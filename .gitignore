@@ -1,6 +1,8 @@
 # folder
 .idea/
 volumes/
+.venv/
 # files
+.env
 
 
