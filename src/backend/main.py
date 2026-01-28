@@ -6,18 +6,26 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from app.api.v1.api import api_router
 
+from app.api import auth, ontology
+from app.infrastructure.database import init_db
+
+# 初始化数据库 (创建表)
+init_db()
+
 app = FastAPI(title="AI 本体构建系统 API", version="1.0.0")
 
 # 添加 CORS 中间件
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 在生产环境中应限制为特定域名
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # 注册路由
+app.include_router(auth.router)
+app.include_router(ontology.router)
 app.include_router(api_router, prefix="/api/v1")
 
 # 健康检查接口
