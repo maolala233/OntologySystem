@@ -24,13 +24,11 @@ def create_test_users():
         test_users = [
             User(
                 username="admin",
-                email="admin@example.com",
                 hashed_password="123456",  # 实际应使用加密
                 is_active=True
             ),
             User(
                 username="testuser",
-                email="test@example.com",
                 hashed_password="123456",
                 is_active=True
             )

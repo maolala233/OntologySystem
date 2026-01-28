@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Form, Input, Button, Card, Tabs, message } from 'antd';
-import { UserOutlined, LockOutlined, MailOutlined } from '@ant-design/icons';
+import { UserOutlined, LockOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { authAPI } from '../api/auth';
 
@@ -34,7 +34,6 @@ const LoginPage: React.FC = () => {
         try {
             const response = await authAPI.register({
                 username: values.username,
-                email: values.email,
                 password: values.password,
             });
 
@@ -63,12 +62,12 @@ const LoginPage: React.FC = () => {
                 {/* Logo 区域 */}
                 <div className="text-center mb-8">
                     <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl mb-4">
-                        <span className="text-white font-bold text-2xl">K</span>
+                        <span className="text-white font-bold text-2xl">O</span>
                     </div>
                     <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-                        Knora 本体平台
+                        本体建模
                     </h1>
-                    <p className="text-gray-500 mt-2">知识图谱构建与管理系统</p>
+                    <p className="text-gray-500 mt-2">企业级语义知识及本体治理平台</p>
                 </div>
 
                 <Tabs
@@ -133,19 +132,7 @@ const LoginPage: React.FC = () => {
                                         />
                                     </Form.Item>
 
-                                    <Form.Item
-                                        name="email"
-                                        rules={[
-                                            { required: true, message: '请输入邮箱' },
-                                            { type: 'email', message: '请输入有效的邮箱地址' },
-                                        ]}
-                                    >
-                                        <Input
-                                            prefix={<MailOutlined className="text-gray-400" />}
-                                            placeholder="邮箱"
-                                            className="rounded-lg"
-                                        />
-                                    </Form.Item>
+
 
                                     <Form.Item
                                         name="password"

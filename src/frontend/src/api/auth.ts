@@ -7,7 +7,6 @@ export interface LoginRequest {
 
 export interface RegisterRequest {
     username: string;
-    email: string;
     password: string;
 }
 
@@ -17,7 +16,6 @@ export interface AuthResponse {
     user: {
         id: number;
         username: string;
-        email: string;
     };
 }
 
@@ -27,19 +25,19 @@ export const authAPI = {
         formData.append('username', data.username);
         formData.append('password', data.password);
 
-        const response = await apiClient.post('/auth/login', formData, {
+        const response = await apiClient.post('/api/auth/login', formData, {
             headers: { 'Content-Type': 'multipart/form-data' },
         });
         return response.data;
     },
 
     register: async (data: RegisterRequest): Promise<AuthResponse> => {
-        const response = await apiClient.post('/auth/register', data);
+        const response = await apiClient.post('/api/auth/register', data);
         return response.data;
     },
 
     getCurrentUser: async () => {
-        const response = await apiClient.get('/auth/me');
+        const response = await apiClient.get('/api/auth/me');
         return response.data;
     },
 };

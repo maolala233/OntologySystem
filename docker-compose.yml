@@ -98,7 +98,7 @@ services:
     ports:
       - "3309:3306"
     environment:
-      MYSQL_ROOT_PASSWORD: password # 请根据需要修改密码
+      MYSQL_ROOT_PASSWORD: password
     volumes:
       - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/mysql:/var/lib/mysql
     restart: always

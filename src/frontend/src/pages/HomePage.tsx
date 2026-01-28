@@ -44,8 +44,8 @@ const HomePage: React.FC = () => {
                 {/* Hero Section */}
                 <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-2xl p-12 mb-8 text-white shadow-xl">
                     <div className="max-w-3xl">
-                        <h1 className="text-5xl font-bold mb-4">
-                            欢迎使用 Knora 本体建模平台
+                        <h1 className="text-4xl font-bold mb-4 whitespace-nowrap overflow-hidden text-ellipsis">
+                            企业级语义知识及本体治理平台
                         </h1>
                         <p className="text-xl mb-8 text-blue-100">
                             基于 AI 的智能本体构建工具，让知识图谱建设更简单、更高效

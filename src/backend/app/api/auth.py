@@ -5,7 +5,7 @@ from app.infrastructure.database import get_db, User
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
 from app.core.config import settings
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from typing import Optional
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -15,13 +15,11 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 # Schemas
 class UserRegister(BaseModel):
     username: str
-    email: EmailStr
     password: str
 
 class UserResponse(BaseModel):
     id: int
     username: str
-    email: str
     
     class Config:
         from_attributes = True
@@ -64,15 +62,9 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
     if existing_user:
         raise HTTPException(status_code=400, detail="Username already registered")
     
-    # 检查邮箱是否已存在
-    existing_email = db.query(User).filter(User.email == user_data.email).first()
-    if existing_email:
-        raise HTTPException(status_code=400, detail="Email already registered")
-    
     # 创建新用户 (实际应使用 passlib 加密密码)
     new_user = User(
         username=user_data.username,
-        email=user_data.email,
         hashed_password=user_data.password  # TODO: 使用 passlib.hash.bcrypt.hash()
     )
     db.add(new_user)

@@ -80,10 +80,10 @@ const AppLayout: React.FC = () => {
                 <div className="h-16 flex items-center justify-center bg-[#001529] border-b border-gray-700">
                     <div className="flex items-center space-x-2">
                         <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-                            <span className="text-white font-bold text-lg">K</span>
+                            <span className="text-white font-bold text-lg">O</span>
                         </div>
                         {!collapsed && (
-                            <span className="text-white font-semibold text-lg">Knora</span>
+                            <span className="text-white font-semibold text-lg">Ontology</span>
                         )}
                     </div>
                 </div>
@@ -111,9 +111,6 @@ const AppLayout: React.FC = () => {
                                 <div className="flex-1 overflow-hidden">
                                     <div className="text-white text-sm font-medium truncate">
                                         {user.username || '用户'}
-                                    </div>
-                                    <div className="text-gray-400 text-xs truncate">
-                                        {user.email || ''}
                                     </div>
                                 </div>
                             )}

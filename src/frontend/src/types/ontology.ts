@@ -18,7 +18,6 @@ export type OntologyEdge = Edge<OntologyEdgeData>;
 export interface User {
   id: number;
   username: string;
-  email: string;
 }
 
 export interface ProjectData {

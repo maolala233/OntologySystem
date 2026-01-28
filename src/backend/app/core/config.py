@@ -46,9 +46,11 @@ class Settings(BaseSettings):
 
     @property
     def DATABASE_URL(self) -> str:
+        # 优先使用环境变量中的 MYSQL_URL，否则根据设置构造
         if self.MYSQL_URL:
             return self.MYSQL_URL
-        return f"sqlite:///{self.SQLITE_PATH}"
+        # 如果没有显式设置 MYSQL_URL，则根据配置构造 MySQL URL
+        return f"mysql+pymysql://{self.MYSQL_USER}:{self.MYSQL_PASSWORD}@{self.MYSQL_HOST}:{self.MYSQL_PORT}/{self.MYSQL_DATABASE}"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

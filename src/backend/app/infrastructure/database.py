@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, Boolean, Text, JSON, DateTime, ForeignKey
+from sqlalchemy.dialects.mysql import VARCHAR
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy import create_engine
@@ -10,9 +11,8 @@ Base = declarative_base()
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
-    username = Column(String, unique=True, index=True)
-    email = Column(String, unique=True, index=True, nullable=True)
-    hashed_password = Column(String)
+    username = Column(String(100), unique=True, index=True)
+    hashed_password = Column(String(255))
     is_active = Column(Boolean, default=True)
 
     projects = relationship("Project", back_populates="owner")
@@ -20,8 +20,8 @@ class User(Base):
 class Project(Base):
     __tablename__ = "projects"
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, index=True)
-    description = Column(String, nullable=True)
+    name = Column(String(200), index=True)
+    description = Column(String(500), nullable=True)
     owner_id = Column(Integer, ForeignKey("users.id"))
     
     # 图谱数据（JSON 格式，用于前端 React Flow 渲染）
@@ -107,13 +107,11 @@ def _create_initial_data():
         test_users = [
             User(
                 username="admin",
-                email="admin@example.com",
                 hashed_password="123456",  # TODO: 实际应使用 bcrypt 加密
                 is_active=True
             ),
             User(
                 username="testuser",
-                email="test@example.com",
                 hashed_password="123456",
                 is_active=True
             )
