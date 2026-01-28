@@ -2,6 +2,10 @@
 .idea/
 volumes/
 .venv/
+old_coding/
+src/backend/logs/
+testfile/
+src/backend/TTL/
 # files
 .env
 

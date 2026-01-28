@@ -1,6 +1,24 @@
+# main.py - FastAPI主应用程序入口点
+# 功能：定义FastAPI应用实例，配置CORS中间件，注册API路由，提供健康检查接口
+
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-app = FastAPI()
+from app.api.v1.api import api_router
+
+app = FastAPI(title="AI 本体构建系统 API", version="1.0.0")
+
+# 添加 CORS 中间件
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 在生产环境中应限制为特定域名
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 注册路由
+app.include_router(api_router, prefix="/api/v1")
 
 # 健康检查接口
 @app.get('/health')
