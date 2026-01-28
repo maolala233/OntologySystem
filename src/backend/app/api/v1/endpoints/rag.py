@@ -6,9 +6,16 @@ from typing import Optional
 from app.schemas.request import RagQueryRequest
 from app.schemas.response import QAResponse, ErrorResponse
 from app.services.rag_engine import GraphRAG
+from app.services.extractor import OntologyExtractor
 from app.infrastructure.vector_client import VectorStoreManager
 from app.infrastructure.llm_client import LLMClient
-from app.core.config import VLLM_API_KEY, VLLM_BASE_URL, VLLM_MODEL, MILVUS_COLLECTION_NAME
+from app.core.config import settings
+
+# 通过 settings 对象访问配置值
+VLLM_API_KEY = settings.VLLM_API_KEY
+VLLM_BASE_URL = settings.VLLM_BASE_URL
+VLLM_MODEL = settings.VLLM_MODEL
+MILVUS_COLLECTION_NAME = settings.MILVUS_COLLECTION_NAME
 from app.core.exceptions import RAGException
 from app.core.logging import logger
 

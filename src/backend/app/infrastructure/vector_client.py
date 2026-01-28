@@ -7,15 +7,16 @@ import os
 from typing import List, Dict, Optional
 from openai import OpenAI
 from pymilvus import connections, Collection, FieldSchema, CollectionSchema, DataType, utility
-from app.core.config import (
-    MILVUS_HOST, 
-    MILVUS_PORT, 
-    MILVUS_COLLECTION_NAME, 
-    EMBEDDING_MODEL, 
-    EMBEDDING_API_KEY, 
-    EMBEDDING_BASE_URL, 
-    EMBEDDING_DIM
-)
+from app.core.config import settings
+
+# 通过 settings 对象访问配置值
+MILVUS_HOST = settings.MILVUS_HOST
+MILVUS_PORT = settings.MILVUS_PORT
+MILVUS_COLLECTION_NAME = settings.MILVUS_COLLECTION_NAME
+EMBEDDING_MODEL = settings.EMBEDDING_MODEL
+EMBEDDING_API_KEY = settings.EMBEDDING_API_KEY
+EMBEDDING_BASE_URL = settings.EMBEDDING_BASE_URL
+EMBEDDING_DIM = settings.EMBEDDING_DIM
 from app.core.logging import logger
 
 

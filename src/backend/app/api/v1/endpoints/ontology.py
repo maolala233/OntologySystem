@@ -7,7 +7,13 @@ import pandas as pd
 from app.schemas.request import ExtractionRequest
 from app.schemas.response import OntologyResponse, ErrorResponse
 from app.services.extractor import OntologyExtractor
-from app.core.config import VLLM_API_KEY, VLLM_BASE_URL, VLLM_MODEL, MILVUS_COLLECTION_NAME
+from app.core.config import settings
+
+# 通过 settings 对象访问配置值
+VLLM_API_KEY = settings.VLLM_API_KEY
+VLLM_BASE_URL = settings.VLLM_BASE_URL
+VLLM_MODEL = settings.VLLM_MODEL
+MILVUS_COLLECTION_NAME = settings.MILVUS_COLLECTION_NAME
 from app.core.exceptions import ExtractionException
 from app.core.logging import logger
 

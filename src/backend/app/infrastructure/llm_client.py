@@ -7,7 +7,10 @@ import time
 import os
 from typing import Dict, Any, Optional
 from openai import OpenAI
-from app.core.config import VLLM_BASE_URL, VLLM_API_KEY, VLLM_MODEL
+from app.core.config import settings
+VLLM_BASE_URL = settings.VLLM_BASE_URL
+VLLM_API_KEY = settings.VLLM_API_KEY
+VLLM_MODEL = settings.VLLM_MODEL
 from app.core.logging import logger
 
 
