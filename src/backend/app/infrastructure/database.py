@@ -11,6 +11,7 @@ class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True)
+    email = Column(String, unique=True, index=True, nullable=True)
     hashed_password = Column(String)
     is_active = Column(Boolean, default=True)
 
@@ -52,6 +53,13 @@ def get_db():
         db.close()
 
 def init_db():
+    """
+    初始化数据库
+    1. 创建数据库（如果使用 MySQL）
+    2. 创建所有表
+    3. 创建测试用户（如果不存在）
+    4. 创建示例项目（可选）
+    """
     # 如果是 MySQL，尝试先连接到服务器创建数据库（如果不存在）
     if settings.DATABASE_URL.startswith("mysql"):
         import pymysql
@@ -60,6 +68,7 @@ def init_db():
         # 提取不包含数据库名的连接信息
         # root:password@localhost:3309/ontology_db -> root, password, localhost, 3309
         try:
+            print(f"🔍 [Database] Connecting to MySQL at {settings.MYSQL_HOST}:{settings.MYSQL_PORT}...")
             conn = pymysql.connect(
                 host=settings.MYSQL_HOST,
                 port=settings.MYSQL_PORT,
@@ -67,11 +76,157 @@ def init_db():
                 password=settings.MYSQL_PASSWORD
             )
             with conn.cursor() as cursor:
-                cursor.execute(f"CREATE DATABASE IF NOT EXISTS {settings.MYSQL_DATABASE} CHARACTER SET utf8mb4;")
+                cursor.execute(f"CREATE DATABASE IF NOT EXISTS {settings.MYSQL_DATABASE} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;")
+                print(f"✅ [Database] Database '{settings.MYSQL_DATABASE}' is ready")
             conn.commit()
             conn.close()
         except Exception as e:
             print(f"⚠️ [Database Init Warning] Failed to check/create database: {e}")
 
     # 创建所有表
+    print("🔨 [Database] Creating tables...")
     Base.metadata.create_all(bind=engine)
+    print("✅ [Database] All tables created")
+    
+    # 创建测试用户和示例数据
+    _create_initial_data()
+
+def _create_initial_data():
+    """创建初始测试数据"""
+    db = SessionLocal()
+    try:
+        # 检查是否已有用户
+        user_count = db.query(User).count()
+        if user_count > 0:
+            print(f"ℹ️ [Database] Found {user_count} existing users, skipping initial data creation")
+            return
+        
+        print("📝 [Database] Creating initial test users...")
+        
+        # 创建测试用户
+        test_users = [
+            User(
+                username="admin",
+                email="admin@example.com",
+                hashed_password="123456",  # TODO: 实际应使用 bcrypt 加密
+                is_active=True
+            ),
+            User(
+                username="testuser",
+                email="test@example.com",
+                hashed_password="123456",
+                is_active=True
+            )
+        ]
+        
+        for user in test_users:
+            db.add(user)
+        
+        db.commit()
+        print("✅ [Database] Test users created:")
+        print("   - Username: admin, Password: 123456")
+        print("   - Username: testuser, Password: 123456")
+        
+        # 创建示例项目
+        print("📝 [Database] Creating sample projects...")
+        
+        admin_user = db.query(User).filter(User.username == "admin").first()
+        
+        sample_projects = [
+            Project(
+                name="工业本体示例",
+                description="这是一个工业领域的本体模型示例",
+                owner_id=admin_user.id,
+                graph_data={
+                    "nodes": [
+                        {
+                            "id": "node_1",
+                            "type": "default",
+                            "position": {"x": 250, "y": 100},
+                            "data": {"label": "产品", "type": "Class", "properties": {}},
+                            "style": {"background": "#fff", "border": "2px solid #3b82f6", "borderRadius": "8px", "padding": "10px"}
+                        },
+                        {
+                            "id": "node_2",
+                            "type": "default",
+                            "position": {"x": 100, "y": 250},
+                            "data": {"label": "零件", "type": "Class", "properties": {}},
+                            "style": {"background": "#fff", "border": "2px solid #3b82f6", "borderRadius": "8px", "padding": "10px"}
+                        },
+                        {
+                            "id": "node_3",
+                            "type": "default",
+                            "position": {"x": 400, "y": 250},
+                            "data": {"label": "工序", "type": "Class", "properties": {}},
+                            "style": {"background": "#fff", "border": "2px solid #3b82f6", "borderRadius": "8px", "padding": "10px"}
+                        }
+                    ],
+                    "edges": [
+                        {
+                            "id": "edge_1",
+                            "source": "node_1",
+                            "target": "node_2",
+                            "type": "smoothstep",
+                            "animated": True,
+                            "data": {"label": "包含", "relation": "contains"}
+                        },
+                        {
+                            "id": "edge_2",
+                            "source": "node_1",
+                            "target": "node_3",
+                            "type": "smoothstep",
+                            "animated": True,
+                            "data": {"label": "需要", "relation": "requires"}
+                        }
+                    ]
+                },
+                is_published=False
+            ),
+            Project(
+                name="已发布的公共本体",
+                description="这是一个已发布的公共本体示例，所有用户都可以在资产中心查看",
+                owner_id=admin_user.id,
+                graph_data={
+                    "nodes": [
+                        {
+                            "id": "node_1",
+                            "type": "default",
+                            "position": {"x": 200, "y": 150},
+                            "data": {"label": "人员", "type": "Entity", "properties": {}},
+                            "style": {"background": "#fff", "border": "2px solid #6366f1", "borderRadius": "8px", "padding": "10px"}
+                        },
+                        {
+                            "id": "node_2",
+                            "type": "default",
+                            "position": {"x": 400, "y": 150},
+                            "data": {"label": "部门", "type": "Entity", "properties": {}},
+                            "style": {"background": "#fff", "border": "2px solid #6366f1", "borderRadius": "8px", "padding": "10px"}
+                        }
+                    ],
+                    "edges": [
+                        {
+                            "id": "edge_1",
+                            "source": "node_1",
+                            "target": "node_2",
+                            "type": "smoothstep",
+                            "data": {"label": "属于", "relation": "belongs_to"}
+                        }
+                    ]
+                },
+                is_published=True
+            )
+        ]
+        
+        for project in sample_projects:
+            db.add(project)
+        
+        db.commit()
+        print("✅ [Database] Sample projects created")
+        print(f"   - Total projects: {len(sample_projects)}")
+        
+    except Exception as e:
+        print(f"⚠️ [Database] Failed to create initial data: {e}")
+        db.rollback()
+    finally:
+        db.close()
+

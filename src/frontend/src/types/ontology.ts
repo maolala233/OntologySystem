@@ -15,12 +15,23 @@ export interface OntologyEdgeData {
 
 export type OntologyEdge = Edge<OntologyEdgeData>;
 
+export interface User {
+  id: number;
+  username: string;
+  email: string;
+}
+
 export interface ProjectData {
   id: number;
   name: string;
-  graph_data: {
+  description?: string;
+  graph_data?: {
     nodes: OntologyNode[];
     edges: OntologyEdge[];
   };
   is_published: boolean;
+  owner?: User;
+  owner_id?: number;
+  created_at?: string;
+  updated_at?: string;
 }
