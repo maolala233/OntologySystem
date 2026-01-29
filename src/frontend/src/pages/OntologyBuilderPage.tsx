@@ -26,7 +26,6 @@ import {
     Spin,
     Tooltip,
     Select,
-    Table,
     Tag,
     Divider,
 } from 'antd';
@@ -41,10 +40,15 @@ import {
     SettingOutlined,
     InfoCircleOutlined,
     DownloadOutlined,
+    DeploymentUnitOutlined,
 } from '@ant-design/icons';
 import Navbar from '../components/Layout/Navbar';
 import { OntologyNode, OntologyEdge } from '../types/ontology';
 import { projectsApi } from '../api/projects';
+import Neo4jNode from '../components/OntologyGraph/Neo4jNode';
+import { getLayoutedElements } from '../utils/layoutUtils';
+import { MarkerType as RFMarkerType } from 'reactflow';
+const nodeTypesMap = { custom: Neo4jNode };
 
 const OntologyBuilderPage: React.FC = () => {
     const { projectId } = useParams<{ projectId: string }>();
@@ -110,11 +114,17 @@ const OntologyBuilderPage: React.FC = () => {
         setIsDrawerOpen(true);
 
         if ('position' in element) {
-            // 节点
+            // 节点：将 properties 对象转换为 [{key, value}] 数组供 Form.List 使用
+            const propsObj = element.data?.properties || {};
+            const propsArray = Object.entries(propsObj).map(([key, value]) => ({
+                name: key,
+                value: String(value)
+            }));
+
             form.setFieldsValue({
                 label: element.data?.label || '',
-                type: element.data?.type || '',
-                ...element.data?.properties
+                type: element.data?.type || 'owl:Class',
+                properties: propsArray
             });
         } else {
             // 边
@@ -130,9 +140,19 @@ const OntologyBuilderPage: React.FC = () => {
         if (!selectedElement) return;
 
         const isNode = 'position' in selectedElement;
-        const { label, type, relation, ...otherProps } = values;
+        const { label, type, relation, properties } = values;
 
         if (isNode) {
+            // 将 properties 数组转换回对象
+            const propsObj: Record<string, any> = {};
+            if (Array.isArray(properties)) {
+                properties.forEach((p: any) => {
+                    if (p && p.name) {
+                        propsObj[p.name] = p.value;
+                    }
+                });
+            }
+
             setNodes((nds) =>
                 nds.map((node) => {
                     if (node.id === selectedElement.id) {
@@ -142,7 +162,7 @@ const OntologyBuilderPage: React.FC = () => {
                                 ...node.data,
                                 label: label,
                                 type: type,
-                                properties: otherProps,
+                                properties: propsObj,
                             },
                         };
                     }
@@ -174,20 +194,20 @@ const OntologyBuilderPage: React.FC = () => {
     const addNewNode = () => {
         const newNode: OntologyNode = {
             id: `node_${Date.now()}`,
-            type: 'default',
+            type: 'custom',
             position: { x: Math.random() * 400 + 100, y: Math.random() * 400 + 100 },
-            data: { label: '新实体', type: 'Entity', properties: {} },
-            style: {
-                background: '#fff',
-                border: '2px solid #3b82f6',
-                borderRadius: '8px',
-                padding: '10px',
-                fontSize: '14px',
-                boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'
-            },
+            data: { label: '新实体', type: 'owl:Class', properties: {} },
         };
         setNodes((nds) => nds.concat(newNode));
         message.success('已添加新节点');
+    };
+
+    // 自动布局
+    const handleAutoLayout = () => {
+        const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(nodes, edges);
+        setNodes([...layoutedNodes]);
+        setEdges([...layoutedEdges]);
+        message.success('已完成自动布局');
     };
 
     // 删除选中元素
@@ -227,10 +247,10 @@ const OntologyBuilderPage: React.FC = () => {
             await projectsApi.updateProject(Number(projectId), {
                 graph_data: { nodes, edges },
             });
-            
+
             // 然后触发TTL文件重新生成（关键修复）
             const updateResponse = await projectsApi.updateOntology(Number(projectId), { nodes, edges });
-            
+
             message.success('草稿已保存，TTL文件已同步更新');
         } catch (error) {
             message.error('保存失败，请重试');
@@ -307,11 +327,11 @@ const OntologyBuilderPage: React.FC = () => {
     // 处理TTL文件上传
     const handleUploadTTL = async (file: File) => {
         if (!projectId) return;
-        
+
         setLoading(true);
         try {
             const response = await projectsApi.uploadTTLFile(Number(projectId), file);
-            
+
             // 将提取的本体数据渲染到画布
             if (response.nodes) {
                 setNodes(response.nodes);
@@ -332,7 +352,7 @@ const OntologyBuilderPage: React.FC = () => {
     // 下载TTL文件
     const handleDownloadTTL = async () => {
         if (!projectId) return;
-        
+
         try {
             await projectsApi.downloadTTL(Number(projectId));
             message.success('TTL文件已开始下载');
@@ -348,10 +368,9 @@ const OntologyBuilderPage: React.FC = () => {
     ];
 
     const nodeTypes = [
-        { label: '实体 (Entity)', value: 'Entity' },
-        { label: '类 (Class)', value: 'Class' },
-        { label: '属性 (Property)', value: 'Property' },
-        { label: '概念 (Concept)', value: 'Concept' },
+        { label: '类 (Class)', value: 'owl:Class' },
+        { label: '实例 (Individual)', value: 'owl:NamedIndividual' },
+        { label: '属性 (Property)', value: 'owl:ObjectProperty' },
     ];
 
     const relationTypes = [
@@ -362,20 +381,11 @@ const OntologyBuilderPage: React.FC = () => {
         { label: '依赖 (depends_on)', value: 'depends_on' },
     ];
 
-    // 属性表格列定义
-    const propertyColumns = [
-        { title: '属性名', dataIndex: 'key', key: 'key' },
-        { title: '属性值', dataIndex: 'value', key: 'value', render: (text: string) => <Tag color="blue">{text}</Tag> },
-    ];
-
-    // 格式化当前选中的属性数据
-    const getPropertyData = () => {
-        if (!selectedElement || !('position' in selectedElement)) return [];
-        const props = selectedElement.data?.properties || {};
-        return Object.entries(props).map(([key, value]) => ({
-            key,
-            value: String(value),
-        }));
+    // 默认连线样式
+    const defaultEdgeOptions = {
+        type: 'smoothstep',
+        markerEnd: { type: RFMarkerType.ArrowClosed, color: '#b1b1b7' },
+        style: { stroke: '#b1b1b7', strokeWidth: 1.5 },
     };
 
     return (
@@ -398,19 +408,20 @@ const OntologyBuilderPage: React.FC = () => {
                         onConnect={onConnect}
                         onNodeClick={onElementClick}
                         onEdgeClick={onElementClick}
+                        nodeTypes={nodeTypesMap}
+                        defaultEdgeOptions={defaultEdgeOptions}
                         fitView
                         className="bg-gray-50"
                     >
-                        <Background color="#d1d5db" gap={20} />
+                        <Background color="#f1f5f9" gap={20} />
                         <Controls />
                         <MiniMap
                             nodeStrokeWidth={3}
                             nodeColor={(node) => {
                                 switch (node.data?.type) {
-                                    case 'Class': return '#3b82f6';
-                                    case 'Property': return '#10b981';
-                                    case 'Concept': return '#f59e0b';
-                                    default: return '#6366f1';
+                                    case 'owl:Class': return '#68bdf6';
+                                    case 'owl:NamedIndividual': return '#f79767';
+                                    default: return '#c990c0';
                                 }
                             }}
                         />
@@ -452,6 +463,14 @@ const OntologyBuilderPage: React.FC = () => {
                                         </Button>
                                     </Tooltip>
                                 </Upload>
+
+                                <Button
+                                    icon={<DeploymentUnitOutlined />}
+                                    onClick={handleAutoLayout}
+                                    title="自动布局"
+                                >
+                                    自动布局
+                                </Button>
 
                                 <Button
                                     icon={<PlusOutlined />}
@@ -574,17 +593,40 @@ const OntologyBuilderPage: React.FC = () => {
 
                                 <Divider />
                                 <SectionTitle icon={<FileTextOutlined />} title="属性列表" />
-                                <Table
-                                    dataSource={getPropertyData()}
-                                    columns={propertyColumns}
-                                    pagination={false}
-                                    size="small"
-                                    className="mb-4"
-                                    locale={{ emptyText: '暂无属性' }}
-                                />
+
+                                <Form.List name="properties">
+                                    {(fields, { add, remove }) => (
+                                        <>
+                                            {fields.map(({ key, name, ...restField }) => (
+                                                <Space key={key} style={{ display: 'flex', marginBottom: 8 }} align="baseline">
+                                                    <Form.Item
+                                                        {...restField}
+                                                        name={[name, 'name']}
+                                                        rules={[{ required: true, message: '属性名' }]}
+                                                    >
+                                                        <Input placeholder="属性名" />
+                                                    </Form.Item>
+                                                    <Form.Item
+                                                        {...restField}
+                                                        name={[name, 'value']}
+                                                        rules={[{ required: true, message: '属性值' }]}
+                                                    >
+                                                        <Input placeholder="属性值" />
+                                                    </Form.Item>
+                                                    <DeleteOutlined onClick={() => remove(name)} className="text-red-500 cursor-pointer" />
+                                                </Space>
+                                            ))}
+                                            <Form.Item>
+                                                <Button type="dashed" onClick={() => add()} block icon={<PlusOutlined />}>
+                                                    添加属性
+                                                </Button>
+                                            </Form.Item>
+                                        </>
+                                    )}
+                                </Form.List>
 
                                 <div className="text-gray-400 text-xs mb-4">
-                                    * 提示：大模型自动提取的属性将展示在此处。
+                                    * 提示：大模型自动提取的属性将展示在此处，您可以手动添加或修改。
                                 </div>
                             </>
                         ) : (
