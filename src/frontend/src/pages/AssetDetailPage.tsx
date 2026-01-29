@@ -11,7 +11,7 @@ import 'reactflow/dist/style.css';
 import { Button, Spin, message, Descriptions, Tag, Card } from 'antd';
 import { ArrowLeftOutlined, UserOutlined, CalendarOutlined } from '@ant-design/icons';
 import Navbar from '../components/Layout/Navbar';
-import { projectsAPI } from '../api/projects';
+import { projectsApi } from '../api/projects';
 import { ProjectData } from '../types/ontology';
 
 const AssetDetailPage: React.FC = () => {
@@ -29,7 +29,7 @@ const AssetDetailPage: React.FC = () => {
     const loadProject = async () => {
         setLoading(true);
         try {
-            const data = await projectsAPI.getProject(Number(projectId));
+            const data = await projectsApi.getProject(Number(projectId));
             setProject(data);
         } catch (error: any) {
             message.error('加载本体详情失败');

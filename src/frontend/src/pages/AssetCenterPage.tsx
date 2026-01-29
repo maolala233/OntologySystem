@@ -3,7 +3,7 @@ import { Card, Empty, Spin, message, Tag, Input, Select } from 'antd';
 import { EyeOutlined, UserOutlined, NodeIndexOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Layout/Navbar';
-import { projectsAPI } from '../api/projects';
+import { projectsApi } from '../api/projects';
 import { ProjectData } from '../types/ontology';
 
 const AssetCenterPage: React.FC = () => {
@@ -25,7 +25,7 @@ const AssetCenterPage: React.FC = () => {
     const loadPublicProjects = async () => {
         setLoading(true);
         try {
-            const data = await projectsAPI.getPublicProjects();
+            const data = await projectsApi.getPublicProjects();
             setProjects(data);
         } catch (error: any) {
             message.error('加载公共本体失败');

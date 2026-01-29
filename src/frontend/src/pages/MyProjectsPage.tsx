@@ -9,7 +9,7 @@ import {
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Layout/Navbar';
-import { projectsAPI } from '../api/projects';
+import { projectsApi } from '../api/projects';
 import { ProjectData } from '../types/ontology';
 
 const MyProjectsPage: React.FC = () => {
@@ -26,7 +26,7 @@ const MyProjectsPage: React.FC = () => {
     const loadProjects = async () => {
         setLoading(true);
         try {
-            const data = await projectsAPI.getMyProjects();
+            const data = await projectsApi.getMyProjects();
             setProjects(data);
         } catch (error: any) {
             message.error('加载项目失败');
@@ -37,7 +37,7 @@ const MyProjectsPage: React.FC = () => {
 
     const handleCreateProject = async (values: any) => {
         try {
-            await projectsAPI.createProject(values);
+            await projectsApi.createProject(values);
             message.success('项目创建成功！');
             setIsModalOpen(false);
             form.resetFields();
@@ -56,7 +56,7 @@ const MyProjectsPage: React.FC = () => {
             okButtonProps: { danger: true },
             onOk: async () => {
                 try {
-                    await projectsAPI.deleteProject(projectId);
+                    await projectsApi.deleteProject(projectId);
                     message.success('删除成功');
                     loadProjects();
                 } catch (error) {

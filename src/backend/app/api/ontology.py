@@ -1,6 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Response
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from app.infrastructure.database import get_db, Project, User
 from app.schemas.ontology import ProjectCreate, ProjectUpdate, ProjectResponse
 from app.api.auth import get_current_user
@@ -8,6 +8,10 @@ from app.core.config import settings
 import json
 import os
 import tempfile
+from app.services.extractor import OntologyExtractor
+from app.infrastructure.neo4j_client import neo4j_client
+import pandas as pd
+from rdflib import Graph, RDF, OWL, RDFS
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -117,13 +121,14 @@ def publish_project(
     if db_project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="No permission to publish this project")
     
-    # TODO: 实现以下功能
-    # 1. 将 JSON 图数据转换为 TTL 结构
-    # ttl_content = convert_json_to_ttl(db_project.graph_data)
-    # db_project.ttl_content = ttl_content
-    
-    # 2. 同步到 Neo4j
-    # sync_to_neo4j(db_project.id, db_project.graph_data)
+    # 同步到 Neo4j
+    if db_project.graph_data:
+        try:
+            success = neo4j_client.sync_graph(db_project.id, db_project.graph_data)
+            if not success:
+                raise HTTPException(status_code=500, detail="Failed to sync to Neo4j database")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Neo4j sync error: {str(e)}")
     
     db_project.is_published = True
     db.commit()
@@ -136,6 +141,11 @@ def publish_project(
 async def upload_document(
     project_id: int,
     file: UploadFile = File(...),
+    scenario: Optional[str] = None,  # 场景描述
+    chunk_size: int = 15000,
+    chunk_overlap: int = 500,
+    request_interval: int = 2,
+    product_code: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -148,60 +158,437 @@ async def upload_document(
         raise HTTPException(status_code=403, detail="No permission to upload to this project")
     
     # 保存临时文件
-    temp_dir = "temp_uploads"
-    os.makedirs(temp_dir, exist_ok=True)
-    temp_path = os.path.join(temp_dir, file.filename)
+    os.makedirs("temp_uploads", exist_ok=True)
+    temp_path = os.path.join("temp_uploads", file.filename)
     
     with open(temp_path, "wb") as buffer:
         content = await file.read()
         buffer.write(content)
     
     try:
-        # TODO: 调用现有的 LLM 提取逻辑
-        # from app.services.extractor import extract_ontology_from_file
-        # result = extract_ontology_from_file(temp_path)
+        # 判断文件类型
+        filename_lower = file.filename.lower()
         
-        # 模拟返回数据
-        mock_nodes = [
-            {
-                "id": f"node_{i}",
-                "type": "default",
-                "position": {"x": 100 + i * 150, "y": 100 + i * 50},
-                "data": {
-                    "label": f"实体{i}",
-                    "type": "Entity",
-                    "properties": {}
-                },
-                "style": {
-                    "background": "#fff",
-                    "border": "2px solid #3b82f6",
-                    "borderRadius": "8px",
-                    "padding": "10px"
-                }
+        if filename_lower.endswith('.ttl'):
+            # 如果是TTL文件，直接解析
+            with open(temp_path, "r", encoding='utf-8') as ttl_file:
+                ttl_content = ttl_file.read()
+            
+            # 从TTL内容生成React Flow节点和边
+            nodes, edges = convert_ttl_to_react_flow(ttl_content)
+            
+            # 更新项目中的TTL内容
+            db_project.ttl_content = ttl_content
+            db.commit()
+            
+            return {
+                "nodes": nodes,
+                "edges": edges,
+                "ttl_filename": file.filename,
+                "message": f"成功解析TTL文件，包含 {len(nodes)} 个实体和 {len(edges)} 个关系"
             }
-            for i in range(1, 4)
-        ]
+        else:
+            # 处理其他类型的文档
+            # 读取文本内容
+            from app.services.parser import FileParser
+            parser = FileParser()
+            text_content = parser.parse_file(temp_path)
+            
+            if not text_content:
+                text_content = "" # 容错
+                
+            # 初始化提取器
+            extractor = OntologyExtractor(
+                api_key=settings.VLLM_API_KEY,
+                base_url=settings.VLLM_BASE_URL,
+                model=settings.VLLM_MODEL
+            )
+            
+            # 构建空的规则 DataFrame
+            df = pd.DataFrame(columns=["主体 (Class)", "属性 (DataProp)", "关系 (ObjectProp)"])
+            
+            # 调用完整的本体构建方法
+            filename, msg = extractor.build_ontology(
+                text_content,
+                scenario or db_project.description or "通用知识领域本体提取",
+                df,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                request_interval=request_interval,
+                product_code=product_code
+            )
+            
+            # 读取生成的TTL内容
+            with open(filename, 'r', encoding='utf-8') as f:
+                ttl_content = f.read()
+            
+            # 更新项目中的TTL内容
+            db_project.ttl_content = ttl_content
+            db.commit()
+            
+            # 从TTL内容生成React Flow节点和边
+            nodes, edges = convert_ttl_to_react_flow(ttl_content)
+            
+            return {
+                "nodes": nodes,
+                "edges": edges,
+                "ttl_filename": filename,
+                "message": msg
+            }
+    
+    except Exception as e:
+        from app.core.logging import logger
+        logger.error(f"Extraction error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"本体提取失败: {str(e)}")
+    
+    finally:
+        # 清理临时文件
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+# 上传TTL文件并解析为前端展示要素
+@router.post("/{project_id}/upload-ttl")
+async def upload_ttl_file(
+    project_id: int,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    专门用于上传TTL文件的端点，将TTL内容解析为前端可视化所需的节点和边
+    """
+    db_project = db.query(Project).filter(Project.id == project_id).first()
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    # 权限检查：只有创建者可以上传
+    if db_project.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="No permission to upload to this project")
+    
+    # 检查文件类型
+    if not file.filename.lower().endswith('.ttl'):
+        raise HTTPException(status_code=400, detail="Only TTL files are accepted")
+    
+    # 保存临时文件
+    os.makedirs("temp_uploads", exist_ok=True)
+    temp_path = os.path.join("temp_uploads", file.filename)
+    
+    with open(temp_path, "wb") as buffer:
+        content = await file.read()
+        buffer.write(content)
+    
+    try:
+        # 读取TTL内容
+        with open(temp_path, "r", encoding='utf-8') as ttl_file:
+            ttl_content = ttl_file.read()
         
-        mock_edges = [
-            {
-                "id": "edge_1",
-                "source": "node_1",
-                "target": "node_2",
-                "type": "smoothstep",
-                "animated": True,
-                "data": {
-                    "label": "关联",
-                    "relation": "related_to"
-                }
-            }
-        ]
+        # 从TTL内容生成React Flow节点和边
+        nodes, edges = convert_ttl_to_react_flow(ttl_content)
+        
+        # 更新项目中的TTL内容
+        db_project.ttl_content = ttl_content
+        db.commit()
         
         return {
-            "nodes": mock_nodes,
-            "edges": mock_edges,
-            "message": "Document uploaded and ontology extracted successfully"
+            "nodes": nodes,
+            "edges": edges,
+            "ttl_filename": file.filename,
+            "message": f"成功解析TTL文件，包含 {len(nodes)} 个实体和 {len(edges)} 个关系"
         }
     
+    except Exception as e:
+        from app.core.logging import logger
+        logger.error(f"TTL parsing error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"TTL文件解析失败: {str(e)}")
+    
+    finally:
+        # 清理临时文件
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+def generate_ttl_from_react_flow(nodes: List[dict], edges: List[dict]):
+    """
+    从React Flow的节点和边数据生成TTL内容
+    """
+    from rdflib import Graph, Literal, RDF, RDFS, OWL, Namespace
+    import datetime
+    
+    # 创建图
+    g = Graph()
+    ex = Namespace("http://www.example.org/auto_ontology#")
+    g.bind("ex", ex)
+    g.bind("owl", OWL)
+    g.bind("rdfs", RDFS)
+    g.bind("rdf", RDF)
+    g.bind("xsd", Namespace("http://www.w3.org/2001/XMLSchema#"))
+    
+    # 添加本体声明
+    onto_uri = ex["Ontology"]
+    g.add((onto_uri, RDF.type, OWL.Ontology))
+    g.add((onto_uri, OWL.versionInfo, Literal("1.0")))
+    
+    # 创建节点ID到URI的映射
+    node_uris = {}
+    for node in nodes:
+        node_id = node['id']
+        node_label = node['data']['label']
+        node_type = node['data']['type']
+        
+        uri = ex[node_id]
+        node_uris[node_id] = uri
+        
+        # 添加个体声明
+        g.add((uri, RDF.type, OWL.NamedIndividual))
+        g.add((uri, RDFS.label, Literal(node_label, lang="zh")))
+        
+        # 添加类型信息
+        type_uri = ex[node_type]
+        g.add((uri, RDF.type, type_uri))
+        
+        # 添加类定义
+        g.add((type_uri, RDF.type, OWL.Class))
+        g.add((type_uri, RDFS.label, Literal(node_type, lang="zh")))
+        
+        # 添加数据属性（节点属性）
+        for prop_name, prop_value in node['data'].get('properties', {}).items():
+            # 创建数据属性
+            dataprop_uri = ex[prop_name]
+            g.add((dataprop_uri, RDF.type, OWL.DatatypeProperty))
+            g.add((dataprop_uri, RDFS.label, Literal(prop_name, lang="zh")))
+            
+            # 添加属性值
+            g.add((uri, dataprop_uri, Literal(str(prop_value), lang="zh")))
+    
+    # 添加对象属性（边）
+    for edge in edges:
+        source_id = edge['source']
+        target_id = edge['target']
+        relation_label = edge.get('label', edge.get('data', {}).get('label', 'relatedTo'))
+        
+        if source_id in node_uris and target_id in node_uris:
+            source_uri = node_uris[source_id]
+            target_uri = node_uris[target_id]
+            
+            # 创建对象属性
+            objprop_uri = ex[relation_label]
+            g.add((objprop_uri, RDF.type, OWL.ObjectProperty))
+            g.add((objprop_uri, RDFS.label, Literal(relation_label, lang="zh")))
+            
+            # 添加关系
+            g.add((source_uri, objprop_uri, target_uri))
+    
+    # 序列化为TTL格式
+    ttl_content = g.serialize(format="turtle")
+    return ttl_content
+
+
+def convert_ttl_to_react_flow(ttl_content: str):
+    """
+    将TTL转换为React Flow格式 (Neo4j风格优化版)
+    """
+    g = Graph()
+    g.parse(data=ttl_content, format="turtle")
+    g.bind("owl", OWL)
+    g.bind("rdfs", RDFS)
+    g.bind("rdf", RDF)
+
+    nodes = []
+    edges = []
+    processed_nodes = set()
+
+    # --- 辅助函数：生成节点 ---
+    def add_node(uri, node_type_category):
+        node_id = str(uri).split('#')[-1] if '#' in str(uri) else str(uri).split('/')[-1]
+
+        if node_id in processed_nodes:
+            return node_id
+
+        # 获取 Label (优先中文)
+        label = node_id
+        for obj in g.objects(uri, RDFS.label):
+            label = str(obj)
+            if hasattr(obj, 'language') and obj.language == 'zh':
+                break
+
+        # 收集属性
+        props = {}
+        for pred, obj in g.predicate_objects(uri):
+            if str(pred) not in [str(RDF.type), str(RDFS.label), str(RDFS.subClassOf), str(RDFS.domain),
+                                 str(RDFS.range)]:
+                p_name = str(pred).split('#')[-1]
+                if not str(obj).startswith('http'):
+                    props[p_name] = str(obj)
+
+        nodes.append({
+            "id": node_id,
+            "type": "custom",  # <--- 关键：强制指定 custom 类型
+            "position": {"x": 0, "y": 0},  # 坐标交由前端计算
+            "data": {
+                "label": label,
+                "type": node_type_category,  # 'owl:Class' 或 'owl:NamedIndividual'
+                "properties": props
+            }
+        })
+        processed_nodes.add(node_id)
+        return node_id
+
+    # 1. 提取类 (Class)
+    for subj in g.subjects(RDF.type, OWL.Class):
+        add_node(subj, "owl:Class")
+
+    # 2. 提取个体 (NamedIndividual)
+    for subj in g.subjects(RDF.type, OWL.NamedIndividual):
+        add_node(subj, "owl:NamedIndividual")
+
+    # 3. 提取关系 (Edges)
+
+    # 3.1 Schema 关系 (基于 ObjectProperty 的 domain/range)
+    # 这能让你看到类之间的逻辑关系，而不仅仅是 type
+    for prop in g.subjects(RDF.type, OWL.ObjectProperty):
+        domain = list(g.objects(prop, RDFS.domain))
+        range_ = list(g.objects(prop, RDFS.range))
+        label_objs = list(g.objects(prop, RDFS.label))
+        prop_label = str(label_objs[0]) if label_objs else str(prop).split('#')[-1]
+
+        if domain and range_:
+            source_id = add_node(domain[0], "owl:Class")
+            target_id = add_node(range_[0], "owl:Class")
+
+            edges.append({
+                "id": f"e_{source_id}_{target_id}_{prop_label}",
+                "source": source_id,
+                "target": target_id,
+                "label": prop_label,
+                "type": "custom",
+                "data": {"label": prop_label}
+            })
+
+    # 3.2 实例关系 (rdf:type)
+    for subj, obj in g.subject_objects(RDF.type):
+        if str(obj) in [str(OWL.Class), str(OWL.NamedIndividual)]: continue  # 跳过元定义
+
+        subj_id = str(subj).split('#')[-1]
+        obj_id = str(obj).split('#')[-1]
+
+        # 确保两端节点都已存在
+        if subj_id in processed_nodes and obj_id in processed_nodes:
+            edges.append({
+                "id": f"e_{subj_id}_type_{obj_id}",
+                "source": subj_id,
+                "target": obj_id,
+                "label": "rdf:type",
+                "type": "custom",
+                "style": {"strokeDasharray": "5,5"},  # 虚线表示 type 关系
+                "data": {"label": "type"}
+            })
+
+    # 3.3 实例间的普通关系 (如果有的话)
+    for subj, pred, obj in g.triples((None, None, None)):
+        if str(pred) in [str(RDF.type), str(RDFS.label), str(RDFS.subClassOf), str(RDFS.domain), str(RDFS.range)]:
+            continue
+
+        subj_str = str(subj).split('#')[-1]
+        if subj_str in processed_nodes and str(obj).startswith('http'):
+            obj_str = str(obj).split('#')[-1]
+            if obj_str in processed_nodes:
+                pred_label = str(pred).split('#')[-1]
+                edges.append({
+                    "id": f"e_{subj_str}_{obj_str}_{pred_label}",
+                    "source": subj_str,
+                    "target": obj_str,
+                    "label": pred_label,
+                    "type": "custom",
+                    "data": {"label": pred_label}
+                })
+
+    return nodes, edges
+
+# 更新项目本体数据并重新生成TTL
+@router.post("/{project_id}/update-ontology")
+async def update_ontology(
+    project_id: int,
+    request: dict,  # 直接接收JSON请求体
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    db_project = db.query(Project).filter(Project.id == project_id).first()
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    # 权限检查：只有创建者可以修改
+    if db_project.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="No permission to update this project")
+    
+    try:
+        # 从请求体中提取节点和边数据
+        nodes = request.get('nodes', [])
+        edges = request.get('edges', [])
+        
+        # 更新项目中的图数据
+        db_project.graph_data = {"nodes": nodes, "edges": edges}
+        
+        # 使用更新后的图数据重新生成TTL
+        ttl_content = generate_ttl_from_react_flow(nodes, edges)
+        
+        # 更新项目中的TTL内容
+        db_project.ttl_content = ttl_content
+        db.commit()
+        
+        # 返回更新后的数据
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "message": f"成功更新本体，包含 {len(nodes)} 个实体和 {len(edges)} 个关系",
+            "ttl_updated": True
+        }
+    
+    except Exception as e:
+        from app.core.logging import logger
+        logger.error(f"Update ontology error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"更新本体失败: {str(e)}")
+
+
+# 下载TTL文件
+@router.get("/{project_id}/download-ttl")
+def download_ttl(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    db_project = db.query(Project).filter(Project.id == project_id).first()
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    # 权限检查：公开项目或自己的项目可下载
+    if not db_project.is_published and db_project.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="No permission to download this project's TTL file")
+    
+    if not db_project.ttl_content:
+        raise HTTPException(status_code=404, detail="TTL file not found for this project")
+    
+    # 创建临时文件
+    temp_dir = "temp_downloads"
+    os.makedirs(temp_dir, exist_ok=True)
+    temp_filename = f"ontology_{db_project.id}_{db_project.name.replace(' ', '_')}.ttl"
+    temp_path = os.path.join(temp_dir, temp_filename)
+    
+    try:
+        with open(temp_path, "w", encoding="utf-8") as f:
+            f.write(db_project.ttl_content)
+        
+        # 返回文件响应
+        with open(temp_path, "rb") as f:
+            content = f.read()
+        
+        return Response(
+            content=content,
+            media_type="text/turtle",
+            headers={
+                "Content-Disposition": f'attachment; filename="{temp_filename}"'
+            }
+        )
     finally:
         # 清理临时文件
         if os.path.exists(temp_path):

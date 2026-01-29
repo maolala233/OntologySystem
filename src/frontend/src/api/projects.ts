@@ -15,7 +15,7 @@ export interface UpdateProjectRequest {
     };
 }
 
-export const projectsAPI = {
+export const projectsApi = {
     // 获取我的项目列表
     getMyProjects: async (): Promise<ProjectData[]> => {
         const response = await apiClient.get('/api/projects/my');
@@ -58,13 +58,52 @@ export const projectsAPI = {
     },
 
     // 上传文档并提取本体
-    uploadDocument: async (projectId: number, file: File): Promise<any> => {
+    uploadDocument: async (projectId: number, file: File, scenario?: string): Promise<any> => {
         const formData = new FormData();
         formData.append('file', file);
+        if (scenario) {
+            formData.append('scenario', scenario);
+        }
 
         const response = await apiClient.post(`/api/projects/${projectId}/upload`, formData, {
             headers: { 'Content-Type': 'multipart/form-data' },
         });
+        return response.data;
+    },
+
+    // 上传TTL文件并解析为前端展示要素
+    uploadTTLFile: async (projectId: number, ttlFile: File): Promise<any> => {
+        const formData = new FormData();
+        formData.append('file', ttlFile);
+
+        const response = await apiClient.post(`/api/projects/${projectId}/upload-ttl`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+        });
+        return response.data;
+    },
+
+    // 更新本体数据
+    updateOntology: async (projectId: number, data: { nodes: any[], edges: any[] }): Promise<any> => {
+        const response = await apiClient.post(`/api/projects/${projectId}/update-ontology`, data);
+        return response.data;
+    },
+
+    // 下载TTL文件
+    downloadTTL: async (projectId: number): Promise<Blob> => {
+        const response = await apiClient.get(`/api/projects/${projectId}/download-ttl`, {
+            responseType: 'blob'
+        });
+        
+        // 创建下载链接
+        const url = window.URL.createObjectURL(new Blob([response.data]));
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', `ontology_${projectId}.ttl`);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+        
         return response.data;
     },
 };

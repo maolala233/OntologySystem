@@ -8,12 +8,15 @@ export interface OntologyNodeData {
 
 export type OntologyNode = Node<OntologyNodeData>;
 
-export interface OntologyEdgeData {
-  label: string;
-  relation: string;
+export interface OntologyNodeData {
+    label: string;
+    labelEn?: string; // 支持英文
+    type: string; // 'owl:Class' | 'owl:NamedIndividual' 等
+    properties?: Record<string, any>;
+    currentLang?: 'zh' | 'en';
 }
 
-export type OntologyEdge = Edge<OntologyEdgeData>;
+export type OntologyEdge = Edge;
 
 export interface User {
   id: number;

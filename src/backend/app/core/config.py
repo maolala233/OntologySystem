@@ -2,6 +2,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
 import os
 
+# 获取项目根目录的路径
+# project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+# env_file_path = os.path.join(project_root, ".env")
+
 class Settings(BaseSettings):
     # Neo4j
     NEO4J_URI: str = "bolt://localhost:7687"

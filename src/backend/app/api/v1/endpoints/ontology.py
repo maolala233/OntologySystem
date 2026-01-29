@@ -1,13 +1,19 @@
 # app/api/v1/endpoints/ontology.py - 本体生成端点
 # 功能：提供本体文件生成、保存和同步到向量库的API接口
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
-from typing import List
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
+from typing import List, Dict, Any
 import pandas as pd
+import os
+from datetime import datetime
+from rdflib import Graph, RDF, OWL, RDFS, Namespace, URIRef, Literal
 from app.schemas.request import ExtractionRequest
 from app.schemas.response import OntologyResponse, ErrorResponse
 from app.services.extractor import OntologyExtractor
 from app.core.config import settings
+from sqlalchemy.orm import Session
+from app.infrastructure.database import get_db, Project  # 修复：从database.py导入Project
+from app.schemas.ontology import ProjectResponse, ProjectUpdate
 
 # 通过 settings 对象访问配置值
 VLLM_API_KEY = settings.VLLM_API_KEY
@@ -20,72 +26,105 @@ from app.core.logging import logger
 router = APIRouter()
 
 
-@router.post("/generate", response_model=OntologyResponse)
-async def generate_ontology(request: ExtractionRequest):
+@router.post("/projects/{project_id}/update-ontology")
+async def update_ontology(project_id: int, data: Dict[str, Any], db: Session = Depends(get_db)):
     """
-    生成本体文件
+    更新本体数据并重新生成TTL文件 - 修复属性保存和TTL更新问题
     """
     try:
-        # 使用配置默认值 (默认为 vLLM)
-        api_key = request.api_key or VLLM_API_KEY
-        base_url = request.base_url or VLLM_BASE_URL
-        model = request.model or VLLM_MODEL
-        milvus_collection = request.milvus_collection or MILVUS_COLLECTION_NAME
-
-        # 构建 DataFrame 用于规则
-        df_data = []
-        for rule in request.rules:
-            df_data.append({
-                "主体 (Class)": rule.get("cls_name") or rule.get("主体 (Class)"),
-                "属性 (DataProp)": rule.get("attrs") or rule.get("属性 (DataProp)"),
-                "关系 (ObjectProp)": rule.get("rels") or rule.get("关系 (ObjectProp)")
-            })
-        df = pd.DataFrame(df_data)
-
-        # 调用核心逻辑
-        backend = OntologyExtractor(api_key, base_url, model, collection_name=milvus_collection)
-        filename, msg = backend.build_ontology(
-            request.text_content,
-            request.scenario,
-            df,
-            chunk_size=request.chunk_size,
-            chunk_overlap=request.chunk_overlap,
-            request_interval=request.request_interval,
-            product_code=request.product_code
-        )
-
-        if not filename:
-            raise ExtractionException(msg)
-
+        # 获取项目
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="项目不存在")
+        
+        # 获取节点和边数据
+        nodes = data.get("nodes", [])
+        edges = data.get("edges", [])
+        
+        # 创建图对象 - 使用与OntologyExtractor相同的命名空间
+        EX = Namespace("http://www.example.org/auto_ontology#")
+        g = Graph()
+        g.bind("ex", EX)
+        g.bind("owl", OWL)
+        g.bind("rdfs", RDFS)
+        g.bind("xsd", Namespace("http://www.w3.org/2001/XMLSchema#"))
+        
+        # 添加本体声明
+        onto_uri = URIRef("http://www.example.org/auto_ontology")
+        g.add((onto_uri, RDF.type, OWL.Ontology))
+        g.add((onto_uri, OWL.versionInfo, Literal("1.0")))
+        
+        # 关键修复：正确处理节点属性
+        for node in nodes:
+            node_id = node.get("id", f"node_{len(nodes)}")
+            node_label = node.get("data", {}).get("label", "未知实体")
+            node_type = node.get("data", {}).get("type", "Entity")
+            
+            uri = EX[node_id]
+            
+            # 添加类型
+            if node_type == "Class":
+                g.add((uri, RDF.type, OWL.Class))
+            else:
+                g.add((uri, RDF.type, OWL.NamedIndividual))
+            
+            # 添加标签（确保中文正确）
+            g.add((uri, RDFS.label, Literal(node_label, lang="zh")))
+            
+            # 关键修复：正确处理properties属性
+            properties = node.get("data", {}).get("properties", {})
+            for prop_name, prop_value in properties.items():
+                # 确保属性名和值都被正确处理
+                prop_uri = EX[prop_name]
+                g.add((prop_uri, RDF.type, OWL.DatatypeProperty))
+                g.add((prop_uri, RDFS.label, Literal(prop_name, lang="zh")))
+                # 确保属性值被正确添加（关键修复点）
+                g.add((uri, prop_uri, Literal(str(prop_value), lang="zh")))
+        
+        # 添加边
+        for edge in edges:
+            source_id = edge.get("source")
+            target_id = edge.get("target")
+            relation = edge.get("data", {}).get("relation", "related_to")
+            edge_label = edge.get("data", {}).get("label", "关联")
+            
+            if source_id and target_id:
+                source_uri = EX[source_id]
+                target_uri = EX[target_id]
+                
+                rel_uri = EX[relation]
+                g.add((rel_uri, RDF.type, OWL.ObjectProperty))
+                g.add((rel_uri, RDFS.label, Literal(edge_label, lang="zh")))
+                g.add((source_uri, rel_uri, target_uri))
+        
+        # 生成TTL文件
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        os.makedirs("TTL", exist_ok=True)
+        filename = os.path.join("TTL", f"ontology_updated_{project_id}_{timestamp}.ttl")
+        g.serialize(filename, format="turtle")
+        
+        # 读取TTL内容
         with open(filename, "r", encoding="utf-8") as f:
             ttl_content = f.read()
-
-        return OntologyResponse(
-            status="success",
-            filename=filename,
-            ttl_content=ttl_content,
-            log=msg
-        )
-
-    except ExtractionException as e:
-        logger.error(f"本体生成错误: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        
+        # 关键修复：确保更新所有相关字段
+        project.graph_data = {"nodes": nodes, "edges": edges}
+        project.ttl_content = ttl_content
+        project.updated_at = datetime.utcnow()
+        
+        # 提交数据库
+        db.commit()
+        
+        return {
+            "status": "success",
+            "message": "本体已更新，TTL文件已重新生成（属性保存已修复）",
+            "filename": filename
+        }
+        
     except Exception as e:
-        logger.error(f"生成本体时发生未知错误: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"生成本体失败: {str(e)}")
-
-
-@router.post("/save")
-async def save_ontology():
-    """
-    保存本体文件
-    """
-    try:
-        # 保存本体文件的逻辑
-        return {"status": "success", "message": "本体文件已保存"}
-    except Exception as e:
-        logger.error(f"保存本体时发生错误: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"保存本体失败: {str(e)}")
+        logger.error(f"更新本体时发生错误: {str(e)}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"更新本体失败: {str(e)}")
 
 
 @router.post("/sync-ttl")

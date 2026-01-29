@@ -170,3 +170,20 @@ def process_files(file_list: Union[List, str]) -> str:
             logger.error(f"[读取失败] {base_name}: {str(e)}")
             
     return text_accumulated
+
+
+class FileParser:
+    """
+    文件解析类，负责多种文件格式的加载与文本提取
+    """
+    def parse_file(self, file_path: str) -> str:
+        """
+        解析单个文件并返回其文本内容
+        """
+        return process_files(file_path)
+
+    def parse_files(self, file_paths: Union[List[str], str]) -> str:
+        """
+        解析多个文件并合并其文本内容
+        """
+        return process_files(file_paths)
