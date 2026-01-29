@@ -47,7 +47,7 @@ import { OntologyNode, OntologyEdge } from '../types/ontology';
 import { projectsApi } from '../api/projects';
 import Neo4jNode from '../components/OntologyGraph/Neo4jNode';
 import { getLayoutedElements } from '../utils/layoutUtils';
-import { MarkerType as RFMarkerType } from 'reactflow';
+import { MarkerType as RFMarkerType, BackgroundVariant } from 'reactflow';
 const nodeTypesMap = { custom: Neo4jNode };
 
 const OntologyBuilderPage: React.FC = () => {
@@ -63,6 +63,7 @@ const OntologyBuilderPage: React.FC = () => {
     const [loading, setLoading] = useState(false);
     const [projectName, setProjectName] = useState('');
     const [isPublished, setIsPublished] = useState(false);
+    const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string>>(new Set());
     const [form] = Form.useForm();
     const [ruleForm] = Form.useForm();
 
@@ -107,6 +108,23 @@ const OntologyBuilderPage: React.FC = () => {
         },
         [setEdges]
     );
+
+    // 双击节点：展开/折叠
+    const onNodeDoubleClick = (_: React.MouseEvent, node: Node) => {
+        if (node.data?.type === 'owl:Class') {
+            setExpandedNodeIds((prev) => {
+                const newSet = new Set(prev);
+                if (newSet.has(node.id)) {
+                    newSet.delete(node.id);
+                } else {
+                    newSet.add(node.id);
+                }
+                return newSet;
+            });
+            // 展开后自动重新布局以避免重叠
+            setTimeout(() => handleAutoLayout(), 100);
+        }
+    };
 
     // 点击节点或连线
     const onElementClick = (_: React.MouseEvent, element: Node | Edge) => {
@@ -388,6 +406,45 @@ const OntologyBuilderPage: React.FC = () => {
         style: { stroke: '#b1b1b7', strokeWidth: 1.5 },
     };
 
+    // --- 计算当前显示的元素 ---
+    // 逻辑：类始终显示；实例仅在其关联的类被展开时显示；隐藏 rdf:type 连线
+    const getDisplayElements = useCallback(() => {
+        const visibleNodeIds = new Set<string>();
+
+        // 1. 确定哪些节点应该显示
+        nodes.forEach(node => {
+            if (node.data.type === 'owl:Class') {
+                visibleNodeIds.add(node.id);
+            } else if (node.data.type === 'owl:NamedIndividual') {
+                // 检查该实例是否有关联的已展开的类
+                const parentClassEdge = edges.find(e =>
+                    e.source === node.id &&
+                    (e.label === 'rdf:type' || e.data?.label === 'type' || e.data?.relation === 'instance_of') &&
+                    expandedNodeIds.has(e.target)
+                );
+                if (parentClassEdge) {
+                    visibleNodeIds.add(node.id);
+                }
+            } else {
+                // 其他类型默认显示
+                visibleNodeIds.add(node.id);
+            }
+        });
+
+        const displayNodes = nodes.filter(n => visibleNodeIds.has(n.id));
+
+        // 2. 确定哪些连线应该显示 (排除 rdf:type)
+        const displayEdges = edges.filter(e => {
+            const isVisible = visibleNodeIds.has(e.source) && visibleNodeIds.has(e.target);
+            const isTypeRelation = e.label === 'rdf:type' || e.data?.label === 'type' || e.data?.relation === 'instance_of';
+            return isVisible && !isTypeRelation;
+        });
+
+        return { displayNodes, displayEdges };
+    }, [nodes, edges, expandedNodeIds]);
+
+    const { displayNodes, displayEdges } = getDisplayElements();
+
     return (
         <div className="h-screen flex flex-col bg-gray-50">
             <Navbar breadcrumbs={breadcrumbs} />
@@ -401,19 +458,20 @@ const OntologyBuilderPage: React.FC = () => {
 
                 <ReactFlowProvider>
                     <ReactFlow
-                        nodes={nodes}
-                        edges={edges}
+                        nodes={displayNodes}
+                        edges={displayEdges}
                         onNodesChange={onNodesChange}
                         onEdgesChange={onEdgesChange}
                         onConnect={onConnect}
                         onNodeClick={onElementClick}
                         onEdgeClick={onElementClick}
+                        onNodeDoubleClick={onNodeDoubleClick}
                         nodeTypes={nodeTypesMap}
                         defaultEdgeOptions={defaultEdgeOptions}
                         fitView
                         className="bg-gray-50"
                     >
-                        <Background color="#f1f5f9" gap={20} />
+                        <Background color="#cbd5e1" gap={20} variant={BackgroundVariant.Dots} />
                         <Controls />
                         <MiniMap
                             nodeStrokeWidth={3}
@@ -521,11 +579,15 @@ const OntologyBuilderPage: React.FC = () => {
 
                         {/* 底部统计 */}
                         <Panel position="bottom-left">
-                            <div className="bg-white px-4 py-2 rounded-lg shadow-md border border-gray-100 flex items-center space-x-4">
-                                <span className="text-gray-500"><InfoCircleOutlined className="mr-1" /> 统计:</span>
-                                <span><Tag color="blue">{nodes.length}</Tag> 实体</span>
-                                <span><Tag color="green">{edges.length}</Tag> 关系</span>
-                                <span className="text-xs text-gray-400">| 点击节点编辑属性</span>
+                            <div className="bg-white px-4 py-2 rounded-lg shadow-md border border-gray-100 flex flex-col space-y-1">
+                                <div className="flex items-center space-x-4">
+                                    <span className="text-gray-500 font-medium"><InfoCircleOutlined className="mr-1" /> 视图统计:</span>
+                                    <span><Tag color="blue">{displayNodes.length} / {nodes.length}</Tag> 实体</span>
+                                    <span><Tag color="green">{displayEdges.length} / {edges.length}</Tag> 关系</span>
+                                </div>
+                                <div className="text-[10px] text-gray-400">
+                                    提示：双击类节点可 展开/收起 实例；已隐藏 rdf:type 关系线。
+                                </div>
                             </div>
                         </Panel>
                     </ReactFlow>

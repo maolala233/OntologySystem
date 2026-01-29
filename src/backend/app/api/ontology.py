@@ -310,10 +310,9 @@ async def upload_ttl_file(
 
 def generate_ttl_from_react_flow(nodes: List[dict], edges: List[dict]):
     """
-    从React Flow的节点和边数据生成TTL内容
+    从React Flow的节点和边数据生成TTL内容 (优化版：支持标准OWL类型)
     """
     from rdflib import Graph, Literal, RDF, RDFS, OWL, Namespace
-    import datetime
     
     # 创建图
     g = Graph()
@@ -332,52 +331,62 @@ def generate_ttl_from_react_flow(nodes: List[dict], edges: List[dict]):
     # 创建节点ID到URI的映射
     node_uris = {}
     for node in nodes:
-        node_id = node['id']
-        node_label = node['data']['label']
-        node_type = node['data']['type']
+        node_id = str(node['id'])
+        node_label = node['data'].get('label', node_id)
+        node_type = node['data'].get('type', 'owl:Class')
         
-        uri = ex[node_id]
+        # 处理特殊的前缀
+        if '#' in node_id or '/' in node_id:
+            uri = Namespace(node_id) # 如果已经是URI则保持
+        else:
+            uri = ex[node_id]
+            
         node_uris[node_id] = uri
         
-        # 添加个体声明
-        g.add((uri, RDF.type, OWL.NamedIndividual))
+        # 1. 设置类型
+        if node_type == 'owl:Class':
+            g.add((uri, RDF.type, OWL.Class))
+        elif node_type == 'owl:NamedIndividual':
+            g.add((uri, RDF.type, OWL.NamedIndividual))
+        else:
+            # 如果是自定义类名，则该节点是该类的实例，且该类本身是一个 OWL:Class
+            class_uri = ex[node_type]
+            g.add((uri, RDF.type, class_uri))
+            g.add((class_uri, RDF.type, OWL.Class))
+            g.add((class_uri, RDFS.label, Literal(node_type, lang="zh")))
+            
+        # 2. 设置 Label
         g.add((uri, RDFS.label, Literal(node_label, lang="zh")))
         
-        # 添加类型信息
-        type_uri = ex[node_type]
-        g.add((uri, RDF.type, type_uri))
-        
-        # 添加类定义
-        g.add((type_uri, RDF.type, OWL.Class))
-        g.add((type_uri, RDFS.label, Literal(node_type, lang="zh")))
-        
-        # 添加数据属性（节点属性）
+        # 3. 设置属性 (DatatypeProperty)
         for prop_name, prop_value in node['data'].get('properties', {}).items():
-            # 创建数据属性
+            if not prop_value: continue
             dataprop_uri = ex[prop_name]
             g.add((dataprop_uri, RDF.type, OWL.DatatypeProperty))
             g.add((dataprop_uri, RDFS.label, Literal(prop_name, lang="zh")))
-            
-            # 添加属性值
-            g.add((uri, dataprop_uri, Literal(str(prop_value), lang="zh")))
-    
-    # 添加对象属性（边）
+            g.add((uri, dataprop_uri, Literal(str(prop_value))))
+
+    # 添加对象属性 (ObjectProperty)
     for edge in edges:
-        source_id = edge['source']
-        target_id = edge['target']
-        relation_label = edge.get('label', edge.get('data', {}).get('label', 'relatedTo'))
+        source_id = str(edge['source'])
+        target_id = str(edge['target'])
+        
+        # 提取关系标签
+        relation_label = edge.get('label') or edge.get('data', {}).get('label') or 'relatedTo'
         
         if source_id in node_uris and target_id in node_uris:
             source_uri = node_uris[source_id]
             target_uri = node_uris[target_id]
             
-            # 创建对象属性
-            objprop_uri = ex[relation_label]
-            g.add((objprop_uri, RDF.type, OWL.ObjectProperty))
-            g.add((objprop_uri, RDFS.label, Literal(relation_label, lang="zh")))
-            
-            # 添加关系
-            g.add((source_uri, objprop_uri, target_uri))
+            if relation_label == 'rdf:type' or relation_label == 'type':
+                g.add((source_uri, RDF.type, target_uri))
+            elif relation_label == 'subClassOf':
+                g.add((source_uri, RDFS.subClassOf, target_uri))
+            else:
+                objprop_uri = ex[relation_label]
+                g.add((objprop_uri, RDF.type, OWL.ObjectProperty))
+                g.add((objprop_uri, RDFS.label, Literal(relation_label, lang="zh")))
+                g.add((source_uri, objprop_uri, target_uri))
     
     # 序列化为TTL格式
     ttl_content = g.serialize(format="turtle")
