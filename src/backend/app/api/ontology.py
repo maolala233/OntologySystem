@@ -121,6 +121,18 @@ def publish_project(
     if db_project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="No permission to publish this project")
     
+    # 如果有图数据，先更新TTL内容（关键修复：确保TTL是最新的）
+    if db_project.graph_data:
+        try:
+            ttl_content = generate_ttl_from_react_flow(
+                db_project.graph_data.get("nodes", []), 
+                db_project.graph_data.get("edges", [])
+            )
+            db_project.ttl_content = ttl_content
+            db.commit()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to regenerate TTL: {str(e)}")
+    
     # 同步到 Neo4j
     if db_project.graph_data:
         try:
@@ -573,6 +585,15 @@ def download_ttl(
     # 权限检查：公开项目或自己的项目可下载
     if not db_project.is_published and db_project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="No permission to download this project's TTL file")
+    
+    # 确保TTL内容是最新的（关键修复）
+    if db_project.graph_data:
+        ttl_content = generate_ttl_from_react_flow(
+            db_project.graph_data.get("nodes", []), 
+            db_project.graph_data.get("edges", [])
+        )
+        db_project.ttl_content = ttl_content
+        db.commit()
     
     if not db_project.ttl_content:
         raise HTTPException(status_code=404, detail="TTL file not found for this project")

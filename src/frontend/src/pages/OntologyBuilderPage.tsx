@@ -289,15 +289,21 @@ const OntologyBuilderPage: React.FC = () => {
             onOk: async () => {
                 setLoading(true);
                 try {
-                    // 先保存当前图数据
+                    // 先保存当前图数据并更新TTL文件（关键修复）
                     await projectsApi.updateProject(Number(projectId), {
                         graph_data: { nodes, edges },
                     });
 
-                    // 发布
+                    // 然后触发TTL文件重新生成（确保Neo4j同步的是最新数据）
+                    const updateResponse = await projectsApi.updateOntology(Number(projectId), { nodes, edges });
+
+                    // 最后发布到Neo4j
                     await projectsApi.publishProject(Number(projectId));
                     message.success('发布成功！本体已同步到图数据库');
-                    setIsPublished(true);
+                    
+                    // 重新获取项目信息，更新isPublished状态
+                    const project = await projectsApi.getProject(Number(projectId));
+                    setIsPublished(project.is_published);
                 } catch (error: any) {
                     message.error(error.response?.data?.detail || '发布失败');
                 } finally {
@@ -562,9 +568,9 @@ const OntologyBuilderPage: React.FC = () => {
                                     onClick={handlePublish}
                                     loading={loading}
                                     className="bg-green-600 hover:bg-green-700"
-                                    disabled={isPublished}
+                                    disabled={loading} /* 修复：移除 isPublished 限制，允许重新发布 */
                                 >
-                                    {isPublished ? '已同步 Neo4j' : '同步至 Neo4j'}
+                                    {isPublished ? '重新同步 Neo4j' : '同步至 Neo4j'}
                                 </Button>
 
                                 {/* 新增：下载TTL按钮 */}
