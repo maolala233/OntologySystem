@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import { useNodesState, useEdgesState } from 'reactflow';
 import { useParams, useNavigate } from 'react-router-dom';
 import ReactFlow, {
     Background,
@@ -11,7 +12,7 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { Button, Spin, message, Descriptions, Tag, Card } from 'antd';
-import { ArrowLeftOutlined, UserOutlined, CalendarOutlined, InfoCircleOutlined, FileTextOutlined, DeploymentUnitOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, UserOutlined, CalendarOutlined, InfoCircleOutlined, FileTextOutlined, DeploymentUnitOutlined, EyeOutlined } from '@ant-design/icons';
 import Navbar from '../components/Layout/Navbar';
 import { projectsApi } from '../api/projects';
 import { ProjectData, OntologyNode, OntologyEdge } from '../types/ontology';
@@ -27,11 +28,15 @@ const AssetDetailPage: React.FC = () => {
     const [loading, setLoading] = useState(true);
 
     // 扩展状态管理
-    const [nodes, setNodes] = useState<OntologyNode[]>([]);
-    const [edges, setEdges] = useState<OntologyEdge[]>([]);
+    const [nodes, setNodes, onNodesChange] = useNodesState<OntologyNode[]>([]);
+    const [edges, setEdges, onEdgesChange] = useEdgesState<OntologyEdge[]>([]);
     const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string>>(new Set());
     const [selectedElement, setSelectedElement] = useState<OntologyNode | OntologyEdge | null>(null);
     const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+
+    // 新增：显示所有实例开关状态（只读模式下不需要开关，直接提供展开/收起功能）
+    const [showAllInstances, setShowAllInstances] = useState(false);
+    const [isAllExpanded, setIsAllExpanded] = useState(false); // 新增：是否所有实例已展开的状态
 
     useEffect(() => {
         if (projectId) {
@@ -51,6 +56,42 @@ const AssetDetailPage: React.FC = () => {
             navigate('/asset-center');
         } finally {
             setLoading(false);
+        }
+    };
+
+    // 一键展开/收起所有实例
+    const toggleAllInstances = () => {
+        if (isAllExpanded) {
+            // 收起所有实例：清空 expandedNodeIds
+            setExpandedNodeIds(new Set());
+            setIsAllExpanded(false);
+            message.success('已收起所有实例');
+        } else {
+            // 展开所有实例
+            const newExpandedSet = new Set<string>(expandedNodeIds);
+            
+            // 找到所有类节点
+            const classNodes = nodes.filter(node => node.data?.type === 'owl:Class');
+            
+            // 找到所有实例节点及其关联的类
+            nodes.forEach(node => {
+                if (node.data?.type === 'owl:NamedIndividual') {
+                    // 查找该实例关联的类
+                    const parentClassEdge = edges.find(e =>
+                        e.source === node.id &&
+                        (e.label === 'rdf:type' || e.data?.label === 'type' || e.data?.relation === 'instance_of')
+                    );
+                    
+                    if (parentClassEdge && parentClassEdge.target) {
+                        // 将关联的类添加到展开集合中
+                        newExpandedSet.add(parentClassEdge.target);
+                    }
+                }
+            });
+            
+            setExpandedNodeIds(newExpandedSet);
+            setIsAllExpanded(true);
+            message.success('已展开所有实例相关的类');
         }
     };
 
@@ -94,13 +135,19 @@ const AssetDetailPage: React.FC = () => {
             if (node.data.type === 'owl:Class') {
                 visibleNodeIds.add(node.id);
             } else if (node.data.type === 'owl:NamedIndividual') {
+                // 检查该实例是否有关联的已展开的类
                 const parentClassEdge = edges.find(e =>
                     e.source === node.id &&
                     (e.label === 'rdf:type' || e.data?.label === 'type' || e.data?.relation === 'instance_of') &&
                     expandedNodeIds.has(e.target)
                 );
-                if (parentClassEdge) visibleNodeIds.add(node.id);
+                
+                // 如果开启"显示所有实例"或有展开的关联类，则显示实例
+                if (showAllInstances || parentClassEdge) {
+                    visibleNodeIds.add(node.id);
+                }
             } else {
+                // 其他类型默认显示
                 visibleNodeIds.add(node.id);
             }
         });
@@ -113,7 +160,7 @@ const AssetDetailPage: React.FC = () => {
         });
 
         return { displayNodes, displayEdges };
-    }, [nodes, edges, expandedNodeIds]);
+    }, [nodes, edges, expandedNodeIds, showAllInstances]);
 
     const nodeTypesMap = useMemo(() => ({ custom: Neo4jNode }), []);
     const defaultEdgeOptions = useMemo(() => ({
@@ -228,9 +275,15 @@ const AssetDetailPage: React.FC = () => {
                             onNodeClick={onNodeClick}
                             nodeTypes={nodeTypesMap}
                             defaultEdgeOptions={defaultEdgeOptions}
-                            nodesDraggable={false}
+                            nodesDraggable={true}
                             nodesConnectable={false}
                             elementsSelectable={true}
+                            panOnDrag={true}
+                            panOnScroll={true}
+                            panOnScrollSpeed={0.5}
+                            zoomOnScroll={false}
+                            onNodesChange={onNodesChange}
+                            onEdgesChange={onEdgesChange}
                             className="bg-gray-50"
                         >
                             <Background color="#cbd5e1" gap={20} variant={BackgroundVariant.Dots} />
@@ -254,6 +307,17 @@ const AssetDetailPage: React.FC = () => {
                                     onClick={() => navigate('/asset-center')}
                                 >
                                     返回资产中心
+                                </Button>
+                            </Panel>
+
+                            {/* 新增：展开/收起所有实例按钮 */}
+                            <Panel position="top-right">
+                                <Button
+                                    icon={<EyeOutlined />}
+                                    onClick={toggleAllInstances}
+                                    disabled={nodes.filter(n => n.data?.type === 'owl:NamedIndividual').length === 0}
+                                >
+                                    {isAllExpanded ? '收起所有实例' : '展开所有实例'}
                                 </Button>
                             </Panel>
 

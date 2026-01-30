@@ -586,16 +586,19 @@ def download_ttl(
     if not db_project.is_published and db_project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="No permission to download this project's TTL file")
     
-    # 确保TTL内容是最新的（关键修复）
+    # 确保TTL内容是最新的（关键修复：确保下载的是最新版本）
     if db_project.graph_data:
         ttl_content = generate_ttl_from_react_flow(
             db_project.graph_data.get("nodes", []), 
             db_project.graph_data.get("edges", [])
         )
-        db_project.ttl_content = ttl_content
-        db.commit()
+        # 不直接更新数据库中的ttl_content，因为这可能会影响发布状态
+        # 而是直接使用生成的最新内容
+        latest_ttl_content = ttl_content
+    else:
+        latest_ttl_content = db_project.ttl_content
     
-    if not db_project.ttl_content:
+    if not latest_ttl_content:
         raise HTTPException(status_code=404, detail="TTL file not found for this project")
     
     # 创建临时文件
@@ -606,7 +609,7 @@ def download_ttl(
     
     try:
         with open(temp_path, "w", encoding="utf-8") as f:
-            f.write(db_project.ttl_content)
+            f.write(latest_ttl_content)
         
         # 返回文件响应
         with open(temp_path, "rb") as f:

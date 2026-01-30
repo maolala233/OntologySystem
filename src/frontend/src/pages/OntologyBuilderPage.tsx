@@ -28,6 +28,7 @@ import {
     Select,
     Tag,
     Divider,
+    Switch,
 } from 'antd';
 import {
     SaveOutlined,
@@ -41,6 +42,7 @@ import {
     InfoCircleOutlined,
     DownloadOutlined,
     DeploymentUnitOutlined,
+    EyeOutlined,
 } from '@ant-design/icons';
 import Navbar from '../components/Layout/Navbar';
 import { OntologyNode, OntologyEdge } from '../types/ontology';
@@ -64,6 +66,12 @@ const OntologyBuilderPage: React.FC = () => {
     const [projectName, setProjectName] = useState('');
     const [isPublished, setIsPublished] = useState(false);
     const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string>>(new Set());
+    const [showAllInstances, setShowAllInstances] = useState(false); // 新增：显示所有实例开关
+    const [lastSavedNodes, setLastSavedNodes] = useState<any[]>([]);
+    const [lastSavedEdges, setLastSavedEdges] = useState<any[]>([]);
+    const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false); // 追踪是否有未保存的更改
+    const [isAddRelationModalOpen, setIsAddRelationModalOpen] = useState(false); // 新增关系对话框
+    const [relationForm] = Form.useForm(); // 关系表单
     const [form] = Form.useForm();
     const [ruleForm] = Form.useForm();
 
@@ -72,6 +80,30 @@ const OntologyBuilderPage: React.FC = () => {
             loadProject();
         }
     }, [projectId]);
+
+    // 监听节点和边的变化，更新是否有未保存更改的状态
+    useEffect(() => {
+        if (projectId) {
+            const hasChanged = JSON.stringify(nodes) !== JSON.stringify(lastSavedNodes) || 
+                             JSON.stringify(edges) !== JSON.stringify(lastSavedEdges);
+            setHasUnsavedChanges(hasChanged);
+        }
+    }, [nodes, edges, lastSavedNodes, lastSavedEdges, projectId]);
+
+    // 页面卸载前的确认
+    useEffect(() => {
+        const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+            if (hasUnsavedChanges) {
+                e.preventDefault();
+                e.returnValue = '您有未保存的更改，确定要离开吗？';
+            }
+        };
+
+        window.addEventListener('beforeunload', handleBeforeUnload);
+        return () => {
+            window.removeEventListener('beforeunload', handleBeforeUnload);
+        };
+    }, [hasUnsavedChanges]);
 
     const loadProject = async () => {
         setLoading(true);
@@ -82,9 +114,11 @@ const OntologyBuilderPage: React.FC = () => {
 
             if (project.graph_data?.nodes) {
                 setNodes(project.graph_data.nodes);
+                setLastSavedNodes(project.graph_data.nodes); // 记录初始状态
             }
             if (project.graph_data?.edges) {
                 setEdges(project.graph_data.edges);
+                setLastSavedEdges(project.graph_data.edges); // 记录初始状态
             }
         } catch (error: any) {
             message.error('加载项目失败');
@@ -208,16 +242,72 @@ const OntologyBuilderPage: React.FC = () => {
         message.success('属性已更新');
     };
 
-    // 新增节点
-    const addNewNode = () => {
+    // 新增节点 - 重构为可选择类型的函数
+    const addNewNodeOfType = (nodeType: string) => {
         const newNode: OntologyNode = {
             id: `node_${Date.now()}`,
             type: 'custom',
             position: { x: Math.random() * 400 + 100, y: Math.random() * 400 + 100 },
-            data: { label: '新实体', type: 'owl:Class', properties: {} },
+            data: { 
+                label: nodeType === 'owl:Class' ? '新类' : '新实例', 
+                type: nodeType, 
+                properties: {} 
+            },
         };
         setNodes((nds) => nds.concat(newNode));
-        message.success('已添加新节点');
+        message.success(`已添加新${nodeType === 'owl:Class' ? '类' : '实例'}`);
+    };
+
+    // 新增类
+    const addNewClass = () => {
+        addNewNodeOfType('owl:Class');
+    };
+
+    // 新增实例
+    const addNewInstance = () => {
+        const newNode: OntologyNode = {
+            id: `node_${Date.now()}`,
+            type: 'custom',
+            position: { x: Math.random() * 400 + 100, y: Math.random() * 400 + 100 },
+            data: { 
+                label: '新实例', 
+                type: 'owl:NamedIndividual', 
+                properties: {} 
+            },
+        };
+        
+        // 尝试找到最近的类节点作为父类
+        const classNodes = nodes.filter(node => node.data?.type === 'owl:Class');
+        let newEdges: OntologyEdge[] = [];
+        
+        if (classNodes.length > 0) {
+            // 创建 rdf:type 关系到最近的类
+            const targetClass = classNodes[classNodes.length - 1];
+            const newEdge: OntologyEdge = {
+                id: `edge_${Date.now()}_${newNode.id}_${targetClass.id}`,
+                source: newNode.id,
+                target: targetClass.id,
+                type: 'smoothstep',
+                animated: true,
+                data: { label: 'rdf:type', relation: 'instance_of' },
+            } as OntologyEdge;
+            newEdges.push(newEdge);
+            
+            // 自动展开该类
+            setExpandedNodeIds(prev => {
+                const newSet = new Set(prev);
+                newSet.add(targetClass.id);
+                return newSet;
+            });
+        }
+        
+        // 添加新节点和边
+        setNodes((nds) => nds.concat(newNode));
+        if (newEdges.length > 0) {
+            setEdges((eds) => [...eds, ...newEdges]);
+        }
+        
+        message.success('已添加新实例');
     };
 
     // 自动布局
@@ -269,6 +359,11 @@ const OntologyBuilderPage: React.FC = () => {
             // 然后触发TTL文件重新生成（关键修复）
             const updateResponse = await projectsApi.updateOntology(Number(projectId), { nodes, edges });
 
+            // 更新最后保存状态
+            setLastSavedNodes([...nodes]);
+            setLastSavedEdges([...edges]);
+            setHasUnsavedChanges(false);
+
             message.success('草稿已保存，TTL文件已同步更新');
         } catch (error) {
             message.error('保存失败，请重试');
@@ -304,6 +399,11 @@ const OntologyBuilderPage: React.FC = () => {
                     // 重新获取项目信息，更新isPublished状态
                     const project = await projectsApi.getProject(Number(projectId));
                     setIsPublished(project.is_published);
+                    
+                    // 更新最后保存状态
+                    setLastSavedNodes([...nodes]);
+                    setLastSavedEdges([...edges]);
+                    setHasUnsavedChanges(false);
                 } catch (error: any) {
                     message.error(error.response?.data?.detail || '发布失败');
                 } finally {
@@ -385,6 +485,33 @@ const OntologyBuilderPage: React.FC = () => {
         }
     };
 
+    // 一键展开所有实例
+    const expandAllInstances = () => {
+        const newExpandedSet = new Set<string>(expandedNodeIds);
+        
+        // 找到所有类节点
+        const classNodes = nodes.filter(node => node.data?.type === 'owl:Class');
+        
+        // 找到所有实例节点及其关联的类
+        nodes.forEach(node => {
+            if (node.data?.type === 'owl:NamedIndividual') {
+                // 查找该实例关联的类
+                const parentClassEdge = edges.find(e =>
+                    e.source === node.id &&
+                    (e.label === 'rdf:type' || e.data?.label === 'type' || e.data?.relation === 'instance_of')
+                );
+                
+                if (parentClassEdge && parentClassEdge.target) {
+                    // 将关联的类添加到展开集合中
+                    newExpandedSet.add(parentClassEdge.target);
+                }
+            }
+        });
+        
+        setExpandedNodeIds(newExpandedSet);
+        message.success('已展开所有实例相关的类');
+    };
+
     const breadcrumbs = [
         { title: '首页', path: '/' },
         { title: '我的项目', path: '/my-projects' },
@@ -428,7 +555,9 @@ const OntologyBuilderPage: React.FC = () => {
                     (e.label === 'rdf:type' || e.data?.label === 'type' || e.data?.relation === 'instance_of') &&
                     expandedNodeIds.has(e.target)
                 );
-                if (parentClassEdge) {
+                
+                // 如果开启"显示所有实例"或有展开的关联类，则显示实例
+                if (showAllInstances || parentClassEdge) {
                     visibleNodeIds.add(node.id);
                 }
             } else {
@@ -447,9 +576,56 @@ const OntologyBuilderPage: React.FC = () => {
         });
 
         return { displayNodes, displayEdges };
-    }, [nodes, edges, expandedNodeIds]);
+    }, [nodes, edges, expandedNodeIds, showAllInstances]);
 
     const { displayNodes, displayEdges } = getDisplayElements();
+
+    // 创建新关系
+    const addNewRelation = () => {
+        // 重置表单
+        relationForm.resetFields();
+        // 设置节点选项
+        const nodeOptions = nodes.map(node => ({
+            label: `${node.data.label} (${node.data.type})`,
+            value: node.id
+        }));
+        // 显示对话框
+        setIsAddRelationModalOpen(true);
+    };
+
+    // 确认创建新关系
+    const handleConfirmNewRelation = async () => {
+        try {
+            const values = await relationForm.validateFields();
+            const { sourceNodeId, targetNodeId, relationType } = values;
+
+            // 处理自定义关系名称
+            let finalRelationType = relationType;
+            if (relationType && !relationTypes.some(opt => opt.value === relationType)) {
+                // 如果是自定义关系，使用输入的值
+                finalRelationType = relationType;
+            }
+
+            // 创建新边
+            const newEdge: OntologyEdge = {
+                id: `edge_${Date.now()}_${sourceNodeId}_${targetNodeId}`,
+                source: sourceNodeId,
+                target: targetNodeId,
+                type: 'smoothstep',
+                animated: true,
+                data: { label: finalRelationType, relation: finalRelationType },
+            } as OntologyEdge;
+
+            // 添加到边列表
+            setEdges((eds) => addEdge(newEdge, eds));
+            message.success('关系已创建');
+
+            // 关闭对话框
+            setIsAddRelationModalOpen(false);
+        } catch (error) {
+            console.error('创建关系失败:', error);
+        }
+    };
 
     return (
         <div className="h-screen flex flex-col bg-gray-50">
@@ -536,11 +712,44 @@ const OntologyBuilderPage: React.FC = () => {
                                     自动布局
                                 </Button>
 
+                                {/* 新增：下拉菜单选择添加不同类型的节点 */}
+                                <Select
+                                    defaultValue="class"
+                                    style={{ width: 120 }}
+                                    onChange={(value) => {
+                                        if (value === 'class') addNewClass();
+                                        else if (value === 'instance') addNewInstance();
+                                    }}
+                                    options={[
+                                        { value: 'class', label: '新增类 (蓝色)' },
+                                        { value: 'instance', label: '新增实例 (橙色)' },
+                                    ]}
+                                />
+
+                                {/* 新增：显示所有实例开关 */}
+                                <Switch
+                                    checked={showAllInstances}
+                                    onChange={setShowAllInstances}
+                                    checkedChildren="显示所有实例"
+                                    unCheckedChildren="仅展开类的实例"
+                                    size="small"
+                                />
+
+                                {/* 新增：展开所有实例按钮 */}
+                                <Button
+                                    icon={<EyeOutlined />}
+                                    onClick={expandAllInstances}
+                                    disabled={nodes.filter(n => n.data?.type === 'owl:NamedIndividual').length === 0}
+                                >
+                                    展开所有实例
+                                </Button>
+
+                                {/* 新增：创建新关系按钮 */}
                                 <Button
                                     icon={<PlusOutlined />}
-                                    onClick={addNewNode}
+                                    onClick={addNewRelation}
                                 >
-                                    新增实体
+                                    创建新关系
                                 </Button>
 
                                 <Button
@@ -568,9 +777,9 @@ const OntologyBuilderPage: React.FC = () => {
                                     onClick={handlePublish}
                                     loading={loading}
                                     className="bg-green-600 hover:bg-green-700"
-                                    disabled={loading} /* 修复：移除 isPublished 限制，允许重新发布 */
+                                    disabled={!hasUnsavedChanges && !loading} /* 仅在有未保存更改时启用 */
                                 >
-                                    {isPublished ? '重新同步 Neo4j' : '同步至 Neo4j'}
+                                    {hasUnsavedChanges ? '同步至 Neo4j' : '已同步 Neo4j'}
                                 </Button>
 
                                 {/* 新增：下载TTL按钮 */}
@@ -598,6 +807,110 @@ const OntologyBuilderPage: React.FC = () => {
                         </Panel>
                     </ReactFlow>
                 </ReactFlowProvider>
+
+                {/* 新增：创建关系对话框 */}
+                <Modal
+                    title="创建新关系"
+                    open={isAddRelationModalOpen}
+                    onOk={handleConfirmNewRelation}
+                    onCancel={() => setIsAddRelationModalOpen(false)}
+                    okText="创建"
+                    cancelText="取消"
+                >
+                    <Form form={relationForm} layout="vertical">
+                        <Form.Item
+                            name="sourceNodeId"
+                            label="源节点"
+                            rules={[{ required: true, message: '请选择源节点' }]}
+                        >
+                            <Select
+                                placeholder="选择源节点"
+                                options={nodes.map(node => ({
+                                    label: `${node.data.label} (${node.data.type})`,
+                                    value: node.id
+                                }))}
+                                showSearch
+                                filterOption={(input, option) => 
+                                    (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                                }
+                                allowClear
+                            />
+                        </Form.Item>
+
+                        <Form.Item
+                            name="targetNodeId"
+                            label="目标节点"
+                            rules={[{ required: true, message: '请选择目标节点' }]}
+                        >
+                            <Select
+                                placeholder="选择目标节点"
+                                options={nodes.filter(node => 
+                                    // 排除已选择的源节点
+                                    relationForm.getFieldValue('sourceNodeId') !== node.id
+                                ).map(node => ({
+                                    label: `${node.data.label} (${node.data.type})`,
+                                    value: node.id
+                                }))}
+                                showSearch
+                                filterOption={(input, option) => 
+                                    (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                                }
+                                allowClear
+                            />
+                        </Form.Item>
+
+                        <Form.Item
+                            name="relationType"
+                            label="关系类型"
+                            rules={[{ required: true, message: '请选择关系类型' }]}
+                        >
+                            <Select
+                                placeholder="选择关系类型"
+                                options={[
+                                    ...relationTypes,
+                                    { value: 'custom', label: '自定义关系' }
+                                ]}
+                                showSearch
+                                filterOption={(input, option) => 
+                                    (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                                }
+                                allowClear
+                                onSearch={(value) => {
+                                    // 当用户输入时
+                                    if (value.trim() && !relationTypes.some(opt => 
+                                        opt.value.toLowerCase() === value.toLowerCase() || 
+                                        opt.label.toLowerCase().includes(value.toLowerCase())
+                                    )) {
+                                        relationForm.setFieldValue('relationType', value);
+                                    }
+                                }}
+                                onChange={(value) => {
+                                    // 如果选择"自定义关系"，清空输入框
+                                    if (value === 'custom') {
+                                        relationForm.setFieldValue('relationType', '');
+                                    }
+                                }}
+                            />
+                        </Form.Item>
+
+                        {/* 自定义关系名称输入框 */}
+                        {relationForm.getFieldValue('relationType') && 
+                         !relationTypes.some(opt => opt.value === relationForm.getFieldValue('relationType')) &&
+                         relationForm.getFieldValue('relationType') !== 'custom' && (
+                            <Form.Item
+                                name="customRelationName"
+                                label="自定义关系名称"
+                                rules={[{ required: true, message: '请输入自定义关系名称' }]}
+                            >
+                                <Input 
+                                    placeholder="输入自定义关系名称"
+                                    value={relationForm.getFieldValue('relationType')}
+                                    onChange={(e) => relationForm.setFieldValue('relationType', e.target.value)}
+                                />
+                            </Form.Item>
+                        )}
+                    </Form>
+                </Modal>
 
                 {/* 定义提取规则 Modal */}
                 <Modal

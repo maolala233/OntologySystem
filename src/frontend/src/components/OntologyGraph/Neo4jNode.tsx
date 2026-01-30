@@ -23,7 +23,12 @@ const Neo4jNode = ({ data, selected, isConnectable }: NodeProps) => {
             justifyContent: 'center',
             alignItems: 'center',
             boxShadow: '0 3px 6px rgba(0,0,0,0.16)',
-            cursor: 'pointer',
+            cursor: 'move',
+            pointerEvents: 'auto',
+            userSelect: 'none',
+            WebkitUserSelect: 'none',
+            MozUserSelect: 'none',
+            msUserSelect: 'none',
             transition: 'all 0.3s ease',
             position: 'relative'
         }}>
@@ -40,7 +45,7 @@ const Neo4jNode = ({ data, selected, isConnectable }: NodeProps) => {
                 WebkitBoxOrient: 'vertical',
                 lineHeight: 1.2
             }}>
-                <Text strong style={{ color: 'white', pointerEvents: 'none' }}>
+                <Text strong style={{ color: 'white' }}>
                     {data.currentLang === 'en' ? (data.labelEn || data.label) : data.label}
                 </Text>
             </div>
