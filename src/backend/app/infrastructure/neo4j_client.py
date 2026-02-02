@@ -48,6 +48,23 @@ class Neo4jClient:
                 
         return True
 
+    def delete_project_data(self, project_id: int):
+        """
+        从 Neo4j 中删除特定项目的所有数据
+        """
+        if not self.driver:
+            logger.error("Neo4j driver not initialized")
+            return False
+
+        with self.driver.session() as session:
+            try:
+                session.execute_write(self._delete_project_data, project_id)
+                logger.info(f"Successfully deleted project {project_id} data from Neo4j")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to delete project {project_id} data from Neo4j: {str(e)}")
+                return False
+
     @staticmethod
     def _delete_project_data(tx, project_id):
         tx.run("MATCH (n) WHERE n.project_id = $project_id DETACH DELETE n", project_id=project_id)

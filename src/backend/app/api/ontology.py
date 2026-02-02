@@ -102,9 +102,32 @@ def delete_project(
     if db_project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="No permission to delete this project")
     
+    # 同步删除图数据库中的数据
+    neo4j_deletion_success = True
+    try:
+        from app.core.logging import logger
+        logger.info(f"Attempting to delete project {project_id} data from Neo4j")
+        # 删除 Neo4j 中的相关节点和关系
+        neo4j_deletion_success = neo4j_client.delete_project_data(project_id)
+        if neo4j_deletion_success:
+            logger.info(f"Successfully deleted project {project_id} data from Neo4j")
+        else:
+            logger.error(f"Failed to delete project {project_id} data from Neo4j (method returned False)")
+    except Exception as e:
+        from app.core.logging import logger
+        logger.error(f"Exception occurred when deleting project data from Neo4j: {str(e)}")
+        # 在这种情况下，我们仍然继续删除关系数据库中的项目，但记录错误
+        neo4j_deletion_success = False
+    
+    # 删除关系数据库中的项目
     db.delete(db_project)
     db.commit()
-    return {"message": "Project deleted successfully"}
+    
+    # 返回结果，告知是否图数据库同步删除成功
+    if neo4j_deletion_success:
+        return {"message": "Project deleted successfully", "neo4j_sync": True}
+    else:
+        return {"message": "Project deleted successfully but Neo4j sync failed", "neo4j_sync": False}
 
 # 发布项目
 @router.post("/{project_id}/publish", response_model=ProjectResponse)
