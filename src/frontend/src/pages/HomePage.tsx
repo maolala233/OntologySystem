@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Card, Row, Col, Statistic, Button } from 'antd';
 import {
     RocketOutlined,
@@ -9,9 +9,55 @@ import {
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Layout/Navbar';
+import { projectsApi } from '../api/projects';
 
 const HomePage: React.FC = () => {
     const navigate = useNavigate();
+    const [stats, setStats] = useState({
+        myProjects: 0,
+        publishedOntologies: 0,
+        publicAssets: 0,
+        totalNodes: 0
+    });
+    const [loading, setLoading] = useState(true);
+
+    // 获取首页统计数据（使用新的API端点）
+    useEffect(() => {
+        const fetchStats = async () => {
+            try {
+                // 方案1：优先尝试使用 projectsApi（已内置 token 拦截器）
+                const [myProjects, publicProjects] = await Promise.all([
+                    projectsApi.getMyProjects(),
+                    projectsApi.getPublicProjects()
+                ]);
+
+                let totalNodes = 0;
+                [...myProjects, ...publicProjects].forEach(project => {
+                    if (project.graph_data?.nodes) {
+                        totalNodes += project.graph_data.nodes.length;
+                    }
+                });
+
+                setStats({
+                    myProjects: myProjects.length,
+                    publishedOntologies: publicProjects.length,
+                    publicAssets: publicProjects.length,
+                    totalNodes
+                });
+            } catch (error) {
+                console.error('获取统计数据失败:', error);
+                // 明确提示：可能是未登录或网络问题
+                if (error instanceof Error && error.message.includes('401')) {
+                    console.warn('请先登录以获取个人项目数据');
+                }
+                // 保持默认值 0，避免页面异常
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchStats();
+    }, []);
 
     const features = [
         {
@@ -78,17 +124,17 @@ const HomePage: React.FC = () => {
                         <Card className="shadow-md hover:shadow-lg transition-shadow">
                             <Statistic
                                 title="我的项目"
-                                value={0}
+                                value={stats.myProjects}
                                 prefix={<FileTextOutlined />}
                                 valueStyle={{ color: '#3b82f6' }}
-                            />
+    />
                         </Card>
                     </Col>
                     <Col xs={24} sm={12} lg={6}>
                         <Card className="shadow-md hover:shadow-lg transition-shadow">
                             <Statistic
                                 title="已发布本体"
-                                value={0}
+                                value={stats.publishedOntologies}
                                 prefix={<DatabaseOutlined />}
                                 valueStyle={{ color: '#10b981' }}
                             />
@@ -98,7 +144,7 @@ const HomePage: React.FC = () => {
                         <Card className="shadow-md hover:shadow-lg transition-shadow">
                             <Statistic
                                 title="公共资产"
-                                value={0}
+                                value={stats.publicAssets}
                                 prefix={<TeamOutlined />}
                                 valueStyle={{ color: '#f59e0b' }}
                             />
@@ -108,7 +154,7 @@ const HomePage: React.FC = () => {
                         <Card className="shadow-md hover:shadow-lg transition-shadow">
                             <Statistic
                                 title="总节点数"
-                                value={0}
+                                value={stats.totalNodes}
                                 prefix={<DatabaseOutlined />}
                                 valueStyle={{ color: '#8b5cf6' }}
                             />
