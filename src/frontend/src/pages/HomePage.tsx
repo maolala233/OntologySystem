@@ -40,7 +40,7 @@ const HomePage: React.FC = () => {
 
                 setStats({
                     myProjects: myProjects.length,
-                    publishedOntologies: publicProjects.length,
+                    publishedOntologies: myProjects.filter(p => p.is_published).length,
                     publicAssets: publicProjects.length,
                     totalNodes
                 });
