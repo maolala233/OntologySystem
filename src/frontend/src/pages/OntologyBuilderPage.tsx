@@ -922,28 +922,50 @@ const OntologyBuilderPage: React.FC = () => {
                                             </Form.Item>
 
                                             <SectionTitle icon={<TagsOutlined />} title="自定义属性" />
-                                            
                                             <Form.List name="properties">
                                                 {(fields, { add, remove }) => (
                                                     <>
                                                         {fields.map(({ key, name, ...restField }) => (
-                                                            <Space key={key} style={{ display: 'flex', marginBottom: 8 }} align="baseline">
+                                                            // 修改 1: 将 Space 替换为 div flex 布局，以便更好地控制宽度和对齐
+                                                            <div
+                                                                key={key}
+                                                                style={{
+                                                                    display: 'flex',
+                                                                    gap: '10px',
+                                                                    marginBottom: 8,
+                                                                    alignItems: 'flex-start' // 顶部对齐，防止多行文本时错位
+                                                                }}
+                                                            >
+                                                                {/* 属性名输入框 */}
                                                                 <Form.Item
                                                                     {...restField}
                                                                     name={[name, 'name']}
                                                                     rules={[{ required: true, message: '属性名不能为空' }]}
+                                                                    style={{ width: '120px', marginBottom: 0, flexShrink: 0 }} // 固定左侧宽度
                                                                 >
-                                                                    <Input placeholder="属性名" style={{ width: 120 }} />
+                                                                    <Input placeholder="属性名" />
                                                                 </Form.Item>
+
+                                                                {/* 属性值输入框 */}
                                                                 <Form.Item
                                                                     {...restField}
                                                                     name={[name, 'value']}
                                                                     rules={[{ required: true, message: '属性值不能为空' }]}
+                                                                    style={{ flex: 1, marginBottom: 0 }} // 修改 2: flex: 1 让其占据剩余空间
                                                                 >
-                                                                    <Input placeholder="属性值" style={{ width: 160 }} />
+                                                                    {/* 修改 3: 使用 TextArea 并开启自动高度，适应长文本 */}
+                                                                    <Input.TextArea
+                                                                        placeholder="属性值"
+                                                                        autoSize={{ minRows: 1, maxRows: 6 }}
+                                                                    />
                                                                 </Form.Item>
-                                                                <MinusCircleOutlined onClick={() => remove(name)} />
-                                                            </Space>
+
+                                                                {/* 删除按钮 */}
+                                                                <MinusCircleOutlined
+                                                                    onClick={() => remove(name)}
+                                                                    style={{ marginTop: 8, color: '#999', cursor: 'pointer' }}
+                                                                />
+                                                            </div>
                                                         ))}
                                                         <Button type="dashed" onClick={() => add()} block icon={<PlusOutlined />}>
                                                             添加自定义属性
