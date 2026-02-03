@@ -49,14 +49,14 @@ const AppLayout: React.FC = () => {
             label: '首页',
         },
         {
-            key: '/my-projects',
-            icon: <UserOutlined />,
-            label: '我的项目',
-        },
-        {
             key: '/ontology-builder',
             icon: <AppstoreOutlined />,
             label: '本体构建',
+        },
+        {
+            key: '/my-projects',
+            icon: <UserOutlined />,
+            label: '我的项目',
         },
         {
             key: '/asset-center',

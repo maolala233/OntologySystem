@@ -66,22 +66,27 @@ const OntologyBuilderPage: React.FC = () => {
     const [projectName, setProjectName] = useState('');
     const [isPublished, setIsPublished] = useState(false);
     const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string>>(new Set());
-    const [showAllInstances, setShowAllInstances] = useState(false); // 新增：显示所有实例开关
+    const [showAllInstances, setShowAllInstances] = useState(false);
     const [lastSavedNodes, setLastSavedNodes] = useState<any[]>([]);
     const [lastSavedEdges, setLastSavedEdges] = useState<any[]>([]);
-    const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false); // 追踪是否有未保存的更改
-    const [isAddRelationModalOpen, setIsAddRelationModalOpen] = useState(false); // 新增关系对话框
-    const [relationForm] = Form.useForm(); // 关系表单
+    const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+    const [isAddRelationModalOpen, setIsAddRelationModalOpen] = useState(false);
+    const [isCreatingProject, setIsCreatingProject] = useState(false);
+    const [createProjectForm] = Form.useForm();
+    const [relationForm] = Form.useForm();
     const [form] = Form.useForm();
     const [ruleForm] = Form.useForm();
 
     useEffect(() => {
         if (projectId) {
             loadProject();
+        } else {
+            // 当没有projectId时,显示创建表单
+            setIsCreatingProject(true);
         }
     }, [projectId]);
 
-    // 监听节点和边的变化，更新是否有未保存更改的状态
+    // 监听节点和边的变化
     useEffect(() => {
         if (projectId) {
             const hasChanged = JSON.stringify(nodes) !== JSON.stringify(lastSavedNodes) || 
@@ -629,408 +634,238 @@ const OntologyBuilderPage: React.FC = () => {
 
     return (
         <div className="h-screen flex flex-col bg-gray-50">
-            <Navbar breadcrumbs={breadcrumbs} />
-
-            <div className="flex-1 relative">
-                {loading && (
-                    <div className="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center z-50">
-                        <Spin size="large" tip="正在通过大模型提取本体中..." />
-                    </div>
-                )}
-
-                <ReactFlowProvider>
-                    <ReactFlow
-                        nodes={displayNodes}
-                        edges={displayEdges}
-                        onNodesChange={onNodesChange}
-                        onEdgesChange={onEdgesChange}
-                        onConnect={onConnect}
-                        onNodeClick={onElementClick}
-                        onEdgeClick={onElementClick}
-                        onNodeDoubleClick={onNodeDoubleClick}
-                        nodeTypes={nodeTypesMap}
-                        defaultEdgeOptions={defaultEdgeOptions}
-                        fitView
-                        className="bg-gray-50"
-                    >
-                        <Background color="#cbd5e1" gap={20} variant={BackgroundVariant.Dots} />
-                        <Controls />
-                        <MiniMap
-                            nodeStrokeWidth={3}
-                            nodeColor={(node) => {
-                                switch (node.data?.type) {
-                                    case 'owl:Class': return '#68bdf6';
-                                    case 'owl:NamedIndividual': return '#f79767';
-                                    default: return '#c990c0';
+            {isCreatingProject ? (
+                // 创建项目表单
+                <div className="flex-1 flex items-center justify-center">
+                    <div className="w-full max-w-md p-6 bg-white rounded-lg shadow-xl">
+                        <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">创建新本体项目</h2>
+                        <Form 
+                            form={createProjectForm}
+                            layout="vertical" 
+                            onFinish={async (values) => {
+                                setLoading(true);
+                                try {
+                                    const newProject = await projectsApi.createProject({
+                                        name: values.name,
+                                        description: values.description
+                                    });
+                                    navigate(`/ontology-builder/${newProject.id}`);
+                                    message.success('项目创建成功，已进入编辑界面');
+                                } catch (error: any) {
+                                    message.error('创建项目失败，请重试');
+                                } finally {
+                                    setLoading(false);
                                 }
                             }}
-                        />
-
-                        {/* 顶部工具栏 */}
-                        <Panel position="top-left">
-                            <Button
-                                icon={<ArrowLeftOutlined />}
-                                onClick={() => navigate('/my-projects')}
-                                className="shadow-sm"
-                            >
-                                返回项目列表
-                            </Button>
-                        </Panel>
-
-                        <Panel position="top-right">
-                            <Space className="bg-white p-2 rounded-lg shadow-md border border-gray-100">
-                                <Upload
-                                    accept=".txt,.pdf,.doc,.docx"
-                                    showUploadList={false}
-                                    beforeUpload={beforeUpload}
-                                >
-                                    <Tooltip title="定义规则并上传文档提取">
-                                        <Button type="primary" icon={<CloudUploadOutlined />} className="bg-indigo-600">
-                                            自动提取构建
-                                        </Button>
-                                    </Tooltip>
-                                </Upload>
-
-                                {/* 新增：上传TTL文件按钮 */}
-                                <Upload
-                                    accept=".ttl"
-                                    showUploadList={false}
-                                    beforeUpload={handleUploadTTL}
-                                >
-                                    <Tooltip title="上传TTL文件直接解析">
-                                        <Button icon={<FileTextOutlined />} className="bg-purple-600 text-white">
-                                            上传TTL文件
-                                        </Button>
-                                    </Tooltip>
-                                </Upload>
-
-                                <Button
-                                    icon={<DeploymentUnitOutlined />}
-                                    onClick={handleAutoLayout}
-                                    title="自动布局"
-                                >
-                                    自动布局
-                                </Button>
-
-                                {/* 新增：下拉菜单选择添加不同类型的节点 */}
-                                <Select
-                                    defaultValue="class"
-                                    style={{ width: 120 }}
-                                    onChange={(value) => {
-                                        if (value === 'class') addNewClass();
-                                        else if (value === 'instance') addNewInstance();
-                                    }}
-                                    options={[
-                                        { value: 'class', label: '新增类 (蓝色)' },
-                                        { value: 'instance', label: '新增实例 (橙色)' },
-                                    ]}
-                                />
-
-                                {/* 新增：显示所有实例开关 */}
-                                <Switch
-                                    checked={showAllInstances}
-                                    onChange={setShowAllInstances}
-                                    checkedChildren="显示所有实例"
-                                    unCheckedChildren="仅展开类的实例"
-                                    size="small"
-                                />
-
-                                {/* 新增：展开所有实例按钮 */}
-                                <Button
-                                    icon={<EyeOutlined />}
-                                    onClick={expandAllInstances}
-                                    disabled={nodes.filter(n => n.data?.type === 'owl:NamedIndividual').length === 0}
-                                >
-                                    展开所有实例
-                                </Button>
-
-                                {/* 新增：创建新关系按钮 */}
-                                <Button
-                                    icon={<PlusOutlined />}
-                                    onClick={addNewRelation}
-                                >
-                                    创建新关系
-                                </Button>
-
-                                <Button
-                                    icon={<DeleteOutlined />}
-                                    danger
-                                    onClick={deleteSelectedElement}
-                                    disabled={!selectedElement}
-                                >
-                                    删除
-                                </Button>
-
-                                <Divider type="vertical" />
-
-                                <Button
-                                    icon={<SaveOutlined />}
-                                    onClick={handleSaveDraft}
-                                    loading={loading}
-                                >
-                                    保存草稿
-                                </Button>
-
-                                <Button
-                                    type="primary"
-                                    icon={<CloudServerOutlined />}
-                                    onClick={handlePublish}
-                                    loading={loading}
-                                    className="bg-green-600 hover:bg-green-700"
-                                    disabled={!hasUnsavedChanges && !loading} /* 仅在有未保存更改时启用 */
-                                >
-                                    {hasUnsavedChanges ? '同步至 Neo4j' : '已同步 Neo4j'}
-                                </Button>
-
-                                {/* 新增：下载TTL按钮 */}
-                                <Button
-                                    icon={<DownloadOutlined />}
-                                    onClick={handleDownloadTTL}
-                                >
-                                    下载TTL
-                                </Button>
-                            </Space>
-                        </Panel>
-
-                        {/* 底部统计 */}
-                        <Panel position="bottom-left">
-                            <div className="bg-white px-4 py-2 rounded-lg shadow-md border border-gray-100 flex flex-col space-y-1">
-                                <div className="flex items-center space-x-4">
-                                    <span className="text-gray-500 font-medium"><InfoCircleOutlined className="mr-1" /> 视图统计:</span>
-                                    <span><Tag color="blue">{displayNodes.length} / {nodes.length}</Tag> 实体</span>
-                                    <span><Tag color="green">{displayEdges.length} / {edges.length}</Tag> 关系</span>
-                                </div>
-                                <div className="text-[10px] text-gray-400">
-                                    提示：双击类节点可 展开/收起 实例；已隐藏 rdf:type 关系线。
-                                </div>
-                            </div>
-                        </Panel>
-                    </ReactFlow>
-                </ReactFlowProvider>
-
-                {/* 新增：创建关系对话框 */}
-                <Modal
-                    title="创建新关系"
-                    open={isAddRelationModalOpen}
-                    onOk={handleConfirmNewRelation}
-                    onCancel={() => setIsAddRelationModalOpen(false)}
-                    okText="创建"
-                    cancelText="取消"
-                >
-                    <Form form={relationForm} layout="vertical">
-                        <Form.Item
-                            name="sourceNodeId"
-                            label="源节点"
-                            rules={[{ required: true, message: '请选择源节点' }]}
                         >
-                            <Select
-                                placeholder="选择源节点"
-                                options={nodes.map(node => ({
-                                    label: `${node.data.label} (${node.data.type})`,
-                                    value: node.id
-                                }))}
-                                showSearch
-                                filterOption={(input, option) => 
-                                    (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-                                }
-                                allowClear
-                            />
-                        </Form.Item>
-
-                        <Form.Item
-                            name="targetNodeId"
-                            label="目标节点"
-                            rules={[{ required: true, message: '请选择目标节点' }]}
-                        >
-                            <Select
-                                placeholder="选择目标节点"
-                                options={nodes.filter(node => 
-                                    // 排除已选择的源节点
-                                    relationForm.getFieldValue('sourceNodeId') !== node.id
-                                ).map(node => ({
-                                    label: `${node.data.label} (${node.data.type})`,
-                                    value: node.id
-                                }))}
-                                showSearch
-                                filterOption={(input, option) => 
-                                    (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-                                }
-                                allowClear
-                            />
-                        </Form.Item>
-
-                        <Form.Item
-                            name="relationType"
-                            label="关系类型"
-                            rules={[{ required: true, message: '请选择关系类型' }]}
-                        >
-                            <Select
-                                placeholder="选择关系类型"
-                                options={[
-                                    ...relationTypes,
-                                    { value: 'custom', label: '自定义关系' }
-                                ]}
-                                showSearch
-                                filterOption={(input, option) => 
-                                    (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-                                }
-                                allowClear
-                                onSearch={(value) => {
-                                    // 当用户输入时
-                                    if (value.trim() && !relationTypes.some(opt => 
-                                        opt.value.toLowerCase() === value.toLowerCase() || 
-                                        opt.label.toLowerCase().includes(value.toLowerCase())
-                                    )) {
-                                        relationForm.setFieldValue('relationType', value);
-                                    }
-                                }}
-                                onChange={(value) => {
-                                    // 如果选择"自定义关系"，清空输入框
-                                    if (value === 'custom') {
-                                        relationForm.setFieldValue('relationType', '');
-                                    }
-                                }}
-                            />
-                        </Form.Item>
-
-                        {/* 自定义关系名称输入框 */}
-                        {relationForm.getFieldValue('relationType') && 
-                         !relationTypes.some(opt => opt.value === relationForm.getFieldValue('relationType')) &&
-                         relationForm.getFieldValue('relationType') !== 'custom' && (
                             <Form.Item
-                                name="customRelationName"
-                                label="自定义关系名称"
-                                rules={[{ required: true, message: '请输入自定义关系名称' }]}
+                                name="name"
+                                label="项目名称"
+                                rules={[{ required: true, message: '请输入项目名称' }]}
                             >
-                                <Input 
-                                    placeholder="输入自定义关系名称"
-                                    value={relationForm.getFieldValue('relationType')}
-                                    onChange={(e) => relationForm.setFieldValue('relationType', e.target.value)}
+                                <Input placeholder="例如: 工业本体" />
+                            </Form.Item>
+
+                            <Form.Item name="description" label="项目描述">
+                                <Input.TextArea
+                                    rows={4}
+                                    placeholder="简要描述这个项目的用途..."
                                 />
                             </Form.Item>
-                        )}
-                    </Form>
-                </Modal>
 
-                {/* 定义提取规则 Modal */}
-                <Modal
-                    title={<Space><SettingOutlined /> 定义本体提取规则</Space>}
-                    open={isRuleModalOpen}
-                    onOk={handleStartExtraction}
-                    onCancel={() => setIsRuleModalOpen(false)}
-                    okText="开始自动提取"
-                    cancelText="取消"
-                    width={600}
-                >
-                    <div className="mb-4 text-gray-500 text-sm">
-                        您可以指定关注的实体类型、属性或关系描述，大模型将根据此规则从文档中提取。
+                            <Form.Item>
+                                <Space className="w-full justify-end">
+                                    <Button onClick={() => navigate('/my-projects')}>取消</Button>
+                                    <Button type="primary" htmlType="submit" className="bg-blue-600">
+                                        创建项目
+                                    </Button>
+                                </Space>
+                            </Form.Item>
+                        </Form>
                     </div>
-                    <Form form={ruleForm} layout="vertical">
-                        <Form.Item
-                            name="rules"
-                            label="提取规则描述"
-                            initialValue={projectName + " 相关领域的本体提取"}
-                        >
-                            <Input.TextArea
-                                rows={6}
-                                placeholder="例如：重点提取关于'制造工艺'的实体，包含其'参数'属性，以及'组成部分'的关系。"
-                            />
-                        </Form.Item>
-                    </Form>
-                </Modal>
-
-                {/* 详情编辑抽屉 */}
-                <Drawer
-                    title={
-                        <div className="flex items-center justify-between w-full pr-8">
-                            <span>{selectedElement && 'position' in selectedElement ? '实体详情' : '关系详情'}</span>
-                            {selectedElement && <Tag color="blue">{selectedElement.id}</Tag>}
-                        </div>
-                    }
-                    placement="right"
-                    onClose={() => setIsDrawerOpen(false)}
-                    open={isDrawerOpen}
-                    width={450}
-                >
-                    <Form form={form} layout="vertical" onFinish={handleSaveProperties}>
-                        <SectionTitle icon={<InfoCircleOutlined />} title="基础信息" />
-                        <Form.Item
-                            name="label"
-                            label="显示名称"
-                            rules={[{ required: true, message: '请输入名称' }]}
-                        >
-                            <Input placeholder="输入名称" />
-                        </Form.Item>
-
-                        {selectedElement && 'position' in selectedElement ? (
-                            <>
-                                <Form.Item
-                                    name="type"
-                                    label="节点类型"
-                                    rules={[{ required: true }]}
-                                >
-                                    <Select options={nodeTypes} />
-                                </Form.Item>
-
-                                <Divider />
-                                <SectionTitle icon={<FileTextOutlined />} title="属性列表" />
-
-                                <Form.List name="properties">
-                                    {(fields, { add, remove }) => (
-                                        <>
-                                            {fields.map(({ key, name, ...restField }) => (
-                                                <Space key={key} style={{ display: 'flex', marginBottom: 8 }} align="baseline">
-                                                    <Form.Item
-                                                        {...restField}
-                                                        name={[name, 'name']}
-                                                        rules={[{ required: true, message: '属性名' }]}
-                                                    >
-                                                        <Input placeholder="属性名" />
-                                                    </Form.Item>
-                                                    <Form.Item
-                                                        {...restField}
-                                                        name={[name, 'value']}
-                                                        rules={[{ required: true, message: '属性值' }]}
-                                                    >
-                                                        <Input placeholder="属性值" />
-                                                    </Form.Item>
-                                                    <DeleteOutlined onClick={() => remove(name)} className="text-red-500 cursor-pointer" />
-                                                </Space>
-                                            ))}
-                                            <Form.Item>
-                                                <Button type="dashed" onClick={() => add()} block icon={<PlusOutlined />}>
-                                                    添加属性
-                                                </Button>
-                                            </Form.Item>
-                                        </>
-                                    )}
-                                </Form.List>
-
-                                <div className="text-gray-400 text-xs mb-4">
-                                    * 提示：大模型自动提取的属性将展示在此处，您可以手动添加或修改。
-                                </div>
-                            </>
-                        ) : (
-                            <Form.Item
-                                name="relation"
-                                label="关系类型"
-                                rules={[{ required: true }]}
-                            >
-                                <Select options={relationTypes} />
-                            </Form.Item>
+                </div>
+            ) : (
+                // 可视化编辑界面
+                <>
+                    <Navbar breadcrumbs={breadcrumbs} />
+                    <div className="flex-1 relative">
+                        {loading && (
+                            <div className="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center z-50">
+                                <Spin size="large" tip="正在加载..." />
+                            </div>
                         )}
+                        <ReactFlowProvider>
+                            <ReactFlow
+                                nodes={displayNodes}
+                                edges={displayEdges}
+                                onNodesChange={onNodesChange}
+                                onEdgesChange={onEdgesChange}
+                                onConnect={onConnect}
+                                onNodeClick={onElementClick}
+                                onEdgeClick={onElementClick}
+                                onNodeDoubleClick={onNodeDoubleClick}
+                                nodeTypes={nodeTypesMap}
+                                defaultEdgeOptions={defaultEdgeOptions}
+                                fitView
+                                className="bg-gray-50"
+                            >
+                                <Background color="#cbd5e1" gap={20} variant={BackgroundVariant.Dots} />
+                                <Controls />
+                                <MiniMap
+                                    nodeStrokeWidth={3}
+                                    nodeColor={(node) => {
+                                        switch (node.data?.type) {
+                                            case 'owl:Class': return '#68bdf6';
+                                            case 'owl:NamedIndividual': return '#f79767';
+                                            default: return '#c990c0';
+                                        }
+                                    }}
+                                />
 
-                        <div className="flex space-x-2 mt-8">
-                            <Button type="primary" htmlType="submit" className="flex-1 bg-blue-600">
-                                更新并保存
-                            </Button>
-                            <Button danger icon={<DeleteOutlined />} onClick={deleteSelectedElement}>
-                                删除
-                            </Button>
-                        </div>
-                    </Form>
-                </Drawer>
-            </div>
+                                {/* 顶部工具栏 */}
+                                <Panel position="top-left">
+                                    <Button
+                                        icon={<ArrowLeftOutlined />}
+                                        onClick={() => navigate('/my-projects')}
+                                        className="shadow-sm"
+                                    >
+                                        返回项目列表
+                                    </Button>
+                                </Panel>
+
+                                <Panel position="top-right">
+                                    <Space className="bg-white p-2 rounded-lg shadow-md border border-gray-100">
+                                        <Upload
+                                            accept=".txt,.pdf,.doc,.docx"
+                                            showUploadList={false}
+                                            beforeUpload={beforeUpload}
+                                        >
+                                            <Tooltip title="定义规则并上传文档提取">
+                                                <Button type="primary" icon={<CloudUploadOutlined />} className="bg-indigo-600">
+                                                    自动提取构建
+                                                </Button>
+                                            </Tooltip>
+                                        </Upload>
+
+                                        {/* 新增：上传TTL文件按钮 */}
+                                        <Upload
+                                            accept=".ttl"
+                                            showUploadList={false}
+                                            beforeUpload={handleUploadTTL}
+                                        >
+                                            <Tooltip title="上传TTL文件直接解析">
+                                                <Button icon={<FileTextOutlined />} className="bg-purple-600 text-white">
+                                                    上传TTL文件
+                                                </Button>
+                                            </Tooltip>
+                                        </Upload>
+
+                                        <Button
+                                            icon={<DeploymentUnitOutlined />}
+                                            onClick={handleAutoLayout}
+                                            title="自动布局"
+                                        >
+                                            自动布局
+                                        </Button>
+
+                                        {/* 新增：下拉菜单选择添加不同类型的节点 */}
+                                        <Select
+                                            defaultValue="class"
+                                            style={{ width: 120 }}
+                                            onChange={(value) => {
+                                                if (value === 'class') addNewClass();
+                                                else if (value === 'instance') addNewInstance();
+                                            }}
+                                            options={[
+                                                { value: 'class', label: '新增类 (蓝色)' },
+                                                { value: 'instance', label: '新增实例 (橙色)' },
+                                            ]}
+                                        />
+
+                                        {/* 新增：显示所有实例开关 */}
+                                        <Switch
+                                            checked={showAllInstances}
+                                            onChange={setShowAllInstances}
+                                            checkedChildren="显示所有实例"
+                                            unCheckedChildren="仅展开类的实例"
+                                            size="small"
+                                        />
+
+                                        {/* 新增：展开所有实例按钮 */}
+                                        <Button
+                                            icon={<EyeOutlined />}
+                                            onClick={expandAllInstances}
+                                            disabled={nodes.filter(n => n.data?.type === 'owl:NamedIndividual').length === 0}
+                                        >
+                                            展开所有实例
+                                        </Button>
+
+                                        {/* 新增：创建新关系按钮 */}
+                                        <Button
+                                            icon={<PlusOutlined />}
+                                            onClick={addNewRelation}
+                                        >
+                                            创建新关系
+                                        </Button>
+
+                                        <Button
+                                            icon={<DeleteOutlined />}
+                                            danger
+                                            onClick={deleteSelectedElement}
+                                            disabled={!selectedElement}
+                                        >
+                                            删除
+                                        </Button>
+
+                                        <Divider type="vertical" />
+
+                                        <Button
+                                            icon={<SaveOutlined />}
+                                            onClick={handleSaveDraft}
+                                            loading={loading}
+                                        >
+                                            保存草稿
+                                        </Button>
+
+                                        <Button
+                                            type="primary"
+                                            icon={<CloudServerOutlined />}
+                                            onClick={handlePublish}
+                                            loading={loading}
+                                            className="bg-green-600 hover:bg-green-700"
+                                            disabled={!hasUnsavedChanges && !loading} /* 仅在有未保存更改时启用 */
+                                        >
+                                            {hasUnsavedChanges ? '同步至 Neo4j' : '已同步 Neo4j'}
+                                        </Button>
+
+                                        {/* 新增：下载TTL按钮 */}
+                                        <Button
+                                            icon={<DownloadOutlined />}
+                                            onClick={handleDownloadTTL}
+                                        >
+                                            下载TTL
+                                        </Button>
+                                    </Space>
+                                </Panel>
+
+                                {/* 底部统计 */}
+                                <Panel position="bottom-left">
+                                    <div className="bg-white px-4 py-2 rounded-lg shadow-md border border-gray-100 flex flex-col space-y-1">
+                                        <div className="flex items-center space-x-4">
+                                            <span className="text-gray-500 font-medium"><InfoCircleOutlined className="mr-1" /> 视图统计:</span>
+                                            <span><Tag color="blue">{displayNodes.length} / {nodes.length}</Tag> 实体</span>
+                                            <span><Tag color="green">{displayEdges.length} / {edges.length}</Tag> 关系</span>
+                                        </div>
+                                        <div className="text-[10px] text-gray-400">
+                                            提示：双击类节点可 展开/收起 实例；已隐藏 rdf:type 关系线。
+                                        </div>
+                                    </div>
+                                </Panel>
+                            </ReactFlow>
+                        </ReactFlowProvider>
+                    </div>
+                </>
+            )}
         </div>
     );
 };

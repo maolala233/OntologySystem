@@ -34,7 +34,7 @@ function App() {
                     >
                         <Route index element={<HomePage />} />
                         <Route path="my-projects" element={<MyProjectsPage />} />
-                        <Route path="ontology-builder" element={<Navigate to="/my-projects" replace />} />
+                        <Route path="ontology-builder" element={<OntologyBuilderPage />} />
                         <Route path="ontology-builder/:projectId" element={<OntologyBuilderPage />} />
                         <Route path="asset-center" element={<AssetCenterPage />} />
                         <Route path="asset-center/:projectId" element={<AssetDetailPage />} />
