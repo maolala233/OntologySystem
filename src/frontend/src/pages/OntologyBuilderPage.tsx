@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import ReactFlow, {
     addEdge,
@@ -43,6 +43,10 @@ import {
     DownloadOutlined,
     DeploymentUnitOutlined,
     EyeOutlined,
+    MinusCircleOutlined,
+    EditOutlined,
+    TagsOutlined,
+    LinkOutlined,
 } from '@ant-design/icons';
 import Navbar from '../components/Layout/Navbar';
 import { OntologyNode, OntologyEdge } from '../types/ontology';
@@ -76,6 +80,7 @@ const OntologyBuilderPage: React.FC = () => {
     const [relationForm] = Form.useForm();
     const [form] = Form.useForm();
     const [ruleForm] = Form.useForm();
+    const [customRelationType, setCustomRelationType] = useState('');
 
     useEffect(() => {
         if (projectId) {
@@ -708,6 +713,9 @@ const OntologyBuilderPage: React.FC = () => {
                                 defaultEdgeOptions={defaultEdgeOptions}
                                 fitView
                                 className="bg-gray-50"
+                                nodesDraggable={true}
+                                nodesConnectable={true}
+                                elementsSelectable={true}
                             >
                                 <Background color="#cbd5e1" gap={20} variant={BackgroundVariant.Dots} />
                                 <Controls />
@@ -863,6 +871,150 @@ const OntologyBuilderPage: React.FC = () => {
                                 </Panel>
                             </ReactFlow>
                         </ReactFlowProvider>
+
+                        {/* 属性编辑抽屉 */}
+                        <Drawer
+                            title={selectedElement ? (
+                                'position' in selectedElement 
+                                    ? `编辑节点属性 - ${selectedElement.data?.label || '未命名'}`
+                                    : `编辑关系属性 - ${selectedElement.data?.label || '未命名'}`
+                            ) : "属性编辑"}
+                            placement="right"
+                            onClose={() => {
+                                setIsDrawerOpen(false);
+                                setSelectedElement(null);
+                                form.resetFields();
+                            }}
+                            open={isDrawerOpen}
+                            width={450}
+                            destroyOnClose={true}
+                        >
+                            {selectedElement && (
+                                <Form
+                                    form={form}
+                                    layout="vertical"
+                                    onFinish={handleSaveProperties}
+                                    initialValues={{
+                                        label: selectedElement.data?.label || '',
+                                        type: selectedElement.data?.type || 'owl:Class',
+                                        relation: selectedElement.data?.relation || 'related_to'
+                                    }}
+                                >
+                                    {'position' in selectedElement ? (
+                                        // 节点属性编辑
+                                        <>
+                                            <SectionTitle icon={<EditOutlined />} title="基本属性" />
+                                            
+                                            <Form.Item
+                                                name="label"
+                                                label="节点名称"
+                                                rules={[{ required: true, message: '请输入节点名称' }]}
+                                            >
+                                                <Input placeholder="请输入节点名称" />
+                                            </Form.Item>
+
+                                            <Form.Item
+                                                name="type"
+                                                label="节点类型"
+                                                rules={[{ required: true, message: '请选择节点类型' }]}
+                                            >
+                                                <Select options={nodeTypes} />
+                                            </Form.Item>
+
+                                            <SectionTitle icon={<TagsOutlined />} title="自定义属性" />
+                                            
+                                            <Form.List name="properties">
+                                                {(fields, { add, remove }) => (
+                                                    <>
+                                                        {fields.map(({ key, name, ...restField }) => (
+                                                            <Space key={key} style={{ display: 'flex', marginBottom: 8 }} align="baseline">
+                                                                <Form.Item
+                                                                    {...restField}
+                                                                    name={[name, 'name']}
+                                                                    rules={[{ required: true, message: '属性名不能为空' }]}
+                                                                >
+                                                                    <Input placeholder="属性名" style={{ width: 120 }} />
+                                                                </Form.Item>
+                                                                <Form.Item
+                                                                    {...restField}
+                                                                    name={[name, 'value']}
+                                                                    rules={[{ required: true, message: '属性值不能为空' }]}
+                                                                >
+                                                                    <Input placeholder="属性值" style={{ width: 160 }} />
+                                                                </Form.Item>
+                                                                <MinusCircleOutlined onClick={() => remove(name)} />
+                                                            </Space>
+                                                        ))}
+                                                        <Button type="dashed" onClick={() => add()} block icon={<PlusOutlined />}>
+                                                            添加自定义属性
+                                                        </Button>
+                                                    </>
+                                                )}
+                                            </Form.List>
+                                        </>
+                                    ) : (
+                                        // 关系属性编辑
+                                        <>
+                                            <SectionTitle icon={<LinkOutlined />} title="关系属性" />
+                                            
+                                            <Form.Item
+                                                name="label"
+                                                label="关系标签"
+                                                rules={[{ required: true, message: '请输入关系标签' }]}
+                                            >
+                                                <Input placeholder="例如: 关联、属于、包含" />
+                                            </Form.Item>
+
+                                            <Form.Item
+                                                name="relation"
+                                                label="关系类型"
+                                                rules={[{ required: true, message: '请选择关系类型' }]}
+                                            >
+                                                <Select
+                                                    showSearch
+                                                    placeholder="选择或输入自定义关系类型"
+                                                    optionFilterProp="label"
+                                                    options={relationTypes}
+                                                    dropdownRender={(menu) => (
+                                                        <>
+                                                            {menu}
+                                                            <Divider style={{ margin: '8px 0' }} />
+                                                            <div style={{ padding: '4px 8px', cursor: 'pointer' }}>
+                                                                <Input
+                                                                    placeholder="输入自定义关系类型"
+                                                                    value={customRelationType}
+                                                                    onChange={(e) => setCustomRelationType(e.target.value)}
+                                                                    onPressEnter={() => {
+                                                                        if (customRelationType.trim()) {
+                                                                            form.setFieldsValue({ relation: customRelationType.trim() });
+                                                                        }
+                                                                    }}
+                                                                />
+                                                            </div>
+                                                        </>
+                                                    )}
+                                                />
+                                            </Form.Item>
+                                        </>
+                                    )}
+
+                                    <div className="flex justify-end space-x-2 mt-6 pt-4 border-t border-gray-200">
+                                        <Button 
+                                            onClick={() => {
+                                                setIsDrawerOpen(false);
+                                                setSelectedElement(null);
+                                                form.resetFields();
+                                            }}
+                                        >
+                                            取消
+                                        </Button>
+                                        <Button type="primary" htmlType="submit" className="bg-blue-600">
+                                            保存修改
+                                        </Button>
+                                    </div>
+                                </Form>
+                            )}
+                        </Drawer>
                     </div>
                 </>
             )}
