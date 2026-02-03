@@ -32,7 +32,14 @@ const HomePage: React.FC = () => {
                 ]);
 
                 let totalNodes = 0;
-                [...myProjects, ...publicProjects].forEach(project => {
+                // 只统计已发布的项目节点数（去重：按项目ID去重，避免个人项目在my和public中重复计算）
+                const allPublishedProjects = [...myProjects, ...publicProjects]
+                    .filter(project => project.is_published);
+                        
+                // 按项目ID去重，确保每个项目只计算一次
+                const uniqueProjects = Array.from(new Map(allPublishedProjects.map(p => [p.id, p])).values());
+                        
+                uniqueProjects.forEach(project => {
                     if (project.graph_data?.nodes) {
                         totalNodes += project.graph_data.nodes.length;
                     }
