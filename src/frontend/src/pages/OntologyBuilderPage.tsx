@@ -59,7 +59,7 @@ const nodeTypesMap = { custom: Neo4jNode };
 const OntologyBuilderPage: React.FC = () => {
     const { projectId } = useParams<{ projectId: string }>();
     const navigate = useNavigate();
-    
+-    
     // 强制初始化状态
     useEffect(() => {
         if (projectId && projectId.trim() !== '') {
@@ -77,7 +77,6 @@ const OntologyBuilderPage: React.FC = () => {
     const [projectName, setProjectName] = useState('');
     const [isPublished, setIsPublished] = useState(false);
     const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string>>(new Set());
-    const [showAllInstances, setShowAllInstances] = useState(false);
     const [lastSavedNodes, setLastSavedNodes] = useState<any[]>([]);
     const [lastSavedEdges, setLastSavedEdges] = useState<any[]>([]);
     const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
@@ -511,31 +510,46 @@ const OntologyBuilderPage: React.FC = () => {
         }
     };
 
-    // 一键展开所有实例
+    // 一键展开/收起所有实例
     const expandAllInstances = () => {
-        const newExpandedSet = new Set<string>(expandedNodeIds);
+        // 检查是否已经有展开的类（即需要收起）
+        const hasExpandedClasses = Array.from(expandedNodeIds).some(id => 
+            nodes.some(node => node.id === id && node.data?.type === 'owl:Class')
+        );
         
-        // 找到所有类节点
-        const classNodes = nodes.filter(node => node.data?.type === 'owl:Class');
-        
-        // 找到所有实例节点及其关联的类
-        nodes.forEach(node => {
-            if (node.data?.type === 'owl:NamedIndividual') {
-                // 查找该实例关联的类
-                const parentClassEdge = edges.find(e =>
-                    e.source === node.id &&
-                    (e.label === 'rdf:type' || e.data?.label === 'type' || e.data?.relation === 'instance_of')
-                );
-                
-                if (parentClassEdge && parentClassEdge.target) {
-                    // 将关联的类添加到展开集合中
-                    newExpandedSet.add(parentClassEdge.target);
+        if (hasExpandedClasses) {
+            // 收起所有类：移除所有类节点的展开状态
+            const newExpandedSet = new Set<string>(expandedNodeIds);
+            nodes.forEach(node => {
+                if (node.data?.type === 'owl:Class') {
+                    newExpandedSet.delete(node.id);
                 }
-            }
-        });
-        
-        setExpandedNodeIds(newExpandedSet);
-        message.success('已展开所有实例相关的类');
+            });
+            setExpandedNodeIds(newExpandedSet);
+            message.success('已收起所有实例相关的类');
+        } else {
+            // 展开所有实例相关的类
+            const newExpandedSet = new Set<string>(expandedNodeIds);
+            
+            // 找到所有实例节点及其关联的类
+            nodes.forEach(node => {
+                if (node.data?.type === 'owl:NamedIndividual') {
+                    // 查找该实例关联的类
+                    const parentClassEdge = edges.find(e =>
+                        e.source === node.id &&
+                        (e.label === 'rdf:type' || e.data?.label === 'type' || e.data?.relation === 'instance_of')
+                    );
+                    
+                    if (parentClassEdge && parentClassEdge.target) {
+                        // 将关联的类添加到展开集合中
+                        newExpandedSet.add(parentClassEdge.target);
+                    }
+                }
+            });
+            
+            setExpandedNodeIds(newExpandedSet);
+            message.success('已展开所有实例相关的类');
+        }
     };
 
     const breadcrumbs = [
@@ -582,8 +596,8 @@ const OntologyBuilderPage: React.FC = () => {
                     expandedNodeIds.has(e.target)
                 );
                 
-                // 如果开启"显示所有实例"或有展开的关联类，则显示实例
-                if (showAllInstances || parentClassEdge) {
+                // 仅当有关联的已展开类时才显示实例
+                if (parentClassEdge) {
                     visibleNodeIds.add(node.id);
                 }
             } else {
@@ -602,7 +616,7 @@ const OntologyBuilderPage: React.FC = () => {
         });
 
         return { displayNodes, displayEdges };
-    }, [nodes, edges, expandedNodeIds, showAllInstances]);
+    }, [nodes, edges, expandedNodeIds]);
 
     const { displayNodes, displayEdges } = getDisplayElements();
 
@@ -808,22 +822,15 @@ const OntologyBuilderPage: React.FC = () => {
                                             ]}
                                         />
 
-                                        {/* 新增：显示所有实例开关 */}
-                                        <Switch
-                                            checked={showAllInstances}
-                                            onChange={setShowAllInstances}
-                                            checkedChildren="显示所有实例"
-                                            unCheckedChildren="仅展开类的实例"
-                                            size="small"
-                                        />
 
-                                        {/* 新增：展开所有实例按钮 */}
+
+                                        {/* 展开所有实例按钮（已支持切换功能） */}
                                         <Button
                                             icon={<EyeOutlined />}
                                             onClick={expandAllInstances}
                                             disabled={nodes.filter(n => n.data?.type === 'owl:NamedIndividual').length === 0}
                                         >
-                                            展开所有实例
+                                            展开/收起所有实例
                                         </Button>
 
                                         {/* 新增：创建新关系按钮 */}
@@ -1047,6 +1054,13 @@ const OntologyBuilderPage: React.FC = () => {
                                             }}
                                         >
                                             取消
+                                        </Button>
+                                        <Button 
+                                            icon={<DeleteOutlined />} 
+                                            danger
+                                            onClick={deleteSelectedElement}
+                                        >
+                                            删除
                                         </Button>
                                         <Button type="primary" htmlType="submit" className="bg-blue-600">
                                             保存修改
