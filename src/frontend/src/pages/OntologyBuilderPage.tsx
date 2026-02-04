@@ -132,29 +132,10 @@ const OntologyBuilderPage: React.FC = () => {
             setProjectName(project.name);
             setIsPublished(project.is_published);
 
-            // 如果项目是新创建的且没有graph_data，初始化默认根类节点
+            // 保持空白画布，不初始化默认根类节点
             if (!project.graph_data || !project.graph_data.nodes || project.graph_data.nodes.length === 0) {
-                const defaultRootNode: OntologyNode = {
-                    id: `node_${Date.now()}`,
-                    type: 'custom',
-                    position: { x: 250, y: 150 },
-                    data: { 
-                        label: '根类', 
-                        type: 'owl:Class', 
-                        properties: {} 
-                    },
-                };
-                
-                setNodes([defaultRootNode]);
-                setLastSavedNodes([defaultRootNode]);
-                
-                // 同时更新项目数据（可选，确保后端也有默认节点）
-                await projectsApi.updateProject(Number(projectId), {
-                    graph_data: { 
-                        nodes: [defaultRootNode], 
-                        edges: [] 
-                    }
-                });
+                setNodes([]);
+                setLastSavedNodes([]);
             } else {
                 if (project.graph_data?.nodes) {
                     setNodes(project.graph_data.nodes);
@@ -690,25 +671,9 @@ const OntologyBuilderPage: React.FC = () => {
                                         description: values.description
                                     });
                                                         
-                                    // 创建默认根类节点
-                                    const defaultRootNode: OntologyNode = {
-                                        id: `node_${Date.now()}`,
-                                        type: 'custom',
-                                        position: { x: 250, y: 150 },
-                                        data: { 
-                                            label: '根类', 
-                                            type: 'owl:Class', 
-                                            properties: {} 
-                                        },
-                                    };
-                                                        
-                                    // 更新本地状态
-                                    setNodes([defaultRootNode]);
-                                    setLastSavedNodes([defaultRootNode]);
-                                                        
-                                    // 导航到编辑界面
+                                    // 导航到编辑界面（空白画布）
                                     navigate(`/ontology-builder/${newProject.id}`);
-                                    message.success('项目创建成功，已进入编辑界面并初始化默认根类');
+                                    message.success('项目创建成功，已进入编辑界面');
                                 } catch (error: any) {
                                     message.error('创建项目失败，请重试');
                                 } finally {
