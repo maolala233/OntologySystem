@@ -53,19 +53,20 @@ import { OntologyNode, OntologyEdge } from '../types/ontology';
 import { projectsApi } from '../api/projects';
 import Neo4jNode from '../components/OntologyGraph/Neo4jNode';
 import { getLayoutedElements } from '../utils/layoutUtils';
+import { systemApi } from '../api/system';
 import { MarkerType as RFMarkerType, BackgroundVariant } from 'reactflow';
 const nodeTypesMap = { custom: Neo4jNode };
 
 const OntologyBuilderPage: React.FC = () => {
     const { projectId } = useParams<{ projectId: string }>();
     const navigate = useNavigate();
--    
-    // 强制初始化状态
-    useEffect(() => {
-        if (projectId && projectId.trim() !== '') {
-            setIsCreatingProject(false);
-        }
-    }, [projectId]);
+    -
+        // 强制初始化状态
+        useEffect(() => {
+            if (projectId && projectId.trim() !== '') {
+                setIsCreatingProject(false);
+            }
+        }, [projectId]);
 
     const [nodes, setNodes, onNodesChange] = useNodesState([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -87,11 +88,14 @@ const OntologyBuilderPage: React.FC = () => {
     const [form] = Form.useForm();
     const [ruleForm] = Form.useForm();
     const [customRelationType, setCustomRelationType] = useState('');
+    const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
+    const [configForm] = Form.useForm();
+    const [isAdmin, setIsAdmin] = useState(false);
 
     useEffect(() => {
         // 优先显示编辑界面，只有当明确没有projectId时才显示创建表单
         const hasValidProjectId = projectId && typeof projectId === 'string' && projectId.trim() !== '';
-        
+
         if (hasValidProjectId) {
             setIsCreatingProject(false);
             loadProject();
@@ -103,8 +107,8 @@ const OntologyBuilderPage: React.FC = () => {
     // 监听节点和边的变化
     useEffect(() => {
         if (projectId) {
-            const hasChanged = JSON.stringify(nodes) !== JSON.stringify(lastSavedNodes) || 
-                             JSON.stringify(edges) !== JSON.stringify(lastSavedEdges);
+            const hasChanged = JSON.stringify(nodes) !== JSON.stringify(lastSavedNodes) ||
+                JSON.stringify(edges) !== JSON.stringify(lastSavedEdges);
             setHasUnsavedChanges(hasChanged);
         }
     }, [nodes, edges, lastSavedNodes, lastSavedEdges, projectId]);
@@ -144,6 +148,13 @@ const OntologyBuilderPage: React.FC = () => {
                     setEdges(project.graph_data.edges);
                     setLastSavedEdges(project.graph_data.edges); // 记录初始状态
                 }
+            }
+
+            // 获取用户信息判断是否为 admin
+            const userStr = localStorage.getItem('user');
+            if (userStr) {
+                const user = JSON.parse(userStr);
+                setIsAdmin(user.username === 'admin');
             }
         } catch (error: any) {
             message.error('加载项目失败');
@@ -273,10 +284,10 @@ const OntologyBuilderPage: React.FC = () => {
             id: `node_${Date.now()}`,
             type: 'custom',
             position: { x: Math.random() * 400 + 100, y: Math.random() * 400 + 100 },
-            data: { 
-                label: nodeType === 'owl:Class' ? '新类' : '新实例', 
-                type: nodeType, 
-                properties: {} 
+            data: {
+                label: nodeType === 'owl:Class' ? '新类' : '新实例',
+                type: nodeType,
+                properties: {}
             },
         };
         setNodes((nds) => nds.concat(newNode));
@@ -294,17 +305,17 @@ const OntologyBuilderPage: React.FC = () => {
             id: `node_${Date.now()}`,
             type: 'custom',
             position: { x: Math.random() * 400 + 100, y: Math.random() * 400 + 100 },
-            data: { 
-                label: '新实例', 
-                type: 'owl:NamedIndividual', 
-                properties: {} 
+            data: {
+                label: '新实例',
+                type: 'owl:NamedIndividual',
+                properties: {}
             },
         };
-        
+
         // 尝试找到最近的类节点作为父类
         const classNodes = nodes.filter(node => node.data?.type === 'owl:Class');
         let newEdges: OntologyEdge[] = [];
-        
+
         if (classNodes.length > 0) {
             // 创建 rdf:type 关系到最近的类
             const targetClass = classNodes[classNodes.length - 1];
@@ -317,7 +328,7 @@ const OntologyBuilderPage: React.FC = () => {
                 data: { label: 'rdf:type', relation: 'instance_of' },
             } as OntologyEdge;
             newEdges.push(newEdge);
-            
+
             // 自动展开该类
             setExpandedNodeIds(prev => {
                 const newSet = new Set(prev);
@@ -325,13 +336,13 @@ const OntologyBuilderPage: React.FC = () => {
                 return newSet;
             });
         }
-        
+
         // 添加新节点和边
         setNodes((nds) => nds.concat(newNode));
         if (newEdges.length > 0) {
             setEdges((eds) => [...eds, ...newEdges]);
         }
-        
+
         message.success('已添加新实例');
     };
 
@@ -420,11 +431,11 @@ const OntologyBuilderPage: React.FC = () => {
                     // 最后发布到Neo4j
                     await projectsApi.publishProject(Number(projectId));
                     message.success('发布成功！本体已同步到图数据库');
-                    
+
                     // 重新获取项目信息，更新isPublished状态
                     const project = await projectsApi.getProject(Number(projectId));
                     setIsPublished(project.is_published);
-                    
+
                     // 更新最后保存状态
                     setLastSavedNodes([...nodes]);
                     setLastSavedEdges([...edges]);
@@ -456,12 +467,14 @@ const OntologyBuilderPage: React.FC = () => {
         try {
             const response = await projectsApi.uploadDocument(Number(projectId), pendingFile, values.rules);
 
-            // 将提取的本体数据渲染到画布
+            // 将提取的本体数据渲染到画布，并执行自动布局
             if (response.nodes) {
-                setNodes(response.nodes);
-            }
-            if (response.edges) {
-                setEdges(response.edges);
+                const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
+                    response.nodes,
+                    response.edges || []
+                );
+                setNodes(layoutedNodes);
+                setEdges(layoutedEdges);
             }
 
             message.success(response.message || '本体处理成功！');
@@ -481,12 +494,14 @@ const OntologyBuilderPage: React.FC = () => {
         try {
             const response = await projectsApi.uploadTTLFile(Number(projectId), file);
 
-            // 将提取的本体数据渲染到画布
+            // 将提取的本体数据渲染到画布，并执行自动布局
             if (response.nodes) {
-                setNodes(response.nodes);
-            }
-            if (response.edges) {
-                setEdges(response.edges);
+                const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
+                    response.nodes,
+                    response.edges || []
+                );
+                setNodes(layoutedNodes);
+                setEdges(layoutedEdges);
             }
 
             message.success(response.message || 'TTL文件解析成功！');
@@ -513,10 +528,10 @@ const OntologyBuilderPage: React.FC = () => {
     // 一键展开/收起所有实例
     const expandAllInstances = () => {
         // 检查是否已经有展开的类（即需要收起）
-        const hasExpandedClasses = Array.from(expandedNodeIds).some(id => 
+        const hasExpandedClasses = Array.from(expandedNodeIds).some(id =>
             nodes.some(node => node.id === id && node.data?.type === 'owl:Class')
         );
-        
+
         if (hasExpandedClasses) {
             // 收起所有类：移除所有类节点的展开状态
             const newExpandedSet = new Set<string>(expandedNodeIds);
@@ -530,7 +545,7 @@ const OntologyBuilderPage: React.FC = () => {
         } else {
             // 展开所有实例相关的类
             const newExpandedSet = new Set<string>(expandedNodeIds);
-            
+
             // 找到所有实例节点及其关联的类
             nodes.forEach(node => {
                 if (node.data?.type === 'owl:NamedIndividual') {
@@ -539,14 +554,14 @@ const OntologyBuilderPage: React.FC = () => {
                         e.source === node.id &&
                         (e.label === 'rdf:type' || e.data?.label === 'type' || e.data?.relation === 'instance_of')
                     );
-                    
+
                     if (parentClassEdge && parentClassEdge.target) {
                         // 将关联的类添加到展开集合中
                         newExpandedSet.add(parentClassEdge.target);
                     }
                 }
             });
-            
+
             setExpandedNodeIds(newExpandedSet);
             message.success('已展开所有实例相关的类');
         }
@@ -595,7 +610,7 @@ const OntologyBuilderPage: React.FC = () => {
                     (e.label === 'rdf:type' || e.data?.label === 'type' || e.data?.relation === 'instance_of') &&
                     expandedNodeIds.has(e.target)
                 );
-                
+
                 // 仅当有关联的已展开类时才显示实例
                 if (parentClassEdge) {
                     visibleNodeIds.add(node.id);
@@ -667,6 +682,31 @@ const OntologyBuilderPage: React.FC = () => {
         }
     };
 
+    // --- 系统配置相关 ---
+    const openConfigModal = async () => {
+        setLoading(true);
+        try {
+            const config = await systemApi.getConfig('llm_config');
+            configForm.setFieldsValue(config.value);
+            setIsConfigModalOpen(true);
+        } catch (error) {
+            message.error('获取配置失败');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleSaveConfig = async () => {
+        try {
+            const values = await configForm.validateFields();
+            await systemApi.updateConfig('llm_config', values);
+            message.success('系统配置已保存');
+            setIsConfigModalOpen(false);
+        } catch (error) {
+            console.error('保存配置失败:', error);
+        }
+    };
+
     return (
         <div className="h-screen flex flex-col bg-gray-50">
             {(!projectId || projectId.trim() === '' || isCreatingProject) ? (
@@ -674,9 +714,9 @@ const OntologyBuilderPage: React.FC = () => {
                 <div className="flex-1 flex items-center justify-center">
                     <div className="w-full max-w-md p-6 bg-white rounded-lg shadow-xl">
                         <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">创建新本体项目</h2>
-                        <Form 
+                        <Form
                             form={createProjectForm}
-                            layout="vertical" 
+                            layout="vertical"
                             onFinish={async (values) => {
                                 setLoading(true);
                                 try {
@@ -684,7 +724,7 @@ const OntologyBuilderPage: React.FC = () => {
                                         name: values.name,
                                         description: values.description
                                     });
-                                                        
+
                                     // 导航到编辑界面（空白画布）
                                     navigate(`/ontology-builder/${newProject.id}`);
                                     message.success('项目创建成功，已进入编辑界面');
@@ -800,6 +840,17 @@ const OntologyBuilderPage: React.FC = () => {
                                             </Tooltip>
                                         </Upload>
 
+                                        {isAdmin && (
+                                            <Tooltip title="模型服务配置">
+                                                <Button
+                                                    icon={<SettingOutlined />}
+                                                    onClick={openConfigModal}
+                                                >
+                                                    配置
+                                                </Button>
+                                            </Tooltip>
+                                        )}
+
                                         <Button
                                             icon={<DeploymentUnitOutlined />}
                                             onClick={handleAutoLayout}
@@ -900,7 +951,7 @@ const OntologyBuilderPage: React.FC = () => {
                         {/* 属性编辑抽屉 */}
                         <Drawer
                             title={selectedElement ? (
-                                'position' in selectedElement 
+                                'position' in selectedElement
                                     ? `编辑节点属性 - ${selectedElement.data?.label || '未命名'}`
                                     : `编辑关系属性 - ${selectedElement.data?.label || '未命名'}`
                             ) : "属性编辑"}
@@ -929,7 +980,7 @@ const OntologyBuilderPage: React.FC = () => {
                                         // 节点属性编辑
                                         <>
                                             <SectionTitle icon={<EditOutlined />} title="基本属性" />
-                                            
+
                                             <Form.Item
                                                 name="label"
                                                 label="节点名称"
@@ -1003,7 +1054,7 @@ const OntologyBuilderPage: React.FC = () => {
                                         // 关系属性编辑
                                         <>
                                             <SectionTitle icon={<LinkOutlined />} title="关系属性" />
-                                            
+
                                             <Form.Item
                                                 name="label"
                                                 label="关系标签"
@@ -1046,7 +1097,7 @@ const OntologyBuilderPage: React.FC = () => {
                                     )}
 
                                     <div className="flex justify-end space-x-2 mt-6 pt-4 border-t border-gray-200">
-                                        <Button 
+                                        <Button
                                             onClick={() => {
                                                 setIsDrawerOpen(false);
                                                 setSelectedElement(null);
@@ -1055,8 +1106,8 @@ const OntologyBuilderPage: React.FC = () => {
                                         >
                                             取消
                                         </Button>
-                                        <Button 
-                                            icon={<DeleteOutlined />} 
+                                        <Button
+                                            icon={<DeleteOutlined />}
                                             danger
                                             onClick={deleteSelectedElement}
                                         >
@@ -1069,6 +1120,93 @@ const OntologyBuilderPage: React.FC = () => {
                                 </Form>
                             )}
                         </Drawer>
+
+                        {/* 系统配置 Modal */}
+                        <Modal
+                            title={
+                                <div className="flex items-center space-x-2">
+                                    <CloudServerOutlined style={{ color: '#1890ff' }} />
+                                    <span>模型服务配置 (仅管理员)</span>
+                                </div>
+                            }
+                            open={isConfigModalOpen}
+                            onOk={handleSaveConfig}
+                            onCancel={() => setIsConfigModalOpen(false)}
+                            width={600}
+                            okText="保存配置"
+                            cancelText="取消"
+                            maskClosable={false}
+                        >
+                            <div className="bg-yellow-50 p-3 mb-4 rounded border border-yellow-100 flex items-start space-x-2">
+                                <InfoCircleOutlined className="mt-1 text-yellow-600" />
+                                <div className="text-yellow-800 text-sm">
+                                    此处的配置将覆盖环境变量中的默认设置。修改后将立即在自动提取和构建任务中生效。
+                                </div>
+                            </div>
+
+                            <Form
+                                form={configForm}
+                                layout="vertical"
+                                initialValues={{
+                                    api_key: '',
+                                    base_url: '',
+                                    model: '',
+                                    chunk_size: 15000,
+                                    chunk_overlap: 500,
+                                    request_interval: 2
+                                }}
+                            >
+                                <div className="grid grid-cols-2 gap-4">
+                                    <Form.Item
+                                        name="base_url"
+                                        label="API Endpoint (Base URL)"
+                                        className="col-span-2"
+                                        rules={[{ required: true, message: '请输入 API 端点' }]}
+                                    >
+                                        <Input placeholder="例如: https://api.openai.com/v1" />
+                                    </Form.Item>
+
+                                    <Form.Item
+                                        name="api_key"
+                                        label="API Key"
+                                        className="col-span-2"
+                                        rules={[{ required: true, message: '请输入 API Key' }]}
+                                    >
+                                        <Input.Password placeholder="sk-..." />
+                                    </Form.Item>
+
+                                    <Form.Item
+                                        name="model"
+                                        label="模型名称"
+                                        className="col-span-2"
+                                        rules={[{ required: true, message: '请输入模型名称' }]}
+                                    >
+                                        <Input placeholder="例如: gpt-3.5-turbo 或 gpt-4" />
+                                    </Form.Item>
+
+                                    <Form.Item
+                                        name="chunk_size"
+                                        label="提取分块大小 (Chunk Size)"
+                                    >
+                                        <Input type="number" suffix="字符" />
+                                    </Form.Item>
+
+                                    <Form.Item
+                                        name="chunk_overlap"
+                                        label="分块重叠 (Overlap)"
+                                    >
+                                        <Input type="number" suffix="字符" />
+                                    </Form.Item>
+
+                                    <Form.Item
+                                        name="request_interval"
+                                        label="请求间隔 (Interval)"
+                                    >
+                                        <Input type="number" suffix="秒" />
+                                    </Form.Item>
+                                </div>
+                            </Form>
+                        </Modal>
                     </div>
                 </>
             )}

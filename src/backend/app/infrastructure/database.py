@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, String, Boolean, Text, JSON, DateTime, ForeignKey
-from sqlalchemy.dialects.mysql import VARCHAR
+from sqlalchemy.dialects.mysql import VARCHAR, LONGTEXT
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy import create_engine
@@ -28,13 +28,20 @@ class Project(Base):
     graph_data = Column(JSON, nullable=True)
     
     # TTL 文件内容（同步到 Neo4j 之前的最终形态）
-    ttl_content = Column(Text, nullable=True)
+    ttl_content = Column(LONGTEXT, nullable=True)
     
     is_published = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
     owner = relationship("User", back_populates="projects")
+
+class SystemConfig(Base):
+    __tablename__ = "system_configs"
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String(100), unique=True, index=True)  # e.g., 'llm_config'
+    value = Column(JSON, nullable=False)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
 # 数据库连接
 DB_URL = settings.DATABASE_URL
@@ -107,7 +114,7 @@ def _create_initial_data():
         test_users = [
             User(
                 username="admin",
-                hashed_password="123456",  # TODO: 实际应使用 bcrypt 加密
+                hashed_password="cbil123456",  # TODO: 实际应使用 bcrypt 加密
                 is_active=True
             ),
             User(

@@ -1,14 +1,20 @@
 import dagre from 'dagre';
 import { Node, Edge } from 'reactflow';
 
-const nodeWidth = 80;
-const nodeHeight = 80;
-
 export const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = 'LR') => {
     const dagreGraph = new dagre.graphlib.Graph();
     dagreGraph.setDefaultEdgeLabel(() => ({}));
 
-    dagreGraph.setGraph({ rankdir: direction });
+    const nodeWidth = 180;
+    const nodeHeight = 60;
+
+    dagreGraph.setGraph({
+        rankdir: direction,
+        ranksep: 100, // 层级间距
+        nodesep: 80,  // 节点间距
+        marginx: 100,
+        marginy: 100
+    });
 
     nodes.forEach((node) => {
         dagreGraph.setNode(node.id, { width: nodeWidth, height: nodeHeight });

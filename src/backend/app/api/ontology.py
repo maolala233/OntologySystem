@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Response
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from app.infrastructure.database import get_db, Project, User
+from app.infrastructure.database import get_db, Project, User, SystemConfig
 from app.schemas.ontology import ProjectCreate, ProjectUpdate, ProjectResponse
 from app.api.auth import get_current_user
 from app.core.config import settings
@@ -232,11 +232,25 @@ async def upload_document(
             if not text_content:
                 text_content = "" # 容错
                 
+            # 获取系统配置中的 LLM 设置
+            db_config = db.query(SystemConfig).filter(SystemConfig.key == "llm_config").first()
+            llm_config = db_config.value if db_config else {}
+            
+            # 使用配置覆盖默认设置
+            api_key = llm_config.get("api_key") or settings.VLLM_API_KEY
+            base_url = llm_config.get("base_url") or settings.VLLM_BASE_URL
+            model = llm_config.get("model") or settings.VLLM_MODEL
+            
+            # 也可以从配置中获取分块大小等参数
+            chunk_size = llm_config.get("chunk_size", chunk_size)
+            chunk_overlap = llm_config.get("chunk_overlap", chunk_overlap)
+            request_interval = llm_config.get("request_interval", request_interval)
+
             # 初始化提取器
             extractor = OntologyExtractor(
-                api_key=settings.VLLM_API_KEY,
-                base_url=settings.VLLM_BASE_URL,
-                model=settings.VLLM_MODEL
+                api_key=api_key,
+                base_url=base_url,
+                model=model
             )
             
             # 构建空的规则 DataFrame

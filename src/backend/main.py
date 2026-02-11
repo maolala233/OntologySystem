@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from app.api.v1.api import api_router
 
-from app.api import auth, ontology
+from app.api import auth, ontology, system
 from app.infrastructure.database import init_db
 
 # 初始化数据库 (创建表)
@@ -26,6 +26,7 @@ app.add_middleware(
 # 注册路由
 app.include_router(auth.router)
 app.include_router(ontology.router)
+app.include_router(system.router)
 app.include_router(api_router, prefix="/api/v1")
 
 # 健康检查接口

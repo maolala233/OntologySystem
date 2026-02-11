@@ -9,6 +9,20 @@ class UserResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class SystemConfigBase(BaseModel):
+    key: str
+    value: Dict[str, Any]
+
+class SystemConfigUpdate(BaseModel):
+    value: Dict[str, Any]
+
+class SystemConfigResponse(SystemConfigBase):
+    id: int
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
 class ProjectBase(BaseModel):
     name: str
     description: Optional[str] = None

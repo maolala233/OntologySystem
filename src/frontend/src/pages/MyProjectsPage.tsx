@@ -37,11 +37,13 @@ const MyProjectsPage: React.FC = () => {
 
     const handleCreateProject = async (values: any) => {
         try {
-            await projectsApi.createProject(values);
+            const newProject = await projectsApi.createProject(values);
             message.success('项目创建成功！');
             setIsModalOpen(false);
             form.resetFields();
-            loadProjects();
+
+            // 立即跳转到该项目的编辑页面
+            navigate(`/ontology-builder/${newProject.id}`);
         } catch (error: any) {
             message.error('创建失败，请稍后重试');
         }
