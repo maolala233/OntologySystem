@@ -25,18 +25,51 @@ class OntologyExtractor:
         """
         改进的文本切分逻辑，尽量在段落或句子边界切分。
         """
+        # 确保参数类型正确
+        try:
+            chunk_size = int(chunk_size)
+        except (ValueError, TypeError):
+            chunk_size = 15000
+            
+        try:
+            overlap = int(overlap)
+        except (ValueError, TypeError):
+            overlap = 500
+            
         return self._recursive_split(text, chunk_size, overlap, separators=["\n\n", "\n", "。 ", "！ ", "？ ", ". ", " ", ""])
 
     def _sub_chunk_text(self, text: str, chunk_size: int = 800, overlap: int = 100) -> List[str]:
         """
         用于向量库入库的细粒度切分。
         """
+        # 确保参数类型正确
+        try:
+            chunk_size = int(chunk_size)
+        except (ValueError, TypeError):
+            chunk_size = 800
+            
+        try:
+            overlap = int(overlap)
+        except (ValueError, TypeError):
+            overlap = 100
+            
         return self._recursive_split(text, chunk_size, overlap, separators=["\n\n", "\n", "。 ", "！ ", "？ ", ". ", " ", ""])
 
     def _recursive_split(self, text: str, chunk_size: int, overlap: int, separators: List[str]) -> List[str]:
         """
         严格递归切分逻辑，确保任何分块都不会超过 chunk_size。
         """
+        # 确保参数类型正确
+        try:
+            chunk_size = int(chunk_size)
+        except (ValueError, TypeError):
+            chunk_size = 15000
+            
+        try:
+            overlap = int(overlap)
+        except (ValueError, TypeError):
+            overlap = 500
+        
         if len(text) <= chunk_size:
             return [text]
         
@@ -210,6 +243,9 @@ class OntologyExtractor:
                       request_interval: int = 2, 
                       progress=None, 
                       product_code: Optional[str] = None) -> tuple[str, str]:
+        # 添加调试信息
+        logger.info(f"build_ontology called with chunk_size={chunk_size} (type: {type(chunk_size)}), chunk_overlap={chunk_overlap} (type: {type(chunk_overlap)}), request_interval={request_interval} (type: {type(request_interval)})")
+        
         master_g = Graph()
         master_g.bind("ex", self.EX)
         master_g.bind("owl", OWL)

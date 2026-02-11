@@ -30,6 +30,7 @@ class RagQueryRequest(BaseModel):
     """RAG查询请求模型"""
     question: str = Field(..., description="查询问题")
     k_hop: int = Field(2, ge=1, le=5, description="扩散深度")
+    top_k: int = Field(5, ge=1, le=20, description="返回结果数量")
     milvus_collection: Optional[str] = Field(None, description="Milvus集合名称")
     api_key: Optional[str] = Field(None, description="API密钥")
     base_url: Optional[str] = Field(None, description="API基础URL")

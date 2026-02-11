@@ -316,6 +316,13 @@ class VectorStoreManager:
         if not self.is_enabled or not self.collection:
             return []
         
+        # 确保 top_k 是整数类型
+        try:
+            top_k_int = int(top_k)
+        except (ValueError, TypeError):
+            logger.warning(f"top_k 参数 '{top_k}' 无法转换为整数，使用默认值 5")
+            top_k_int = 5
+        
         query_vec = self.get_embedding(query_text)
         search_params = {"metric_type": "COSINE", "params": {"nprobe": 10}}
         
@@ -323,7 +330,7 @@ class VectorStoreManager:
             data=[query_vec],
             anns_field="vector",
             param=search_params,
-            limit=top_k,
+            limit=top_k_int,
             output_fields=["text", "metadata"]
         )
         

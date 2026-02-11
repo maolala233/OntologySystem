@@ -63,7 +63,8 @@ async def query_rag(request: RagQueryRequest):
 
         answer, context, sources = rag_engine.query(
             question=request.question,
-            k_hop=request.k_hop
+            k_hop=request.k_hop,
+            top_k=getattr(request, 'top_k', 5)  # 使用 getattr 确保安全访问
         )
         
         # 格式化溯源信息

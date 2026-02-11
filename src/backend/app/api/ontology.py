@@ -241,10 +241,21 @@ async def upload_document(
             base_url = llm_config.get("base_url") or settings.VLLM_BASE_URL
             model = llm_config.get("model") or settings.VLLM_MODEL
             
-            # 也可以从配置中获取分块大小等参数
-            chunk_size = llm_config.get("chunk_size", chunk_size)
-            chunk_overlap = llm_config.get("chunk_overlap", chunk_overlap)
-            request_interval = llm_config.get("request_interval", request_interval)
+            # 也可以从配置中获取分块大小等参数，确保类型正确
+            try:
+                chunk_size = int(llm_config.get("chunk_size", chunk_size))
+            except (ValueError, TypeError):
+                chunk_size = chunk_size  # 使用默认值
+                
+            try:
+                chunk_overlap = int(llm_config.get("chunk_overlap", chunk_overlap))
+            except (ValueError, TypeError):
+                chunk_overlap = chunk_overlap  # 使用默认值
+                
+            try:
+                request_interval = int(llm_config.get("request_interval", request_interval))
+            except (ValueError, TypeError):
+                request_interval = request_interval  # 使用默认值
 
             # 初始化提取器
             extractor = OntologyExtractor(
