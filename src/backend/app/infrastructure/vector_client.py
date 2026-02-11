@@ -10,28 +10,22 @@ from pymilvus import connections, Collection, FieldSchema, CollectionSchema, Dat
 from app.core.config import settings
 
 # 通过 settings 对象访问配置值
-MILVUS_HOST = settings.MILVUS_HOST
-MILVUS_PORT = settings.MILVUS_PORT
-MILVUS_COLLECTION_NAME = settings.MILVUS_COLLECTION_NAME
-EMBEDDING_MODEL = settings.EMBEDDING_MODEL
-EMBEDDING_API_KEY = settings.EMBEDDING_API_KEY
-EMBEDDING_BASE_URL = settings.EMBEDDING_BASE_URL
-EMBEDDING_DIM = settings.EMBEDDING_DIM
 from app.core.logging import logger
 
 
 class VectorStoreManager:
     def __init__(self, collection_name: str = None, create_if_missing: bool = True):
-        self.milvus_host = MILVUS_HOST
-        self.milvus_port = MILVUS_PORT
-        self.collection_name = collection_name if collection_name else MILVUS_COLLECTION_NAME
-        self.embedding_dim = EMBEDDING_DIM
-        self.emb_model = EMBEDDING_MODEL
+        # 获取动态配置
+        self._load_dynamic_config()
+        
+        self.collection_name = collection_name if collection_name else self.milvus_collection_name
+        self.embedding_dim = self.embedding_dim
+        self.emb_model = self.embedding_model
 
         # 判断是否为外部API
-        is_external_api = EMBEDDING_BASE_URL and ('openai' in EMBEDDING_BASE_URL.lower() or 'api.' in EMBEDDING_BASE_URL.lower() or 
-                                                  'http' in EMBEDDING_BASE_URL and 'localhost' not in EMBEDDING_BASE_URL and 
-                                                  '127.0.0.1' not in EMBEDDING_BASE_URL and '.lan' not in EMBEDDING_BASE_URL)
+        is_external_api = self.embedding_base_url and ('openai' in self.embedding_base_url.lower() or 'api.' in self.embedding_base_url.lower() or 
+                                                  'http' in self.embedding_base_url and 'localhost' not in self.embedding_base_url and 
+                                                  '127.0.0.1' not in self.embedding_base_url and '.lan' not in self.embedding_base_url)
         
         if is_external_api:
             # 对于外部API，可能需要代理
@@ -55,16 +49,16 @@ class VectorStoreManager:
                                 proxy_transport = SyncProxyTransport.from_url(proxy_to_use)
                                 http_client = httpx.Client(transport=proxy_transport)
                                 self.client = OpenAI(
-                                    api_key=EMBEDDING_API_KEY,
-                                    base_url=EMBEDDING_BASE_URL,
+                                    api_key=self.embedding_api_key,
+                                    base_url=self.embedding_base_url,
                                     http_client=http_client
                                 )
                             else:
                                 # 对于非SOCKS代理，使用标准方式
                                 http_client = httpx.Client(proxy=proxy_to_use)
                                 self.client = OpenAI(
-                                    api_key=EMBEDDING_API_KEY,
-                                    base_url=EMBEDDING_BASE_URL,
+                                    api_key=self.embedding_api_key,
+                                    base_url=self.embedding_base_url,
                                     http_client=http_client
                                 )
                         except ImportError:
@@ -82,8 +76,8 @@ class VectorStoreManager:
                             
                             try:
                                 self.client = OpenAI(
-                                    api_key=EMBEDDING_API_KEY,
-                                    base_url=EMBEDDING_BASE_URL
+                                    api_key=self.embedding_api_key,
+                                    base_url=self.embedding_base_url
                                 )
                             finally:
                                 # 恢复环境变量
@@ -107,8 +101,8 @@ class VectorStoreManager:
                             
                             try:
                                 self.client = OpenAI(
-                                    api_key=EMBEDDING_API_KEY,
-                                    base_url=EMBEDDING_BASE_URL
+                                    api_key=self.embedding_api_key,
+                                    base_url=self.embedding_base_url
                                 )
                             finally:
                                 # 恢复环境变量
@@ -121,21 +115,21 @@ class VectorStoreManager:
                         # 对于HTTP代理，使用httpx的proxy参数
                         http_client = httpx.Client(proxy=proxy_to_use)
                         self.client = OpenAI(
-                            api_key=EMBEDDING_API_KEY,
-                            base_url=EMBEDDING_BASE_URL,
+                            api_key=self.embedding_api_key,
+                            base_url=self.embedding_base_url,
                             http_client=http_client
                         )
                 else:
                     # 没有代理设置，直接创建客户端
                     self.client = OpenAI(
-                        api_key=EMBEDDING_API_KEY,
-                        base_url=EMBEDDING_BASE_URL
+                        api_key=self.embedding_api_key,
+                        base_url=self.embedding_base_url
                     )
             except Exception as e:
                 logger.warning(f"Embedding客户端代理配置失败: {e}，尝试直接连接")
                 self.client = OpenAI(
-                    api_key=EMBEDDING_API_KEY,
-                    base_url=EMBEDDING_BASE_URL
+                    api_key=self.embedding_api_key,
+                    base_url=self.embedding_base_url
                 )
         else:
             # 对于内部服务，移除代理环境变量
@@ -150,8 +144,8 @@ class VectorStoreManager:
             
             try:
                 self.client = OpenAI(
-                    api_key=EMBEDDING_API_KEY,
-                    base_url=EMBEDDING_BASE_URL
+                    api_key=self.embedding_api_key,
+                    base_url=self.embedding_base_url
                 )
             finally:
                 # 恢复环境变量
@@ -179,6 +173,96 @@ class VectorStoreManager:
         except Exception as e:
             logger.warning(f"Milvus 初始化跳过 (非阻塞): {e}")
 
+    def _force_check_milvus_config(self):
+        """强制检查并更新 Milvus 配置状态"""
+        try:
+            from app.infrastructure.database import get_db, SystemConfig
+            db = next(get_db())
+            config = db.query(SystemConfig).filter(SystemConfig.key == 'llm_config').first()
+            
+            if config and config.value:
+                new_milvus_enabled = config.value.get('milvus_enabled', True)
+                # 强制更新状态
+                old_enabled = self.milvus_enabled
+                self.milvus_enabled = new_milvus_enabled
+                self.is_enabled = new_milvus_enabled and self.collection is not None
+                
+                if old_enabled != new_milvus_enabled:
+                    logger.info(f"Milvus 状态变更: {old_enabled} -> {new_milvus_enabled}")
+                    if not new_milvus_enabled:
+                        logger.info("Milvus 已禁用，停止写入操作")
+            
+            db.close()
+        except Exception as e:
+            logger.debug(f"强制检查配置失败: {e}")
+    
+    def _check_milvus_enabled(self):
+        """动态检查 Milvus 是否启用"""
+        try:
+            from app.infrastructure.database import get_db, SystemConfig
+            db = next(get_db())
+            config = db.query(SystemConfig).filter(SystemConfig.key == 'llm_config').first()
+            
+            if config and config.value:
+                # 更新启用状态
+                self.milvus_enabled = config.value.get('milvus_enabled', True)
+                # 如果状态改变，相应更新 is_enabled
+                if not self.milvus_enabled:
+                    self.is_enabled = False
+                    logger.info("Milvus 动态禁用")
+                elif self.milvus_enabled and not self.is_enabled:
+                    # 如果之前禁用现在启用，重新连接
+                    self._connect_milvus()
+                    self.collection = self._get_or_create_collection()
+                    self.is_enabled = True
+                    logger.info("Milvus 动态启用")
+            
+            db.close()
+        except Exception as e:
+            logger.debug(f"动态检查配置失败: {e}")
+    
+    def _load_dynamic_config(self):
+        """加载动态配置"""
+        try:
+            # 获取数据库会话
+            from app.infrastructure.database import get_db, SystemConfig
+            db = next(get_db())
+            config = db.query(SystemConfig).filter(SystemConfig.key == 'llm_config').first()
+            
+            if config and config.value:
+                # 使用动态配置
+                self.milvus_enabled = config.value.get('milvus_enabled', True)
+                self.milvus_host = config.value.get('milvus_host', settings.MILVUS_HOST)
+                self.milvus_port = config.value.get('milvus_port', settings.MILVUS_PORT)
+                self.milvus_collection_name = config.value.get('milvus_collection', settings.MILVUS_COLLECTION_NAME)
+                self.embedding_api_key = config.value.get('embedding_api_key', settings.embedding_api_key)
+                self.embedding_base_url = config.value.get('embedding_base_url', settings.embedding_base_url)
+                self.embedding_model = config.value.get('embedding_model', settings.EMBEDDING_MODEL)
+                self.embedding_dim = config.value.get('embedding_dim', settings.EMBEDDING_DIM)
+            else:
+                # 使用默认配置
+                self.milvus_enabled = True
+                self.milvus_host = settings.MILVUS_HOST
+                self.milvus_port = settings.MILVUS_PORT
+                self.milvus_collection_name = settings.MILVUS_COLLECTION_NAME
+                self.embedding_api_key = settings.embedding_api_key
+                self.embedding_base_url = settings.embedding_base_url
+                self.embedding_model = settings.EMBEDDING_MODEL
+                self.embedding_dim = settings.EMBEDDING_DIM
+            
+            db.close()
+        except Exception as e:
+            logger.warning(f"加载动态配置失败，使用默认配置: {e}")
+            # 回退到默认配置
+            self.milvus_enabled = True
+            self.milvus_host = settings.MILVUS_HOST
+            self.milvus_port = settings.MILVUS_PORT
+            self.milvus_collection_name = settings.MILVUS_COLLECTION_NAME
+            self.embedding_api_key = settings.EMBEDDING_API_KEY
+            self.embedding_base_url = settings.EMBEDDING_BASE_URL
+            self.embedding_model = settings.EMBEDDING_MODEL
+            self.embedding_dim = settings.EMBEDDING_DIM
+    
     def _connect_milvus(self):
         try:
             if not connections.has_connection("default"):
@@ -242,7 +326,11 @@ class VectorStoreManager:
         return hashlib.sha256(content.encode()).hexdigest()
 
     def insert_data(self, texts: List[str], metadatas: List[Dict]):
+        # 强制重新检查 Milvus 配置状态
+        self._force_check_milvus_config()
+        logger.info(f"insert_data called - is_enabled: {self.is_enabled}, has_collection: {self.collection is not None}, texts_count: {len(texts) if texts else 0}")
         if not self.is_enabled or not self.collection or not texts:
+            logger.info("Milvus 已禁用或无数据，跳过写入")
             return
 
         vectors = []
