@@ -47,6 +47,9 @@ import {
     EditOutlined,
     TagsOutlined,
     LinkOutlined,
+    DatabaseOutlined,
+    ApiOutlined,
+    ClusterOutlined,
 } from '@ant-design/icons';
 import Navbar from '../components/Layout/Navbar';
 import { OntologyNode, OntologyEdge } from '../types/ontology';
@@ -55,6 +58,8 @@ import Neo4jNode from '../components/OntologyGraph/Neo4jNode';
 import { getLayoutedElements } from '../utils/layoutUtils';
 import { systemApi } from '../api/system';
 import { MarkerType as RFMarkerType, BackgroundVariant } from 'reactflow';
+import apiClient from '../api/client';
+
 const nodeTypesMap = { custom: Neo4jNode };
 
 const OntologyBuilderPage: React.FC = () => {
@@ -91,6 +96,12 @@ const OntologyBuilderPage: React.FC = () => {
     const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
     const [configForm] = Form.useForm();
     const [isAdmin, setIsAdmin] = useState(false);
+
+    // 新增：测试连通性状态
+    const [testingLLM, setTestingLLM] = useState(false);
+    const [testingNeo4J, setTestingNeo4J] = useState(false);
+    const [testingEmbedding, setTestingEmbedding] = useState(false);
+    const [testingMilvus, setTestingMilvus] = useState(false);
 
     useEffect(() => {
         // 优先显示编辑界面，只有当明确没有projectId时才显示创建表单
@@ -704,11 +715,91 @@ const OntologyBuilderPage: React.FC = () => {
     const handleSaveConfig = async () => {
         try {
             const values = await configForm.validateFields();
-            await systemApi.updateConfig('llm_config', values);
+            // 确保所有配置项都包含在values中
+            const configValues = {
+                ...values,
+                // 确保布尔值正确转换
+                streaming_enabled: values.streaming_enabled === true,
+                milvus_enabled: values.milvus_enabled === true,
+            };
+            await systemApi.updateConfig('llm_config', configValues);
             message.success('系统配置已保存');
             setIsConfigModalOpen(false);
         } catch (error) {
             console.error('保存配置失败:', error);
+            message.error('保存配置失败，请检查输入');
+        }
+    };
+
+    // 新增：测试大模型连通性
+    const testLLMConnectivity = async () => {
+        setTestingLLM(true);
+        try {
+            const values = await configForm.validateFields();
+            const response = await apiClient.post('/api/system/test-connectivity/llm', values);
+            if (response.data.status === 'success') {
+                message.success(response.data.message);
+            } else {
+                message.error(response.data.message);
+            }
+        } catch (error: any) {
+            message.error(`大模型连通性测试失败: ${error.response?.data?.message || error.message}`);
+        } finally {
+            setTestingLLM(false);
+        }
+    };
+
+    // 新增：测试Neo4j连通性
+    const testNeo4JConnectivity = async () => {
+        setTestingNeo4J(true);
+        try {
+            const values = await configForm.validateFields();
+            const response = await apiClient.post('/api/system/test-connectivity/neo4j', values);
+            if (response.data.status === 'success') {
+                message.success(response.data.message);
+            } else {
+                message.error(response.data.message);
+            }
+        } catch (error: any) {
+            message.error(`Neo4j连通性测试失败: ${error.response?.data?.message || error.message}`);
+        } finally {
+            setTestingNeo4J(false);
+        }
+    };
+
+    // 新增：测试Embedding连通性
+    const testEmbeddingConnectivity = async () => {
+        setTestingEmbedding(true);
+        try {
+            const values = await configForm.validateFields();
+            const response = await apiClient.post('/api/system/test-connectivity/embedding', values);
+            if (response.data.status === 'success') {
+                message.success(response.data.message);
+            } else {
+                message.error(response.data.message);
+            }
+        } catch (error: any) {
+            message.error(`Embedding连通性测试失败: ${error.response?.data?.message || error.message}`);
+        } finally {
+            setTestingEmbedding(false);
+        }
+    };
+
+    // 新增：测试Milvus连通性
+    const testMilvusConnectivity = async () => {
+        setTestingMilvus(true);
+        try {
+            const values = await configForm.validateFields();
+            const response = await apiClient.post('/api/system/test-connectivity/milvus', values);
+            if (response.data.status === 'success') {
+                message.success(response.data.message);
+            } else {
+                message.error(response.data.message);
+            }
+        } catch (error: any) {
+            message.error(`Milvus连通性测试失败: ${error.response?.data?.message || error.message}`);
+        } finally {
+            setTestingMilvus(false);
         }
     };
 
@@ -844,17 +935,6 @@ const OntologyBuilderPage: React.FC = () => {
                                                 </Button>
                                             </Tooltip>
                                         </Upload>
-
-                                        {isAdmin && (
-                                            <Tooltip title="模型服务配置">
-                                                <Button
-                                                    icon={<SettingOutlined />}
-                                                    onClick={openConfigModal}
-                                                >
-                                                    配置
-                                                </Button>
-                                            </Tooltip>
-                                        )}
 
                                         <Button
                                             icon={<DeploymentUnitOutlined />}
@@ -1263,7 +1343,16 @@ const OntologyBuilderPage: React.FC = () => {
                                     model: '',
                                     chunk_size: 15000,
                                     chunk_overlap: 500,
-                                    request_interval: 2
+                                    request_interval: 2,
+                                    streaming_enabled: false,
+                                    milvus_enabled: false,
+                                    neo4j_uri: 'bolt://localhost:7687',
+                                    neo4j_username: 'neo4j',
+                                    neo4j_password: 'password',
+                                    embedding_base_url: 'http://localhost:11434/v1',
+                                    embedding_model: 'nomic-embed-text:latest',
+                                    milvus_host: '127.0.0.1',
+                                    milvus_port: '19530'
                                 }}
                             >
                                 <div className="grid grid-cols-2 gap-4">
@@ -1314,6 +1403,127 @@ const OntologyBuilderPage: React.FC = () => {
                                     >
                                         <Input type="number" suffix="秒" />
                                     </Form.Item>
+
+                                    {/* 新增：大模型流式开关 */}
+                                    <Form.Item
+                                        name="streaming_enabled"
+                                        valuePropName="checked"
+                                        className="col-span-2"
+                                    >
+                                        <Switch checkedChildren="流式启用" unCheckedChildren="流式禁用" />
+                                    </Form.Item>
+
+                                    {/* 新增：Neo4j配置 */}
+                                    <Form.Item
+                                        name="neo4j_uri"
+                                        label="Neo4j URI"
+                                        className="col-span-2"
+                                        rules={[{ required: true, message: '请输入 Neo4j URI' }]}
+                                    >
+                                        <Input placeholder="例如: bolt://localhost:7687" />
+                                    </Form.Item>
+
+                                    <Form.Item
+                                        name="neo4j_username"
+                                        label="Neo4j 用户名"
+                                        className="col-span-1"
+                                        rules={[{ required: true, message: '请输入 Neo4j 用户名' }]}
+                                    >
+                                        <Input placeholder="neo4j" />
+                                    </Form.Item>
+
+                                    <Form.Item
+                                        name="neo4j_password"
+                                        label="Neo4j 密码"
+                                        className="col-span-1"
+                                        rules={[{ required: true, message: '请输入 Neo4j 密码' }]}
+                                    >
+                                        <Input.Password placeholder="password" />
+                                    </Form.Item>
+
+                                    {/* 新增：Milvus配置 */}
+                                    <Form.Item
+                                        name="milvus_enabled"
+                                        valuePropName="checked"
+                                        className="col-span-2"
+                                    >
+                                        <Switch checkedChildren="Milvus启用" unCheckedChildren="Milvus禁用" />
+                                    </Form.Item>
+
+                                    <Form.Item
+                                        name="embedding_base_url"
+                                        label="Embedding API 地址"
+                                        className="col-span-2"
+                                        rules={[{ required: true, message: '请输入 Embedding API 地址' }]}
+                                    >
+                                        <Input placeholder="例如: http://localhost:11434/v1" />
+                                    </Form.Item>
+
+                                    <Form.Item
+                                        name="embedding_model"
+                                        label="Embedding 模型"
+                                        className="col-span-2"
+                                        rules={[{ required: true, message: '请输入 Embedding 模型名称' }]}
+                                    >
+                                        <Input placeholder="例如: nomic-embed-text:latest" />
+                                    </Form.Item>
+
+                                    <Form.Item
+                                        name="milvus_host"
+                                        label="Milvus 主机"
+                                        className="col-span-1"
+                                        rules={[{ required: true, message: '请输入 Milvus 主机地址' }]}
+                                    >
+                                        <Input placeholder="127.0.0.1" />
+                                    </Form.Item>
+
+                                    <Form.Item
+                                        name="milvus_port"
+                                        label="Milvus 端口"
+                                        className="col-span-1"
+                                        rules={[{ required: true, message: '请输入 Milvus 端口' }]}
+                                    >
+                                        <Input placeholder="19530" />
+                                    </Form.Item>
+                                </div>
+
+                                {/* 新增：测试连通性区域 */}
+                                <div className="mt-6 pt-4 border-t border-gray-200">
+                                    <h3 className="font-medium text-gray-700 mb-3">连通性测试</h3>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <Button 
+                                            type="default"
+                                            onClick={testLLMConnectivity}
+                                            loading={testingLLM}
+                                            icon={<CloudServerOutlined />}
+                                        >
+                                            测试大模型连通性
+                                        </Button>
+                                        <Button 
+                                            type="default"
+                                            onClick={testNeo4JConnectivity}
+                                            loading={testingNeo4J}
+                                            icon={<DatabaseOutlined />}
+                                        >
+                                            测试Neo4j连通性
+                                        </Button>
+                                        <Button 
+                                            type="default"
+                                            onClick={testEmbeddingConnectivity}
+                                            loading={testingEmbedding}
+                                            icon={<ApiOutlined />}
+                                        >
+                                            测试Embedding连通性
+                                        </Button>
+                                        <Button 
+                                            type="default"
+                                            onClick={testMilvusConnectivity}
+                                            loading={testingMilvus}
+                                            icon={<ClusterOutlined />}
+                                        >
+                                            测试Milvus连通性
+                                        </Button>
+                                    </div>
                                 </div>
                             </Form>
                         </Modal>
