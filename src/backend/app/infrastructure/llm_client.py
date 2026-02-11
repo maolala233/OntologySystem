@@ -15,36 +15,58 @@ from app.core.logging import logger
 
 class LLMClient:
     def __init__(self, api_key: str = None, base_url: str = None, model: str = None):
-        # 优先使用传入的参数，如果没有则使用settings中的默认值
+        """初始化 LLM 客户端"""
         from app.core.config import settings
-        self.api_key = api_key or settings.LLM_API_KEY
-        self.base_url = self._clean_base_url(base_url or settings.LLM_BASE_URL)
-        self.model = model or settings.LLM_MODEL_NAME
+        from app.core.logging import logger
         
-        # 检查是否为外部API（需要代理）
-        is_external_api = self.base_url and ('openrouter' in self.base_url.lower() or 'api.' in self.base_url.lower() or 
-                                             'http' in self.base_url and 'localhost' not in self.base_url and 
-                                             '127.0.0.1' not in self.base_url and '.lan' not in self.base_url)
+        # 1. 基础参数赋值 - 确保 self.model 最先设置
+        self.api_key = api_key if api_key is not None else settings.LLM_API_KEY
+        self.model = model if model is not None else settings.LLM_MODEL_NAME
         
-        # 准备客户端参数
+        # 2. 地址处理
+        raw_url = base_url if base_url is not None else settings.LLM_BASE_URL
+        self.base_url = self._clean_base_url(raw_url)
+        
+        logger.info(f"LLMClient 正在初始化: model={self.model}, base_url={self.base_url}")
+        
+        # 3. 检查是否为外部API（需要代理）
+        is_external_api = False
+        if self.base_url:
+            lowercase_url = self.base_url.lower()
+            is_external_api = ('openrouter' in lowercase_url or 'api.' in lowercase_url or 
+                              ('http' in lowercase_url and 'localhost' not in lowercase_url and 
+                               '127.0.0.1' not in lowercase_url and '.lan' not in lowercase_url))
+        
+        # 4. 准备客户端参数
         client_kwargs = {
             "base_url": self.base_url,
-            "api_key": self.api_key if self.api_key else "EMPTY",  # 根据项目规范，即使为空也应允许连接VLLM
-            "timeout": 60.0
+            "api_key": self.api_key if self.api_key else "EMPTY",
+            "timeout": 300.0
         }
         
-        # 设置默认headers
-        # 根据项目规范，对于VLLM服务，即使API_KEY为"EMPTY"也需要正确处理
+        # 5. 设置认证头
+        headers = {}
         if self.api_key and self.api_key != "EMPTY":
-            client_kwargs["default_headers"] = {"Authorization": f"Bearer {self.api_key}"}
-        elif self.api_key == "EMPTY" and ('localhost' in self.base_url or '127.0.0.1' in self.base_url):
-            # 对于VLLM服务，当API_KEY为"EMPTY"且是本地地址时，设置相应的认证头
-            client_kwargs["default_headers"] = {"Authorization": "Bearer EMPTY"}
-        elif self.api_key == "EMPTY":
-            # 对于其他服务，如果API_KEY为"EMPTY"，设置相应的认证头
-            client_kwargs["default_headers"] = {"Authorization": "Bearer EMPTY"}
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        else:
+            headers["Authorization"] = "Bearer EMPTY"
+        client_kwargs["default_headers"] = headers
         
+        # 6. 代理配置
         if is_external_api:
+            try:
+                client_kwargs["http_client"] = self._create_proxy_http_client()
+                logger.info("LLMClient 已启用代理连接")
+            except Exception as e:
+                logger.warning(f"代理配置失败，使用默认连接: {e}")
+        
+        # 7. 最终创建客户端
+        try:
+            self.client = OpenAI(**client_kwargs)
+            logger.info("LLMClient 初始化完成")
+        except Exception as e:
+            logger.error(f"LLMClient 创建失败: {e}")
+            raise
             # 对于外部API，使用代理
             try:
                 client_kwargs["http_client"] = self._create_proxy_http_client()
@@ -113,20 +135,30 @@ class LLMClient:
         if not url: 
             return ""
         url = url.strip()
+        # 移除末尾斜杠
         if url.endswith("/"): 
             url = url[:-1]
+        
+        # 移除常见的后缀，保留基础 API 路径
+        # OpenAI SDK 会自动补全 /chat/completions
         if url.endswith("/chat/completions"): 
             url = url.replace("/chat/completions", "")
+        if url.endswith("/completions"):
+            url = url.replace("/completions", "")
+            
         return url
 
     def call_llm(self, system_prompt: str, user_prompt: str, max_retries: int = 3, stream: bool = True) -> Dict[str, Any]:
         """
         调用 LLM 接口
         """
+        from app.core.logging import logger
+        model_name = getattr(self, 'model', 'unknown-model')
+        logger.info(f"正在发起 LLM 调用: model={model_name}, stream={stream}")
         for attempt in range(max_retries):
             try:
                 response = self.client.chat.completions.create(
-                    model=self.model,
+                    model=model_name,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}

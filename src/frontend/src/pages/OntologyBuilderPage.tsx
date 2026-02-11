@@ -465,21 +465,26 @@ const OntologyBuilderPage: React.FC = () => {
         setLoading(true);
 
         try {
+            console.log('Starting extraction with rules:', values.rules);
             const response = await projectsApi.uploadDocument(Number(projectId), pendingFile, values.rules);
+            console.log('Extraction response:', response);
 
             // 将提取的本体数据渲染到画布，并执行自动布局
-            if (response.nodes) {
+            if (response.nodes && response.nodes.length > 0) {
                 const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
                     response.nodes,
                     response.edges || []
                 );
                 setNodes(layoutedNodes);
                 setEdges(layoutedEdges);
+                message.success(response.message || '本体处理成功！');
+            } else {
+                message.warning('提取完成，但未发现有效的本体节点，请检查模型配置或文档内容');
             }
-
-            message.success(response.message || '本体处理成功！');
         } catch (error: any) {
-            message.error(error.response?.data?.detail || '提取失败');
+            console.error('Extraction error:', error);
+            const errorDetail = error.response?.data?.detail || error.message || '未知错误';
+            message.error(`提取失败: ${errorDetail}`);
         } finally {
             setLoading(false);
             setPendingFile(null);
@@ -1120,6 +1125,111 @@ const OntologyBuilderPage: React.FC = () => {
                                 </Form>
                             )}
                         </Drawer>
+
+                        {/* 抽取规则定义 Modal */}
+                        <Modal
+                            title={
+                                <div className="flex items-center space-x-2">
+                                    <CloudUploadOutlined style={{ color: '#indigo' }} />
+                                    <span>定义抽取规则 (可选)</span>
+                                </div>
+                            }
+                            open={isRuleModalOpen}
+                            onOk={handleStartExtraction}
+                            onCancel={() => setIsRuleModalOpen(false)}
+                            okText="开始提取"
+                            cancelText="取消"
+                            width={650}
+                        >
+                            <div className="mb-4 text-gray-500 text-sm">
+                                请在下方输入一些规则或范本，帮助 AI 更准确地从文档中提取您关注的内容。留空则按通用模式提取。
+                            </div>
+                            <Form form={ruleForm} layout="vertical">
+                                <Form.Item
+                                    name="rules"
+                                    label="抽取指令 / 规则"
+                                    tooltip="例如：'重点提取产品技术参数' 或 '仅提取涉及公司关系的实体'"
+                                >
+                                    <Input.TextArea
+                                        rows={6}
+                                        placeholder="请输入提取规则或提示词..."
+                                    />
+                                </Form.Item>
+                            </Form>
+                        </Modal>
+
+                        {/* 创建新关系 Modal */}
+                        <Modal
+                            title="创建新关系"
+                            open={isAddRelationModalOpen}
+                            onOk={handleConfirmNewRelation}
+                            onCancel={() => setIsAddRelationModalOpen(false)}
+                            okText="创建"
+                            cancelText="取消"
+                        >
+                            <Form form={relationForm} layout="vertical">
+                                <Form.Item
+                                    name="sourceNodeId"
+                                    label="起始节点"
+                                    rules={[{ required: true, message: '请选择起始节点' }]}
+                                >
+                                    <Select
+                                        showSearch
+                                        placeholder="选择起始节点"
+                                        optionFilterProp="label"
+                                        options={nodes.map(node => ({
+                                            label: `${node.data.label} (${node.data.type})`,
+                                            value: node.id
+                                        }))}
+                                    />
+                                </Form.Item>
+                                <Form.Item
+                                    name="targetNodeId"
+                                    label="目标节点"
+                                    rules={[{ required: true, message: '请选择目标节点' }]}
+                                >
+                                    <Select
+                                        showSearch
+                                        placeholder="选择目标节点"
+                                        optionFilterProp="label"
+                                        options={nodes.map(node => ({
+                                            label: `${node.data.label} (${node.data.type})`,
+                                            value: node.id
+                                        }))}
+                                    />
+                                </Form.Item>
+                                <Form.Item
+                                    name="relationType"
+                                    label="关系类型"
+                                    rules={[{ required: true, message: '请选择或输入关系类型' }]}
+                                >
+                                    <Select
+                                        showSearch
+                                        placeholder="选择或输入自定义关系类型"
+                                        optionFilterProp="label"
+                                        options={relationTypes}
+                                        dropdownRender={(menu) => (
+                                            <>
+                                                {menu}
+                                                <Divider style={{ margin: '8px 0' }} />
+                                                <div style={{ padding: '4px 8px', cursor: 'pointer' }}>
+                                                    <Input
+                                                        placeholder="输入自定义关系类型"
+                                                        value={customRelationType}
+                                                        onChange={(e) => setCustomRelationType(e.target.value)}
+                                                        onPressEnter={() => {
+                                                            if (customRelationType.trim()) {
+                                                                relationForm.setFieldsValue({ relationType: customRelationType.trim() });
+                                                            }
+                                                        }}
+                                                    />
+                                                </div>
+                                            </>
+                                        )}
+                                    />
+                                </Form.Item>
+                            </Form>
+                        </Modal>
 
                         {/* 系统配置 Modal */}
                         <Modal

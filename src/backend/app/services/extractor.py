@@ -239,6 +239,7 @@ class OntologyExtractor:
             return uri_cache[safe]
 
         for i, chunk_text in enumerate(chunks):
+            logger.info(f"Processing chunk {i+1}/{total_chunks} (size: {len(chunk_text)})")
             if progress: progress((i + 1) / total_chunks, desc=f"AI 处理中 {i + 1}/{total_chunks}...")
             
             # 1. 原始文本切片入库
