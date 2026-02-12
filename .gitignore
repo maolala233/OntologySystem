@@ -7,8 +7,11 @@ src/backend/logs/
 testfile/
 src/backend/TTL/
 src/frontend/node_modules/
+
 # files
 *.pyc
 .env
+*.ttl
+*.log
 
 

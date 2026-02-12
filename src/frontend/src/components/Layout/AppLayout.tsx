@@ -204,7 +204,8 @@ const AppLayout: React.FC = () => {
                 onCollapse={setCollapsed}
                 theme="dark"
                 width={240}
-                className="shadow-lg"
+                className="shadow-lg sticky top-0 h-screen flex flex-col"
+                style={{ position: 'sticky', top: 0, height: '100vh' }}
             >
                 {/* Logo 区域 */}
                 <div className="h-16 flex items-center justify-center bg-[#001529] border-b border-gray-700">
@@ -219,33 +220,44 @@ const AppLayout: React.FC = () => {
                 </div>
 
                 {/* 导航菜单 */}
-                <Menu
-                    theme="dark"
-                    mode="inline"
-                    selectedKeys={[location.pathname]}
-                    items={menuItems}
-                    onClick={({ key }) => {
-                        if (key === 'system-config-trigger') {
-                            openConfigModal();
-                        } else {
-                            navigate(key);
-                        }
-                    }}
-                    className="border-r-0"
-                />
+                <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+                    <Menu
+                        theme="dark"
+                        mode="inline"
+                        selectedKeys={[location.pathname]}
+                        items={menuItems}
+                        onClick={({ key }) => {
+                            if (key === 'system-config-trigger') {
+                                openConfigModal();
+                            } else {
+                                navigate(key);
+                            }
+                        }}
+                        className="border-r-0"
+                    />
+                </div>
 
-                {/* 用户信息 */}
-                <div className="absolute bottom-4 left-0 right-0 px-4">
+                {/* 用户信息 - 强制贴合在底部收起按钮上方 */}
+                <div
+                    className="px-4"
+                    style={{
+                        marginTop: 'auto',
+                        paddingBottom: '48px', // 精确匹配 Ant Design Sider Trigger 的高度
+                        zIndex: 10,
+                        position: 'relative',
+                        background: 'transparent'
+                    }}
+                >
                     <Dropdown menu={{ items: userMenuItems }} placement="topRight">
-                        <div className="flex items-center space-x-3 p-3 rounded-lg hover:bg-gray-700 cursor-pointer transition-colors">
+                        <div className="flex items-center space-x-3 p-2 rounded-lg hover:bg-gray-700 cursor-pointer transition-colors">
                             <Avatar
                                 size={collapsed ? 32 : 40}
                                 icon={<UserOutlined />}
                                 className="bg-gradient-to-br from-blue-500 to-purple-600"
                             />
                             {!collapsed && (
-                                <div className="flex-1 overflow-hidden">
-                                    <div className="text-white text-sm font-medium truncate">
+                                <div className="flex-1">
+                                    <div className="text-white text-sm font-medium">
                                         {user.username || '用户'}
                                     </div>
                                 </div>
@@ -436,7 +448,7 @@ const AppLayout: React.FC = () => {
                     <div className="mt-6 pt-4 border-t border-gray-200">
                         <h3 className="font-medium text-gray-700 mb-3">连通性测试</h3>
                         <div className="grid grid-cols-2 gap-3">
-                            <Button 
+                            <Button
                                 type="default"
                                 onClick={testLLMConnectivity}
                                 loading={testingLLM}
@@ -444,7 +456,7 @@ const AppLayout: React.FC = () => {
                             >
                                 测试大模型连通性
                             </Button>
-                            <Button 
+                            <Button
                                 type="default"
                                 onClick={testNeo4JConnectivity}
                                 loading={testingNeo4J}
@@ -452,7 +464,7 @@ const AppLayout: React.FC = () => {
                             >
                                 测试Neo4j连通性
                             </Button>
-                            <Button 
+                            <Button
                                 type="default"
                                 onClick={testEmbeddingConnectivity}
                                 loading={testingEmbedding}
@@ -460,7 +472,7 @@ const AppLayout: React.FC = () => {
                             >
                                 测试Embedding连通性
                             </Button>
-                            <Button 
+                            <Button
                                 type="default"
                                 onClick={testMilvusConnectivity}
                                 loading={testingMilvus}

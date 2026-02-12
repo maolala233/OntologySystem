@@ -60,6 +60,11 @@ body,
 }
 
 /* Ant Design 自定义样式 */
+.ant-layout-sider-children {
+  display: flex !important;
+  flex-direction: column;
+}
+
 .ant-card-hoverable:hover {
   border-color: #3b82f6;
 }
