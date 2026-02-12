@@ -393,26 +393,27 @@ const OntologyBuilderPage: React.FC = () => {
         });
     };
 
-    // 保存草稿 - 修改为同时更新TTL文件
+    // 保存草稿 - 同时更新项目数据、TTL文件和图数据库(Neo4j)
     const handleSaveDraft = async () => {
         if (!projectId) return;
 
         setLoading(true);
         try {
-            // 先更新项目图数据（保持原有逻辑）
+            // 1. 先更新项目基础数据
             await projectsApi.updateProject(Number(projectId), {
                 graph_data: { nodes, edges },
             });
 
-            // 然后触发TTL文件重新生成（关键修复）
-            const updateResponse = await projectsApi.updateOntology(Number(projectId), { nodes, edges });
+            // 2. 触发后端同步更新 (包含TTL生成和Neo4j同步)
+            // 后端 updateOntology 现在已经集成了 neo4jSync
+            await projectsApi.updateOntology(Number(projectId), { nodes, edges });
 
             // 更新最后保存状态
             setLastSavedNodes([...nodes]);
             setLastSavedEdges([...edges]);
             setHasUnsavedChanges(false);
 
-            message.success('草稿已保存，TTL文件已同步更新');
+            message.success('草稿已保存，已自动同步到图数据库(Neo4j)');
         } catch (error) {
             message.error('保存失败，请重试');
         } finally {
@@ -420,40 +421,50 @@ const OntologyBuilderPage: React.FC = () => {
         }
     };
 
-    // 发布项目
-    const handlePublish = async () => {
+    // 发布/取消发布项目
+    const handleTogglePublish = async () => {
         if (!projectId) return;
 
+        const actionText = isPublished ? '取消发布' : '发布资产';
+        const contentText = isPublished
+            ? '取消发布后，该本体将从资产中心下架。确定吗？'
+            : '发布后，您的本体将在资产中心公开展示。确定要发布吗？';
+
         Modal.confirm({
-            title: '确认发布',
-            content: '发布后，本体将同步到 Neo4j 图数据库，并在资产中心公开展示。确定要发布吗？',
-            okText: '确定发布',
+            title: `确认${actionText}`,
+            content: contentText,
+            okText: `确定${actionText}`,
             cancelText: '取消',
             onOk: async () => {
                 setLoading(true);
                 try {
-                    // 先保存当前图数据并更新TTL文件（关键修复）
-                    await projectsApi.updateProject(Number(projectId), {
-                        graph_data: { nodes, edges },
-                    });
-
-                    // 然后触发TTL文件重新生成（确保Neo4j同步的是最新数据）
-                    const updateResponse = await projectsApi.updateOntology(Number(projectId), { nodes, edges });
-
-                    // 最后发布到Neo4j
-                    await projectsApi.publishProject(Number(projectId));
-                    message.success('发布成功！本体已同步到图数据库');
+                    if (isPublished) {
+                        await projectsApi.unpublishProject(Number(projectId));
+                        message.success('已取消发布');
+                    } else {
+                        // 发布前确保最新更改已同步
+                        if (hasUnsavedChanges) {
+                            await projectsApi.updateProject(Number(projectId), {
+                                graph_data: { nodes, edges },
+                            });
+                            await projectsApi.updateOntology(Number(projectId), { nodes, edges });
+                        }
+                        await projectsApi.publishProject(Number(projectId));
+                        message.success('发布成功！已在资产中心公开展示');
+                    }
 
                     // 重新获取项目信息，更新isPublished状态
-                    const project = await projectsApi.getProject(Number(projectId));
-                    setIsPublished(project.is_published);
+                    const updatedProject = await projectsApi.getProject(Number(projectId));
+                    setIsPublished(updatedProject.is_published);
 
-                    // 更新最后保存状态
-                    setLastSavedNodes([...nodes]);
-                    setLastSavedEdges([...edges]);
-                    setHasUnsavedChanges(false);
+                    // 如果刚才是执行发布操作并成功了，则重置未保存更改状态
+                    if (!isPublished && updatedProject.is_published) {
+                        setHasUnsavedChanges(false);
+                        setLastSavedNodes([...nodes]);
+                        setLastSavedEdges([...edges]);
+                    }
                 } catch (error: any) {
-                    message.error(error.response?.data?.detail || '发布失败');
+                    message.error(error.response?.data?.detail || `${actionText}失败`);
                 } finally {
                     setLoading(false);
                 }
@@ -994,19 +1005,20 @@ const OntologyBuilderPage: React.FC = () => {
                                             icon={<SaveOutlined />}
                                             onClick={handleSaveDraft}
                                             loading={loading}
+                                            type={hasUnsavedChanges ? "primary" : "default"}
+                                            ghost={hasUnsavedChanges}
                                         >
                                             保存草稿
                                         </Button>
 
                                         <Button
-                                            type="primary"
-                                            icon={<CloudServerOutlined />}
-                                            onClick={handlePublish}
+                                            type={isPublished ? "default" : "primary"}
+                                            icon={isPublished ? <EyeOutlined /> : <CloudServerOutlined />}
+                                            onClick={handleTogglePublish}
                                             loading={loading}
-                                            className="bg-green-600 hover:bg-green-700"
-                                            disabled={!hasUnsavedChanges && !loading} /* 仅在有未保存更改时启用 */
+                                            className={isPublished ? "" : "bg-green-600 hover:bg-green-700"}
                                         >
-                                            {hasUnsavedChanges ? '同步至 Neo4j' : '已同步 Neo4j'}
+                                            {isPublished ? '已发布资产 (点击关闭)' : '发布资产中心'}
                                         </Button>
 
                                         {/* 新增：下载TTL按钮 */}

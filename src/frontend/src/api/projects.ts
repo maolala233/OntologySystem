@@ -52,6 +52,12 @@ export const projectsApi = {
         return response.data;
     },
 
+    // 取消发布项目
+    unpublishProject: async (projectId: number): Promise<ProjectData> => {
+        const response = await apiClient.post(`/api/projects/${projectId}/unpublish`);
+        return response.data;
+    },
+
     // 删除项目
     deleteProject: async (projectId: number): Promise<void> => {
         await apiClient.delete(`/api/projects/${projectId}`);
@@ -61,12 +67,12 @@ export const projectsApi = {
     uploadDocument: async (projectId: number, file: File, params?: { scenario?: string; entities_df?: any }): Promise<any> => {
         const formData = new FormData();
         formData.append('file', file);
-        
+
         // 添加场景描述（如果存在）
         if (params?.scenario && params.scenario.trim()) {
             formData.append('scenario', params.scenario);
         }
-        
+
         // 添加结构化规则（如果存在）
         if (params?.entities_df) {
             // 将结构化数据转换为JSON字符串
@@ -101,7 +107,7 @@ export const projectsApi = {
         const response = await apiClient.get(`/api/projects/${projectId}/download-ttl`, {
             responseType: 'blob'
         });
-        
+
         // 创建下载链接
         const url = window.URL.createObjectURL(new Blob([response.data]));
         const link = document.createElement('a');
@@ -111,7 +117,7 @@ export const projectsApi = {
         link.click();
         link.remove();
         window.URL.revokeObjectURL(url);
-        
+
         return response.data;
     },
 };

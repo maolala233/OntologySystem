@@ -171,6 +171,27 @@ def publish_project(
     
     return db_project
 
+# 取消发布项目
+@router.post("/{project_id}/unpublish", response_model=ProjectResponse)
+def unpublish_project(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    db_project = db.query(Project).filter(Project.id == project_id).first()
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    # 权限检查：只有创建者可以取消发布
+    if db_project.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="No permission to unpublish this project")
+    
+    db_project.is_published = False
+    db.commit()
+    db.refresh(db_project)
+    
+    return db_project
+
 # 上传文档并提取本体
 @router.post("/{project_id}/upload")
 async def upload_document(
@@ -598,6 +619,14 @@ async def update_ontology(
         # 更新项目中的图数据
         db_project.graph_data = {"nodes": nodes, "edges": edges}
         
+        # 同步到 Neo4j (关键更新：保存草稿时同步到图数据库)
+        try:
+            neo4j_client.sync_graph(db_project.id, db_project.graph_data)
+        except Exception as e:
+            from app.core.logging import logger
+            logger.error(f"Neo4j sync error during update: {str(e)}")
+            # 这里不抛出异常，让基本数据的保存继续完成
+
         # 使用更新后的图数据重新生成TTL
         ttl_content = generate_ttl_from_react_flow(nodes, edges)
         
@@ -609,8 +638,9 @@ async def update_ontology(
         return {
             "nodes": nodes,
             "edges": edges,
-            "message": f"成功更新本体，包含 {len(nodes)} 个实体和 {len(edges)} 个关系",
-            "ttl_updated": True
+            "message": f"成功更新本体并同步Neo4j，包含 {len(nodes)} 个实体和 {len(edges)} 个关系",
+            "ttl_updated": True,
+            "neo4j_synced": True
         }
     
     except Exception as e:
