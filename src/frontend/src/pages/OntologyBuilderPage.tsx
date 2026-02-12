@@ -29,6 +29,7 @@ import {
     Tag,
     Divider,
     Switch,
+    Table,
 } from 'antd';
 import {
     SaveOutlined,
@@ -1219,20 +1220,92 @@ const OntologyBuilderPage: React.FC = () => {
                             onCancel={() => setIsRuleModalOpen(false)}
                             okText="开始提取"
                             cancelText="取消"
-                            width={650}
+                            width={800}
                         >
                             <div className="mb-4 text-gray-500 text-sm">
-                                请在下方输入一些规则或范本，帮助 AI 更准确地从文档中提取您关注的内容。留空则按通用模式提取。
+                                请在下方配置主体、属性和关系，帮助 AI 更准确地从文档中提取您关注的内容。留空则按通用模式提取。
                             </div>
                             <Form form={ruleForm} layout="vertical">
+                                {/* 主体 (Class) 表格 */}
+                                <SectionTitle icon={<DatabaseOutlined />} title="主体 (Class)" />
+                                <Form.List name="classes">
+                                    {(fields, { add, remove }) => (
+                                        <>
+                                            <div className="overflow-x-auto mb-4">
+                                                <table className="min-w-full divide-y divide-gray-200 border border-gray-200 rounded-lg">
+                                                    <thead className="bg-gray-50">
+                                                        <tr>
+                                                            <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/3">
+                                                                主体 (Class)
+                                                            </th>
+                                                            <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/3">
+                                                                属性 (DataProp)
+                                                            </th>
+                                                            <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/3">
+                                                                关系 (ObjectProp)
+                                                            </th>
+                                                            <th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-12">
+                                                                操作
+                                                            </th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody className="bg-white divide-y divide-gray-200">
+                                                        {fields.map(({ key, name, ...restField }) => (
+                                                            <tr key={key} className="hover:bg-gray-50">
+                                                                <td className="px-4 py-3 whitespace-nowrap">
+                                                                    <Form.Item
+                                                                        {...restField}
+                                                                        name={[name, 'class']}
+                                                                        rules={[{ required: true, message: '主体名称不能为空' }]}
+                                                                        noStyle
+                                                                    >
+                                                                        <Input placeholder="例如: 技术与知识领域" />
+                                                                    </Form.Item>
+                                                                </td>
+                                                                <td className="px-4 py-3 whitespace-nowrap">
+                                                                    <Form.Item
+                                                                        {...restField}
+                                                                        name={[name, 'properties']}
+                                                                        noStyle
+                                                                    >
+                                                                        <Input placeholder="例如: 描述, 成熟度" />
+                                                                    </Form.Item>
+                                                                </td>
+                                                                <td className="px-4 py-3 whitespace-nowrap">
+                                                                    <Form.Item
+                                                                        {...restField}
+                                                                        name={[name, 'relations']}
+                                                                        noStyle
+                                                                    >
+                                                                        <Input placeholder="例如: 支撑(创新载体), 应用于(业务价值)" />
+                                                                    </Form.Item>
+                                                                </td>
+                                                                <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
+                                                                    <MinusCircleOutlined
+                                                                        onClick={() => remove(name)}
+                                                                        className="text-red-500 hover:text-red-700 cursor-pointer"
+                                                                    />
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                            <Button type="dashed" onClick={() => add()} block icon={<PlusOutlined />}>添加主体配置</Button>
+                                        </>
+                                    )}
+                                </Form.List>
+                                
+                                {/* 场景描述 */}
+                                <SectionTitle icon={<InfoCircleOutlined />} title="场景描述 (可选)" />
                                 <Form.Item
-                                    name="rules"
-                                    label="抽取指令 / 规则"
-                                    tooltip="例如：'重点提取产品技术参数' 或 '仅提取涉及公司关系的实体'"
+                                    name="scenario"
+                                    label="场景描述"
+                                    tooltip="例如：分析这份半导体行业研报..."
                                 >
                                     <Input.TextArea
-                                        rows={6}
-                                        placeholder="请输入提取规则或提示词..."
+                                        rows={3}
+                                        placeholder="请输入场景描述，帮助AI理解上下文..."
                                     />
                                 </Form.Item>
                             </Form>

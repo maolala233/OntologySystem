@@ -58,11 +58,19 @@ export const projectsApi = {
     },
 
     // 上传文档并提取本体
-    uploadDocument: async (projectId: number, file: File, scenario?: string): Promise<any> => {
+    uploadDocument: async (projectId: number, file: File, params?: { scenario?: string; entities_df?: any }): Promise<any> => {
         const formData = new FormData();
         formData.append('file', file);
-        if (scenario) {
-            formData.append('scenario', scenario);
+        
+        // 添加场景描述（如果存在）
+        if (params?.scenario && params.scenario.trim()) {
+            formData.append('scenario', params.scenario);
+        }
+        
+        // 添加结构化规则（如果存在）
+        if (params?.entities_df) {
+            // 将结构化数据转换为JSON字符串
+            formData.append('entities_df', JSON.stringify(params.entities_df));
         }
 
         const response = await apiClient.post(`/api/projects/${projectId}/upload`, formData, {
