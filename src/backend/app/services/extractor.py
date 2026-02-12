@@ -144,6 +144,32 @@ class OntologyExtractor:
             rule_text += "  (表格为空，请完全依据【核心本体定义文档】中的逻辑体系进行构建)\n"
         return rule_text
 
+    def _get_streaming_config(self) -> bool:
+        """
+        从系统配置中获取流式启用状态
+        """
+        try:
+            from app.infrastructure.database import get_db, SystemConfig
+            
+            # 每次都创建新的数据库会话
+            db = next(get_db())
+            # 查询配置
+            config = db.query(SystemConfig).filter(SystemConfig.key == 'llm_config').first()
+            
+            if config and config.value:
+                # 清除缓存并刷新数据
+                db.expire(config)
+                db.refresh(config)
+                streaming_enabled = config.value.get('streaming_enabled', True)
+                db.close()
+                return streaming_enabled
+            
+            db.close()
+            return True  # 默认启用流式
+        except Exception as e:
+            logger.warning(f"获取流式配置失败，使用默认值: {e}")
+            return True
+    
     def _analyze_global_schema(self, sample_text: str, scenario_desc: str) -> str:
         """
         对长文档进行预分析，提取全局 Schema 框架。
@@ -151,7 +177,9 @@ class OntologyExtractor:
         system_prompt = "你是一位本体建模专家。请分析提供的文本片段，提取出最核心的类(Classes)和关系(Properties)框架，以便后续详细提取时保持一致性。"
         user_prompt = f"场景描述: {scenario_desc}\n文本片段: {sample_text}\n请以 JSON 格式输出核心类和关系列表。"
         try:
-            data = self.llm_client.call_llm(system_prompt, user_prompt)
+            # 动态获取流式配置
+            streaming_enabled = self._get_streaming_config()
+            data = self.llm_client.call_llm(system_prompt, user_prompt, stream=streaming_enabled)
             schema_str = json.dumps(data, ensure_ascii=False)
             return f"\n【全局 Schema 参考】: {schema_str}\n"
         except Exception as e:
@@ -347,8 +375,9 @@ class OntologyExtractor:
             - 确保所有对象和数组正确闭合
             - 确保JSON结构完整，包含所有必要的大括号和方括号
             """
-            # 使用非流式调用以获得更完整的响应
-            data = self.llm_client.call_llm(system_prompt, user_prompt, stream=False)
+            # 动态获取流式配置
+            streaming_enabled = self._get_streaming_config()
+            data = self.llm_client.call_llm(system_prompt, user_prompt, stream=streaming_enabled)
             # 确保数据结构完整性
             if not data:
                 logger.warning(f"第 {i + 1} 个片段的LLM返回数据为空，跳过此片段")
