@@ -53,8 +53,13 @@ class Settings(BaseSettings):
         # 优先使用环境变量中的 MYSQL_URL，否则根据设置构造
         if self.MYSQL_URL:
             return self.MYSQL_URL
-        # 如果没有显式设置 MYSQL_URL，则根据配置构造 MySQL URL
-        return f"mysql+pymysql://{self.MYSQL_USER}:{self.MYSQL_PASSWORD}@{self.MYSQL_HOST}:{self.MYSQL_PORT}/{self.MYSQL_DATABASE}"
+        # 强制从环境变量获取，如果没有则使用默认值
+        host = os.getenv('MYSQL_HOST', self.MYSQL_HOST)
+        port = os.getenv('MYSQL_PORT', str(self.MYSQL_PORT))
+        user = os.getenv('MYSQL_USER', self.MYSQL_USER)
+        password = os.getenv('MYSQL_PASSWORD', self.MYSQL_PASSWORD)
+        database = os.getenv('MYSQL_DATABASE', self.MYSQL_DATABASE)
+        return f"mysql+pymysql://{user}:{password}@{host}:{port}/{database}"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

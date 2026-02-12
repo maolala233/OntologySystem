@@ -43,8 +43,17 @@ class SystemConfig(Base):
     value = Column(JSON, nullable=False)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
-# 数据库连接
-DB_URL = settings.DATABASE_URL
+# 数据库连接 - 直接使用环境变量确保正确配置
+import os
+MYSQL_HOST = os.getenv('MYSQL_HOST', settings.MYSQL_HOST)
+MYSQL_PORT = os.getenv('MYSQL_PORT', str(settings.MYSQL_PORT))
+MYSQL_USER = os.getenv('MYSQL_USER', settings.MYSQL_USER)
+MYSQL_PASSWORD = os.getenv('MYSQL_PASSWORD', settings.MYSQL_PASSWORD)
+MYSQL_DATABASE = os.getenv('MYSQL_DATABASE', settings.MYSQL_DATABASE)
+
+DB_URL = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}"
+print(f"🔧 [Database] Using connection URL: {DB_URL}")
+
 # 根据数据库类型选择合适的参数
 if DB_URL.startswith("mysql"):
     engine = create_engine(DB_URL, pool_pre_ping=True, pool_recycle=3600)

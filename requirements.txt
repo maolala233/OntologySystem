@@ -4,7 +4,9 @@ uvicorn>=0.20.0
 python-multipart
 pymysql
 cryptography
+SQLAlchemy>=2.0.0
 alembic
+passlib[bcrypt]>=1.7.4
 
 # 前端界面
 gradio>=4.0.0
@@ -35,8 +37,15 @@ neo4j>=5.0.0
 
 # 基础工具
 pydantic>=2.0.0
+pydantic-settings>=2.0.0
+python-jose[cryptography]>=3.3.0
+pyasn1>=0.6.0
+rsa>=4.9.0
 email-validator>=2.0.0
 pymysql>=1.0.0
+
+# 网络请求
+requests>=2.31.0
 
 # SOCKS 代理支持
 httpx[socks]>=0.25.0

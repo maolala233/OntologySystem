@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import ReactFlow, {
     addEdge,
     Background,
@@ -14,7 +14,8 @@ import ReactFlow, {
     EdgeProps,
     useReactFlow,
     MarkerType,
-    Node
+    Node,
+    ConnectionMode
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { Drawer, Form, Input, Button, Select, message, Space, Switch, Typography, Divider, Spin } from 'antd';
@@ -271,7 +272,7 @@ const OntologyCanvas: React.FC<{ projectId: number }> = ({ projectId }) => {
             setLoading(true);
             let result;
             if (file.name.endsWith('.ttl')) {
-                result = await projectsApi.uploadTTL(projectId, file);
+                result = await projectsApi.uploadTTLFile(projectId, file);
             } else {
                 result = await projectsApi.uploadDocument(projectId, file);
             }
@@ -339,7 +340,7 @@ const OntologyCanvas: React.FC<{ projectId: number }> = ({ projectId }) => {
                 nodeTypes={nodeTypes}
                 edgeTypes={edgeTypes}
                 defaultEdgeOptions={defaultEdgeOptions}
-                connectionMode="loosely"
+                connectionMode={ConnectionMode.Loose}
                 fitView
                 minZoom={0.1}
             >

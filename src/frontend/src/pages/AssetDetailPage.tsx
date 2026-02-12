@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNodesState, useEdgesState } from 'reactflow';
 import { useParams, useNavigate } from 'react-router-dom';
 import ReactFlow, {
@@ -15,7 +15,7 @@ import { Button, Spin, message, Descriptions, Tag, Card } from 'antd';
 import { ArrowLeftOutlined, UserOutlined, CalendarOutlined, InfoCircleOutlined, FileTextOutlined, DeploymentUnitOutlined, EyeOutlined } from '@ant-design/icons';
 import Navbar from '../components/Layout/Navbar';
 import { projectsApi } from '../api/projects';
-import { ProjectData, OntologyNode, OntologyEdge } from '../types/ontology';
+import { ProjectData } from '../types/ontology';
 import Neo4jNode from '../components/OntologyGraph/Neo4jNode';
 import { getLayoutedElements } from '../utils/layoutUtils';
 import { MarkerType as RFMarkerType, BackgroundVariant } from 'reactflow';
@@ -27,11 +27,11 @@ const AssetDetailPage: React.FC = () => {
     const [project, setProject] = useState<ProjectData | null>(null);
     const [loading, setLoading] = useState(true);
 
-    // 扩展状态管理
-    const [nodes, setNodes, onNodesChange] = useNodesState<OntologyNode[]>([]);
-    const [edges, setEdges, onEdgesChange] = useEdgesState<OntologyEdge[]>([]);
+    // 扩展状态管理 - 使用 any 类型避免复杂类型问题
+    const [nodes, setNodes, onNodesChange] = useNodesState<any>([]);
+    const [edges, setEdges, onEdgesChange] = useEdgesState<any>([]);
     const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string>>(new Set());
-    const [selectedElement, setSelectedElement] = useState<OntologyNode | OntologyEdge | null>(null);
+    const [selectedElement, setSelectedElement] = useState<any>(null);
     const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
     // 新增：显示所有实例开关状态（只读模式下不需要开关，直接提供展开/收起功能）
@@ -71,13 +71,13 @@ const AssetDetailPage: React.FC = () => {
             const newExpandedSet = new Set<string>(expandedNodeIds);
             
             // 找到所有类节点
-            const classNodes = nodes.filter(node => node.data?.type === 'owl:Class');
+            const classNodes = nodes.filter((node: any) => node.data?.type === 'owl:Class');
             
             // 找到所有实例节点及其关联的类
-            nodes.forEach(node => {
+            nodes.forEach((node: any) => {
                 if (node.data?.type === 'owl:NamedIndividual') {
                     // 查找该实例关联的类
-                    const parentClassEdge = edges.find(e =>
+                    const parentClassEdge = edges.find((e: any) =>
                         e.source === node.id &&
                         (e.label === 'rdf:type' || e.data?.label === 'type' || e.data?.relation === 'instance_of')
                     );
@@ -104,7 +104,7 @@ const AssetDetailPage: React.FC = () => {
 
     // 双击节点：展开/折叠
     const onNodeDoubleClick = useCallback((_: React.MouseEvent, node: RFNode) => {
-        if (node.data?.type === 'owl:Class') {
+        if ((node.data as any)?.type === 'owl:Class') {
             setExpandedNodeIds((prev) => {
                 const newSet = new Set(prev);
                 if (newSet.has(node.id)) {
@@ -123,7 +123,7 @@ const AssetDetailPage: React.FC = () => {
 
     // 单击节点：查看详情
     const onNodeClick = useCallback((_: React.MouseEvent, node: RFNode) => {
-        setSelectedElement(node as any as OntologyNode);
+        setSelectedElement(node.data);
         setIsDrawerOpen(true);
     }, []);
 
@@ -131,12 +131,12 @@ const AssetDetailPage: React.FC = () => {
     const { displayNodes, displayEdges } = useMemo(() => {
         const visibleNodeIds = new Set<string>();
 
-        nodes.forEach(node => {
-            if (node.data.type === 'owl:Class') {
+        nodes.forEach((node: any) => {
+            if (node.data?.type === 'owl:Class') {
                 visibleNodeIds.add(node.id);
-            } else if (node.data.type === 'owl:NamedIndividual') {
+            } else if (node.data?.type === 'owl:NamedIndividual') {
                 // 检查该实例是否有关联的已展开的类
-                const parentClassEdge = edges.find(e =>
+                const parentClassEdge = edges.find((e: any) =>
                     e.source === node.id &&
                     (e.label === 'rdf:type' || e.data?.label === 'type' || e.data?.relation === 'instance_of') &&
                     expandedNodeIds.has(e.target)
@@ -152,8 +152,8 @@ const AssetDetailPage: React.FC = () => {
             }
         });
 
-        const displayNodes = nodes.filter(n => visibleNodeIds.has(n.id));
-        const displayEdges = edges.filter(e => {
+        const displayNodes = nodes.filter((n: any) => visibleNodeIds.has(n.id));
+        const displayEdges = edges.filter((e: any) => {
             const isVisible = visibleNodeIds.has(e.source) && visibleNodeIds.has(e.target);
             const isTypeRelation = e.label === 'rdf:type' || e.data?.label === 'type' || e.data?.relation === 'instance_of';
             return isVisible && !isTypeRelation;
@@ -241,19 +241,16 @@ const AssetDetailPage: React.FC = () => {
                             <Card title="节点类型分布" size="small">
                                 {(() => {
                                     const typeCount: Record<string, number> = {};
-                                    project.graph_data.nodes.forEach((node) => {
+                                    project.graph_data.nodes.forEach((node: any) => {
                                         const type = node.data?.type || 'Unknown';
                                         typeCount[type] = (typeCount[type] || 0) + 1;
                                     });
                                     return (
                                         <div className="space-y-2">
                                             {Object.entries(typeCount).map(([type, count]) => (
-                                                <div
-                                                    key={type}
-                                                    className="flex items-center justify-between text-sm"
-                                                >
+                                                <div key={type} className="flex justify-between items-center">
                                                     <span className="text-gray-600">{type}</span>
-                                                    <Tag color="blue">{count}</Tag>
+                                                    <span className="font-semibold">{count}</span>
                                                 </div>
                                             ))}
                                         </div>
@@ -261,112 +258,73 @@ const AssetDetailPage: React.FC = () => {
                                 })()}
                             </Card>
                         )}
+
+                        {/* 控制按钮 */}
+                        <div className="space-y-2">
+                            <Button 
+                                block 
+                                onClick={toggleAllInstances}
+                                icon={<DeploymentUnitOutlined />}
+                            >
+                                {isAllExpanded ? '收起所有实例' : '展开所有实例'}
+                            </Button>
+                        </div>
                     </div>
                 </div>
 
-                {/* 右侧图谱展示 */}
+                {/* 右侧图谱展示区 */}
                 <div className="flex-1 relative">
                     <ReactFlowProvider>
                         <ReactFlow
                             nodes={displayNodes}
                             edges={displayEdges}
-                            fitView
-                            onNodeDoubleClick={onNodeDoubleClick}
-                            onNodeClick={onNodeClick}
-                            nodeTypes={nodeTypesMap}
-                            defaultEdgeOptions={defaultEdgeOptions}
-                            nodesDraggable={true}
-                            nodesConnectable={false}
-                            elementsSelectable={true}
-                            panOnDrag={true}
-                            panOnScroll={true}
-                            panOnScrollSpeed={0.5}
-                            zoomOnScroll={false}
                             onNodesChange={onNodesChange}
                             onEdgesChange={onEdgesChange}
-                            className="bg-gray-50"
+                            onNodeClick={onNodeClick}
+                            onNodeDoubleClick={onNodeDoubleClick}
+                            nodeTypes={nodeTypesMap}
+                            defaultEdgeOptions={defaultEdgeOptions}
+                            fitView
+                            attributionPosition="bottom-left"
                         >
-                            <Background color="#cbd5e1" gap={20} variant={BackgroundVariant.Dots} />
                             <Controls />
-                            <MiniMap
-                                nodeColor={(node) => {
-                                    switch (node.data?.type) {
-                                        case 'owl:Class':
-                                            return '#68bdf6';
-                                        case 'owl:NamedIndividual':
-                                            return '#f79767';
-                                        default:
-                                            return '#c990c0';
-                                    }
-                                }}
-                            />
-
-                            <Panel position="top-left">
-                                <Button
-                                    icon={<ArrowLeftOutlined />}
-                                    onClick={() => navigate('/asset-center')}
-                                >
-                                    返回资产中心
-                                </Button>
-                            </Panel>
-
-                            {/* 新增：展开/收起所有实例按钮 */}
-                            <Panel position="top-right">
-                                <Button
-                                    icon={<EyeOutlined />}
-                                    onClick={toggleAllInstances}
-                                    disabled={nodes.filter(n => n.data?.type === 'owl:NamedIndividual').length === 0}
-                                >
-                                    {isAllExpanded ? '收起所有实例' : '展开所有实例'}
-                                </Button>
-                            </Panel>
-
-                            <Panel position="bottom-left">
-                                <div className="bg-white px-4 py-2 rounded-lg shadow-md border border-gray-100 flex flex-col space-y-1">
-                                    <div className="text-xs text-blue-600 font-medium">
-                                        只读模式 - 此本体已发布到图数据库
-                                    </div>
-                                    <div className="text-[10px] text-gray-400">
-                                        双击类节点可 展开/收起 实例；单击查看属性。
-                                    </div>
-                                </div>
-                            </Panel>
+                            <MiniMap />
+                            <Background variant={BackgroundVariant.Lines} gap={20} size={1} />
                         </ReactFlow>
                     </ReactFlowProvider>
-                </div>
 
-                <Drawer
-                    title="属性详情"
-                    open={isDrawerOpen}
-                    onClose={() => setIsDrawerOpen(false)}
-                    width={400}
-                >
-                    {selectedElement && (
-                        <div>
-                            <Descriptions column={1} bordered size="small">
-                                <Descriptions.Item label="名称">
-                                    {selectedElement.data?.label}
-                                </Descriptions.Item>
-                                <Descriptions.Item label="类型">
-                                    <Tag color="blue">{selectedElement.data?.type}</Tag>
-                                </Descriptions.Item>
-                            </Descriptions>
-
-                            <Divider orientation="left">自定义属性</Divider>
-                            <Descriptions column={1} bordered size="small">
-                                {Object.entries(selectedElement.data?.properties || {}).length > 0 ? (
-                                    Object.entries(selectedElement.data.properties).map(([key, value]) => (
-                                        <Descriptions.Item key={key} label={key}>
-                                            {String(value)}
-                                        </Descriptions.Item>
-                                    ))
-                                ) : (
-                                    <Descriptions.Item label="暂无属性">-</Descriptions.Item>
+                    {/* 抽屉 - 元素详情 */}
+                    <Drawer
+                        title="元素详情"
+                        placement="right"
+                        onClose={() => setIsDrawerOpen(false)}
+                        open={isDrawerOpen}
+                        width={400}
+                    >
+                        {selectedElement && (
+                            <div className="space-y-4">
+                                <div>
+                                    <h3 className="font-semibold mb-2">基本信息</h3>
+                                    <p><strong>标签:</strong> {selectedElement.label || 'N/A'}</p>
+                                    <p><strong>类型:</strong> {selectedElement.type || 'N/A'}</p>
+                                </div>
+                                
+                                {selectedElement.properties && Object.keys(selectedElement.properties).length > 0 && (
+                                    <div>
+                                        <h3 className="font-semibold mb-2">属性</h3>
+                                        <div className="space-y-1">
+                                            {Object.entries(selectedElement.properties).map(([key, value]) => (
+                                                <p key={key} className="text-sm">
+                                                    <strong>{key}:</strong> {String(value)}
+                                                </p>
+                                            ))}
+                                        </div>
+                                    </div>
                                 )}
-                            </Descriptions>
-                        </div>
-                    )}
-                </Drawer>
+                            </div>
+                        )}
+                    </Drawer>
+                </div>
             </div>
         </div>
     );

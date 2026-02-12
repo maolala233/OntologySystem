@@ -1,13 +1,6 @@
 import { Node, Edge } from 'reactflow';
 
-export interface OntologyNodeData {
-  label: string;
-  type: string;
-  properties: Record<string, any>;
-}
-
-export type OntologyNode = Node<OntologyNodeData>;
-
+// 合并两个OntologyNodeData接口定义
 export interface OntologyNodeData {
     label: string;
     labelEn?: string; // 支持英文
@@ -15,6 +8,8 @@ export interface OntologyNodeData {
     properties?: Record<string, any>;
     currentLang?: 'zh' | 'en';
 }
+
+export type OntologyNode = Node<OntologyNodeData>;
 
 export type OntologyEdge = Edge;
 

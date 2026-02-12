@@ -99,9 +99,47 @@ services:
       - "3309:3306"
     environment:
       MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: ontology_db
     volumes:
       - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/mysql:/var/lib/mysql
     restart: always
+    networks:
+      - default
+
+  # Backend服务
+  backend:
+    image: ontology-backend:latest
+    container_name: ontology-backend
+    ports:
+      - "3001:3001"
+    environment:
+      NEO4J_URI: bolt://neo4j:7687
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: root
+      MYSQL_PASSWORD: password
+      MYSQL_DATABASE: ontology_db
+    volumes:
+      - ./TTL:/app/TTL
+      - ./logs:/app/logs
+    depends_on:
+      - mysql
+      - neo4j
+      - standalone
+    networks:
+      - default
+
+  # Frontend服务
+  frontend:
+    image: ontology-frontend:latest
+    container_name: ontology-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - default
+
 networks:
   default:
     name: milvus
