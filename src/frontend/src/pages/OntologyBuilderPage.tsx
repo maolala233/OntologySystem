@@ -621,15 +621,14 @@ const OntologyBuilderPage: React.FC = () => {
             if (node.data.type === 'owl:Class') {
                 visibleNodeIds.add(node.id);
             } else if (node.data.type === 'owl:NamedIndividual') {
-                // 检查该实例是否有关联的已展开的类
+                // 检查该实例是否有关联的类
                 const parentClassEdge = edges.find(e =>
                     e.source === node.id &&
-                    (e.label === 'rdf:type' || e.data?.label === 'type' || e.data?.relation === 'instance_of') &&
-                    expandedNodeIds.has(e.target)
+                    (e.label === 'rdf:type' || e.data?.label === 'type' || e.data?.relation === 'instance_of')
                 );
 
-                // 仅当有关联的已展开类时才显示实例
-                if (parentClassEdge) {
+                // 如果没有关联类，或者关联的类已展开，则显示
+                if (!parentClassEdge || expandedNodeIds.has(parentClassEdge.target)) {
                     visibleNodeIds.add(node.id);
                 }
             } else {
@@ -945,19 +944,21 @@ const OntologyBuilderPage: React.FC = () => {
                                             自动布局
                                         </Button>
 
-                                        {/* 新增：下拉菜单选择添加不同类型的节点 */}
-                                        <Select
-                                            defaultValue="class"
-                                            style={{ width: 120 }}
-                                            onChange={(value) => {
-                                                if (value === 'class') addNewClass();
-                                                else if (value === 'instance') addNewInstance();
-                                            }}
-                                            options={[
-                                                { value: 'class', label: '新增类 (蓝色)' },
-                                                { value: 'instance', label: '新增实例 (橙色)' },
-                                            ]}
-                                        />
+                                        <Button
+                                            icon={<PlusOutlined />}
+                                            onClick={addNewClass}
+                                            className="border-blue-500 text-blue-600 hover:text-blue-700 hover:border-blue-700"
+                                        >
+                                            新增类
+                                        </Button>
+
+                                        <Button
+                                            icon={<PlusOutlined />}
+                                            onClick={addNewInstance}
+                                            className="border-orange-500 text-orange-600 hover:text-orange-700 hover:border-orange-700"
+                                        >
+                                            新增实例
+                                        </Button>
 
 
 
@@ -1295,7 +1296,7 @@ const OntologyBuilderPage: React.FC = () => {
                                         </>
                                     )}
                                 </Form.List>
-                                
+
                                 {/* 场景描述 */}
                                 <SectionTitle icon={<InfoCircleOutlined />} title="场景描述 (可选)" />
                                 <Form.Item
@@ -1564,7 +1565,7 @@ const OntologyBuilderPage: React.FC = () => {
                                 <div className="mt-6 pt-4 border-t border-gray-200">
                                     <h3 className="font-medium text-gray-700 mb-3">连通性测试</h3>
                                     <div className="grid grid-cols-2 gap-3">
-                                        <Button 
+                                        <Button
                                             type="default"
                                             onClick={testLLMConnectivity}
                                             loading={testingLLM}
@@ -1572,7 +1573,7 @@ const OntologyBuilderPage: React.FC = () => {
                                         >
                                             测试大模型连通性
                                         </Button>
-                                        <Button 
+                                        <Button
                                             type="default"
                                             onClick={testNeo4JConnectivity}
                                             loading={testingNeo4J}
@@ -1580,7 +1581,7 @@ const OntologyBuilderPage: React.FC = () => {
                                         >
                                             测试Neo4j连通性
                                         </Button>
-                                        <Button 
+                                        <Button
                                             type="default"
                                             onClick={testEmbeddingConnectivity}
                                             loading={testingEmbedding}
@@ -1588,7 +1589,7 @@ const OntologyBuilderPage: React.FC = () => {
                                         >
                                             测试Embedding连通性
                                         </Button>
-                                        <Button 
+                                        <Button
                                             type="default"
                                             onClick={testMilvusConnectivity}
                                             loading={testingMilvus}
