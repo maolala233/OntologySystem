@@ -7,7 +7,7 @@ src/backend/logs/
 testfile/
 src/backend/TTL/
 src/frontend/node_modules/
-log
+log/
 
 # files
 *.pyc
