@@ -74,7 +74,6 @@ services:
 
 # 图数据库
   neo4j:
-
     image: neo4j:5.26.17
     container_name: neo4j-onto
     ports:
@@ -100,11 +99,11 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: password
       MYSQL_DATABASE: ontology_db
+      MYSQL_USER: root
+      MYSQL_PASSWORD: password
     volumes:
       - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/mysql:/var/lib/mysql
     restart: always
-    networks:
-      - default
 
   # Backend服务
   backend:
@@ -126,20 +125,21 @@ services:
       - mysql
       - neo4j
       - standalone
-    networks:
-      - default
+    restart: always
 
   # Frontend服务
   frontend:
     image: ontology-frontend:latest
     container_name: ontology-frontend
     ports:
-      - "80:80"
+      - "3080:80"
+    # 移除硬编码的环境变量，让前端动态获取
+    # environment:
+    #   - VITE_API_BASE_URL=http://localhost:3001
     depends_on:
       - backend
-    networks:
-      - default
+    restart: always
 
 networks:
   default:
-    name: milvus
+    name: ontology-network

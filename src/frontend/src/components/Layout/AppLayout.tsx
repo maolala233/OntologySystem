@@ -12,6 +12,7 @@ import {
     InfoCircleOutlined,
     ApiOutlined,
     ClusterOutlined,
+    QuestionCircleOutlined,
 } from '@ant-design/icons';
 import { Modal, Form, Input, message, Divider, Switch } from 'antd';
 import { systemApi } from '../../api/system';
@@ -185,6 +186,11 @@ const AppLayout: React.FC = () => {
             icon: <DatabaseOutlined />,
             label: '资产中心',
         },
+        {
+            key: 'question',
+            icon: <QuestionCircleOutlined />,
+            label: '问答',
+        },
     ];
 
     if (user.username === 'admin') {
@@ -229,6 +235,8 @@ const AppLayout: React.FC = () => {
                         onClick={({ key }) => {
                             if (key === 'system-config-trigger') {
                                 openConfigModal();
+                            } else if (key === 'question') {
+                                window.open('http://28.4.185.69:7861', '_blank');
                             } else {
                                 navigate(key);
                             }
