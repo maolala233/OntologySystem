@@ -8,6 +8,8 @@ testfile/
 src/backend/TTL/
 src/frontend/node_modules/
 log/
+OWL2VOWL/
+WebVOWL/
 
 # files
 *.pyc
