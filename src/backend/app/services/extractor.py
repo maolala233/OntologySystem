@@ -178,6 +178,34 @@ class OntologyExtractor:
             return None
 
     # ──────────────────────────────────────────
+    # 术语规范化 / 同义词轻量归一
+    # ──────────────────────────────────────────
+
+    def _normalize_term(self, label: str, user_intent: Optional[str] = None) -> str:
+        """
+        对 LLM 返回的中文术语做轻量规范化，用于实现 Map-Reduce 风格的同义词归一。
+        目标示例：将「负责的人」「负责人员」规范为「负责人」等。
+        """
+        if not label:
+            return label
+
+        normalized = label.strip()
+        # 去除常见助词 / 冗余尾缀
+        for suffix in ["的人", "的人员", "人员", "的人士", "的情况", "的记录"]:
+            if normalized.endswith(suffix):
+                normalized = normalized[: -len(suffix)]
+                break
+        # 去除无意义的“的”
+        if normalized.endswith("的") and len(normalized) > 1:
+            normalized = normalized[:-1]
+
+        # 将全角空格等统一为半角并裁剪
+        normalized = normalized.replace("\u3000", " ").strip()
+
+        # 预留基于 user_intent 的后续规则（当前仅占位，不做细化分支）
+        return normalized or label.strip()
+
+    # ──────────────────────────────────────────
     # ★ API 1：骨架提取 (Schema Extraction)
     # ──────────────────────────────────────────
 
@@ -222,6 +250,9 @@ class OntologyExtractor:
 2. 【ID 不由你决定】: 你输出的 id 字段用于辅助识别，最终 ID 将由系统重新计算，请直接用英文语义名（如 "Product", "hasName"）。
 3. 【Label 必须中文】: 所有 label 字段必须是简洁中文（非英文）。
 4. 【Data Property】: 在 classes 的 data_properties 字段中列出该类应有的属性名称列表（字符串数组）。
+5. 【鼓励抽取隐含关系】: 如果文本中存在明确描述或强烈暗示的「系统 A 依赖于系统 B / A 调用 B / A 部署在 B 上 / A 与 B 对接」等关系，
+   即使没有出现“关系名称”这个词，也请将其提取为类与类之间的 ObjectProperty，
+   关系的 label 可用简洁中文动词短语（如「依赖于」「调用」「部署于」「对接」等）。
 {intent_instruction}
 """
 
@@ -254,7 +285,7 @@ class OntologyExtractor:
         chunks = self._chunk_text(text, chunk_size=chunk_size, overlap=chunk_overlap)
         total_chunks = len(chunks)
 
-        # 聚合结构：用 ID 做去重（后面会重算确定性ID）
+        # 聚合结构：用规范化后的 Label 做 Reduce 去重
         all_classes: Dict[str, dict] = {}
         all_obj_props: Dict[str, dict] = {}
 
@@ -274,11 +305,12 @@ class OntologyExtractor:
                 raw_label = cls.get("label", "").strip()
                 if not raw_label:
                     continue
-                det_id = make_deterministic_id(raw_label, "Class")
+                norm_label = self._normalize_term(raw_label, user_intent=user_intent)
+                det_id = make_deterministic_id(norm_label, "Class")
                 if det_id not in all_classes:
                     all_classes[det_id] = {
                         "id": det_id,
-                        "label": raw_label,
+                        "label": norm_label,
                         "sub_class_of": None,
                         "data_properties": list(cls.get("data_properties", [])),
                     }
@@ -300,11 +332,12 @@ class OntologyExtractor:
                 raw_range = op.get("range", "").strip()
                 if not raw_label or not raw_domain or not raw_range:
                     continue
-                det_id = make_deterministic_id(raw_label, "ObjectProperty")
+                norm_label = self._normalize_term(raw_label, user_intent=user_intent)
+                det_id = make_deterministic_id(norm_label, "ObjectProperty")
                 if det_id not in all_obj_props:
                     all_obj_props[det_id] = {
                         "id": det_id,
-                        "label": raw_label,
+                        "label": norm_label,
                         "domain": raw_domain,   # 临时存原始文本，后续二次解析
                         "range": raw_range,
                     }
@@ -365,6 +398,27 @@ class OntologyExtractor:
             f"{len(result['object_properties'])} 个关系"
         )
         return result
+
+    def extract_schema_only(
+        self,
+        text: str,
+        user_intent: Optional[str] = None,
+        chunk_size: int = 15000,
+        chunk_overlap: int = 500,
+        request_interval: int = 2,
+    ) -> Dict[str, Any]:
+        """
+        对外暴露的「Schema Only」方法。
+        语义等价于 extract_schema，仅负责抽取骨架（Class/ObjectProperty/DataProperty），
+        不做任何实例提取，方便在路由层与实例提取 API 做清晰区分。
+        """
+        return self.extract_schema(
+            text=text,
+            user_intent=user_intent,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            request_interval=request_interval,
+        )
 
     # ──────────────────────────────────────────
     # ★ API 2：强约束实例提取 (Instance Extraction)
@@ -428,12 +482,22 @@ class OntologyExtractor:
 {op_list_str}
 {domain_code_clause}
 【严格约束】:
-1. 【仅实例化已定义的类】: type 字段的值必须是上方某个「类 ID」。绝对不能创建 Schema 以外的类型。
-2. 【连线必须符合 domain→range】: object_props 中使用的关系 ID 必须是上方已定义的，且起点/终点类型必须匹配。
-3. 【禁止重新定义类】: 不要输出 classes 或 object_properties 字段。
-4. 【ID 使用语义英文名】: 你输出的 id 用于辅助，系统将重新计算确定性 ID。
-5. 【Label 必须中文】: label 字段必须是中文。
-6. 【不遗漏】: 文本中出现的所有符合上述类定义的实体都必须提取，不得只举例代表。
+1. 【区分属性与关系】: 
+   - 如果是文本值（如 "1.0版", "高性能"），放入 data_props。
+   - 如果是指向另一个**实体**（如指向 "算法A"），放入 object_props。
+   - 不要把 "平台名称"、"版本" 等属性放到 object_props 里！
+2. 【仅实例化已定义的类】: type 字段的值必须是上方某个「类 ID」。绝对不能创建 Schema 以外的类型。
+3. 【连线必须符合 domain→range】: object_props 中使用的关系 ID 必须是上方已定义的，且起点/终点类型必须匹配。
+4. 【禁止重新定义类】: 不要输出 classes 或 object_properties 字段。
+5. 【ID 使用语义英文名】: 你输出的 id 用于辅助，系统将重新计算确定性 ID。
+6. 【Label 必须中文】: label 字段必须是中文。
+7. 【不遗漏】: 文本中出现的所有符合上述类定义的实体都必须提取，不得只举例代表。
+8. 【具体化命名原则】: 实例的 label 必须是文档中出现的最具体的专有名词或实体名称，例如“人行清算模拟系统”“二代支付系统”等。
+   绝对禁止直接照抄所属类的名称作为实例的 label（例如 type 为“清算系统”时，不允许实例 label 也叫“清算系统”）。
+9. 【消除同名冗余】: 如果提取出的实例 label 与它的 type（类的 ID 对应的中文标签）完全一样，说明你提取错了，必须回到上下文中寻找更具体的限定词，
+   例如不要提取出 label 为“监管机构”的实例，而应该提取出 label 为“国家金融监督管理总局”等更具体的机构名称。
+10. 【属性防冗余】: 如果某个专有名词（如“二代支付系统”“人行清算模拟系统”）已经作为实例的 label 出现，就不要再把同样的字符串重复放入 data_props 的“名称”“系统名称”等字段中；
+    data_props 应主要用于存放该实例的版本号、金额、日期、状态等真正的数据字段，而不是简单重复 label。
 """
 
         user_prompt_template = """【当前文本片段】:
@@ -467,6 +531,8 @@ class OntologyExtractor:
         op_constraints: Dict[str, Tuple[str, str]] = {
             op["id"]: (op["domain"], op["range"]) for op in obj_props
         }
+        # 支持通过关系中文 label 反查 ObjectProperty ID，避免 LLM 用 label 代替 ID 时被误杀
+        op_label_to_id: Dict[str, str] = {op["label"]: op["id"] for op in obj_props}
         # 为实例 type → class_id 的快速校验建立标签索引
         class_label_to_id: Dict[str, str] = {c["label"]: c["id"] for c in classes}
 
@@ -484,7 +550,15 @@ class OntologyExtractor:
                     time.sleep(request_interval)
                 continue
 
-            raw_instances = data.get("instances", [])
+            raw_instances = []
+            if isinstance(data, list):
+                raw_instances = data
+                logger.info(f"分块 {i+1}/{total_chunks} LLM 返回了列表格式，已自动适配")
+            elif isinstance(data, dict):
+                raw_instances = data.get("instances", [])
+            else:
+                logger.warning(f"分块 {i+1}/{total_chunks} LLM 返回格式异常 (type: {type(data)})，跳过")
+                continue
 
             for inst in raw_instances:
                 raw_label = inst.get("label", "").strip()
@@ -514,25 +588,63 @@ class OntologyExtractor:
 
                 # ── 防御性校验 object_props 连线 ──
                 valid_obj_props: Dict[str, List[str]] = {}
-                raw_obj_props = inst.get("object_props", {})
-                for op_id, targets in raw_obj_props.items():
-                    targets_list = targets if isinstance(targets, list) else [targets]
+                
+                # 获取该类允许的数据属性列表 (用于纠错)
+                valid_data_props_keys = set()
+                if resolved_type:
+                    # 找到 schema 中该类的定义
+                    target_cls = next((c for c in classes if c["id"] == resolved_type), None)
+                    if target_cls:
+                        valid_data_props_keys = set(target_cls.get("data_properties", []))
 
-                    if op_id not in op_constraints:
+                raw_obj_props = inst.get("object_props", {})
+                
+                # 确保 data_props 初始化
+                if "data_props" not in inst:
+                    inst["data_props"] = {}
+
+                for op_key, targets in raw_obj_props.items():
+                    targets_list = targets if isinstance(targets, list) else [targets]
+                    
+                    # ── 纠错逻辑：检查这是否其实是一个 Data Property (属性) ──
+                    if op_key in valid_data_props_keys:
+                        # 这是一个属性，模型把它放错位置了 -> 挪到 data_props
+                        val_str = ", ".join([str(t) for t in targets_list]) # 简单的列表转字符串
+                        inst["data_props"][op_key] = val_str
+                        logger.info(f"[AutoFix] 将误入 object_props 的属性 '{op_key}' 移动至 data_props")
+                        continue
+                    # ──────────────────────────────────────────────────
+
+                    # 下面是正常的 Object Property 校验逻辑
+                    resolved_op_id = op_key
+                    if resolved_op_id not in op_constraints:
+                        if resolved_op_id in op_label_to_id:
+                            resolved_op_id = op_label_to_id[resolved_op_id]
+                        else:
+                            logger.warning(
+                                f"[EdgeDiscard] 实例 '{raw_label}' (Type: {resolved_type}) 试图通过关系 '{op_key}' 连接，"
+                                f"但被拦截。原因: 关系未在 Schema 中定义（ID/Label 均未匹配）。"
+                            )
+                            discarded_count += len(targets_list)
+                            continue
+
+                    expected_domain, expected_range = op_constraints[resolved_op_id]
+
+                    # 校验起点实例的父类是否符合 ObjectProperty 的 domain
+                    if not resolved_type or resolved_type != expected_domain:
                         logger.warning(
-                            f"[InstanceExtraction] 连线关系 '{op_id}' 不在 Schema 中，已丢弃"
+                            f"[EdgeDiscard] 实例 '{raw_label}' (Type: {resolved_type}) 试图通过关系 '{resolved_op_id}' 连接，"
+                            f"但被拦截。原因: Domain 不匹配（期望: {expected_domain}, 实际: {resolved_type}）。"
                         )
                         discarded_count += len(targets_list)
                         continue
 
-                    _, expected_range = op_constraints[op_id]
                     valid_targets = []
                     for t_raw in targets_list:
-                        # target 是实例 id 或 label，暂存原始值（第二步图构建时按 label 解析）
                         valid_targets.append(t_raw)
 
                     if valid_targets:
-                        valid_obj_props[op_id] = valid_targets
+                        valid_obj_props[resolved_op_id] = valid_targets
 
                 if det_id not in all_instances:
                     all_instances[det_id] = {
@@ -565,6 +677,28 @@ class OntologyExtractor:
             f"{discarded_count} 条不合规连线已丢弃"
         )
         return result
+
+    def extract_instances_with_constraints(
+        self,
+        text: str,
+        schema_graph: Dict[str, Any],
+        chunk_size: int = 15000,
+        chunk_overlap: int = 500,
+        request_interval: int = 2,
+        product_code: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        对外暴露的「带 Schema 约束的实例提取」方法。
+        语义等价于 extract_instances，但命名上强调强约束规则，便于路由层对齐 API 设计。
+        """
+        return self.extract_instances(
+            text=text,
+            schema_graph=schema_graph,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            request_interval=request_interval,
+            product_code=product_code,
+        )
 
     # ──────────────────────────────────────────
     # 图数据转换工具：Schema / Instance → GraphData

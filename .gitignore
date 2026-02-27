@@ -16,5 +16,6 @@ WebVOWL/
 .env
 *.ttl
 *.log
+*.docx
 
 

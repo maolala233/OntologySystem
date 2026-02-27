@@ -232,8 +232,8 @@ async def extract_schema_endpoint(
         # 获取 LLM 配置
         extractor = _build_extractor(db)
 
-        # ── 调用第一阶段引擎 ──
-        schema = extractor.extract_schema(
+        # ── 调用第一阶段引擎（Schema Only） ──
+        schema = extractor.extract_schema_only(
             text=text_content,
             user_intent=user_intent,
             chunk_size=chunk_size,
@@ -307,8 +307,8 @@ async def extract_instances_endpoint(
         # schema_graph 来自请求体（用户已审核版本）
         schema_dict = request_body.schema_graph.model_dump()
 
-        # ── 调用第二阶段引擎 ──
-        inst_result = extractor.extract_instances(
+        # ── 调用第二阶段引擎（带 Schema 约束） ──
+        inst_result = extractor.extract_instances_with_constraints(
             text=request_body.text_content,
             schema_graph=schema_dict,
             chunk_size=request_body.chunk_size,
