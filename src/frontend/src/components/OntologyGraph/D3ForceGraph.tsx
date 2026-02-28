@@ -32,9 +32,13 @@ const NODE_SIZES = {
 const LIGHT_THEME = {
     background: '#ffffff',
     text: '#333333',
-    edge: '#999999',
+    edge: '#cccccc',      // 更浅的边颜色
+    edgeHighlight: '#999999',
     stroke: '#ffffff'
 };
+
+// 边点击区域宽度（扩大点击范围）
+const EDGE_CLICK_WIDTH = 20;
 
 interface D3ForceGraphProps {
     nodes: OntologyNode[];
@@ -77,6 +81,15 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
         return NODE_COLORS[node.data?.type || NODE_TYPES.CLASS] || NODE_COLORS.DEFAULT;
     }, []);
 
+    // 判断边是否为实例关系（类与实例之间的边）
+    const isInstanceEdge = useCallback((edge: any) => {
+        const sourceType = edge.source?.data?.type || edge.source?.type;
+        const targetType = edge.target?.data?.type || edge.target?.type;
+        const sourceIsIndividual = sourceType === NODE_TYPES.INDIVIDUAL;
+        const targetIsIndividual = targetType === NODE_TYPES.INDIVIDUAL;
+        return sourceIsIndividual || targetIsIndividual;
+    }, []);
+
     // 渲染节点和边
     const renderGraph = useCallback(() => {
         if (!svgRef.current || nodes.length === 0) return;
@@ -92,14 +105,14 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             g = svg.append("g").attr("class", "main-group");
         }
 
-        // 准备节点数据
+        // 准备节点数据 - 保留现有位置或初始化新位置
         const nodeMap = new Map<string, any>();
         const d3Nodes = nodes.map(node => {
             const existingNode = simulationRef.current?.nodes().find((n: any) => n.id === node.id);
             const nodeData = {
                 id: node.id,
-                x: existingNode?.x || centerX + (Math.random() - 0.5) * width * 0.5,
-                y: existingNode?.y || centerY + (Math.random() - 0.5) * height * 0.5,
+                x: existingNode?.x || centerX + (Math.random() - 0.5) * width * 0.3,
+                y: existingNode?.y || centerY + (Math.random() - 0.5) * height * 0.3,
                 vx: existingNode?.vx || 0,
                 vy: existingNode?.vy || 0,
                 fx: existingNode?.fx || null,
@@ -113,52 +126,118 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             return nodeData;
         });
 
-        // 准备边数据 - 确保 source 和 target 引用正确的节点对象
-        const d3Links = edges.map(edge => {
-            const sourceNode = nodeMap.get(edge.source);
-            const targetNode = nodeMap.get(edge.target);
-            return {
-                source: sourceNode || edge.source,
-                target: targetNode || edge.target,
-                data: edge.data,
-                id: `${edge.source}-${edge.target}`
-            };
-        });
+        // 准备边数据 - 确保 source 和 target 引用正确的节点对象，过滤掉无效边
+        const d3Links = edges
+            .filter(edge => {
+                // 只保留两端节点都存在的边
+                const sourceExists = nodeMap.has(edge.source);
+                const targetExists = nodeMap.has(edge.target);
+                return sourceExists && targetExists;
+            })
+            .map(edge => {
+                const sourceNode = nodeMap.get(edge.source);
+                const targetNode = nodeMap.get(edge.target);
+                return {
+                    source: sourceNode,
+                    target: targetNode,
+                    data: edge.data,
+                    id: `${edge.source}-${edge.target}`,
+                    originalEdge: edge
+                };
+            });
 
         // 创建力模拟 - 使用更稳定的参数
         const simulation = forceSimulation(d3Nodes)
             .force("link", forceLink(d3Links)
                 .id((d: any) => d.id)
-                .distance(200)
-                .strength(0.8))  // 增加链接强度，让节点更稳定
+                .distance(150)
+                .strength(0.6))
             .force("charge", forceManyBody()
-                .strength(-500)   // 减少斥力，避免节点过度分散
-                .distanceMax(500)) // 限制斥力作用距离
+                .strength(-300)
+                .distanceMax(400))
             .force("center", forceCenter(centerX, centerY)
-                .strength(0.1))    // 增加中心引力
+                .strength(0.05))
             .force("collision", forceCollide()
-                .radius((d: any) => d.radius + 5)
-                .strength(0.5)
+                .radius((d: any) => d.radius + 10)
+                .strength(0.7)
                 .iterations(2));
 
         simulationRef.current = simulation;
 
-        // 渲染边
-        const linkSelection = g.selectAll<SVGLineElement, any>("line.link")
+        // 定义箭头标记
+        const markers = svg.select<SVGGElement>("defs.markers");
+        if (markers.empty()) {
+            svg.append("defs").attr("class", "markers")
+                .html(`
+                    <marker id="arrowhead-class" markerWidth="10" markerHeight="7" refX="28" refY="3.5" orient="auto">
+                        <polygon points="0 0, 10 3.5, 0 7" fill="#cccccc" opacity="0.8" />
+                    </marker>
+                    <marker id="arrowhead-instance" markerWidth="10" markerHeight="7" refX="28" refY="3.5" orient="auto">
+                        <polygon points="0 0, 10 3.5, 0 7" fill="#cccccc" opacity="0.6" />
+                    </marker>
+                `);
+        }
+
+        // 渲染边 - 使用 path 而不是 line，以便更好地控制箭头位置
+        const linkSelection = g.selectAll<SVGPathElement, any>("path.link")
             .data(d3Links, (d: any) => d.id);
 
         const linkEnter = linkSelection.enter()
-            .append("line")
+            .append("path")
             .attr("class", "link")
+            .attr("fill", "none")
             .attr("stroke", LIGHT_THEME.edge)
-            .attr("stroke-opacity", 0.6)
-            .attr("stroke-width", 2);
+            .attr("stroke-opacity", 0.8)
+            .attr("stroke-width", 1.5);
 
         const linkMerge = linkEnter.merge(linkSelection as any);
 
+        // 移除不再需要的边元素
         linkSelection.exit().remove();
 
-        // 渲染节点组
+        // 设置边的样式：类 - 类为实线，类 - 实例为虚线
+        linkMerge.each(function(this: SVGPathElement, d: any) {
+            const isInstance = isInstanceEdge(d);
+            select(this)
+                .attr("stroke-dasharray", isInstance ? "5,5" : "none")
+                .attr("marker-end", isInstance ? "url(#arrowhead-instance)" : "url(#arrowhead-class)")
+                .style("cursor", "pointer")
+                .on("click", (event: MouseEvent) => {
+                    event.stopPropagation();
+                    if (onEdgeClick && d.originalEdge) {
+                        onEdgeClick(d.originalEdge);
+                    }
+                });
+        });
+
+        // 添加透明的点击区域（扩大边的点击范围）
+        const invisibleLinkSelection = g.selectAll<SVGPathElement, any>("path.invisible-link")
+            .data(d3Links, (d: any) => d.id);
+
+        const invisibleLinkEnter = invisibleLinkSelection.enter()
+            .append("path")
+            .attr("class", "invisible-link")
+            .attr("fill", "none")
+            .attr("stroke", "transparent")
+            .attr("stroke-width", EDGE_CLICK_WIDTH)
+            .style("pointer-events", "stroke");
+
+        const invisibleLinkMerge = invisibleLinkEnter.merge(invisibleLinkSelection as any);
+
+        invisibleLinkMerge.each(function(this: SVGPathElement, d: any) {
+            select(this)
+                .style("cursor", "pointer")
+                .on("click", (event: MouseEvent) => {
+                    event.stopPropagation();
+                    if (onEdgeClick && d.originalEdge) {
+                        onEdgeClick(d.originalEdge);
+                    }
+                });
+        });
+
+        invisibleLinkSelection.exit().remove();
+
+        // 渲染节点组（在边之后渲染，确保节点在边之上）
         const nodeSelection = g.selectAll<SVGGElement, any>("g.node-group")
             .data(d3Nodes, (d: any) => d.id);
 
@@ -168,23 +247,19 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             .style("cursor", "grab")
             .call(d3Drag<any, any>()
                 .on("start", (event: any, d: any) => {
-                    // 拖动时不重启模拟，只固定当前节点位置
                     d.fx = d.x;
                     d.fy = d.y;
                     setIsDragging(true);
                 })
                 .on("drag", (event: any, d: any) => {
-                    // 直接更新固定位置，不触发模拟重新计算
                     d.fx = event.x;
                     d.fy = event.y;
                 })
                 .on("end", (event: any, d: any) => {
-                    // 释放节点，但不重启模拟
                     d.fx = null;
                     d.fy = null;
                     setIsDragging(false);
                     
-                    // 只更新被拖动的节点位置，避免影响其他节点的状态
                     if (onNodesChange) {
                         onNodesChange([{
                             ...d.originalNode,
@@ -232,19 +307,40 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
 
         // 每一帧更新位置
         simulation.on("tick", () => {
-            // 更新边的位置
-            linkMerge
-                .attr("x1", (d: any) => (d.source as any).x || 0)
-                .attr("y1", (d: any) => (d.source as any).y || 0)
-                .attr("x2", (d: any) => (d.target as any).x || 0)
-                .attr("y2", (d: any) => (d.target as any).y || 0);
+            // 更新边的位置 - 使用 path 连接到节点边缘
+            const updatePath = (path: any, strokeWidth: number) => {
+                path.attr("d", (d: any) => {
+                    const source = d.source as any;
+                    const target = d.target as any;
+                    
+                    // 计算从源节点到目标节点的角度
+                    const dx = target.x - source.x;
+                    const dy = target.y - source.y;
+                    const angle = Math.atan2(dy, dx);
+                    
+                    // 计算源节点边缘的点（源节点半径）
+                    const sourceRadius = source.radius || NODE_SIZES[source.type] / 2;
+                    const sourceX = source.x + Math.cos(angle) * sourceRadius;
+                    const sourceY = source.y + Math.sin(angle) * sourceRadius;
+                    
+                    // 计算目标节点边缘的点（目标节点半径，减去箭头长度）
+                    const targetRadius = target.radius || NODE_SIZES[target.type] / 2;
+                    const targetX = target.x - Math.cos(angle) * (targetRadius + 5);
+                    const targetY = target.y - Math.sin(angle) * (targetRadius + 5);
+                    
+                    return `M${sourceX},${sourceY}L${targetX},${targetY}`;
+                });
+            };
+
+            updatePath(linkMerge, 1.5);
+            updatePath(invisibleLinkMerge, EDGE_CLICK_WIDTH);
 
             // 更新节点组的位置
             g.selectAll<SVGGElement, any>("g.node-group")
                 .attr("transform", (d: any) => `translate(${d.x || 0}, ${d.y || 0})`);
         });
 
-    }, [nodes, edges, width, height, getNodeColor, getNodeRadius, onNodeClick, onNodesChange]);
+    }, [nodes, edges, width, height, getNodeColor, getNodeRadius, onNodeClick, onNodesChange, onEdgeClick, isInstanceEdge]);
 
     // 初始化缩放行为
     useEffect(() => {
@@ -306,7 +402,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
         <div 
             ref={containerRef}
             className={`relative ${className}`}
-            style={{ width, height, position: 'relative', border: '1px solid #e0e0e0' }}
+            style={{ width, height, position: 'relative' }}
         >
             <svg
                 ref={svgRef}
@@ -316,11 +412,6 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                     background: LIGHT_THEME.background,
                     cursor: isDragging ? 'grabbing' : 'grab',
                     display: 'block'
-                }}
-                onClick={() => {
-                    if (onNodeClick) {
-                        onNodeClick(null);
-                    }
                 }}
             />
             <div className="absolute bottom-4 right-4 flex gap-2 items-center">
