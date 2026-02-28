@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import ReactFlow, {
     addEdge,
@@ -51,17 +51,28 @@ import {
     DatabaseOutlined,
     ApiOutlined,
     ClusterOutlined,
+    EyeInvisibleOutlined,
 } from '@ant-design/icons';
 import Navbar from '../components/Layout/Navbar';
 import { OntologyNode, OntologyEdge } from '../types/ontology';
 import { projectsApi } from '../api/projects';
 import Neo4jNode from '../components/OntologyGraph/Neo4jNode';
+import { StraightArrowEdge } from '../components/OntologyGraph/StraightEdge';
 import { getLayoutedElements } from '../utils/layoutUtils';
 import { systemApi } from '../api/system';
 import { MarkerType as RFMarkerType, BackgroundVariant } from 'reactflow';
 import apiClient from '../api/client';
+import D3ForceGraph from '../components/OntologyGraph/D3ForceGraph';
+import {
+    forceSimulation,
+    forceLink,
+    forceManyBody,
+    forceCenter,
+    forceCollide
+} from 'd3-force';
 
 const nodeTypesMap = { custom: Neo4jNode };
+const edgeTypesMap = { straight: StraightArrowEdge };
 
 const OntologyBuilderPage: React.FC = () => {
     const { projectId } = useParams<{ projectId: string }>();
@@ -77,6 +88,7 @@ const OntologyBuilderPage: React.FC = () => {
     const [nodes, setNodes, onNodesChange] = useNodesState([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState([]);
     const [selectedElement, setSelectedElement] = useState<OntologyNode | OntologyEdge | null>(null);
+    const [viewMode, setViewMode] = useState<'reactflow' | 'd3force'>('reactflow');
     const [isDrawerOpen, setIsDrawerOpen] = useState(false);
     const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
     const [pendingFile, setPendingFile] = useState<File | null>(null);
@@ -157,8 +169,15 @@ const OntologyBuilderPage: React.FC = () => {
                     setLastSavedNodes(project.graph_data.nodes); // 记录初始状态
                 }
                 if (project.graph_data?.edges) {
-                    setEdges(project.graph_data.edges);
-                    setLastSavedEdges(project.graph_data.edges); // 记录初始状态
+                    // 确保所有边都使用直线类型，避免曲线显示
+                    const normalizedEdges = project.graph_data.edges.map((edge: any) => ({
+                        ...edge,
+                        type: 'straight',
+                        markerEnd: edge.markerEnd || { type: RFMarkerType.ArrowClosed, color: '#b1b1b7' },
+                        style: edge.style || { stroke: '#b1b1b7', strokeWidth: 1.5 },
+                    }));
+                    setEdges(normalizedEdges);
+                    setLastSavedEdges(normalizedEdges); // 记录初始状态
                 }
             }
 
@@ -176,14 +195,15 @@ const OntologyBuilderPage: React.FC = () => {
         }
     };
 
-    // 处理连线
+    // 处理连线 - 使用自定义直线类型
     const onConnect = useCallback(
         (params: Connection) => {
             const newEdge: OntologyEdge = {
                 ...params,
                 id: `edge_${Date.now()}`,
-                type: 'smoothstep',
-                animated: true,
+                type: 'straight',
+                markerEnd: { type: RFMarkerType.ArrowClosed, color: '#b1b1b7' },
+                style: { stroke: '#b1b1b7', strokeWidth: 1.5 },
                 data: { label: '关联', relation: 'related_to' },
             } as OntologyEdge;
             setEdges((eds) => addEdge(newEdge, eds));
@@ -335,8 +355,9 @@ const OntologyBuilderPage: React.FC = () => {
                 id: `edge_${Date.now()}_${newNode.id}_${targetClass.id}`,
                 source: newNode.id,
                 target: targetClass.id,
-                type: 'smoothstep',
-                animated: true,
+                type: 'straight',
+                markerEnd: { type: RFMarkerType.ArrowClosed, color: '#b1b1b7' },
+                style: { stroke: '#b1b1b7', strokeWidth: 1.5 },
                 data: { label: 'rdf:type', relation: 'instance_of' },
             } as OntologyEdge;
             newEdges.push(newEdge);
@@ -364,6 +385,226 @@ const OntologyBuilderPage: React.FC = () => {
         setNodes([...layoutedNodes]);
         setEdges([...layoutedEdges]);
         message.success('已完成自动布局');
+    };
+
+    // 力导向布局 - 使用同步计算，然后批量更新，自动适配窗口
+    const handleForceLayout = useCallback(() => {
+        if (nodes.length === 0) {
+            message.warning('没有节点可布局');
+            return;
+        }
+
+        // 获取画布尺寸
+        const containerWidth = window.innerWidth - 300;
+        const containerHeight = window.innerHeight - 150;
+        const centerX = containerWidth / 2;
+        const centerY = containerHeight / 2;
+
+        // 节点尺寸估计（用于碰撞检测）- 与 Neo4jNode 组件一致
+        const classNodeSize = 80; // 类节点直径
+        const individualNodeSize = 50; // 实例节点直径
+
+        interface SimulationNode {
+            id: string;
+            x: number;
+            y: number;
+            vx: number;
+            vy: number;
+            data: any;
+            nodeType: string; // 存储节点类型用于碰撞检测
+        }
+
+        interface SimulationLink {
+            source: string;
+            target: string;
+        }
+
+        // 创建模拟节点（深拷贝）- 初始位置随机分布在画布中心周围
+        // 同时存储节点类型以便在 forceCollide 中直接使用
+        const d3Nodes: SimulationNode[] = nodes.map((n) => ({
+            id: n.id,
+            x: centerX + (Math.random() - 0.5) * containerWidth * 0.6,
+            y: centerY + (Math.random() - 0.5) * containerHeight * 0.6,
+            vx: 0,
+            vy: 0,
+            data: { ...n.data },
+            nodeType: n.data?.type || 'owl:Class', // 直接存储类型
+        }));
+
+        // 只处理显示边（排除 rdf:type）
+        const d3Edges: SimulationLink[] = edges.filter(e => {
+            const isTypeRelation = e.label === 'rdf:type' || e.data?.label === 'type' || e.data?.relation === 'instance_of';
+            return !isTypeRelation;
+        }).map((e) => ({
+            source: e.source,
+            target: e.target,
+        }));
+
+        // 根据节点数量动态调整参数
+        const nodeCount = nodes.length;
+        // 弹簧距离：节点少时大一些，节点多时小一些
+        const linkDistance = Math.max(120, Math.min(280, 350 - nodeCount * 5));
+        // 斥力强度：更强的斥力让节点更分散
+        const chargeStrength = Math.max(-1000, Math.min(-400, -300 - nodeCount * 12));
+
+        // 创建物理模拟系统
+        const simulation = forceSimulation<SimulationNode>(d3Nodes)
+            .force("link", forceLink<SimulationNode, SimulationLink>(d3Edges)
+                .id((d: any) => d.id)
+                .distance(linkDistance)
+                .strength(0.5))
+            .force("charge", forceManyBody<SimulationNode>()
+                .strength(chargeStrength)
+                .distanceMax(Math.max(containerWidth, containerHeight)))
+            .force("collide", forceCollide<SimulationNode>()
+                .radius((d: SimulationNode) => {
+                    // 直接从模拟节点获取类型，不需要再查找
+                    const baseSize = d.nodeType === 'owl:Class' ? classNodeSize : individualNodeSize;
+                    return baseSize / 2 + 30; // 增加边距以更好避免重叠
+                })
+                .strength(1.0)
+                .iterations(4)) // 增加迭代次数
+            .force("center", forceCenter<SimulationNode>(centerX, centerY)
+                .strength(0.03))
+            .alpha(1)
+            .alphaDecay(0.015) // 降低衰减速度，让模拟有更多时间稳定
+            .velocityDecay(0.25); // 降低速度衰减，保持更多动量
+
+        // 同步执行模拟计算
+        message.loading('正在计算力导向布局...', 0);
+        
+        setTimeout(() => {
+            // 执行更多次计算让布局更稳定
+            for (let i = 0; i < 500; i++) {
+                simulation.tick();
+            }
+
+            // 计算边界
+            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+            d3Nodes.forEach(node => {
+                if (node.x < minX) minX = node.x;
+                if (node.x > maxX) maxX = node.x;
+                if (node.y < minY) minY = node.y;
+                if (node.y > maxY) maxY = node.y;
+            });
+
+            // 计算缩放因子，使布局适配窗口（保留更多边距）
+            const padding = 120;
+            const contentWidth = maxX - minX + padding * 2;
+            const contentHeight = maxY - minY + padding * 2;
+            const scaleX = containerWidth / contentWidth;
+            const scaleY = containerHeight / contentHeight;
+            const scale = Math.min(scaleX, scaleY, 1) * 0.85; // 缩小 15% 避免贴边
+
+            // 计算中心点
+            const midX = (minX + maxX) / 2;
+            const midY = (minY + maxY) / 2;
+
+            // 计算完成后更新节点位置
+            const newNodes = nodes.map((node) => {
+                const simNode = d3Nodes.find(n => n.id === node.id);
+                if (!simNode) return node;
+                // 以中心点为基准进行缩放和平移
+                const x = centerX + (simNode.x - midX) * scale;
+                const y = centerY + (simNode.y - midY) * scale;
+                return {
+                    ...node,
+                    position: { x, y },
+                };
+            });
+
+            setNodes(newNodes);
+            message.destroy();
+            message.success('力导向布局完成！节点已自动避让并适配窗口');
+        }, 50);
+    }, [nodes, edges, setNodes]);
+    const handleRadialLayout = () => {
+        if (nodes.length === 0) return;
+    
+        // 1. 确定中心节点（如果选中了某个节点就以它为中心，否则找连接数/度数最多的节点）
+        let centerNodeId = nodes[0].id;
+        if (selectedElement && 'position' in selectedElement) {
+            centerNodeId = selectedElement.id;
+        } else {
+            // 自动计算度数最大的节点作为中心
+            const degrees: Record<string, number> = {};
+            nodes.forEach(n => { degrees[n.id] = 0; });
+            edges.forEach(e => {
+                if (degrees[e.source] !== undefined) degrees[e.source]++;
+                if (degrees[e.target] !== undefined) degrees[e.target]++;
+            });
+            centerNodeId = Object.keys(degrees).reduce((a, b) => degrees[a] > degrees[b] ? a : b);
+        }
+    
+        // 2. BFS 遍历，计算每个节点到中心节点的距离（所在圈层）
+        const levels = new Map<string, number>(); // 记录 nodeId -> level
+        levels.set(centerNodeId, 0);
+        const queue: string[] = [centerNodeId];
+        
+        // 建立无向邻接表用于快速查找
+        const adj: Record<string, string[]> = {};
+        nodes.forEach(n => { adj[n.id] = []; });
+        edges.forEach(e => {
+            if (adj[e.source] && adj[e.target]) {
+                adj[e.source].push(e.target);
+                adj[e.target].push(e.source);
+            }
+        });
+    
+        while (queue.length > 0) {
+            const curr = queue.shift()!;
+            const currentLevel = levels.get(curr)!;
+    
+            adj[curr].forEach((neighbor: string) => {
+                if (!levels.has(neighbor)) {
+                    levels.set(neighbor, currentLevel + 1);
+                    queue.push(neighbor);
+                }
+            });
+        }
+    
+        // 处理没有连通的孤立节点（放到最外层）
+        const maxLevel = Math.max(1, ...Array.from(levels.values()));
+        nodes.forEach(n => {
+            if (!levels.has(n.id)) {
+                levels.set(n.id, maxLevel + 1);
+            }
+        });
+    
+        // 3. 计算坐标 (利用正弦和余弦)
+        const centerX = 500; // 画布中心 X
+        const centerY = 500; // 画布中心 Y
+        const baseRadius = 180; // 每层圆环的间距
+    
+        const newNodes = nodes.map(node => {
+            const level = levels.get(node.id) ?? 1;
+            
+            // 中心节点直接放正中间
+            if (level === 0) {
+                return { ...node, position: { x: centerX, y: centerY } };
+            }
+    
+            // 获取同一圈的所有节点
+            const nodesInSameLevel = nodes.filter(n => (levels.get(n.id) ?? 1) === level);
+            // 当前节点在这一圈的索引
+            const indexInLevel = nodesInSameLevel.findIndex(n => n.id === node.id);
+            
+            // 计算角度和半径
+            const radius = level * baseRadius;
+            const angleStep = (2 * Math.PI) / nodesInSameLevel.length; // 平均分配 360 度
+            const angle = indexInLevel * angleStep;
+    
+            return {
+                ...node,
+                position: {
+                    x: centerX + radius * Math.cos(angle),
+                    y: centerY + radius * Math.sin(angle)
+                }
+            };
+        });
+    
+        setNodes(newNodes);
+        message.success('已应用星型/环形布局');
     };
 
     // 删除选中元素
@@ -555,43 +796,35 @@ const OntologyBuilderPage: React.FC = () => {
 
     // 一键展开/收起所有实例
     const expandAllInstances = () => {
-        // 检查是否已经有展开的类（即需要收起）
-        const hasExpandedClasses = Array.from(expandedNodeIds).some(id =>
-            nodes.some(node => node.id === id && node.data?.type === 'owl:Class')
-        );
-
-        if (hasExpandedClasses) {
-            // 收起所有类：移除所有类节点的展开状态
-            const newExpandedSet = new Set<string>(expandedNodeIds);
-            nodes.forEach(node => {
-                if (node.data?.type === 'owl:Class') {
-                    newExpandedSet.delete(node.id);
+        // 收集所有实例关联的类 ID
+        const classIdsWithInstances = new Set<string>();
+        nodes.forEach(node => {
+            if (node.data?.type === 'owl:NamedIndividual') {
+                const parentClassEdge = edges.find(e =>
+                    e.source === node.id &&
+                    (e.label === 'rdf:type' || e.data?.label === 'type' || e.data?.relation === 'instance_of')
+                );
+                if (parentClassEdge && parentClassEdge.target) {
+                    classIdsWithInstances.add(parentClassEdge.target);
                 }
-            });
-            setExpandedNodeIds(newExpandedSet);
-            message.success('已收起所有实例相关的类');
+            }
+        });
+
+        // 判断当前是否有任何类被展开（即展开集合和类 ID 集合有交集）
+        const hasExpandedInstances = Array.from(expandedNodeIds).some(id => classIdsWithInstances.has(id));
+
+        if (hasExpandedInstances) {
+            // 收起所有实例：清空展开集合
+            setExpandedNodeIds(new Set());
+            message.success('已收起所有实例');
         } else {
             // 展开所有实例相关的类
-            const newExpandedSet = new Set<string>(expandedNodeIds);
-
-            // 找到所有实例节点及其关联的类
-            nodes.forEach(node => {
-                if (node.data?.type === 'owl:NamedIndividual') {
-                    // 查找该实例关联的类
-                    const parentClassEdge = edges.find(e =>
-                        e.source === node.id &&
-                        (e.label === 'rdf:type' || e.data?.label === 'type' || e.data?.relation === 'instance_of')
-                    );
-
-                    if (parentClassEdge && parentClassEdge.target) {
-                        // 将关联的类添加到展开集合中
-                        newExpandedSet.add(parentClassEdge.target);
-                    }
-                }
-            });
-
-            setExpandedNodeIds(newExpandedSet);
-            message.success('已展开所有实例相关的类');
+            setExpandedNodeIds(classIdsWithInstances);
+            if (classIdsWithInstances.size > 0) {
+                message.success(`已展开 ${classIdsWithInstances.size} 个类`);
+            } else {
+                message.info('没有找到实例关联的类');
+            }
         }
     };
 
@@ -615,9 +848,9 @@ const OntologyBuilderPage: React.FC = () => {
         { label: '依赖 (depends_on)', value: 'depends_on' },
     ];
 
-    // 默认连线样式
+    // 默认连线样式 - 使用自定义直线类型
     const defaultEdgeOptions = {
-        type: 'smoothstep',
+        type: 'straight',
         markerEnd: { type: RFMarkerType.ArrowClosed, color: '#b1b1b7' },
         style: { stroke: '#b1b1b7', strokeWidth: 1.5 },
     };
@@ -629,9 +862,9 @@ const OntologyBuilderPage: React.FC = () => {
 
         // 1. 确定哪些节点应该显示
         nodes.forEach(node => {
-            if (node.data.type === 'owl:Class') {
+            if (node.data?.type === 'owl:Class') {
                 visibleNodeIds.add(node.id);
-            } else if (node.data.type === 'owl:NamedIndividual') {
+            } else if (node.data?.type === 'owl:NamedIndividual') {
                 // 检查该实例是否有关联的类
                 const parentClassEdge = edges.find(e =>
                     e.source === node.id &&
@@ -650,11 +883,10 @@ const OntologyBuilderPage: React.FC = () => {
 
         const displayNodes = nodes.filter(n => visibleNodeIds.has(n.id));
 
-        // 2. 确定哪些连线应该显示 (排除 rdf:type)
+        // 2. 确定哪些连线应该显示 (包括 rdf:type 关系)
         const displayEdges = edges.filter(e => {
             const isVisible = visibleNodeIds.has(e.source) && visibleNodeIds.has(e.target);
-            const isTypeRelation = e.label === 'rdf:type' || e.data?.label === 'type' || e.data?.relation === 'instance_of';
-            return isVisible && !isTypeRelation;
+            return isVisible;
         });
 
         return { displayNodes, displayEdges };
@@ -693,8 +925,7 @@ const OntologyBuilderPage: React.FC = () => {
                 id: `edge_${Date.now()}_${sourceNodeId}_${targetNodeId}`,
                 source: sourceNodeId,
                 target: targetNodeId,
-                type: 'smoothstep',
-                animated: true,
+                type: 'straight',
                 data: { label: finalRelationType, relation: finalRelationType },
             } as OntologyEdge;
 
@@ -878,50 +1109,220 @@ const OntologyBuilderPage: React.FC = () => {
                                 <Spin size="large" tip="正在加载..." />
                             </div>
                         )}
-                        <ReactFlowProvider>
-                            <ReactFlow
-                                nodes={displayNodes}
-                                edges={displayEdges}
-                                onNodesChange={onNodesChange}
-                                onEdgesChange={onEdgesChange}
-                                onConnect={onConnect}
-                                onNodeClick={onElementClick}
-                                onEdgeClick={onElementClick}
-                                onNodeDoubleClick={onNodeDoubleClick}
-                                nodeTypes={nodeTypesMap}
-                                defaultEdgeOptions={defaultEdgeOptions}
-                                fitView
-                                className="bg-gray-50"
-                                nodesDraggable={true}
-                                nodesConnectable={true}
-                                elementsSelectable={true}
-                            >
-                                <Background color="#cbd5e1" gap={20} variant={BackgroundVariant.Dots} />
-                                <Controls />
-                                <MiniMap
-                                    nodeStrokeWidth={3}
-                                    nodeColor={(node) => {
-                                        switch (node.data?.type) {
-                                            case 'owl:Class': return '#68bdf6';
-                                            case 'owl:NamedIndividual': return '#f79767';
-                                            default: return '#c990c0';
-                                        }
-                                    }}
-                                />
+                        {/* 视图模式切换按钮 */}
+                        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-10">
+                            <Space className="bg-white p-2 rounded-lg shadow-md border border-gray-100">
+                                <Button
+                                    type={viewMode === 'reactflow' ? 'primary' : 'default'}
+                                    onClick={() => setViewMode('reactflow')}
+                                    icon={<EyeOutlined />}
+                                >
+                                    React Flow
+                                </Button>
+                                <Button
+                                    type={viewMode === 'd3force' ? 'primary' : 'default'}
+                                    onClick={() => setViewMode('d3force')}
+                                    icon={<ClusterOutlined />}
+                                >
+                                    力导向图
+                                </Button>
+                            </Space>
+                        </div>
 
-                                {/* 顶部工具栏 */}
-                                <Panel position="top-left">
+                        {viewMode === 'reactflow' ? (
+                            <ReactFlowProvider>
+                                <ReactFlow
+                                    nodes={displayNodes}
+                                    edges={displayEdges}
+                                    onNodesChange={onNodesChange}
+                                    onEdgesChange={onEdgesChange}
+                                    onConnect={onConnect}
+                                    onNodeClick={onElementClick}
+                                    onEdgeClick={onElementClick}
+                                    onNodeDoubleClick={onNodeDoubleClick}
+                                    nodeTypes={nodeTypesMap}
+                                    edgeTypes={edgeTypesMap}
+                                    defaultEdgeOptions={defaultEdgeOptions}
+                                    fitView
+                                    className="bg-gray-50"
+                                    nodesDraggable={true}
+                                    nodesConnectable={true}
+                                    elementsSelectable={true}
+                                >
+                                    <Background color="#cbd5e1" gap={20} variant={BackgroundVariant.Dots} />
+                                    <Controls />
+                                    <MiniMap
+                                        nodeStrokeWidth={3}
+                                        nodeColor={(node) => {
+                                            switch (node.data?.type) {
+                                                case 'owl:Class': return '#68bdf6';
+                                                case 'owl:NamedIndividual': return '#f79767';
+                                                default: return '#c990c0';
+                                            }
+                                        }}
+                                    />
+
+                                    {/* 顶部工具栏 */}
+                                    <Panel position="top-left">
+                                        <Button
+                                            icon={<ArrowLeftOutlined />}
+                                            onClick={() => navigate('/my-projects')}
+                                            className="shadow-sm"
+                                        >
+                                            返回项目列表
+                                        </Button>
+                                    </Panel>
+
+                                    <Panel position="top-right">
+                                        <Space className="bg-white p-2 rounded-lg shadow-md border border-gray-100">
+                                            <Upload
+                                                accept=".txt,.pdf,.doc,.docx"
+                                                showUploadList={false}
+                                                beforeUpload={beforeUpload}
+                                            >
+                                                <Tooltip title="定义规则并上传文档提取">
+                                                    <Button type="primary" icon={<CloudUploadOutlined />} className="bg-indigo-600">
+                                                        自动提取构建
+                                                    </Button>
+                                                </Tooltip>
+                                            </Upload>
+
+                                            {/* 新增：上传TTL文件按钮 */}
+                                            <Upload
+                                                accept=".ttl"
+                                                showUploadList={false}
+                                                beforeUpload={handleUploadTTL}
+                                            >
+                                                <Tooltip title="上传TTL文件直接解析">
+                                                    <Button icon={<FileTextOutlined />} className="bg-purple-600 text-white">
+                                                        上传TTL文件
+                                                    </Button>
+                                                </Tooltip>
+                                            </Upload>
+
+                                            <Button
+                                                icon={<DeploymentUnitOutlined />}
+                                                onClick={handleAutoLayout}
+                                                title="自动布局"
+                                            >
+                                                自动布局
+                                            </Button>
+                                            <Button
+                                                icon={<ApiOutlined />}
+                                                onClick={handleRadialLayout}
+                                                title="以选中节点或核心节点为中心进行环形布局"
+                                            >
+                                                星型布局
+                                            </Button>
+                                            <Button
+                                                icon={<ClusterOutlined />}
+                                                onClick={handleForceLayout}
+                                                title="力导向布局（自动避让）"
+                                            >
+                                                力导向布局
+                                            </Button>
+
+                                            <Button
+                                                icon={<PlusOutlined />}
+                                                onClick={addNewClass}
+                                                className="border-blue-500 text-blue-600 hover:text-blue-700 hover:border-blue-700"
+                                            >
+                                                新增类
+                                            </Button>
+
+                                            <Button
+                                                icon={<PlusOutlined />}
+                                                onClick={addNewInstance}
+                                                className="border-orange-500 text-orange-600 hover:text-orange-700 hover:border-orange-700"
+                                            >
+                                                新增实例
+                                            </Button>
+
+                                            <Button
+                                                icon={<EyeOutlined />}
+                                                onClick={expandAllInstances}
+                                                disabled={nodes.filter(n => n.data?.type === 'owl:NamedIndividual').length === 0}
+                                            >
+                                                展开/收起所有实例
+                                            </Button>
+
+                                            <Button
+                                                icon={<PlusOutlined />}
+                                                onClick={addNewRelation}
+                                            >
+                                                创建新关系
+                                            </Button>
+
+                                            <Button
+                                                icon={<DeleteOutlined />}
+                                                danger
+                                                onClick={deleteSelectedElement}
+                                                disabled={!selectedElement}
+                                            >
+                                                删除
+                                            </Button>
+
+                                            <Divider type="vertical" />
+
+                                            <Button
+                                                icon={<SaveOutlined />}
+                                                onClick={handleSaveDraft}
+                                                loading={loading}
+                                                type={hasUnsavedChanges ? "primary" : "default"}
+                                                ghost={hasUnsavedChanges}
+                                            >
+                                                保存草稿
+                                            </Button>
+
+                                            <Button
+                                                type={isPublished ? "default" : "primary"}
+                                                icon={isPublished ? <EyeOutlined /> : <CloudServerOutlined />}
+                                                onClick={handleTogglePublish}
+                                                loading={loading}
+                                                className={isPublished ? "" : "bg-green-600 hover:bg-green-700"}
+                                            >
+                                                {isPublished ? '已发布资产 (点击关闭)' : '发布资产中心'}
+                                            </Button>
+
+                                            <Button
+                                                icon={<DownloadOutlined />}
+                                                onClick={handleDownloadTTL}
+                                            >
+                                                下载TTL
+                                            </Button>
+                                        </Space>
+                                    </Panel>
+
+                                    {/* 底部统计 */}
+                                    <Panel position="bottom-left">
+                                        <div className="bg-white px-4 py-2 rounded-lg shadow-md border border-gray-100 flex flex-col space-y-1">
+                                            <div className="flex items-center space-x-4">
+                                                <span className="text-gray-500 font-medium"><InfoCircleOutlined className="mr-1" /> 视图统计:</span>
+                                                <span><Tag color="blue">{displayNodes.length} / {nodes.length}</Tag> 实体</span>
+                                                <span><Tag color="green">{displayEdges.length} / {edges.length}</Tag> 关系</span>
+                                            </div>
+                                            <div className="text-[10px] text-gray-400">
+                                                提示：双击类节点可 展开/收起 实例；已隐藏 rdf:type 关系线。
+                                            </div>
+                                        </div>
+                                    </Panel>
+                                </ReactFlow>
+                            </ReactFlowProvider>
+                        ) : (
+                            <div className="relative w-full h-full" style={{ width: '100%', height: '100%' }}>
+                                {/* D3 力导向图工具栏 */}
+                                <div className="absolute top-16 left-4 z-10">
                                     <Button
                                         icon={<ArrowLeftOutlined />}
                                         onClick={() => navigate('/my-projects')}
-                                        className="shadow-sm"
+                                        className="shadow-sm bg-white"
                                     >
                                         返回项目列表
                                     </Button>
-                                </Panel>
+                                </div>
 
-                                <Panel position="top-right">
-                                    <Space className="bg-white p-2 rounded-lg shadow-md border border-gray-100">
+                                <div className="absolute top-16 right-4 z-10">
+                                    <Space className="bg-white p-2 rounded-lg shadow-md border border-gray-100 flex-wrap max-w-[calc(100vw-400px)]">
                                         <Upload
                                             accept=".txt,.pdf,.doc,.docx"
                                             showUploadList={false}
@@ -934,7 +1335,6 @@ const OntologyBuilderPage: React.FC = () => {
                                             </Tooltip>
                                         </Upload>
 
-                                        {/* 新增：上传TTL文件按钮 */}
                                         <Upload
                                             accept=".ttl"
                                             showUploadList={false}
@@ -971,9 +1371,6 @@ const OntologyBuilderPage: React.FC = () => {
                                             新增实例
                                         </Button>
 
-
-
-                                        {/* 展开所有实例按钮（已支持切换功能） */}
                                         <Button
                                             icon={<EyeOutlined />}
                                             onClick={expandAllInstances}
@@ -982,7 +1379,6 @@ const OntologyBuilderPage: React.FC = () => {
                                             展开/收起所有实例
                                         </Button>
 
-                                        {/* 新增：创建新关系按钮 */}
                                         <Button
                                             icon={<PlusOutlined />}
                                             onClick={addNewRelation}
@@ -1021,7 +1417,6 @@ const OntologyBuilderPage: React.FC = () => {
                                             {isPublished ? '已发布资产 (点击关闭)' : '发布资产中心'}
                                         </Button>
 
-                                        {/* 新增：下载TTL按钮 */}
                                         <Button
                                             icon={<DownloadOutlined />}
                                             onClick={handleDownloadTTL}
@@ -1029,10 +1424,10 @@ const OntologyBuilderPage: React.FC = () => {
                                             下载TTL
                                         </Button>
                                     </Space>
-                                </Panel>
+                                </div>
 
                                 {/* 底部统计 */}
-                                <Panel position="bottom-left">
+                                <div className="absolute bottom-4 left-4 z-10">
                                     <div className="bg-white px-4 py-2 rounded-lg shadow-md border border-gray-100 flex flex-col space-y-1">
                                         <div className="flex items-center space-x-4">
                                             <span className="text-gray-500 font-medium"><InfoCircleOutlined className="mr-1" /> 视图统计:</span>
@@ -1040,12 +1435,38 @@ const OntologyBuilderPage: React.FC = () => {
                                             <span><Tag color="green">{displayEdges.length} / {edges.length}</Tag> 关系</span>
                                         </div>
                                         <div className="text-[10px] text-gray-400">
-                                            提示：双击类节点可 展开/收起 实例；已隐藏 rdf:type 关系线。
+                                            提示：在力导向图视图中可以拖拽节点调整位置。
                                         </div>
                                     </div>
-                                </Panel>
-                            </ReactFlow>
-                        </ReactFlowProvider>
+                                </div>
+
+                                <D3ForceGraph
+                                    nodes={displayNodes}
+                                    edges={displayEdges}
+                                    onNodeClick={(node) => {
+                                        if (node) {
+                                            onElementClick({} as any, node);
+                                        }
+                                    }}
+                                    onNodesChange={(updatedNode) => {
+                                        // 只更新被拖动的节点位置到完整节点列表
+                                        // updatedNode 是单个节点（数组形式），只更新这个节点的位置
+                                        if (Array.isArray(updatedNode) && updatedNode.length > 0) {
+                                            const draggedNode = updatedNode[0];
+                                            setNodes((prevNodes) =>
+                                                prevNodes.map(node =>
+                                                    node.id === draggedNode.id
+                                                        ? { ...draggedNode }
+                                                        : node
+                                                )
+                                            );
+                                        }
+                                    }}
+                                    width={window.innerWidth - 300}
+                                    height={window.innerHeight - 150}
+                                />
+                            </div>
+                        )}
 
                         {/* 属性编辑抽屉 */}
                         <Drawer

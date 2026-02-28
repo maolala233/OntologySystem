@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <title>D3 Force Graph Demo</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      background: #111;
+    }
+    svg {
+      width: 100vw;
+      height: 100vh;
+    }
+    line {
+      stroke: #666;
+      stroke-opacity: 0.6;
+    }
+    circle {
+      stroke: #fff;
+      stroke-width: 1.5px;
+      cursor: grab;
+    }
+  </style>
+</head>
+<body>
+
+<svg></svg>
+
+<script>
+const width = window.innerWidth;
+const height = window.innerHeight;
+
+const svg = d3.select("svg");
+
+// 示例数据
+const nodes = [
+  { id: "A" },
+  { id: "B" },
+  { id: "C" },
+  { id: "D" },
+  { id: "E" }
+];
+
+const links = [
+  { source: "A", target: "B" },
+  { source: "A", target: "C" },
+  { source: "B", target: "D" },
+  { source: "C", target: "E" }
+];
+
+// 创建力模拟
+const simulation = d3.forceSimulation(nodes)
+  .force("link", d3.forceLink(links)
+    .id(d => d.id)
+    .distance(120))
+  .force("charge", d3.forceManyBody()
+    .strength(-400)) // 斥力
+  .force("center", d3.forceCenter(width / 2, height / 2))
+  .force("collision", d3.forceCollide()
+    .radius(30)); // 防止重叠
+
+// 画边
+const link = svg.append("g")
+  .selectAll("line")
+  .data(links)
+  .enter()
+  .append("line");
+
+// 画节点
+const node = svg.append("g")
+  .selectAll("circle")
+  .data(nodes)
+  .enter()
+  .append("circle")
+  .attr("r", 20)
+  .attr("fill", "#4cc9f0")
+  .call(d3.drag()
+    .on("start", dragstarted)
+    .on("drag", dragged)
+    .on("end", dragended)
+  );
+
+// 每一帧更新位置
+simulation.on("tick", () => {
+  link
+    .attr("x1", d => d.source.x)
+    .attr("y1", d => d.source.y)
+    .attr("x2", d => d.target.x)
+    .attr("y2", d => d.target.y);
+
+  node
+    .attr("cx", d => d.x)
+    .attr("cy", d => d.y);
+});
+
+// 拖拽事件
+function dragstarted(event, d) {
+  if (!event.active) simulation.alphaTarget(0.3).restart();
+  d.fx = d.x;
+  d.fy = d.y;
+}
+
+function dragged(event, d) {
+  d.fx = event.x;
+  d.fy = event.y;
+}
+
+function dragended(event, d) {
+  if (!event.active) simulation.alphaTarget(0);
+  d.fx = null;
+  d.fy = null;
+}
+
+</script>
+
+</body>
+</html>

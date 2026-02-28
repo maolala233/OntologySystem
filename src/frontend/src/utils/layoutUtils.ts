@@ -1,5 +1,13 @@
 import dagre from 'dagre';
-import { Node, Edge } from 'reactflow';
+import { Node, Edge, MarkerType } from 'reactflow';
+
+// 规范化边的类型，确保使用直线类型
+const normalizeEdge = (edge: Edge): Edge => ({
+    ...edge,
+    type: 'straight',
+    markerEnd: edge.markerEnd || { type: MarkerType.ArrowClosed, color: '#b1b1b7' },
+    style: edge.style || { stroke: '#b1b1b7', strokeWidth: 1.5 },
+});
 
 export const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = 'LR') => {
     const dagreGraph = new dagre.graphlib.Graph();
@@ -42,5 +50,8 @@ export const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = 'L
         };
     });
 
-    return { nodes: layoutedNodes, edges };
+    // 规范化所有边为直线类型
+    const layoutedEdges = edges.map(normalizeEdge);
+
+    return { nodes: layoutedNodes, edges: layoutedEdges };
 };

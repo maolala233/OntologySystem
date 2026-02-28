@@ -95,3 +95,38 @@ body,
 ::-webkit-scrollbar-thumb:hover {
   background: #555;
 }
+
+/* D3 力导向图样式 */
+.d3-force-graph {
+  cursor: grab;
+}
+
+.d3-force-graph:active {
+  cursor: grabbing;
+}
+
+.d3-force-graph line {
+  stroke: #666;
+  stroke-opacity: 0.6;
+  stroke-width: 1.5;
+}
+
+.d3-force-graph circle {
+  stroke: #fff;
+  stroke-width: 1.5px;
+  cursor: grab;
+  transition: all 0.3s ease;
+}
+
+.d3-force-graph circle:hover {
+  stroke: #4cc9f0;
+  stroke-width: 2px;
+}
+
+.d3-force-graph circle.node {
+  cursor: grab;
+}
+
+.d3-force-graph circle.node:active {
+  cursor: grabbing;
+}
