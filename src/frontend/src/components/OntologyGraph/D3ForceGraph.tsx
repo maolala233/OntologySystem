@@ -49,6 +49,7 @@ interface D3ForceGraphProps {
     width?: number;
     height?: number;
     className?: string;
+    highlightNodeId?: string | null;
 }
 
 /**
@@ -62,7 +63,8 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
     onNodesChange,
     width = window.innerWidth - 300,
     height = window.innerHeight - 150,
-    className = ''
+    className = '',
+    highlightNodeId = null
 }) => {
     const svgRef = useRef<SVGSVGElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -275,7 +277,8 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             .attr("r", (d: any) => NODE_SIZES[d.type] / 2)
             .attr("fill", (d: any) => getNodeColor(d))
             .attr("stroke", "#fff")
-            .attr("stroke-width", 2);
+            .attr("stroke-width", 2)
+            .attr("filter", (d: any) => d.id === highlightNodeId ? "drop-shadow(0 0 8px rgba(255, 165, 0, 0.8))" : null);
 
         // 添加文字标签
         nodeEnter.append("text")
@@ -289,7 +292,12 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             .text((d: any) => d.originalNode.data?.label || d.id);
 
         // 绑定节点点击事件
+        // 更新高亮节点的外发光效果
         nodeEnter.merge(nodeSelection as any)
+            .each(function(this: SVGGElement, d: any) {
+                const circle = select(this).select("circle.node");
+                circle.attr("filter", d.id === highlightNodeId ? "drop-shadow(0 0 8px rgba(255, 165, 0, 0.8))" : null);
+            })
             .on("click", (event: MouseEvent, d: any) => {
                 event.stopPropagation();
                 if (onNodeClick) {
@@ -371,7 +379,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
         if (nodes.length > 0) {
             renderGraph();
         }
-    }, [nodes, edges, renderGraph]);
+    }, [nodes, edges, renderGraph, highlightNodeId]);
 
     // 重新计算布局
     const forceLayout = useCallback(() => {

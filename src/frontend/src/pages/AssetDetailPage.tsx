@@ -1,42 +1,28 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useNodesState, useEdgesState } from 'reactflow';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import ReactFlow, {
-    Background,
-    Controls,
-    MiniMap,
-    ReactFlowProvider,
-    Panel,
-    Node as RFNode,
-    Edge as RFEdge,
-} from 'reactflow';
-import 'reactflow/dist/style.css';
-import { Button, Spin, message, Descriptions, Tag, Card } from 'antd';
-import { ArrowLeftOutlined, UserOutlined, CalendarOutlined, InfoCircleOutlined, FileTextOutlined, DeploymentUnitOutlined, EyeOutlined } from '@ant-design/icons';
+import { Button, Spin, message, Descriptions, Tag, Card, Drawer, Form, Input, Divider } from 'antd';
+import { ArrowLeftOutlined, UserOutlined, InfoCircleOutlined, DeploymentUnitOutlined, UnorderedListOutlined, RightOutlined, LeftOutlined } from '@ant-design/icons';
 import Navbar from '../components/Layout/Navbar';
 import { projectsApi } from '../api/projects';
 import { ProjectData } from '../types/ontology';
-import Neo4jNode from '../components/OntologyGraph/Neo4jNode';
-import { getLayoutedElements } from '../utils/layoutUtils';
-import { MarkerType as RFMarkerType, BackgroundVariant } from 'reactflow';
-import { Drawer, Form, Input, Divider } from 'antd';
+import D3ForceGraph from '../components/OntologyGraph/D3ForceGraph';
+import { Tree } from 'antd';
+
+const { TreeNode } = Tree;
 
 const AssetDetailPage: React.FC = () => {
     const { projectId } = useParams<{ projectId: string }>();
     const navigate = useNavigate();
     const [project, setProject] = useState<ProjectData | null>(null);
     const [loading, setLoading] = useState(true);
-
-    // 扩展状态管理 - 使用 any 类型避免复杂类型问题
-    const [nodes, setNodes, onNodesChange] = useNodesState<any>([]);
-    const [edges, setEdges, onEdgesChange] = useEdgesState<any>([]);
+    const [nodes, setNodes] = useState<any[]>([]);
+    const [edges, setEdges] = useState<any[]>([]);
     const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string>>(new Set());
     const [selectedElement, setSelectedElement] = useState<any>(null);
     const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-
-    // 新增：显示所有实例开关状态（只读模式下不需要开关，直接提供展开/收起功能）
-    const [showAllInstances, setShowAllInstances] = useState(false);
-    const [isAllExpanded, setIsAllExpanded] = useState(false); // 新增：是否所有实例已展开的状态
+    const [isAllExpanded, setIsAllExpanded] = useState(false);
+    const [isLeftPanelExpanded, setIsLeftPanelExpanded] = useState(false);
+    const [form] = Form.useForm();
 
     useEffect(() => {
         if (projectId) {
@@ -62,112 +48,124 @@ const AssetDetailPage: React.FC = () => {
     // 一键展开/收起所有实例
     const toggleAllInstances = () => {
         if (isAllExpanded) {
-            // 收起所有实例：清空 expandedNodeIds
             setExpandedNodeIds(new Set());
             setIsAllExpanded(false);
             message.success('已收起所有实例');
         } else {
-            // 展开所有实例
-            const newExpandedSet = new Set<string>(expandedNodeIds);
-            
-            // 找到所有类节点
-            const classNodes = nodes.filter((node: any) => node.data?.type === 'owl:Class');
-            
-            // 找到所有实例节点及其关联的类
+            const newExpandedSet = new Set<string>();
             nodes.forEach((node: any) => {
                 if (node.data?.type === 'owl:NamedIndividual') {
-                    // 查找该实例关联的类
                     const parentClassEdge = edges.find((e: any) =>
                         e.source === node.id &&
                         (e.label === 'rdf:type' || e.data?.label === 'type' || e.data?.relation === 'instance_of')
                     );
-                    
                     if (parentClassEdge && parentClassEdge.target) {
-                        // 将关联的类添加到展开集合中
                         newExpandedSet.add(parentClassEdge.target);
                     }
                 }
             });
-            
             setExpandedNodeIds(newExpandedSet);
             setIsAllExpanded(true);
             message.success('已展开所有实例相关的类');
         }
     };
 
-    // 自动布局
-    const handleAutoLayout = useCallback((currentNodes: any[], currentEdges: any[]) => {
-        const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(currentNodes, currentEdges);
-        setNodes(layoutedNodes);
-        setEdges(layoutedEdges);
-    }, []);
-
-    // 双击节点：展开/折叠
-    const onNodeDoubleClick = useCallback((_: React.MouseEvent, node: RFNode) => {
-        if ((node.data as any)?.type === 'owl:Class') {
-            setExpandedNodeIds((prev) => {
-                const newSet = new Set(prev);
-                if (newSet.has(node.id)) {
-                    newSet.delete(node.id);
-                } else {
-                    newSet.add(node.id);
-                }
-                return newSet;
-            });
-            // 展开后自动适配视图
-            setTimeout(() => {
-                message.info('双击已展开/折叠类节点');
-            }, 100);
-        }
-    }, []);
-
-    // 单击节点：查看详情
-    const onNodeClick = useCallback((_: React.MouseEvent, node: RFNode) => {
-        setSelectedElement(node.data);
+    // 点击节点
+    const onNodeClick = (node: any) => {
+        setSelectedElement(node);
         setIsDrawerOpen(true);
-    }, []);
+        const propsObj = node.data?.properties || {};
+        const propsArray = Object.entries(propsObj).map(([key, value]) => ({
+            name: key,
+            value: String(value)
+        }));
+        form.setFieldsValue({
+            label: node.data?.label || '',
+            type: node.data?.type || 'owl:Class',
+            properties: propsArray
+        });
+    };
+
+    // 点击边
+    const onEdgeClick = (edge: any) => {
+        setSelectedElement(edge);
+        setIsDrawerOpen(true);
+        form.setFieldsValue({
+            label: edge.data?.label || edge.data?.relation || '',
+            relation: edge.data?.relation || edge.data?.label || '',
+        });
+    };
 
     // 计算当前显示的元素
-    const { displayNodes, displayEdges } = useMemo(() => {
+    const getDisplayElements = useCallback(() => {
+        const isExpanded = expandedNodeIds.size > 0;
         const visibleNodeIds = new Set<string>();
 
-        nodes.forEach((node: any) => {
+        nodes.forEach(node => {
             if (node.data?.type === 'owl:Class') {
                 visibleNodeIds.add(node.id);
             } else if (node.data?.type === 'owl:NamedIndividual') {
-                // 检查该实例是否有关联的已展开的类
-                const parentClassEdge = edges.find((e: any) =>
-                    e.source === node.id &&
-                    (e.label === 'rdf:type' || e.data?.label === 'type' || e.data?.relation === 'instance_of') &&
-                    expandedNodeIds.has(e.target)
-                );
-                
-                // 如果开启"显示所有实例"或有展开的关联类，则显示实例
-                if (showAllInstances || parentClassEdge) {
+                if (isExpanded) {
                     visibleNodeIds.add(node.id);
                 }
             } else {
-                // 其他类型默认显示
                 visibleNodeIds.add(node.id);
             }
         });
 
-        const displayNodes = nodes.filter((n: any) => visibleNodeIds.has(n.id));
-        const displayEdges = edges.filter((e: any) => {
-            const isVisible = visibleNodeIds.has(e.source) && visibleNodeIds.has(e.target);
-            const isTypeRelation = e.label === 'rdf:type' || e.data?.label === 'type' || e.data?.relation === 'instance_of';
-            return isVisible && !isTypeRelation;
+        const displayNodes = nodes.filter(n => visibleNodeIds.has(n.id));
+        const displayEdges = edges.filter(e => {
+            const sourceId = String(e.source);
+            const targetId = String(e.target);
+            const sourceVisible = visibleNodeIds.has(sourceId);
+            const targetVisible = visibleNodeIds.has(targetId);
+            return sourceVisible && targetVisible;
         });
 
         return { displayNodes, displayEdges };
-    }, [nodes, edges, expandedNodeIds, showAllInstances]);
+    }, [nodes, edges, expandedNodeIds]);
 
-    const nodeTypesMap = useMemo(() => ({ custom: Neo4jNode }), []);
-    const defaultEdgeOptions = useMemo(() => ({
-        type: 'smoothstep',
-        markerEnd: { type: RFMarkerType.ArrowClosed, color: '#b1b1b7' },
-        style: { stroke: '#b1b1b7', strokeWidth: 1.5 },
-    }), []);
+    const { displayNodes, displayEdges } = getDisplayElements();
+
+    // 构建树形数据
+    const buildTreeData = useCallback(() => {
+        const classNodes = nodes.filter(n => n.data?.type === 'owl:Class');
+        const instanceNodes = nodes.filter(n => n.data?.type === 'owl:NamedIndividual');
+        const classToInstances: Record<string, any[]> = {};
+        instanceNodes.forEach(instance => {
+            const parentClassEdge = edges.find(e =>
+                e.source === instance.id &&
+                (e.label === 'rdf:type' || e.data?.label === 'type' || e.data?.relation === 'instance_of')
+            );
+            if (parentClassEdge && parentClassEdge.target) {
+                if (!classToInstances[parentClassEdge.target]) {
+                    classToInstances[parentClassEdge.target] = [];
+                }
+                classToInstances[parentClassEdge.target].push(instance);
+            }
+        });
+        return classNodes.map(classNode => ({
+            title: classNode.data?.label || '未命名类',
+            key: classNode.id,
+            icon: <span className="inline-block w-3 h-3 rounded-full bg-[#4cc9f0] mr-2" />,
+            children: classToInstances[classNode.id]?.map(instance => ({
+                title: instance.data?.label || '未命名实例',
+                key: instance.id,
+                icon: <span className="inline-block w-3 h-3 rounded-full bg-[#f79767] mr-2" />,
+                isLeaf: true,
+            })) || [],
+        }));
+    }, [nodes, edges]);
+
+    // 点击树节点
+    const onTreeSelect = (selectedKeys: React.Key[]) => {
+        if (selectedKeys.length === 0) return;
+        const key = selectedKeys[0] as string;
+        const node = nodes.find(n => n.id === key);
+        if (node) {
+            onNodeClick(node);
+        }
+    };
 
     const breadcrumbs = [
         { title: '首页', path: '/' },
@@ -190,53 +188,77 @@ const AssetDetailPage: React.FC = () => {
     return (
         <div className="h-screen flex flex-col bg-gray-50">
             <Navbar breadcrumbs={breadcrumbs} />
+            <div className="flex-1 flex relative">
+                {/* 左侧展开面板 */}
+                <div
+                    className={`absolute left-0 top-0 bottom-0 bg-white shadow-lg z-20 transition-all duration-300 ${
+                        isLeftPanelExpanded ? 'w-[420px]' : 'w-0'
+                    } overflow-hidden`}
+                >
+                    {isLeftPanelExpanded && (
+                        <div className="p-4 h-full flex flex-col">
+                            <div className="flex items-center justify-between mb-4">
+                                <h3 className="font-semibold text-gray-700 flex items-center">
+                                    <UnorderedListOutlined className="mr-2" />
+                                    类与实例列表
+                                </h3>
+                            </div>
+                            <div className="flex-1 overflow-auto">
+                                <Tree
+                                    showIcon
+                                    defaultExpandAll
+                                    selectedKeys={selectedElement ? [selectedElement.id] : []}
+                                    onSelect={onTreeSelect}
+                                    treeData={buildTreeData()}
+                                />
+                            </div>
+                            <div className="mt-4 pt-4 border-t border-gray-200">
+                                <div className="flex items-center text-sm text-gray-500">
+                                    <InfoCircleOutlined className="mr-2" />
+                                    <span>共 {nodes.filter(n => n.data?.type === 'owl:Class').length} 个类，{nodes.filter(n => n.data?.type === 'owl:NamedIndividual').length} 个实例</span>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
 
-            <div className="flex-1 flex">
-                {/* 左侧信息面板 */}
-                <div className="w-80 bg-white border-r border-gray-200 p-6 overflow-y-auto">
+                {/* 左侧展开/收起按钮 */}
+                <button
+                    className={`absolute left-0 top-1/2 -translate-y-1/2 z-30 bg-white shadow-md rounded-r-lg p-2 hover:bg-gray-50 transition-all duration-300 ${
+                        isLeftPanelExpanded ? 'left-[420px]' : 'left-0'
+                    }`}
+                    onClick={() => setIsLeftPanelExpanded(!isLeftPanelExpanded)}
+                    title={isLeftPanelExpanded ? '收起列表' : '展开列表'}
+                >
+                    {isLeftPanelExpanded ? <LeftOutlined /> : <RightOutlined />}
+                </button>
+
+                {/* 左侧信息面板 - 固定宽度 */}
+                <div className={`w-[420px] bg-white border-r border-gray-200 p-6 overflow-y-auto transition-all duration-300 ${isLeftPanelExpanded ? 'ml-[420px]' : ''}`}>
                     <div className="space-y-6">
-                        {/* 项目标题 */}
                         <div>
-                            <h1 className="text-2xl font-bold text-gray-800 mb-2">
-                                {project.name}
-                            </h1>
+                            <h1 className="text-2xl font-bold text-gray-800 mb-2">{project.name}</h1>
                             <Tag color="green">已发布</Tag>
                         </div>
-
-                        {/* 项目描述 */}
                         <Card title="项目描述" size="small">
-                            <p className="text-gray-600 text-sm">
-                                {project.description || '暂无描述'}
-                            </p>
+                            <p className="text-gray-600 text-sm">{project.description || '暂无描述'}</p>
                         </Card>
-
-                        {/* 统计信息 */}
                         <Card title="统计信息" size="small">
                             <Descriptions column={1} size="small">
                                 <Descriptions.Item label="节点数量">
-                                    <span className="font-semibold text-blue-600">
-                                        {project.graph_data?.nodes?.length || 0}
-                                    </span>
+                                    <span className="font-semibold text-blue-600">{project.graph_data?.nodes?.length || 0}</span>
                                 </Descriptions.Item>
                                 <Descriptions.Item label="关系数量">
-                                    <span className="font-semibold text-purple-600">
-                                        {project.graph_data?.edges?.length || 0}
-                                    </span>
+                                    <span className="font-semibold text-purple-600">{project.graph_data?.edges?.length || 0}</span>
                                 </Descriptions.Item>
                             </Descriptions>
                         </Card>
-
-                        {/* 创建者信息 */}
                         <Card title="创建者" size="small">
                             <div className="flex items-center space-x-2">
                                 <UserOutlined className="text-gray-400" />
-                                <span className="text-gray-700">
-                                    {project.owner?.username || '未知'}
-                                </span>
+                                <span className="text-gray-700">{project.owner?.username || '未知'}</span>
                             </div>
                         </Card>
-
-                        {/* 节点类型统计 */}
                         {project.graph_data?.nodes && (
                             <Card title="节点类型分布" size="small">
                                 {(() => {
@@ -258,60 +280,103 @@ const AssetDetailPage: React.FC = () => {
                                 })()}
                             </Card>
                         )}
-
-                        {/* 控制按钮 */}
                         <div className="space-y-2">
-                            <Button 
-                                block 
-                                onClick={toggleAllInstances}
-                                icon={<DeploymentUnitOutlined />}
-                            >
+                            <Button block onClick={toggleAllInstances} icon={<DeploymentUnitOutlined />}>
                                 {isAllExpanded ? '收起所有实例' : '展开所有实例'}
                             </Button>
                         </div>
                     </div>
                 </div>
 
+                {/* 返回按钮 */}
+                <div 
+                    className={`absolute top-4 z-10 transition-all duration-300 ${
+                        isLeftPanelExpanded ? 'left-[660px]' : 'left-[240px]'
+                    }`}
+                >
+                    <Button
+                        icon={<ArrowLeftOutlined />}
+                        onClick={() => navigate('/asset-center')}
+                        className="shadow-sm bg-white"
+                    >
+                        返回资产中心
+                    </Button>
+                </div>
+
                 {/* 右侧图谱展示区 */}
                 <div className="flex-1 relative">
-                    <ReactFlowProvider>
-                        <ReactFlow
-                            nodes={displayNodes}
-                            edges={displayEdges}
-                            onNodesChange={onNodesChange}
-                            onEdgesChange={onEdgesChange}
-                            onNodeClick={onNodeClick}
-                            onNodeDoubleClick={onNodeDoubleClick}
-                            nodeTypes={nodeTypesMap}
-                            defaultEdgeOptions={defaultEdgeOptions}
-                            fitView
-                            attributionPosition="bottom-left"
-                        >
-                            <Controls />
-                            <MiniMap />
-                            <Background variant={BackgroundVariant.Lines} gap={20} size={1} />
-                        </ReactFlow>
-                    </ReactFlowProvider>
+                    {loading && (
+                        <div className="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center z-50">
+                            <Spin size="large" tip="正在加载..." />
+                        </div>
+                    )}
+                    <D3ForceGraph
+                        nodes={displayNodes}
+                        edges={displayEdges}
+                        onNodeClick={onNodeClick}
+                        onEdgeClick={onEdgeClick}
+                        onNodesChange={(updatedNodes) => {
+                            if (Array.isArray(updatedNodes)) {
+                                setNodes((prevNodes) =>
+                                    prevNodes.map(node => {
+                                        const updated = updatedNodes.find(n => n.id === node.id);
+                                        return updated ? { ...updated } : node;
+                                    })
+                                );
+                            }
+                        }}
+                        width={window.innerWidth - (isLeftPanelExpanded ? 880 : 460)}
+                        height={window.innerHeight - 60}
+                    />
+                </div>
+            </div>
 
-                    {/* 抽屉 - 元素详情 */}
-                    <Drawer
-                        title="元素详情"
-                        placement="right"
-                        onClose={() => setIsDrawerOpen(false)}
-                        open={isDrawerOpen}
-                        width={400}
+            {/* 抽屉 - 元素详情 */}
+            <Drawer
+                title={selectedElement ? (
+                    'position' in selectedElement
+                        ? `编辑节点属性 - ${selectedElement.data?.label || '未命名'}`
+                        : `编辑关系属性 - ${selectedElement.data?.label || '未命名'}`
+                ) : "元素详情"}
+                placement="right"
+                onClose={() => {
+                    setIsDrawerOpen(false);
+                    setSelectedElement(null);
+                    form.resetFields();
+                }}
+                open={isDrawerOpen}
+                width={450}
+                destroyOnClose={true}
+            >
+                {selectedElement && (
+                    <Form
+                        form={form}
+                        layout="vertical"
+                        initialValues={{
+                            label: selectedElement.data?.label || '',
+                            type: selectedElement.data?.type || 'owl:Class',
+                            relation: selectedElement.data?.relation || selectedElement.data?.label || ''
+                        }}
                     >
-                        {selectedElement && (
-                            <div className="space-y-4">
-                                <div>
-                                    <h3 className="font-semibold mb-2">基本信息</h3>
-                                    <p><strong>标签:</strong> {selectedElement.label || 'N/A'}</p>
-                                    <p><strong>类型:</strong> {selectedElement.type || 'N/A'}</p>
+                        {'position' in selectedElement ? (
+                            <>
+                                <div className="flex items-center space-x-2 mb-4 font-medium text-gray-700">
+                                    <InfoCircleOutlined />
+                                    <span>基本信息</span>
                                 </div>
-                                
+                                <Form.Item name="label" label="节点名称">
+                                    <Input disabled />
+                                </Form.Item>
+                                <Form.Item name="type" label="节点类型">
+                                    <Input disabled />
+                                </Form.Item>
                                 {selectedElement.properties && Object.keys(selectedElement.properties).length > 0 && (
-                                    <div>
-                                        <h3 className="font-semibold mb-2">属性</h3>
+                                    <>
+                                        <Divider />
+                                        <div className="flex items-center space-x-2 mb-4 font-medium text-gray-700">
+                                            <InfoCircleOutlined />
+                                            <span>属性</span>
+                                        </div>
                                         <div className="space-y-1">
                                             {Object.entries(selectedElement.properties).map(([key, value]) => (
                                                 <p key={key} className="text-sm">
@@ -319,13 +384,26 @@ const AssetDetailPage: React.FC = () => {
                                                 </p>
                                             ))}
                                         </div>
-                                    </div>
+                                    </>
                                 )}
-                            </div>
+                            </>
+                        ) : (
+                            <>
+                                <div className="flex items-center space-x-2 mb-4 font-medium text-gray-700">
+                                    <InfoCircleOutlined />
+                                    <span>关系属性</span>
+                                </div>
+                                <Form.Item name="label" label="关系标签">
+                                    <Input disabled />
+                                </Form.Item>
+                                <Form.Item name="relation" label="关系类型">
+                                    <Input disabled />
+                                </Form.Item>
+                            </>
                         )}
-                    </Drawer>
-                </div>
-            </div>
+                    </Form>
+                )}
+            </Drawer>
         </div>
     );
 };

@@ -86,6 +86,10 @@ const OntologyBuilderPage: React.FC = () => {
     const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
     const [configForm] = Form.useForm();
     const [isAdmin, setIsAdmin] = useState(false);
+    const [isAddInstanceModalOpen, setIsAddInstanceModalOpen] = useState(false);
+    const [addInstanceForm] = Form.useForm();
+    const [isNewNode, setIsNewNode] = useState(false);
+    const [highlightNodeId, setHighlightNodeId] = useState<string | null>(null);
 
     // 左侧列表展开状态
     const [isLeftPanelExpanded, setIsLeftPanelExpanded] = useState(false);
@@ -234,6 +238,12 @@ const OntologyBuilderPage: React.FC = () => {
                     return node;
                 })
             );
+            
+            // 如果是新节点保存后，清除高亮状态
+            if (isNewNode) {
+                setIsNewNode(false);
+                setHighlightNodeId(null);
+            }
         } else {
             // 边属性编辑
             setEdges((eds) =>
@@ -257,70 +267,86 @@ const OntologyBuilderPage: React.FC = () => {
         message.success('属性已更新');
     };
 
-    // 新增节点
-    const addNewNodeOfType = (nodeType: string) => {
+    // 新增类
+    const addNewClass = () => {
         const newNode: OntologyNode = {
             id: `node_${Date.now()}`,
             type: 'custom',
-            position: { x: Math.random() * 400 + 100, y: Math.random() * 400 + 100 },
+            position: { x: window.innerWidth / 2 - 200, y: window.innerHeight / 2 - 200 },
             data: {
-                label: nodeType === 'owl:Class' ? '新类' : '新实例',
-                type: nodeType,
+                label: '新类',
+                type: 'owl:Class',
                 properties: {}
             },
         };
         setNodes((nds) => nds.concat(newNode));
-        message.success(`已添加新${nodeType === 'owl:Class' ? '类' : '实例'}`);
+        setIsNewNode(true);
+        setHighlightNodeId(newNode.id);
+        
+        // 自动选中并打开编辑抽屉
+        setSelectedElement(newNode);
+        setIsDrawerOpen(true);
+        form.setFieldsValue({
+            label: '新类',
+            type: 'owl:Class',
+            properties: []
+        });
+        message.success('已添加新类，请编辑节点名称');
     };
 
-    // 新增类
-    const addNewClass = () => {
-        addNewNodeOfType('owl:Class');
-    };
-
-    // 新增实例
+    // 新增实例 - 打开选择类对话框
     const addNewInstance = () => {
-        const newNode: OntologyNode = {
-            id: `node_${Date.now()}`,
-            type: 'custom',
-            position: { x: Math.random() * 400 + 100, y: Math.random() * 400 + 100 },
-            data: {
-                label: '新实例',
-                type: 'owl:NamedIndividual',
-                properties: {}
-            },
-        };
-
-        // 尝试找到最近的类节点作为父类
         const classNodes = nodes.filter(node => node.data?.type === 'owl:Class');
-        let newEdges: OntologyEdge[] = [];
+        if (classNodes.length === 0) {
+            message.warning('请先创建至少一个类，然后才能添加实例');
+            return;
+        }
+        addInstanceForm.resetFields();
+        setIsAddInstanceModalOpen(true);
+    };
 
-        if (classNodes.length > 0) {
-            // 创建 rdf:type 关系到最近的类
-            const targetClass = classNodes[classNodes.length - 1];
+    // 确认添加实例
+    const handleConfirmAddInstance = async () => {
+        try {
+            const values = await addInstanceForm.validateFields();
+            const { instanceLabel, parentClassId } = values;
+
+            const newNode: OntologyNode = {
+                id: `node_${Date.now()}`,
+                type: 'custom',
+                position: { x: Math.random() * 400 + 100, y: Math.random() * 400 + 100 },
+                data: {
+                    label: instanceLabel,
+                    type: 'owl:NamedIndividual',
+                    properties: {}
+                },
+            };
+
+            // 创建 rdf:type 关系到选中的类（本体论关系）
             const newEdge: OntologyEdge = {
-                id: `edge_${Date.now()}_${newNode.id}_${targetClass.id}`,
+                id: `edge_${Date.now()}_${newNode.id}_${parentClassId}`,
                 source: newNode.id,
-                target: targetClass.id,
+                target: parentClassId,
                 data: { label: 'rdf:type', relation: 'instance_of' },
             } as OntologyEdge;
-            newEdges.push(newEdge);
+
+            // 添加新节点和边
+            setNodes((nds) => nds.concat(newNode));
+            setEdges((eds) => [...eds, newEdge]);
 
             // 自动展开该类
             setExpandedNodeIds(prev => {
                 const newSet = new Set(prev);
-                newSet.add(targetClass.id);
+                newSet.add(parentClassId);
                 return newSet;
             });
-        }
 
-        // 添加新节点和边
-        setNodes((nds) => nds.concat(newNode));
-        if (newEdges.length > 0) {
-            setEdges((eds) => [...eds, ...newEdges]);
+            message.success('已添加新实例');
+            setIsAddInstanceModalOpen(false);
+            addInstanceForm.resetFields();
+        } catch (error) {
+            console.error('添加实例失败:', error);
         }
-
-        message.success('已添加新实例');
     };
 
     // 删除选中元素
@@ -830,7 +856,7 @@ const OntologyBuilderPage: React.FC = () => {
                     {/* 左侧展开面板 */}
                     <div
                         className={`absolute left-0 top-0 bottom-0 bg-white shadow-lg z-20 transition-all duration-300 ${
-                            isLeftPanelExpanded ? 'w-80' : 'w-0'
+                            isLeftPanelExpanded ? 'w-[420px]' : 'w-0'
                         } overflow-hidden`}
                     >
                         {isLeftPanelExpanded && (
@@ -863,7 +889,7 @@ const OntologyBuilderPage: React.FC = () => {
                     {/* 左侧展开/收起按钮 */}
                     <button
                         className={`absolute left-0 top-1/2 -translate-y-1/2 z-30 bg-white shadow-md rounded-r-lg p-2 hover:bg-gray-50 transition-all duration-300 ${
-                            isLeftPanelExpanded ? 'left-80' : 'left-0'
+                            isLeftPanelExpanded ? 'left-[420px]' : 'left-0'
                         }`}
                         onClick={() => setIsLeftPanelExpanded(!isLeftPanelExpanded)}
                         title={isLeftPanelExpanded ? '收起列表' : '展开列表'}
@@ -978,7 +1004,11 @@ const OntologyBuilderPage: React.FC = () => {
                         </div>
 
                         {/* 返回按钮 */}
-                        <div className="absolute top-4 left-4 z-10">
+                        <div 
+                            className={`absolute top-4 z-10 transition-all duration-300 ${
+                                isLeftPanelExpanded ? 'left-[240px]' : 'left-4'
+                            }`}
+                        >
                             <Button
                                 icon={<ArrowLeftOutlined />}
                                 onClick={() => navigate('/my-projects')}
@@ -990,8 +1020,8 @@ const OntologyBuilderPage: React.FC = () => {
 
                         {/* 底部统计 */}
                         <div 
-                            className={`absolute bottom-4 left-4 z-10 transition-all duration-300 ${
-                                isLeftPanelExpanded ? 'ml-80' : ''
+                            className={`absolute bottom-4 z-10 transition-all duration-300 ${
+                                isLeftPanelExpanded ? 'left-[240px]' : 'left-4'
                             }`}
                         >
                             <div className="bg-white px-4 py-2 rounded-lg shadow-md border border-gray-100 flex flex-col space-y-1">
@@ -1001,7 +1031,7 @@ const OntologyBuilderPage: React.FC = () => {
                                     <span><Tag color="green">{edges.length}</Tag> 关系</span>
                                 </div>
                                 <div className="text-[10px] text-gray-400">
-                                    提示：可以拖拽节点调整位置，点击边可编辑关系属性。
+                                    提示：可以
                                 </div>
                             </div>
                         </div>
@@ -1023,8 +1053,9 @@ const OntologyBuilderPage: React.FC = () => {
                                         );
                                     }
                                 }}
-                                width={window.innerWidth - (isLeftPanelExpanded ? 380 : 60)}
+                                width={window.innerWidth - (isLeftPanelExpanded ? 420 : 60)}
                                 height={window.innerHeight - 60}
+                                highlightNodeId={highlightNodeId}
                             />
                         </div>
 
@@ -1072,9 +1103,8 @@ const OntologyBuilderPage: React.FC = () => {
                                             <Form.Item
                                                 name="type"
                                                 label="节点类型"
-                                                rules={[{ required: true, message: '请选择节点类型' }]}
                                             >
-                                                <Select options={nodeTypes} />
+                                                <Input disabled value={form.getFieldValue('type') === 'owl:Class' ? '类 (Class)' : form.getFieldValue('type') === 'owl:NamedIndividual' ? '实例 (Individual)' : form.getFieldValue('type')} />
                                             </Form.Item>
 
                                             <SectionTitle icon={<TagsOutlined />} title="自定义属性" />
@@ -1367,6 +1397,61 @@ const OntologyBuilderPage: React.FC = () => {
                                             </>
                                         )}
                                     />
+                                </Form.Item>
+                            </Form>
+                        </Modal>
+
+                        {/* 新增实例 Modal - 选择父类 */}
+                        <Modal
+                            title={
+                                <div className="flex items-center space-x-2">
+                                    <PlusOutlined style={{ color: '#fa8c16' }} />
+                                    <span>新增实例</span>
+                                </div>
+                            }
+                            open={isAddInstanceModalOpen}
+                            onOk={handleConfirmAddInstance}
+                            onCancel={() => {
+                                setIsAddInstanceModalOpen(false);
+                                addInstanceForm.resetFields();
+                            }}
+                            okText="创建"
+                            cancelText="取消"
+                            width={500}
+                        >
+                            <div className="mb-4 text-gray-500 text-sm">
+                                请选择要归属的类，并输入实例名称。实例将通过 <Tag color="orange">rdf:type</Tag> 关系（本体论中的"属于"关系）关联到选中的类。
+                            </div>
+                            <Form
+                                form={addInstanceForm}
+                                layout="vertical"
+                                initialValues={{
+                                    instanceLabel: '',
+                                    parentClassId: ''
+                                }}
+                            >
+                                <Form.Item
+                                    name="parentClassId"
+                                    label="选择父类"
+                                    rules={[{ required: true, message: '请选择一个类作为父类' }]}
+                                >
+                                    <Select
+                                        showSearch
+                                        placeholder="选择一个类"
+                                        optionFilterProp="label"
+                                        options={nodes.filter(n => n.data?.type === 'owl:Class').map(node => ({
+                                            label: node.data?.label || '未命名类',
+                                            value: node.id
+                                        }))}
+                                    />
+                                </Form.Item>
+
+                                <Form.Item
+                                    name="instanceLabel"
+                                    label="实例名称"
+                                    rules={[{ required: true, message: '请输入实例名称' }]}
+                                >
+                                    <Input placeholder="请输入实例名称" />
                                 </Form.Item>
                             </Form>
                         </Modal>
