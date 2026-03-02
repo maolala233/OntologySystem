@@ -37,8 +37,8 @@ const LIGHT_THEME = {
     stroke: '#ffffff'
 };
 
-// 边点击区域宽度（扩大点击范围）
-const EDGE_CLICK_WIDTH = 20;
+// 边点击区域宽度（扩大点击范围）- 增加到 30 更容易选中
+const EDGE_CLICK_WIDTH = 30;
 
 interface D3ForceGraphProps {
     nodes: OntologyNode[];
@@ -46,6 +46,7 @@ interface D3ForceGraphProps {
     onNodeClick?: (node: OntologyNode | null) => void;
     onEdgeClick?: (edge: OntologyEdge) => void;
     onNodesChange?: (newNodes: OntologyNode[]) => void;
+    onNodeRightClick?: (node: OntologyNode) => void;
     width?: number;
     height?: number;
     className?: string;
@@ -61,6 +62,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
     onNodeClick,
     onEdgeClick,
     onNodesChange,
+    onNodeRightClick,
     width = window.innerWidth - 300,
     height = window.innerHeight - 150,
     className = '',
@@ -181,6 +183,11 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
         }
 
         // 渲染边 - 使用 path 而不是 line，以便更好地控制箭头位置
+        // 先移除旧的边和标签
+        g.selectAll("path.link").remove();
+        g.selectAll("path.invisible-link").remove();
+        svg.selectAll("g.edge-label-group").remove();
+        
         const linkSelection = g.selectAll<SVGPathElement, any>("path.link")
             .data(d3Links, (d: any) => d.id);
 
@@ -190,7 +197,8 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             .attr("fill", "none")
             .attr("stroke", LIGHT_THEME.edge)
             .attr("stroke-opacity", 0.8)
-            .attr("stroke-width", 1.5);
+            .attr("stroke-width", 1.5)
+            .attr("data-edge-id", (d: any) => d.id);
 
         const linkMerge = linkEnter.merge(linkSelection as any);
 
@@ -200,6 +208,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
         // 设置边的样式：类 - 类为实线，类 - 实例为虚线
         linkMerge.each(function(this: SVGPathElement, d: any) {
             const isInstance = isInstanceEdge(d);
+            const edgeLabel = d.data?.label || d.data?.relation || '';
             select(this)
                 .attr("stroke-dasharray", isInstance ? "5,5" : "none")
                 .attr("marker-end", isInstance ? "url(#arrowhead-instance)" : "url(#arrowhead-class)")
@@ -209,11 +218,105 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                     if (onEdgeClick && d.originalEdge) {
                         onEdgeClick(d.originalEdge);
                     }
+                })
+                // 鼠标悬停时显示关系标签
+                .on("mouseenter", function(this: SVGPathElement, event: MouseEvent) {
+                    event.stopPropagation();
+                    // 高亮边
+                    select(this)
+                        .attr("stroke", LIGHT_THEME.edgeHighlight)
+                        .attr("stroke-width", 2.5);
+                    
+                    // 获取边的中点位置
+                    const pathElement = this as SVGPathElement;
+                    const pathLength = pathElement.getTotalLength();
+                    const midPoint = pathElement.getPointAtLength(pathLength / 2);
+                    
+                    // 创建或显示标签 - 使用唯一 ID 避免重复
+                    const labelGroupId = `edge-label-${d.id}`;
+                    let labelGroup = svg.select<SVGGElement>(`g#${labelGroupId}`);
+                    
+                    // 如果标签组不存在，创建它
+                    if (labelGroup.empty()) {
+                        labelGroup = svg.append("g")
+                            .attr("id", labelGroupId)
+                            .attr("class", "edge-label-group")
+                            .style("pointer-events", "none")
+                            .raise(); // 放在最上层
+                        
+                        // 先创建背景矩形
+                        const labelBg = labelGroup.append("rect")
+                            .attr("class", "edge-label-bg")
+                            .attr("fill", "#fff")
+                            .attr("stroke", "#999")
+                            .attr("stroke-width", 1)
+                            .attr("rx", 3)
+                            .attr("ry", 3)
+                            .style("opacity", 0.95);
+                        
+                        // 再创建文本
+                        const labelText = labelGroup.append("text")
+                            .attr("class", "edge-label-text")
+                            .attr("text-anchor", "middle")
+                            .attr("dominant-baseline", "middle")
+                            .style("fill", "#333")
+                            .style("font-size", "11px")
+                            .style("font-weight", "500")
+                            .style("pointer-events", "none");
+                    }
+                    
+                    // 获取标签元素
+                    const labelBg = labelGroup.select<SVGRectElement>("rect.edge-label-bg");
+                    const labelText = labelGroup.select<SVGTextElement>("text.edge-label-text");
+                    
+                    // 设置文本内容并立即获取边界框
+                    const displayLabel = edgeLabel || "关系";
+                    labelText.text(displayLabel);
+                    
+                    // 同步获取文本边界框（不使用 setTimeout）
+                    const textNode = labelText.node();
+                    if (textNode) {
+                        const textBBox = textNode.getBBox();
+                        const padding = 6;
+                        
+                        // 设置背景矩形位置和大小
+                        labelBg
+                            .attr("x", midPoint.x - textBBox.width / 2 - padding)
+                            .attr("y", midPoint.y - textBBox.height / 2 - padding)
+                            .attr("width", textBBox.width + padding * 2)
+                            .attr("height", textBBox.height + padding * 2)
+                            .style("display", "block");
+                        
+                        // 设置文本位置
+                        labelText
+                            .attr("x", midPoint.x)
+                            .attr("y", midPoint.y + textBBox.height / 2 - 2);
+                    }
+                    
+                    // 显示标签组（放在最上层）
+                    labelGroup.style("display", "block").raise();
+                })
+                .on("mouseleave", function(this: SVGPathElement, event: MouseEvent) {
+                    event.stopPropagation();
+                    // 恢复边的样式
+                    select(this)
+                        .attr("stroke", LIGHT_THEME.edge)
+                        .attr("stroke-width", 1.5);
+                    
+                    // 隐藏所有标签组
+                    svg.selectAll("g.edge-label-group").style("display", "none");
                 });
         });
 
-        // 添加透明的点击区域（扩大边的点击范围）
-        const invisibleLinkSelection = g.selectAll<SVGPathElement, any>("path.invisible-link")
+        // 添加透明的点击区域（扩大边的点击范围）- 在节点之上渲染，确保能捕获鼠标事件
+        // 先移除旧的透明边
+        g.selectAll("g.invisible-link-group").remove();
+        
+        // 在节点之后添加透明边组（确保在节点之上）
+        const invisibleLinkGroup = g.append("g").attr("class", "invisible-link-group").raise();
+        
+        const invisibleLinkSelection = invisibleLinkGroup
+            .selectAll<SVGPathElement, any>("path.invisible-link")
             .data(d3Links, (d: any) => d.id);
 
         const invisibleLinkEnter = invisibleLinkSelection.enter()
@@ -222,13 +325,106 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             .attr("fill", "none")
             .attr("stroke", "transparent")
             .attr("stroke-width", EDGE_CLICK_WIDTH)
-            .style("pointer-events", "stroke");
+            .style("pointer-events", "stroke")
+            .style("cursor", "crosshair");
 
         const invisibleLinkMerge = invisibleLinkEnter.merge(invisibleLinkSelection as any);
 
         invisibleLinkMerge.each(function(this: SVGPathElement, d: any) {
+            const invisibleEdgeLabel = d.originalEdge?.data?.label || d.originalEdge?.data?.relation || '';
             select(this)
-                .style("cursor", "pointer")
+                .on("mouseenter", function(event: MouseEvent) {
+                    event.stopPropagation();
+                    // 鼠标悬停时高亮对应的可见边
+                    const visibleEdge = g.select(`path.link[data-edge-id="${d.id}"]`);
+                    if (!visibleEdge.empty()) {
+                        visibleEdge
+                            .attr("stroke", LIGHT_THEME.edgeHighlight)
+                            .attr("stroke-width", 2.5);
+                    }
+                    
+                    // 获取边的中点位置
+                    const pathElement = this as SVGPathElement;
+                    const pathLength = pathElement.getTotalLength();
+                    const midPoint = pathElement.getPointAtLength(pathLength / 2);
+                    
+                    // 创建或显示标签 - 使用唯一 ID 避免重复
+                    const labelGroupId = `edge-label-${d.id}`;
+                    let labelGroup = svg.select<SVGGElement>(`g#${labelGroupId}`);
+                    
+                    // 如果标签组不存在，创建它
+                    if (labelGroup.empty()) {
+                        labelGroup = svg.append("g")
+                            .attr("id", labelGroupId)
+                            .attr("class", "edge-label-group")
+                            .style("pointer-events", "none")
+                            .raise(); // 放在最上层
+                        
+                        // 先创建背景矩形
+                        const labelBg = labelGroup.append("rect")
+                            .attr("class", "edge-label-bg")
+                            .attr("fill", "#fff")
+                            .attr("stroke", "#999")
+                            .attr("stroke-width", 1)
+                            .attr("rx", 3)
+                            .attr("ry", 3)
+                            .style("opacity", 0.95);
+                        
+                        // 再创建文本
+                        const labelText = labelGroup.append("text")
+                            .attr("class", "edge-label-text")
+                            .attr("text-anchor", "middle")
+                            .attr("dominant-baseline", "middle")
+                            .style("fill", "#333")
+                            .style("font-size", "11px")
+                            .style("font-weight", "500")
+                            .style("pointer-events", "none");
+                    }
+                    
+                    // 获取标签元素
+                    const labelBg = labelGroup.select<SVGRectElement>("rect.edge-label-bg");
+                    const labelText = labelGroup.select<SVGTextElement>("text.edge-label-text");
+                    
+                    // 设置文本内容并立即获取边界框
+                    const displayLabel = invisibleEdgeLabel || "关系";
+                    labelText.text(displayLabel);
+                    
+                    // 同步获取文本边界框（不使用 setTimeout）
+                    const textNode = labelText.node();
+                    if (textNode) {
+                        const textBBox = textNode.getBBox();
+                        const padding = 6;
+                        
+                        // 设置背景矩形位置和大小
+                        labelBg
+                            .attr("x", midPoint.x - textBBox.width / 2 - padding)
+                            .attr("y", midPoint.y - textBBox.height / 2 - padding)
+                            .attr("width", textBBox.width + padding * 2)
+                            .attr("height", textBBox.height + padding * 2)
+                            .style("display", "block");
+                        
+                        // 设置文本位置
+                        labelText
+                            .attr("x", midPoint.x)
+                            .attr("y", midPoint.y + textBBox.height / 2 - 2);
+                    }
+                    
+                    // 显示标签组（放在最上层）
+                    labelGroup.style("display", "block").raise();
+                })
+                .on("mouseleave", function(event: MouseEvent) {
+                    event.stopPropagation();
+                    // 恢复边的样式
+                    const visibleEdge = g.select(`path.link[data-edge-id="${d.id}"]`);
+                    if (!visibleEdge.empty()) {
+                        visibleEdge
+                            .attr("stroke", LIGHT_THEME.edge)
+                            .attr("stroke-width", 1.5);
+                    }
+                    
+                    // 隐藏所有标签组
+                    svg.selectAll("g.edge-label-group").style("display", "none");
+                })
                 .on("click", (event: MouseEvent) => {
                     event.stopPropagation();
                     if (onEdgeClick && d.originalEdge) {
@@ -308,6 +504,16 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                 event.stopPropagation();
                 if (d.data?.type === NODE_TYPES.CLASS && onNodeClick) {
                     onNodeClick(d.originalNode);
+                }
+            })
+            // 右键点击类节点展开实例
+            .on("contextmenu", (event: MouseEvent, d: any) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (d.data?.type === NODE_TYPES.CLASS && onNodeRightClick) {
+                    onNodeRightClick(d.originalNode);
+                } else if (d.data?.type !== NODE_TYPES.CLASS) {
+                    message.info('只有类节点支持右键展开实例');
                 }
             });
 

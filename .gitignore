@@ -10,6 +10,7 @@ src/frontend/node_modules/
 log/
 OWL2VOWL/
 WebVOWL/
+src/frontend/dist/
 
 # files
 *.pyc

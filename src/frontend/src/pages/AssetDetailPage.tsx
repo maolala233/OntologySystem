@@ -96,24 +96,73 @@ const AssetDetailPage: React.FC = () => {
         });
     };
 
-    // 计算当前显示的元素
+    // 右键点击类节点展开实例
+    const onNodeRightClick = (node: any) => {
+        const classId = node.id;
+        setExpandedNodeIds(prev => {
+            const newSet = new Set(prev);
+            if (newSet.has(classId)) {
+                // 如果已展开，则收起（切换）
+                newSet.delete(classId);
+                message.info(`已收起 "${node.data?.label}" 的实例`);
+            } else {
+                // 如果未展开，则展开
+                newSet.add(classId);
+                message.success(`已展开 "${node.data?.label}" 的实例`);
+            }
+            return newSet;
+        });
+    };
+
+    // 计算当前显示的元素 - 根据展开状态控制实例节点的显示
     const getDisplayElements = useCallback(() => {
-        const isExpanded = expandedNodeIds.size > 0;
         const visibleNodeIds = new Set<string>();
+        
+        // 构建类到实例的映射
+        const classToInstances: Map<string, string[]> = new Map();
+        // 构建实例到类的映射
+        const instanceToClass: Map<string, string> = new Map();
+        
+        edges.forEach(edge => {
+            const label = edge.data?.label || edge.label || '';
+            const relation = edge.data?.relation || '';
+            // 支持多种标签格式：rdf:type, type, instance_of
+            const isInstanceRelation = label === 'rdf:type' || label === 'type' || relation === 'instance_of';
+            if (isInstanceRelation) {
+                const instanceId = String(edge.source);
+                const classId = String(edge.target);
+                if (!classToInstances.has(classId)) {
+                    classToInstances.set(classId, []);
+                }
+                classToInstances.get(classId)!.push(instanceId);
+                instanceToClass.set(instanceId, classId);
+            }
+        });
 
         nodes.forEach(node => {
             if (node.data?.type === 'owl:Class') {
+                // 类节点始终显示
                 visibleNodeIds.add(node.id);
+                // 如果该类被展开，显示其所有实例
+                if (expandedNodeIds.has(node.id)) {
+                    const instances = classToInstances.get(node.id) || [];
+                    instances.forEach(instanceId => visibleNodeIds.add(instanceId));
+                }
             } else if (node.data?.type === 'owl:NamedIndividual') {
-                if (isExpanded) {
+                // 实例节点只有在所属类被展开时才显示
+                const parentClassId = instanceToClass.get(node.id);
+                if (parentClassId && expandedNodeIds.has(parentClassId)) {
                     visibleNodeIds.add(node.id);
                 }
             } else {
+                // 其他类型节点始终显示
                 visibleNodeIds.add(node.id);
             }
         });
 
         const displayNodes = nodes.filter(n => visibleNodeIds.has(n.id));
+
+        // 边只有在两端节点都可见时才显示
         const displayEdges = edges.filter(e => {
             const sourceId = String(e.source);
             const targetId = String(e.target);
@@ -315,6 +364,7 @@ const AssetDetailPage: React.FC = () => {
                         edges={displayEdges}
                         onNodeClick={onNodeClick}
                         onEdgeClick={onEdgeClick}
+                        onNodeRightClick={onNodeRightClick}
                         onNodesChange={(updatedNodes) => {
                             if (Array.isArray(updatedNodes)) {
                                 setNodes((prevNodes) =>

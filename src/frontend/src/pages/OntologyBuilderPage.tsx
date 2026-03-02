@@ -527,27 +527,31 @@ const OntologyBuilderPage: React.FC = () => {
     // 一键展开/收起所有实例
     const expandAllInstances = () => {
         const classIdsWithInstances = new Set<string>();
-        nodes.forEach(node => {
-            if (node.data?.type === 'owl:NamedIndividual') {
-                const parentClassEdge = edges.find(e =>
-                    e.source === node.id &&
-                    (e.label === 'rdf:type' || e.data?.label === 'type' || e.data?.relation === 'instance_of')
-                );
-                if (parentClassEdge && parentClassEdge.target) {
-                    classIdsWithInstances.add(parentClassEdge.target);
-                }
+        
+        // 遍历边找到所有 instance_of 关系
+        edges.forEach(edge => {
+            const label = edge.data?.label || edge.label || '';
+            const relation = edge.data?.relation || '';
+            // 支持多种标签格式：rdf:type, type, instance_of
+            const isInstanceRelation = label === 'rdf:type' || label === 'type' || relation === 'instance_of';
+            if (isInstanceRelation) {
+                const classId = String(edge.target);
+                classIdsWithInstances.add(classId);
             }
         });
 
+        // 检查是否已经有展开的类
         const hasExpandedInstances = Array.from(expandedNodeIds).some(id => classIdsWithInstances.has(id));
 
         if (hasExpandedInstances) {
+            // 收起所有实例 - 清空展开状态
             setExpandedNodeIds(new Set());
             message.success('已收起所有实例');
         } else {
+            // 展开所有有实例的类
             setExpandedNodeIds(classIdsWithInstances);
             if (classIdsWithInstances.size > 0) {
-                message.success(`已展开 ${classIdsWithInstances.size} 个类`);
+                message.success(`已展开 ${classIdsWithInstances.size} 个类的实例`);
             } else {
                 message.info('没有找到实例关联的类');
             }
@@ -576,16 +580,42 @@ const OntologyBuilderPage: React.FC = () => {
 
     // 计算当前显示的元素 - 根据展开状态控制实例节点的显示
     const getDisplayElements = useCallback(() => {
-        const isExpanded = expandedNodeIds.size > 0;
         const visibleNodeIds = new Set<string>();
+        
+        // 构建类到实例的映射
+        const classToInstances: Map<string, string[]> = new Map();
+        // 构建实例到类的映射
+        const instanceToClass: Map<string, string> = new Map();
+        
+        edges.forEach(edge => {
+            const label = edge.data?.label || edge.label || '';
+            const relation = edge.data?.relation || '';
+            // 支持多种标签格式：rdf:type, type, instance_of
+            const isInstanceRelation = label === 'rdf:type' || label === 'type' || relation === 'instance_of';
+            if (isInstanceRelation) {
+                const instanceId = String(edge.source);
+                const classId = String(edge.target);
+                if (!classToInstances.has(classId)) {
+                    classToInstances.set(classId, []);
+                }
+                classToInstances.get(classId)!.push(instanceId);
+                instanceToClass.set(instanceId, classId);
+            }
+        });
 
         nodes.forEach(node => {
             if (node.data?.type === 'owl:Class') {
                 // 类节点始终显示
                 visibleNodeIds.add(node.id);
+                // 如果该类被展开，显示其所有实例
+                if (expandedNodeIds.has(node.id)) {
+                    const instances = classToInstances.get(node.id) || [];
+                    instances.forEach(instanceId => visibleNodeIds.add(instanceId));
+                }
             } else if (node.data?.type === 'owl:NamedIndividual') {
-                // 实例节点只有在展开时才显示
-                if (isExpanded) {
+                // 实例节点只有在所属类被展开时才显示
+                const parentClassId = instanceToClass.get(node.id);
+                if (parentClassId && expandedNodeIds.has(parentClassId)) {
                     visibleNodeIds.add(node.id);
                 }
             } else {
@@ -597,7 +627,6 @@ const OntologyBuilderPage: React.FC = () => {
         const displayNodes = nodes.filter(n => visibleNodeIds.has(n.id));
 
         // 边只有在两端节点都可见时才显示
-        // 使用 String() 确保 source 和 target 被正确转换为字符串进行比较
         const displayEdges = edges.filter(e => {
             const sourceId = String(e.source);
             const targetId = String(e.target);
@@ -1052,6 +1081,23 @@ const OntologyBuilderPage: React.FC = () => {
                                             })
                                         );
                                     }
+                                }}
+                                onNodeRightClick={(node) => {
+                                    // 右键点击类节点时，展开该类的实例
+                                    const classId = node.id;
+                                    setExpandedNodeIds(prev => {
+                                        const newSet = new Set(prev);
+                                        if (newSet.has(classId)) {
+                                            // 如果已展开，则收起（切换）
+                                            newSet.delete(classId);
+                                            message.info(`已收起 "${node.data?.label}" 的实例`);
+                                        } else {
+                                            // 如果未展开，则展开
+                                            newSet.add(classId);
+                                            message.success(`已展开 "${node.data?.label}" 的实例`);
+                                        }
+                                        return newSet;
+                                    });
                                 }}
                                 width={window.innerWidth - (isLeftPanelExpanded ? 420 : 60)}
                                 height={window.innerHeight - 60}
