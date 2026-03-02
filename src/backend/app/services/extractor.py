@@ -28,22 +28,33 @@ from app.core.logging import logger
 
 def make_deterministic_id(label: str, category: str) -> str:
     """
-    用 MD5(label + category) 生成确定性 6 位十六进制前缀 + 语义 slug。
+    用 MD5(label + category) 生成确定性 ID。
     同一概念、同一类别，在多次提取中永远返回同一 ID。
+    
+    格式：{category_prefix}_{8 位哈希}
+    例如：C_a1b2c3d4, I_f5e6d7c8, OP_12345678
     """
     raw = f"{label.strip()}::{category.strip()}"
-    hex_prefix = hashlib.md5(raw.encode("utf-8")).hexdigest()[:6]
-    # 去除特殊字符，保留字母数字下划线
-    slug = re.sub(r"[^\w]", "_", label.strip())[:30]
-    return f"{hex_prefix}_{slug}"
+    hex_hash = hashlib.md5(raw.encode("utf-8")).hexdigest()[:8]
+    
+    # 类别前缀映射
+    prefix_map = {
+        "Class": "C",
+        "Instance": "I",
+        "ObjectProperty": "OP",
+        "DataProperty": "DP",
+    }
+    prefix = prefix_map.get(category, "Node")
+    
+    return f"{prefix}_{hex_hash}"
 
 
 def safe_id(raw: str) -> str:
-    """清理字符串，使其可以作为 URI 片段（兼容旧逻辑 fallback）。"""
-    s = re.sub(r"[^a-zA-Z0-9_\-]", "_", raw.strip())
-    if s and s[0].isdigit():
-        s = "n" + s
-    return s or "unknown"
+    """
+    安全的 ID 生成函数（兼容旧代码 fallback）。
+    使用确定性哈希机制，不再使用正则替换中文。
+    """
+    return make_deterministic_id(raw, "Unknown")
 
 
 # ─────────────────────────────────────────────────────────────

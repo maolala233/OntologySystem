@@ -15,6 +15,28 @@ export interface UpdateProjectRequest {
     };
 }
 
+// 阶段 1: Schema 提取请求参数
+export interface SchemaExtractionRequest {
+    file: File;
+    user_intent?: string;
+    chunk_size?: number;
+    chunk_overlap?: number;
+    request_interval?: number;
+}
+
+// 阶段 2: 实例提取请求参数
+export interface InstanceExtractionRequest {
+    text_content: string;
+    schema_graph: {
+        classes: any[];
+        object_properties: any[];
+    };
+    chunk_size?: number;
+    chunk_overlap?: number;
+    request_interval?: number;
+    product_code?: string;
+}
+
 export const projectsApi = {
     // 获取我的项目列表
     getMyProjects: async (): Promise<ProjectData[]> => {
@@ -63,7 +85,7 @@ export const projectsApi = {
         await apiClient.delete(`/api/projects/${projectId}`);
     },
 
-    // 上传文档并提取本体
+    // 上传文档并提取本体（旧版兼容接口）
     uploadDocument: async (projectId: number, file: File, params?: { scenario?: string; entities_df?: any }): Promise<any> => {
         const formData = new FormData();
         formData.append('file', file);
@@ -75,7 +97,7 @@ export const projectsApi = {
 
         // 添加结构化规则（如果存在）
         if (params?.entities_df) {
-            // 将结构化数据转换为JSON字符串
+            // 将结构化数据转换为 JSON 字符串
             formData.append('entities_df', JSON.stringify(params.entities_df));
         }
 
@@ -85,7 +107,7 @@ export const projectsApi = {
         return response.data;
     },
 
-    // 上传TTL文件并解析为前端展示要素
+    // 上传 TTL 文件并解析为前端展示要素
     uploadTTLFile: async (projectId: number, ttlFile: File): Promise<any> => {
         const formData = new FormData();
         formData.append('file', ttlFile);
@@ -102,7 +124,7 @@ export const projectsApi = {
         return response.data;
     },
 
-    // 下载TTL文件
+    // 下载 TTL 文件
     downloadTTL: async (projectId: number): Promise<Blob> => {
         const response = await apiClient.get(`/api/projects/${projectId}/download-ttl`, {
             responseType: 'blob'
@@ -118,6 +140,70 @@ export const projectsApi = {
         link.remove();
         window.URL.revokeObjectURL(url);
 
+        return response.data;
+    },
+
+    // ==================== 两阶段提取 API ====================
+
+    // 阶段 1: 提取 Schema（骨架提取）
+    extractSchema: async (
+        projectId: number,
+        file: File,
+        options?: {
+            user_intent?: string;
+            chunk_size?: number;
+            chunk_overlap?: number;
+            request_interval?: number;
+        }
+    ): Promise<any> => {
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        if (options?.user_intent) {
+            formData.append('user_intent', options.user_intent);
+        }
+        if (options?.chunk_size) {
+            formData.append('chunk_size', String(options.chunk_size));
+        }
+        if (options?.chunk_overlap) {
+            formData.append('chunk_overlap', String(options.chunk_overlap));
+        }
+        if (options?.request_interval) {
+            formData.append('request_interval', String(options.request_interval));
+        }
+
+        const response = await apiClient.post(
+            `/api/projects/${projectId}/extract-schema`,
+            formData,
+            {
+                headers: { 'Content-Type': 'multipart/form-data' },
+            }
+        );
+        return response.data;
+    },
+
+    // 阶段 2: 提取实例（带 Schema 约束）
+    extractInstances: async (
+        projectId: number,
+        data: {
+            text_content: string;
+            schema_graph: {
+                classes: any[];
+                object_properties: any[];
+            };
+            chunk_size?: number;
+            chunk_overlap?: number;
+            request_interval?: number;
+            product_code?: string;
+        }
+    ): Promise<any> => {
+        const response = await apiClient.post(
+            `/api/projects/${projectId}/extract-instances`,
+            data,
+            {
+                headers: { 'Content-Type': 'application/json' },
+            }
+        );
         return response.data;
     },
 };

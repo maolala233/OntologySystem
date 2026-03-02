@@ -455,8 +455,8 @@ const OntologyBuilderPage: React.FC = () => {
         return false;
     };
 
-    // 执行带规则的上传
-    const handleStartExtraction = async () => {
+    // 阶段 1: 执行 Schema 提取（两阶段流程的第一步）
+    const handleStartSchemaExtraction = async () => {
         if (!projectId || !pendingFile) return;
 
         const values = await ruleForm.validateFields();
@@ -464,9 +464,36 @@ const OntologyBuilderPage: React.FC = () => {
         setLoading(true);
 
         try {
-            const response = await projectsApi.uploadDocument(Number(projectId), pendingFile, values.rules);
+            // 调用新的两阶段 API - 阶段 1: Schema 提取
+            const response = await projectsApi.extractSchema(Number(projectId), pendingFile, {
+                user_intent: values.scenario,
+                chunk_size: 15000,
+                chunk_overlap: 500,
+                request_interval: 2,
+            });
 
-            if (response.nodes && response.nodes.length > 0) {
+            // 获取返回的 schema_graph 和 graph_data
+            if (response.schema_graph && response.graph_data) {
+                // 存储原始文本内容供阶段 2 使用
+                const textContent = response.text_content || '';
+                localStorage.setItem(`project_${projectId}_text_content`, textContent);
+                
+                // 存储 schema_graph 供阶段 2 使用（使用用户审核后的版本）
+                localStorage.setItem(`project_${projectId}_schema_graph`, JSON.stringify(response.schema_graph));
+
+                const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
+                    response.graph_data.nodes || [],
+                    response.graph_data.edges || []
+                );
+                setNodes(layoutedNodes);
+                setEdges(layoutedEdges);
+                
+                message.success(
+                    response.message || 
+                    `骨架提取完成！请审核类框架图，调整后可点击「自动提取构建」进行实例提取。`
+                );
+            } else if (response.nodes && response.nodes.length > 0) {
+                // 兼容旧版返回格式
                 const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
                     response.nodes,
                     response.edges || []
@@ -479,10 +506,79 @@ const OntologyBuilderPage: React.FC = () => {
             }
         } catch (error: any) {
             const errorDetail = error.response?.data?.detail || error.message || '未知错误';
-            message.error(`提取失败：${errorDetail}`);
+            message.error(`Schema 提取失败：${errorDetail}`);
         } finally {
             setLoading(false);
             setPendingFile(null);
+        }
+    };
+
+    // 阶段 2: 执行实例提取（需要用户已审核 Schema）
+    const handleStartInstanceExtraction = async () => {
+        if (!projectId) return;
+
+        setLoading(true);
+
+        try {
+            // 从 localStorage 获取之前存储的数据
+            const textContent = localStorage.getItem(`project_${projectId}_text_content`) || '';
+            const schemaGraphStr = localStorage.getItem(`project_${projectId}_schema_graph`);
+            
+            if (!schemaGraphStr) {
+                message.warning('请先上传文件提取 Schema，然后再进行实例提取');
+                setLoading(false);
+                return;
+            }
+
+            const schemaGraph = JSON.parse(schemaGraphStr);
+
+            // 调用新的两阶段 API - 阶段 2: 实例提取
+            const response = await projectsApi.extractInstances(Number(projectId), {
+                text_content: textContent,
+                schema_graph: schemaGraph,
+                chunk_size: 15000,
+                chunk_overlap: 500,
+                request_interval: 2,
+            });
+
+            if (response.graph_data) {
+                const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
+                    response.graph_data.nodes || [],
+                    response.graph_data.edges || []
+                );
+                setNodes(layoutedNodes);
+                setEdges(layoutedEdges);
+                
+                let successMsg = response.message || `实例提取完成：${response.instances?.length || 0} 个实例`;
+                if (response.discarded_edges_count > 0) {
+                    successMsg += ` (⚠️ ${response.discarded_edges_count} 条不合规连线已自动丢弃)`;
+                }
+                message.success(successMsg);
+            } else {
+                message.warning('实例提取完成，但未发现有效实例');
+            }
+        } catch (error: any) {
+            const errorDetail = error.response?.data?.detail || error.message || '未知错误';
+            message.error(`实例提取失败：${errorDetail}`);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // 执行带规则的上传（根据当前状态决定调用哪个阶段）
+    const handleStartExtraction = async () => {
+        if (!projectId || !pendingFile) return;
+
+        // 检查是否已经有 schema_graph
+        const schemaGraphStr = localStorage.getItem(`project_${projectId}_schema_graph`);
+        
+        if (schemaGraphStr) {
+            // 已有 Schema，直接进行阶段 2
+            setIsRuleModalOpen(false);
+            await handleStartInstanceExtraction();
+        } else {
+            // 没有 Schema，先进行阶段 1
+            await handleStartSchemaExtraction();
         }
     };
 
@@ -937,17 +1033,49 @@ const OntologyBuilderPage: React.FC = () => {
                         {/* 顶部工具栏 */}
                         <div className="absolute top-4 right-4 z-10">
                             <Space className="bg-white p-2 rounded-lg shadow-md border border-gray-100 flex-wrap max-w-[calc(100vw-400px)]">
+                                {/* 阶段 1: 上传文档提取 Schema */}
                                 <Upload
                                     accept=".txt,.pdf,.doc,.docx"
                                     showUploadList={false}
                                     beforeUpload={beforeUpload}
                                 >
-                                    <Tooltip title="定义规则并上传文档提取">
+                                    <Tooltip title={localStorage.getItem(`project_${projectId}_schema_graph`) ? "已有 Schema，点击将重新提取" : "定义规则并上传文档提取骨架 (类 + 关系)"}>
                                         <Button type="primary" icon={<CloudUploadOutlined />} className="bg-indigo-600">
-                                            自动提取构建
+                                            {localStorage.getItem(`project_${projectId}_schema_graph`) ? "重新提取骨架" : "自动提取骨架"}
                                         </Button>
                                     </Tooltip>
                                 </Upload>
+
+                                {/* 阶段 2: 提取实例按钮 */}
+                                <Tooltip title={
+                                    !localStorage.getItem(`project_${projectId}_schema_graph`) 
+                                        ? "请先上传文档提取骨架后再进行实例提取" 
+                                        : "根据当前骨架和原文档提取实例"
+                                }>
+                                    <Button 
+                                        icon={<DatabaseOutlined />} 
+                                        onClick={() => {
+                                            const schemaGraphStr = localStorage.getItem(`project_${projectId}_schema_graph`);
+                                            if (!schemaGraphStr) {
+                                                message.warning('请先上传文档提取骨架，然后再进行实例提取');
+                                                return;
+                                            }
+                                            Modal.confirm({
+                                                title: '确认提取实例',
+                                                content: '将根据当前骨架结构和原文档内容提取实例。提取过程中请保持页面打开。',
+                                                okText: '开始提取',
+                                                cancelText: '取消',
+                                                onOk: () => {
+                                                    handleStartInstanceExtraction();
+                                                }
+                                            });
+                                        }}
+                                        className="bg-orange-500 text-white"
+                                        disabled={!localStorage.getItem(`project_${projectId}_schema_graph`)}
+                                    >
+                                        提取实例
+                                    </Button>
+                                </Tooltip>
 
                                 <Upload
                                     accept=".ttl"

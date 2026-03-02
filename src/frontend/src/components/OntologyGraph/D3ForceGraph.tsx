@@ -258,7 +258,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                         const labelText = labelGroup.append("text")
                             .attr("class", "edge-label-text")
                             .attr("text-anchor", "middle")
-                            .attr("dominant-baseline", "middle")
+                            .attr("dominant-baseline", "central")
                             .style("fill", "#333")
                             .style("font-size", "11px")
                             .style("font-weight", "500")
@@ -277,7 +277,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                     const textNode = labelText.node();
                     if (textNode) {
                         const textBBox = textNode.getBBox();
-                        const padding = 6;
+                        const padding = 4;
                         
                         // 设置背景矩形位置和大小
                         labelBg
@@ -287,10 +287,10 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                             .attr("height", textBBox.height + padding * 2)
                             .style("display", "block");
                         
-                        // 设置文本位置
+                        // 设置文本位置（使用 central baseline，y 坐标就是中点）
                         labelText
                             .attr("x", midPoint.x)
-                            .attr("y", midPoint.y + textBBox.height / 2 - 2);
+                            .attr("y", midPoint.y);
                     }
                     
                     // 显示标签组（放在最上层）
@@ -393,7 +393,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                     const textNode = labelText.node();
                     if (textNode) {
                         const textBBox = textNode.getBBox();
-                        const padding = 6;
+                        const padding = 4;
                         
                         // 设置背景矩形位置和大小
                         labelBg
@@ -403,10 +403,10 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                             .attr("height", textBBox.height + padding * 2)
                             .style("display", "block");
                         
-                        // 设置文本位置
+                        // 设置文本位置（使用 central baseline，y 坐标就是中点）
                         labelText
                             .attr("x", midPoint.x)
-                            .attr("y", midPoint.y + textBBox.height / 2 - 2);
+                            .attr("y", midPoint.y);
                     }
                     
                     // 显示标签组（放在最上层）

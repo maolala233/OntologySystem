@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Response, Form
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
+from urllib.parse import quote
 from app.infrastructure.database import get_db, Project, User, SystemConfig
 from app.schemas.ontology import ProjectCreate, ProjectUpdate, ProjectResponse
 from app.schemas.extraction import (
@@ -208,6 +210,17 @@ async def extract_schema_endpoint(
     上传文档 → 提取 OWL Class + ObjectProperty + DataProperty 骨架 Schema。
     绝对禁止提取实例，结果供前端 Step 2 (Schema Review) 使用。
     用户审核骨架后，将 schema_graph 传给 API 2 进行实例提取。
+    
+    返回包含：
+    - schema_graph: 原始 Schema 数据（classes + object_properties）
+    - graph_data: 前端可渲染的 {nodes, edges}
+    - text_content: 解析后的文本内容（供阶段 2 使用）
+    """
+    """
+    【API 1 - 骨架提取】
+    上传文档 → 提取 OWL Class + ObjectProperty + DataProperty 骨架 Schema。
+    绝对禁止提取实例，结果供前端 Step 2 (Schema Review) 使用。
+    用户审核骨架后，将 schema_graph 传给 API 2 进行实例提取。
     """
     from app.core.logging import logger
 
@@ -245,7 +258,7 @@ async def extract_schema_endpoint(
         graph_data = OntologyExtractor.schema_to_graph_data(schema)
 
         # 将骨架 schema 临时存到 project graph_data（供 API 2 参考）
-        # 格式: {"schema": {...}, "nodes": [...], "edges": [...]}
+        # 格式：{"schema": {...}, "nodes": [...], "edges": [...]}
         merged_graph = {
             "schema": schema,
             **graph_data,
@@ -256,6 +269,7 @@ async def extract_schema_endpoint(
         return {
             "schema_graph": schema,
             "graph_data": graph_data,
+            "text_content": text_content,  # 返回解析后的文本内容供阶段 2 使用
             "message": (
                 f"骨架提取完成：{len(schema['classes'])} 个类，"
                 f"{len(schema['object_properties'])} 个关系。"
@@ -556,6 +570,10 @@ def download_ttl(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    """
+    下载 TTL 文件。
+    使用纯 ASCII 文件名避免编码问题。
+    """
     db_project = db.query(Project).filter(Project.id == project_id).first()
     if not db_project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -563,36 +581,49 @@ def download_ttl(
         raise HTTPException(status_code=403, detail="No permission to download this project's TTL file")
 
     # 始终基于最新 graph_data 重新生成，保证下载内容是最新快照
+    latest_ttl_content = ""
+    
+    # 优先从 graph_data 生成
     if db_project.graph_data:
-        latest_ttl_content = generate_ttl_from_graph_data(
-            db_project.graph_data.get("nodes", []),
-            db_project.graph_data.get("edges", [])
-        )
-    else:
-        latest_ttl_content = db_project.ttl_content
+        nodes = db_project.graph_data.get("nodes", [])
+        edges = db_project.graph_data.get("edges", [])
+        if nodes or edges:
+            try:
+                latest_ttl_content = generate_ttl_from_graph_data(nodes, edges)
+            except Exception as e:
+                from app.core.logging import logger
+                logger.error(f"generate_ttl_from_graph_data 失败：{e}")
+    
+    # 如果 graph_data 为空或生成失败，使用 ttl_content
+    if not latest_ttl_content:
+        latest_ttl_content = db_project.ttl_content or ""
 
     if not latest_ttl_content:
         raise HTTPException(status_code=404, detail="TTL file not found for this project")
 
-    temp_dir = "temp_downloads"
-    os.makedirs(temp_dir, exist_ok=True)
-    temp_filename = f"ontology_{db_project.id}_{db_project.name.replace(' ', '_')}.ttl"
-    temp_path = os.path.join(temp_dir, temp_filename)
-
-    try:
-        with open(temp_path, "w", encoding="utf-8") as f:
-            f.write(latest_ttl_content)
-        with open(temp_path, "rb") as f:
-            content = f.read()
-
-        return Response(
-            content=content,
-            media_type="text/turtle",
-            headers={"Content-Disposition": f'attachment; filename="{temp_filename}"'},
-        )
-    finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+    # 生成纯 ASCII 文件名（避免任何编码问题）
+    import re
+    safe_name = db_project.name
+    # 移除所有非 ASCII 字符
+    safe_name = safe_name.encode('ascii', 'ignore').decode('ascii')
+    # 替换剩余的特殊字符
+    safe_name = safe_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
+    safe_name = re.sub(r'[^\w\-_.]', '_', safe_name)
+    # 如果文件名为空，使用默认名
+    if not safe_name or safe_name == '_':
+        safe_name = f"project_{db_project.id}"
+    
+    temp_filename = f"ontology_{db_project.id}_{safe_name}.ttl"
+    
+    # 直接返回内容，不创建临时文件
+    return Response(
+        content=latest_ttl_content.encode('utf-8'),
+        media_type="text/turtle; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{temp_filename}"',
+            "Content-Type": "text/turtle; charset=utf-8",
+        },
+    )
 
 
 # ─────────────────────────────────────────────

@@ -74,8 +74,16 @@ const AssetDetailPage: React.FC = () => {
     const onNodeClick = (node: any) => {
         setSelectedElement(node);
         setIsDrawerOpen(true);
-        const propsObj = node.data?.properties || {};
-        const propsArray = Object.entries(propsObj).map(([key, value]) => ({
+        // 兼容多种属性字段格式：properties、data.properties、data.data
+        const propsObj = node.data?.properties || node.data?.data?.properties || node.data?.data || {};
+        // 过滤掉 type 和 label 字段，只保留真正的属性
+        const filteredProps: Record<string, any> = {};
+        Object.entries(propsObj).forEach(([key, value]) => {
+            if (key !== 'type' && key !== 'label' && value !== undefined && value !== null && value !== '') {
+                filteredProps[key] = value;
+            }
+        });
+        const propsArray = Object.entries(filteredProps).map(([key, value]) => ({
             name: key,
             value: String(value)
         }));
@@ -420,22 +428,49 @@ const AssetDetailPage: React.FC = () => {
                                 <Form.Item name="type" label="节点类型">
                                     <Input disabled />
                                 </Form.Item>
-                                {selectedElement.properties && Object.keys(selectedElement.properties).length > 0 && (
-                                    <>
-                                        <Divider />
-                                        <div className="flex items-center space-x-2 mb-4 font-medium text-gray-700">
-                                            <InfoCircleOutlined />
-                                            <span>属性</span>
-                                        </div>
-                                        <div className="space-y-1">
-                                            {Object.entries(selectedElement.properties).map(([key, value]) => (
-                                                <p key={key} className="text-sm">
-                                                    <strong>{key}:</strong> {String(value)}
-                                                </p>
-                                            ))}
-                                        </div>
-                                    </>
-                                )}
+                                {(() => {
+                                    // 兼容多种属性字段格式
+                                    const propsObj = selectedElement.data?.properties || 
+                                                     selectedElement.data?.data?.properties || 
+                                                     selectedElement.data?.data || {};
+                                    // 过滤掉 type 和 label 字段
+                                    const filteredProps: Record<string, any> = {};
+                                    Object.entries(propsObj).forEach(([key, value]) => {
+                                        if (key !== 'type' && key !== 'label' && value !== undefined && value !== null && value !== '') {
+                                            filteredProps[key] = value;
+                                        }
+                                    });
+                                    
+                                    if (Object.keys(filteredProps).length === 0) {
+                                        return (
+                                            <>
+                                                <Divider />
+                                                <div className="text-gray-400 text-sm text-center py-4">
+                                                    <InfoCircleOutlined className="mr-2" />
+                                                    暂无属性数据
+                                                </div>
+                                            </>
+                                        );
+                                    }
+                                    
+                                    return (
+                                        <>
+                                            <Divider />
+                                            <div className="flex items-center space-x-2 mb-4 font-medium text-gray-700">
+                                                <InfoCircleOutlined />
+                                                <span>属性列表</span>
+                                            </div>
+                                            <div className="space-y-3">
+                                                {Object.entries(filteredProps).map(([key, value]) => (
+                                                    <div key={key} className="p-3 bg-gray-50 rounded border border-gray-100">
+                                                        <div className="text-xs text-gray-500 mb-1">{key}</div>
+                                                        <div className="text-sm text-gray-800 font-medium">{String(value)}</div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </>
+                                    );
+                                })()}
                             </>
                         ) : (
                             <>
