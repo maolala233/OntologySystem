@@ -1177,10 +1177,9 @@ const OntologyBuilderPage: React.FC = () => {
                         </div>
 
 
-                        {/* 画布控制工具栏 - 右下角，浮于画布之上 */}
-                        <div className="absolute bottom-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none">
-                            {/* 统计面板 */}
-                            <div className="bg-white/90 backdrop-blur-sm px-3 py-2 rounded-lg shadow-lg border border-gray-200 pointer-events-auto">
+                        {/* 统计面板 - 右下角，浮于画布之上 */}
+                        <div className="absolute bottom-4 right-4 z-[100]">
+                            <div className="bg-white/90 backdrop-blur-sm px-3 py-2 rounded-lg shadow-lg border border-gray-200">
                                 <div className="flex items-center gap-3 text-sm">
                                     <span className="text-gray-500"><InfoCircleOutlined className="mr-1" />视图:</span>
                                     <Tag color="blue" className="font-medium">{nodes.length}</Tag>
@@ -1188,21 +1187,6 @@ const OntologyBuilderPage: React.FC = () => {
                                     <Tag color="green" className="font-medium">{edges.length}</Tag>
                                     <span className="text-gray-600">关系</span>
                                 </div>
-                            </div>
-                            
-                            {/* 画布缩放控制 */}
-                            <div className="bg-white/90 backdrop-blur-sm px-2 py-1.5 rounded-lg shadow-lg border border-gray-200 flex items-center gap-1 pointer-events-auto">
-                                <Tooltip title="缩小">
-                                    <Button size="small" icon={<ZoomOutOutlined />} onClick={() => setCanvasZoom(z => Math.max(0.1, z - 0.1))} className="border-0" />
-                                </Tooltip>
-                                <span className="text-xs text-gray-600 w-12 text-center">{Math.round(canvasZoom * 100)}%</span>
-                                <Tooltip title="放大">
-                                    <Button size="small" icon={<ZoomInOutlined />} onClick={() => setCanvasZoom(z => Math.min(4, z + 0.1))} className="border-0" />
-                                </Tooltip>
-                                <Divider type="vertical" />
-                                <Tooltip title="适应屏幕">
-                                    <Button size="small" icon={<FullscreenOutlined />} onClick={() => setCanvasZoom(1)} className="border-0" />
-                                </Tooltip>
                             </div>
                         </div>
 
