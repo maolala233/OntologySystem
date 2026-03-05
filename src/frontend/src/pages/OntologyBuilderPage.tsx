@@ -1045,7 +1045,7 @@ const OntologyBuilderPage: React.FC = () => {
                     </div>
 
                     {/* 主内容区 - 使用 Flex 布局自动适应剩余空间 */}
-                    <div className="flex-1 flex flex-col min-w-0 relative">
+                    <div className="flex-1 flex flex-col min-w-0 relative h-full">
                         <Navbar breadcrumbs={breadcrumbs} />
 
                         {/* 展开按钮 - 仅在面板收起时显示 */}
@@ -1165,8 +1165,8 @@ const OntologyBuilderPage: React.FC = () => {
                             </div>
                         </div>
 
-                        {/* 返回按钮 */}
-                        <div className="absolute top-3 left-3 z-20">
+                        {/* 返回按钮 - 放在工具栏左侧 */}
+                        <div className="absolute z-20" style={{ top: '76px', left: '16px' }}>
                             <Button
                                 icon={<ArrowLeftOutlined />}
                                 onClick={() => navigate('/my-projects')}
@@ -1177,10 +1177,10 @@ const OntologyBuilderPage: React.FC = () => {
                         </div>
 
 
-                        {/* 画布控制工具栏 - 右下角 */}
-                        <div className="absolute bottom-4 right-4 z-20 flex flex-col gap-2">
+                        {/* 画布控制工具栏 - 右下角，浮于画布之上 */}
+                        <div className="absolute bottom-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none">
                             {/* 统计面板 */}
-                            <div className="bg-white/90 backdrop-blur-sm px-3 py-2 rounded-lg shadow-lg border border-gray-200">
+                            <div className="bg-white/90 backdrop-blur-sm px-3 py-2 rounded-lg shadow-lg border border-gray-200 pointer-events-auto">
                                 <div className="flex items-center gap-3 text-sm">
                                     <span className="text-gray-500"><InfoCircleOutlined className="mr-1" />视图:</span>
                                     <Tag color="blue" className="font-medium">{nodes.length}</Tag>
@@ -1191,7 +1191,7 @@ const OntologyBuilderPage: React.FC = () => {
                             </div>
                             
                             {/* 画布缩放控制 */}
-                            <div className="bg-white/90 backdrop-blur-sm px-2 py-1.5 rounded-lg shadow-lg border border-gray-200 flex items-center gap-1">
+                            <div className="bg-white/90 backdrop-blur-sm px-2 py-1.5 rounded-lg shadow-lg border border-gray-200 flex items-center gap-1 pointer-events-auto">
                                 <Tooltip title="缩小">
                                     <Button size="small" icon={<ZoomOutOutlined />} onClick={() => setCanvasZoom(z => Math.max(0.1, z - 0.1))} className="border-0" />
                                 </Tooltip>
@@ -1206,8 +1206,8 @@ const OntologyBuilderPage: React.FC = () => {
                             </div>
                         </div>
 
-                        {/* 力导向图组件 */}
-                        <div className="absolute inset-0">
+                        {/* 力导向图组件 - 填满整个可用空间 */}
+                        <div className="absolute inset-0 w-full h-full" style={{ top: '64px' }}>
                             <D3ForceGraph
                                 nodes={displayNodes}
                                 edges={displayEdges}

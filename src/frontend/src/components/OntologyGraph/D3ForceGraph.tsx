@@ -98,9 +98,21 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
         const updateContainerSize = () => {
             if (containerRef.current) {
                 const rect = containerRef.current.getBoundingClientRect();
+                // 获取父容器的实际尺寸，确保填满整个可用空间
+                const parentElement = containerRef.current.parentElement;
+                let parentHeight = rect.height;
+                let parentWidth = rect.width;
+                
+                // 如果当前尺寸为0，尝试从父元素获取
+                if (parentElement) {
+                    const parentRect = parentElement.getBoundingClientRect();
+                    if (rect.height === 0) parentHeight = parentRect.height;
+                    if (rect.width === 0) parentWidth = parentRect.width;
+                }
+                
                 setContainerSize({
-                    width: rect.width || window.innerWidth - 300,
-                    height: rect.height || window.innerHeight - 150
+                    width: propWidth || parentWidth || window.innerWidth - 300,
+                    height: propHeight || parentHeight || window.innerHeight - 150
                 });
             } else {
                 setContainerSize({
@@ -760,8 +772,8 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
     return (
         <div 
             ref={containerRef}
-            className={`relative ${className}`}
-            style={{ width, height, position: 'relative' }}
+            className={`relative w-full h-full ${className}`}
+            style={{ width: width || '100%', height: height || '100%', position: 'relative' }}
         >
             <svg
                 ref={svgRef}
