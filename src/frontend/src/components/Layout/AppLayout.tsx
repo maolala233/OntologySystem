@@ -229,11 +229,13 @@ const AppLayout: React.FC = () => {
                 onCollapse={setCollapsed}
                 theme="dark"
                 width={240}
-                className="shadow-lg sticky top-0 h-screen flex flex-col"
+                className="sticky top-0 h-screen flex flex-col"
                 style={{
                     position: 'sticky',
                     top: 0,
                     height: '100vh',
+                    boxShadow: '4px 0 12px rgba(0, 0, 0, 0.15)',
+                    zIndex: 10,
                 }}
             >
                 {/* Logo 区域 */}

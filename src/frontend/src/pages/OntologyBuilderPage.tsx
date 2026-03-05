@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
     Drawer,
@@ -16,8 +16,11 @@ import {
     Divider,
     Switch,
     Tree,
-    Collapse,
+    Input as AntInput,
+    Dropdown,
+    Menu,
 } from 'antd';
+import type { TreeProps } from 'antd';
 import {
     SaveOutlined,
     CloudUploadOutlined,
@@ -40,7 +43,15 @@ import {
     AppstoreOutlined,
     RightOutlined,
     LeftOutlined,
+    SearchOutlined,
+    ExpandOutlined,
+    ShrinkOutlined,
+    ZoomInOutlined,
+    ZoomOutOutlined,
+    FullscreenOutlined,
+    MoreOutlined,
 } from '@ant-design/icons';
+import type { MenuProps } from 'antd';
 import Navbar from '../components/Layout/Navbar';
 import { OntologyNode, OntologyEdge } from '../types/ontology';
 import { projectsApi } from '../api/projects';
@@ -50,7 +61,7 @@ import apiClient from '../api/client';
 import D3ForceGraph from '../components/OntologyGraph/D3ForceGraph';
 
 const { TreeNode } = Tree;
-const { Panel } = Collapse;
+const { Search } = AntInput;
 
 const OntologyBuilderPage: React.FC = () => {
     const { projectId } = useParams<{ projectId: string }>();
@@ -91,8 +102,14 @@ const OntologyBuilderPage: React.FC = () => {
     const [isNewNode, setIsNewNode] = useState(false);
     const [highlightNodeId, setHighlightNodeId] = useState<string | null>(null);
 
-    // 左侧列表展开状态
+    // 左侧面板展开状态
     const [isLeftPanelExpanded, setIsLeftPanelExpanded] = useState(false);
+    
+    // 树形列表搜索
+    const [treeSearchValue, setTreeSearchValue] = useState('');
+    
+    // 画布缩放控制
+    const [canvasZoom, setCanvasZoom] = useState(1);
 
     // 测试连通性状态
     const [testingLLM, setTestingLLM] = useState(false);
@@ -101,7 +118,6 @@ const OntologyBuilderPage: React.FC = () => {
     const [testingMilvus, setTestingMilvus] = useState(false);
 
     useEffect(() => {
-        // 优先显示编辑界面，只有当明确没有 projectId 时才显示创建表单
         const hasValidProjectId = projectId && typeof projectId === 'string' && projectId.trim() !== '';
 
         if (hasValidProjectId) {
@@ -143,7 +159,6 @@ const OntologyBuilderPage: React.FC = () => {
             setProjectName(project.name);
             setIsPublished(project.is_published);
 
-            // 保持空白画布，不初始化默认根类节点
             if (!project.graph_data || !project.graph_data.nodes || project.graph_data.nodes.length === 0) {
                 setNodes([]);
                 setLastSavedNodes([]);
@@ -158,7 +173,6 @@ const OntologyBuilderPage: React.FC = () => {
                 }
             }
 
-            // 获取用户信息判断是否为 admin
             const userStr = localStorage.getItem('user');
             if (userStr) {
                 const user = JSON.parse(userStr);
@@ -172,7 +186,6 @@ const OntologyBuilderPage: React.FC = () => {
         }
     };
 
-    // 点击节点
     const onNodeClick = (node: any) => {
         setSelectedElement(node);
         setIsDrawerOpen(true);
@@ -190,7 +203,6 @@ const OntologyBuilderPage: React.FC = () => {
         });
     };
 
-    // 点击边
     const onEdgeClick = (edge: any) => {
         setSelectedElement(edge);
         setIsDrawerOpen(true);
@@ -201,18 +213,13 @@ const OntologyBuilderPage: React.FC = () => {
         });
     };
 
-    // 保存属性修改
     const handleSaveProperties = (values: any) => {
         if (!selectedElement) return;
 
         const { label, type, properties, relation } = values;
-
-        // 判断是节点还是边
         const isNode = 'position' in selectedElement;
 
         if (isNode) {
-            // 节点属性编辑
-            // 将 properties 数组转换回对象
             const propsObj: Record<string, any> = {};
             if (Array.isArray(properties)) {
                 properties.forEach((p: any) => {
@@ -239,13 +246,11 @@ const OntologyBuilderPage: React.FC = () => {
                 })
             );
             
-            // 如果是新节点保存后，清除高亮状态
             if (isNewNode) {
                 setIsNewNode(false);
                 setHighlightNodeId(null);
             }
         } else {
-            // 边属性编辑
             setEdges((eds) =>
                 eds.map((edge) => {
                     if (edge.id === selectedElement.id) {
@@ -267,7 +272,6 @@ const OntologyBuilderPage: React.FC = () => {
         message.success('属性已更新');
     };
 
-    // 新增类
     const addNewClass = () => {
         const newNode: OntologyNode = {
             id: `node_${Date.now()}`,
@@ -283,7 +287,6 @@ const OntologyBuilderPage: React.FC = () => {
         setIsNewNode(true);
         setHighlightNodeId(newNode.id);
         
-        // 自动选中并打开编辑抽屉
         setSelectedElement(newNode);
         setIsDrawerOpen(true);
         form.setFieldsValue({
@@ -294,7 +297,6 @@ const OntologyBuilderPage: React.FC = () => {
         message.success('已添加新类，请编辑节点名称');
     };
 
-    // 新增实例 - 打开选择类对话框
     const addNewInstance = () => {
         const classNodes = nodes.filter(node => node.data?.type === 'owl:Class');
         if (classNodes.length === 0) {
@@ -305,7 +307,6 @@ const OntologyBuilderPage: React.FC = () => {
         setIsAddInstanceModalOpen(true);
     };
 
-    // 确认添加实例
     const handleConfirmAddInstance = async () => {
         try {
             const values = await addInstanceForm.validateFields();
@@ -322,7 +323,6 @@ const OntologyBuilderPage: React.FC = () => {
                 },
             };
 
-            // 创建 rdf:type 关系到选中的类（本体论关系）
             const newEdge: OntologyEdge = {
                 id: `edge_${Date.now()}_${newNode.id}_${parentClassId}`,
                 source: newNode.id,
@@ -330,11 +330,9 @@ const OntologyBuilderPage: React.FC = () => {
                 data: { label: 'rdf:type', relation: 'instance_of' },
             } as OntologyEdge;
 
-            // 添加新节点和边
             setNodes((nds) => nds.concat(newNode));
             setEdges((eds) => [...eds, newEdge]);
 
-            // 自动展开该类
             setExpandedNodeIds(prev => {
                 const newSet = new Set(prev);
                 newSet.add(parentClassId);
@@ -349,7 +347,6 @@ const OntologyBuilderPage: React.FC = () => {
         }
     };
 
-    // 删除选中元素
     const deleteSelectedElement = () => {
         if (!selectedElement) {
             message.warning('请先选择要删除的元素');
@@ -376,7 +373,6 @@ const OntologyBuilderPage: React.FC = () => {
         });
     };
 
-    // 保存草稿
     const handleSaveDraft = async () => {
         if (!projectId) return;
 
@@ -400,7 +396,6 @@ const OntologyBuilderPage: React.FC = () => {
         }
     };
 
-    // 发布/取消发布项目
     const handleTogglePublish = async () => {
         if (!projectId) return;
 
@@ -448,14 +443,12 @@ const OntologyBuilderPage: React.FC = () => {
         });
     };
 
-    // 准备上传
     const beforeUpload = (file: File) => {
         setPendingFile(file);
         setIsRuleModalOpen(true);
         return false;
     };
 
-    // 阶段 1: 执行 Schema 提取（两阶段流程的第一步）
     const handleStartSchemaExtraction = async () => {
         if (!projectId || !pendingFile) return;
 
@@ -464,7 +457,6 @@ const OntologyBuilderPage: React.FC = () => {
         setLoading(true);
 
         try {
-            // 调用新的两阶段 API - 阶段 1: Schema 提取
             const response = await projectsApi.extractSchema(Number(projectId), pendingFile, {
                 user_intent: values.scenario,
                 chunk_size: 15000,
@@ -472,13 +464,9 @@ const OntologyBuilderPage: React.FC = () => {
                 request_interval: 2,
             });
 
-            // 获取返回的 schema_graph 和 graph_data
             if (response.schema_graph && response.graph_data) {
-                // 存储原始文本内容供阶段 2 使用
                 const textContent = response.text_content || '';
                 localStorage.setItem(`project_${projectId}_text_content`, textContent);
-                
-                // 存储 schema_graph 供阶段 2 使用（使用用户审核后的版本）
                 localStorage.setItem(`project_${projectId}_schema_graph`, JSON.stringify(response.schema_graph));
 
                 const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
@@ -488,12 +476,8 @@ const OntologyBuilderPage: React.FC = () => {
                 setNodes(layoutedNodes);
                 setEdges(layoutedEdges);
                 
-                message.success(
-                    response.message || 
-                    `骨架提取完成！请审核类框架图，调整后可点击「自动提取构建」进行实例提取。`
-                );
+                message.success(response.message || `骨架提取完成！`);
             } else if (response.nodes && response.nodes.length > 0) {
-                // 兼容旧版返回格式
                 const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
                     response.nodes,
                     response.edges || []
@@ -502,7 +486,7 @@ const OntologyBuilderPage: React.FC = () => {
                 setEdges(layoutedEdges);
                 message.success(response.message || '本体处理成功！');
             } else {
-                message.warning('提取完成，但未发现有效的本体节点，请检查模型配置或文档内容');
+                message.warning('提取完成，但未发现有效的本体节点');
             }
         } catch (error: any) {
             const errorDetail = error.response?.data?.detail || error.message || '未知错误';
@@ -513,14 +497,12 @@ const OntologyBuilderPage: React.FC = () => {
         }
     };
 
-    // 阶段 2: 执行实例提取（需要用户已审核 Schema）
     const handleStartInstanceExtraction = async () => {
         if (!projectId) return;
 
         setLoading(true);
 
         try {
-            // 从 localStorage 获取之前存储的数据
             const textContent = localStorage.getItem(`project_${projectId}_text_content`) || '';
             const schemaGraphStr = localStorage.getItem(`project_${projectId}_schema_graph`);
             
@@ -532,7 +514,6 @@ const OntologyBuilderPage: React.FC = () => {
 
             const schemaGraph = JSON.parse(schemaGraphStr);
 
-            // 调用新的两阶段 API - 阶段 2: 实例提取
             const response = await projectsApi.extractInstances(Number(projectId), {
                 text_content: textContent,
                 schema_graph: schemaGraph,
@@ -565,24 +546,19 @@ const OntologyBuilderPage: React.FC = () => {
         }
     };
 
-    // 执行带规则的上传（根据当前状态决定调用哪个阶段）
     const handleStartExtraction = async () => {
         if (!projectId || !pendingFile) return;
 
-        // 检查是否已经有 schema_graph
         const schemaGraphStr = localStorage.getItem(`project_${projectId}_schema_graph`);
         
         if (schemaGraphStr) {
-            // 已有 Schema，直接进行阶段 2
             setIsRuleModalOpen(false);
             await handleStartInstanceExtraction();
         } else {
-            // 没有 Schema，先进行阶段 1
             await handleStartSchemaExtraction();
         }
     };
 
-    // 处理 TTL 文件上传
     const handleUploadTTL = async (file: File) => {
         if (!projectId) return;
 
@@ -608,7 +584,6 @@ const OntologyBuilderPage: React.FC = () => {
         return false;
     };
 
-    // 下载 TTL 文件
     const handleDownloadTTL = async () => {
         if (!projectId) return;
 
@@ -620,15 +595,12 @@ const OntologyBuilderPage: React.FC = () => {
         }
     };
 
-    // 一键展开/收起所有实例
     const expandAllInstances = () => {
         const classIdsWithInstances = new Set<string>();
         
-        // 遍历边找到所有 instance_of 关系
         edges.forEach(edge => {
             const label = edge.data?.label || edge.label || '';
             const relation = edge.data?.relation || '';
-            // 支持多种标签格式：rdf:type, type, instance_of
             const isInstanceRelation = label === 'rdf:type' || label === 'type' || relation === 'instance_of';
             if (isInstanceRelation) {
                 const classId = String(edge.target);
@@ -636,15 +608,12 @@ const OntologyBuilderPage: React.FC = () => {
             }
         });
 
-        // 检查是否已经有展开的类
         const hasExpandedInstances = Array.from(expandedNodeIds).some(id => classIdsWithInstances.has(id));
 
         if (hasExpandedInstances) {
-            // 收起所有实例 - 清空展开状态
             setExpandedNodeIds(new Set());
             message.success('已收起所有实例');
         } else {
-            // 展开所有有实例的类
             setExpandedNodeIds(classIdsWithInstances);
             if (classIdsWithInstances.size > 0) {
                 message.success(`已展开 ${classIdsWithInstances.size} 个类的实例`);
@@ -674,19 +643,14 @@ const OntologyBuilderPage: React.FC = () => {
         { label: '依赖 (depends_on)', value: 'depends_on' },
     ];
 
-    // 计算当前显示的元素 - 根据展开状态控制实例节点的显示
     const getDisplayElements = useCallback(() => {
         const visibleNodeIds = new Set<string>();
-        
-        // 构建类到实例的映射
         const classToInstances: Map<string, string[]> = new Map();
-        // 构建实例到类的映射
         const instanceToClass: Map<string, string> = new Map();
         
         edges.forEach(edge => {
             const label = edge.data?.label || edge.label || '';
             const relation = edge.data?.relation || '';
-            // 支持多种标签格式：rdf:type, type, instance_of
             const isInstanceRelation = label === 'rdf:type' || label === 'type' || relation === 'instance_of';
             if (isInstanceRelation) {
                 const instanceId = String(edge.source);
@@ -701,34 +665,27 @@ const OntologyBuilderPage: React.FC = () => {
 
         nodes.forEach(node => {
             if (node.data?.type === 'owl:Class') {
-                // 类节点始终显示
                 visibleNodeIds.add(node.id);
-                // 如果该类被展开，显示其所有实例
                 if (expandedNodeIds.has(node.id)) {
                     const instances = classToInstances.get(node.id) || [];
                     instances.forEach(instanceId => visibleNodeIds.add(instanceId));
                 }
             } else if (node.data?.type === 'owl:NamedIndividual') {
-                // 实例节点只有在所属类被展开时才显示
                 const parentClassId = instanceToClass.get(node.id);
                 if (parentClassId && expandedNodeIds.has(parentClassId)) {
                     visibleNodeIds.add(node.id);
                 }
             } else {
-                // 其他类型节点始终显示
                 visibleNodeIds.add(node.id);
             }
         });
 
         const displayNodes = nodes.filter(n => visibleNodeIds.has(n.id));
 
-        // 边只有在两端节点都可见时才显示
         const displayEdges = edges.filter(e => {
             const sourceId = String(e.source);
             const targetId = String(e.target);
-            const sourceVisible = visibleNodeIds.has(sourceId);
-            const targetVisible = visibleNodeIds.has(targetId);
-            return sourceVisible && targetVisible;
+            return visibleNodeIds.has(sourceId) && visibleNodeIds.has(targetId);
         });
 
         return { displayNodes, displayEdges };
@@ -736,47 +693,31 @@ const OntologyBuilderPage: React.FC = () => {
 
     const { displayNodes, displayEdges } = getDisplayElements();
 
-    // 创建新关系
     const addNewRelation = () => {
         relationForm.resetFields();
-        const nodeOptions = nodes.map(node => ({
-            label: `${node.data.label} (${node.data.type})`,
-            value: node.id
-        }));
         setIsAddRelationModalOpen(true);
     };
 
-    // 确认创建新关系
     const handleConfirmNewRelation = async () => {
         try {
             const values = await relationForm.validateFields();
             const { sourceNodeId, targetNodeId, relationType } = values;
 
-            let finalRelationType = relationType;
-            if (relationType && !relationTypes.some(opt => opt.value === relationType)) {
-                finalRelationType = relationType;
-            }
-
             const newEdge: OntologyEdge = {
                 id: `edge_${Date.now()}_${sourceNodeId}_${targetNodeId}`,
                 source: sourceNodeId,
                 target: targetNodeId,
-                data: { label: finalRelationType, relation: finalRelationType },
+                data: { label: relationType, relation: relationType },
             } as OntologyEdge;
 
-            setEdges((eds) => {
-                const newEdges = [...eds, newEdge];
-                return newEdges;
-            });
+            setEdges((eds) => [...eds, newEdge]);
             message.success('关系已创建');
-
             setIsAddRelationModalOpen(false);
         } catch (error) {
             console.error('创建关系失败:', error);
         }
     };
 
-    // 系统配置相关
     const openConfigModal = async () => {
         setLoading(true);
         try {
@@ -807,7 +748,6 @@ const OntologyBuilderPage: React.FC = () => {
         }
     };
 
-    // 测试大模型连通性
     const testLLMConnectivity = async () => {
         setTestingLLM(true);
         try {
@@ -825,7 +765,6 @@ const OntologyBuilderPage: React.FC = () => {
         }
     };
 
-    // 测试 Neo4j 连通性
     const testNeo4JConnectivity = async () => {
         setTestingNeo4J(true);
         try {
@@ -843,7 +782,6 @@ const OntologyBuilderPage: React.FC = () => {
         }
     };
 
-    // 测试 Embedding 连通性
     const testEmbeddingConnectivity = async () => {
         setTestingEmbedding(true);
         try {
@@ -861,7 +799,6 @@ const OntologyBuilderPage: React.FC = () => {
         }
     };
 
-    // 测试 Milvus 连通性
     const testMilvusConnectivity = async () => {
         setTestingMilvus(true);
         try {
@@ -879,12 +816,11 @@ const OntologyBuilderPage: React.FC = () => {
         }
     };
 
-    // 构建树形数据
+    // 构建树形数据（带搜索过滤）
     const buildTreeData = useCallback(() => {
         const classNodes = nodes.filter(n => n.data?.type === 'owl:Class');
         const instanceNodes = nodes.filter(n => n.data?.type === 'owl:NamedIndividual');
 
-        // 构建类到实例的映射
         const classToInstances: Record<string, any[]> = {};
         instanceNodes.forEach(instance => {
             const parentClassEdge = edges.find(e =>
@@ -899,21 +835,45 @@ const OntologyBuilderPage: React.FC = () => {
             }
         });
 
-        return classNodes.map(classNode => ({
-            title: classNode.data?.label || '未命名类',
-            key: classNode.id,
-            icon: <span className="inline-block w-3 h-3 rounded-full bg-[#4cc9f0] mr-2" />,
-            children: classToInstances[classNode.id]?.map(instance => ({
-                title: instance.data?.label || '未命名实例',
-                key: instance.id,
-                icon: <span className="inline-block w-3 h-3 rounded-full bg-[#f79767] mr-2" />,
-                isLeaf: true,
-            })) || [],
-        }));
-    }, [nodes, edges]);
+        // 搜索过滤
+        const filterNode = (title: string) => {
+            if (!treeSearchValue) return true;
+            return title.toLowerCase().includes(treeSearchValue.toLowerCase());
+        };
 
-    // 点击树节点
-    const onTreeSelect = (selectedKeys: React.Key[]) => {
+        return classNodes.map(classNode => {
+            const classTitle = classNode.data?.label || '未命名类';
+            const children = classToInstances[classNode.id]?.map(instance => {
+                const instanceTitle = instance.data?.label || '未命名实例';
+                return {
+                    title: instanceTitle,
+                    key: instance.id,
+                    icon: <span className="inline-block w-3 h-3 rounded-full bg-[#f79767] mr-2" />,
+                    isLeaf: true,
+                    searchableTitle: instanceTitle,
+                };
+            }) || [];
+
+            return {
+                title: classTitle,
+                key: classNode.id,
+                icon: <span className="inline-block w-3 h-3 rounded-full bg-[#4cc9f0] mr-2" />,
+                children,
+                searchableTitle: classTitle,
+            };
+        }).filter(node => {
+            // 如果节点本身或子节点匹配搜索，则显示
+            if (!treeSearchValue) return true;
+            const selfMatch = node.searchableTitle?.toLowerCase().includes(treeSearchValue.toLowerCase());
+            const childrenMatch = node.children?.some((child: any) => 
+                child.searchableTitle?.toLowerCase().includes(treeSearchValue.toLowerCase())
+            );
+            return selfMatch || childrenMatch;
+        });
+    }, [nodes, edges, treeSearchValue]);
+
+    // 树节点点击
+    const onTreeSelect: TreeProps['onSelect'] = (selectedKeys) => {
         if (selectedKeys.length === 0) return;
         const key = selectedKeys[0] as string;
         const node = nodes.find(n => n.id === key);
@@ -922,10 +882,46 @@ const OntologyBuilderPage: React.FC = () => {
         }
     };
 
+    // 全部展开/折叠
+    const expandAllTreeNodes = () => {
+        const allClassIds = nodes.filter(n => n.data?.type === 'owl:Class').map(n => n.id);
+        setExpandedNodeIds(new Set(allClassIds));
+        message.success('已展开所有类节点');
+    };
+
+    const collapseAllTreeNodes = () => {
+        setExpandedNodeIds(new Set());
+        message.success('已收起所有类节点');
+    };
+
+    // 更多操作菜单
+    const moreMenuItems: MenuProps['items'] = [
+        {
+            key: 'expand-all',
+            icon: <ExpandOutlined />,
+            label: '展开所有实例',
+            onClick: expandAllInstances,
+        },
+        {
+            key: 'expand-tree-all',
+            icon: <ExpandOutlined />,
+            label: '展开树形列表',
+            onClick: expandAllTreeNodes,
+        },
+        {
+            key: 'collapse-tree-all',
+            icon: <ShrinkOutlined />,
+            label: '收起树形列表',
+            onClick: collapseAllTreeNodes,
+        },
+    ];
+
+    const classCount = nodes.filter(n => n.data?.type === 'owl:Class').length;
+    const instanceCount = nodes.filter(n => n.data?.type === 'owl:NamedIndividual').length;
+
     return (
         <div className="h-screen flex flex-col bg-gray-50">
             {(!projectId || projectId.trim() === '' || isCreatingProject) ? (
-                // 创建项目表单
                 <div className="flex-1 flex items-center justify-center">
                     <div className="w-full max-w-md p-6 bg-white rounded-lg shadow-xl">
                         <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">创建新本体项目</h2>
@@ -939,7 +935,6 @@ const OntologyBuilderPage: React.FC = () => {
                                         name: values.name,
                                         description: values.description
                                     });
-
                                     navigate(`/ontology-builder/${newProject.id}`);
                                     message.success('项目创建成功，已进入编辑界面');
                                 } catch (error: any) {
@@ -949,263 +944,254 @@ const OntologyBuilderPage: React.FC = () => {
                                 }
                             }}
                         >
-                            <Form.Item
-                                name="name"
-                                label="项目名称"
-                                rules={[{ required: true, message: '请输入项目名称' }]}
-                            >
+                            <Form.Item name="name" label="项目名称" rules={[{ required: true, message: '请输入项目名称' }]}>
                                 <Input placeholder="例如：工业本体" />
                             </Form.Item>
-
                             <Form.Item name="description" label="项目描述">
-                                <Input.TextArea
-                                    rows={4}
-                                    placeholder="简要描述这个项目的用途..."
-                                />
+                                <Input.TextArea rows={4} placeholder="简要描述这个项目的用途..." />
                             </Form.Item>
-
                             <Form.Item>
                                 <Space className="w-full justify-end">
                                     <Button onClick={() => navigate('/my-projects')}>取消</Button>
-                                    <Button type="primary" htmlType="submit" className="bg-blue-600">
-                                        创建项目
-                                    </Button>
+                                    <Button type="primary" htmlType="submit" className="bg-blue-600">创建项目</Button>
                                 </Space>
                             </Form.Item>
                         </Form>
                     </div>
                 </div>
             ) : (
-                // 可视化编辑界面 - 力导向图
-                <div className="flex-1 flex relative">
-                    {/* 左侧展开面板 */}
+                // 使用 Flex 布局实现平推式响应
+                <div className="flex-1 flex overflow-hidden">
+                    {/* 左侧展开面板 - 使用 Flex 布局，展开时推挤主内容区 */}
                     <div
-                        className={`absolute left-0 top-0 bottom-0 bg-white shadow-lg z-20 transition-all duration-300 ${
-                            isLeftPanelExpanded ? 'w-[420px]' : 'w-0'
-                        } overflow-hidden`}
+                        className={`bg-white transition-all duration-300 ease-in-out flex-shrink-0 overflow-hidden relative ${
+                            isLeftPanelExpanded ? 'w-[380px] shadow-lg' : 'w-0'
+                        }`}
+                        style={{
+                            boxShadow: isLeftPanelExpanded ? '4px 0 12px rgba(0, 0, 0, 0.1)' : 'none',
+                            borderRight: isLeftPanelExpanded ? '1px solid #e5e7eb' : 'none'
+                        }}
                     >
-                        {isLeftPanelExpanded && (
-                            <div className="p-4 h-full flex flex-col">
-                                <div className="flex items-center justify-between mb-4">
-                                    <h3 className="font-semibold text-gray-700 flex items-center">
-                                        <UnorderedListOutlined className="mr-2" />
+                        <div className="h-full flex flex-col" style={{ minWidth: isLeftPanelExpanded ? '380px' : '0' }}>
+                            {/* 面板头部 - 搜索和操作 */}
+                            <div className="p-3 border-b border-gray-100 flex-shrink-0">
+                                <div className="flex items-center justify-between mb-2">
+                                    <h3 className="font-semibold text-gray-700 flex items-center text-sm">
+                                        <UnorderedListOutlined className="mr-2 text-gray-500" />
                                         类与实例列表
                                     </h3>
-                                </div>
-                                <div className="flex-1 overflow-auto">
-                                    <Tree
-                                        showIcon
-                                        defaultExpandAll
-                                        selectedKeys={selectedElement ? [selectedElement.id] : []}
-                                        onSelect={onTreeSelect}
-                                        treeData={buildTreeData()}
-                                    />
-                                </div>
-                                <div className="mt-4 pt-4 border-t border-gray-200">
-                                    <div className="flex items-center text-sm text-gray-500">
-                                        <InfoCircleOutlined className="mr-2" />
-                                        <span>共 {nodes.filter(n => n.data?.type === 'owl:Class').length} 个类，{nodes.filter(n => n.data?.type === 'owl:NamedIndividual').length} 个实例</span>
+                                    <div className="flex items-center gap-1">
+                                        <Tooltip title="全部展开">
+                                            <Button type="text" size="small" icon={<ExpandOutlined />} onClick={expandAllTreeNodes} />
+                                        </Tooltip>
+                                        <Tooltip title="全部收起">
+                                            <Button type="text" size="small" icon={<ShrinkOutlined />} onClick={collapseAllTreeNodes} />
+                                        </Tooltip>
                                     </div>
                                 </div>
+                                {/* 搜索框 */}
+                                <Search
+                                    placeholder="搜索类或实例..."
+                                    size="small"
+                                    value={treeSearchValue}
+                                    onChange={(e) => setTreeSearchValue(e.target.value)}
+                                    allowClear
+                                    prefix={<SearchOutlined className="text-gray-400" />}
+                                />
                             </div>
-                        )}
+                            
+                            {/* 树形列表 */}
+                            <div className="flex-1 overflow-auto p-2">
+                                <Tree
+                                    showIcon
+                                    defaultExpandAll
+                                    selectedKeys={selectedElement ? [selectedElement.id] : []}
+                                    onSelect={onTreeSelect}
+                                    treeData={buildTreeData()}
+                                    blockNode
+                                    className="custom-tree"
+                                />
+                            </div>
+                            
+                            {/* 底部统计 */}
+                            <div className="p-3 border-t border-gray-100 flex-shrink-0 bg-gray-50">
+                                <div className="flex items-center justify-between text-xs text-gray-500">
+                                    <span className="flex items-center">
+                                        <span className="inline-block w-2 h-2 rounded-full bg-[#4cc9f0] mr-1.5" />
+                                        类：{classCount}
+                                    </span>
+                                    <span className="flex items-center">
+                                        <span className="inline-block w-2 h-2 rounded-full bg-[#f79767] mr-1.5" />
+                                        实例：{instanceCount}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
-                    {/* 左侧展开/收起按钮 */}
-                    <button
-                        className={`absolute left-0 top-1/2 -translate-y-1/2 z-30 bg-white shadow-md rounded-r-lg p-2 hover:bg-gray-50 transition-all duration-300 ${
-                            isLeftPanelExpanded ? 'left-[420px]' : 'left-0'
-                        }`}
-                        onClick={() => setIsLeftPanelExpanded(!isLeftPanelExpanded)}
-                        title={isLeftPanelExpanded ? '收起列表' : '展开列表'}
-                    >
-                        {isLeftPanelExpanded ? <LeftOutlined /> : <RightOutlined />}
-                    </button>
+                    {/* 主内容区 - 使用 Flex 布局自动适应剩余空间 */}
+                    <div className="flex-1 flex flex-col min-w-0 relative">
+                        <Navbar breadcrumbs={breadcrumbs} />
 
-                    <Navbar breadcrumbs={breadcrumbs} />
-                    <div className="flex-1 relative">
+                        {/* 展开/收起按钮 - 垂直居中贴边左侧面板 */}
+                        <button
+                            className="absolute top-1/2 -translate-y-1/2 z-30 bg-white shadow-md rounded-r-lg p-2 hover:bg-gray-50 transition-all duration-300"
+                            style={{
+                                left: isLeftPanelExpanded ? '380px' : '0px',
+                            }}
+                            onClick={() => setIsLeftPanelExpanded(!isLeftPanelExpanded)}
+                            title={isLeftPanelExpanded ? '收起列表' : '展开列表'}
+                        >
+                            {isLeftPanelExpanded ? <LeftOutlined /> : <RightOutlined />}
+                        </button>
+                        
                         {loading && (
                             <div className="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center z-50">
                                 <Spin size="large" tip="正在加载..." />
                             </div>
                         )}
 
-                        {/* 顶部工具栏 - 优化布局 */}
-                        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 w-full max-w-[90%]">
-                            {/* 主工具栏 - 分组布局 */}
-                            <div className="flex items-center justify-center gap-2 flex-wrap">
-                                {/* AI 提取组 */}
-                                <div className="flex items-center gap-1 bg-white px-2 py-1.5 rounded-lg shadow-md border border-gray-100">
-                                    <span className="text-xs text-gray-500 font-medium px-2">AI 提取</span>
-                                    <Upload
-                                        accept=".txt,.pdf,.doc,.docx"
-                                        showUploadList={false}
-                                        beforeUpload={beforeUpload}
-                                    >
-                                        <Tooltip title={localStorage.getItem(`project_${projectId}_schema_graph`) ? "已有 Schema，点击将重新提取" : "定义规则并上传文档提取骨架 (类 + 关系)"}>
-                                            <Button size="small" type="primary" icon={<CloudUploadOutlined />} className="bg-indigo-600">
-                                                {localStorage.getItem(`project_${projectId}_schema_graph`) ? "重新提取" : "提取骨架"}
+                        {/* 顶部工具栏 - 优化分组和视觉 */}
+                        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20">
+                            <div className="flex items-center gap-1 bg-white/95 backdrop-blur-sm px-2 py-1.5 rounded-lg shadow-lg border border-gray-200">
+                                {/* 数据导入/导出组 */}
+                                <div className="flex items-center gap-1 pr-2 border-r border-gray-200">
+                                    <Upload accept=".txt,.pdf,.doc,.docx" showUploadList={false} beforeUpload={beforeUpload}>
+                                        <Tooltip title={localStorage.getItem(`project_${projectId}_schema_graph`) ? "重新提取骨架" : "提取骨架"}>
+                                            <Button size="small" type="primary" icon={<CloudUploadOutlined />} className="bg-indigo-600 hover:bg-indigo-700 border-none">
+                                                骨架
                                             </Button>
                                         </Tooltip>
                                     </Upload>
-                                    <Tooltip title={
-                                        !localStorage.getItem(`project_${projectId}_schema_graph`) 
-                                            ? "请先上传文档提取骨架后再进行实例提取" 
-                                            : "根据当前骨架和原文档提取实例"
-                                    }>
+                                    <Tooltip title={localStorage.getItem(`project_${projectId}_schema_graph`) ? "提取实例" : "请先提取骨架"}>
                                         <Button 
                                             size="small"
                                             icon={<DatabaseOutlined />} 
-                                            onClick={() => {
-                                                const schemaGraphStr = localStorage.getItem(`project_${projectId}_schema_graph`);
-                                                if (!schemaGraphStr) {
-                                                    message.warning('请先上传文档提取骨架，然后再进行实例提取');
-                                                    return;
-                                                }
-                                                Modal.confirm({
-                                                    title: '确认提取实例',
-                                                    content: '将根据当前骨架结构和原文档内容提取实例。提取过程中请保持页面打开。',
-                                                    okText: '开始提取',
-                                                    cancelText: '取消',
-                                                    onOk: () => {
-                                                        handleStartInstanceExtraction();
-                                                    }
-                                                });
-                                            }}
-                                            className="bg-orange-500 text-white"
+                                            onClick={handleStartInstanceExtraction}
+                                            className="bg-orange-500 text-white hover:bg-orange-600 border-none"
                                             disabled={!localStorage.getItem(`project_${projectId}_schema_graph`)}
-                                        >
-                                            提取实例
-                                        </Button>
-                                    </Tooltip>
-                                    <Upload
-                                        accept=".ttl"
-                                        showUploadList={false}
-                                        beforeUpload={handleUploadTTL}
-                                    >
-                                        <Tooltip title="上传 TTL 文件直接解析">
-                                            <Button size="small" icon={<FileTextOutlined />} className="bg-purple-600 text-white">
-                                                上传 TTL
-                                            </Button>
-                                        </Tooltip>
-                                    </Upload>
-                                </div>
-
-                                {/* 节点管理组 */}
-                                <div className="flex items-center gap-1 bg-white px-2 py-1.5 rounded-lg shadow-md border border-gray-100">
-                                    <span className="text-xs text-gray-500 font-medium px-2">节点</span>
-                                    <Tooltip title="添加新的类节点">
-                                        <Button size="small" icon={<PlusOutlined />} onClick={addNewClass} className="border-blue-500 text-blue-600">
-                                            新增类
-                                        </Button>
-                                    </Tooltip>
-                                    <Tooltip title="添加实例节点">
-                                        <Button size="small" icon={<PlusOutlined />} onClick={addNewInstance} className="border-orange-500 text-orange-600">
-                                            新增实例
-                                        </Button>
-                                    </Tooltip>
-                                    <Tooltip title="展开/收起所有实例节点">
-                                        <Button 
-                                            size="small" 
-                                            icon={<EyeOutlined />} 
-                                            onClick={expandAllInstances}
-                                            disabled={nodes.filter(n => n.data?.type === 'owl:NamedIndividual').length === 0}
                                         >
                                             实例
                                         </Button>
                                     </Tooltip>
+                                    <Upload accept=".ttl" showUploadList={false} beforeUpload={handleUploadTTL}>
+                                        <Tooltip title="上传 TTL 文件">
+                                            <Button size="small" icon={<FileTextOutlined />} className="border-purple-500 text-purple-600 hover:bg-purple-50">
+                                                TTL
+                                            </Button>
+                                        </Tooltip>
+                                    </Upload>
                                 </div>
 
-                                {/* 关系管理组 */}
-                                <div className="flex items-center gap-1 bg-white px-2 py-1.5 rounded-lg shadow-md border border-gray-100">
-                                    <span className="text-xs text-gray-500 font-medium px-2">关系</span>
-                                    <Tooltip title="创建节点间的新关系">
-                                        <Button size="small" icon={<LinkOutlined />} onClick={addNewRelation}>
-                                            创建关系
+                                {/* 节点操作组 */}
+                                <div className="flex items-center gap-1 px-2 border-r border-gray-200">
+                                    <Tooltip title="新增类">
+                                        <Button size="small" icon={<PlusOutlined />} onClick={addNewClass} className="border-blue-500 text-blue-600 hover:bg-blue-50">
+                                            类
                                         </Button>
                                     </Tooltip>
-                                    <Tooltip title="删除选中的节点或关系">
+                                    <Tooltip title="新增实例">
+                                        <Button size="small" icon={<PlusOutlined />} onClick={addNewInstance} className="border-orange-500 text-orange-600 hover:bg-orange-50">
+                                            实例
+                                        </Button>
+                                    </Tooltip>
+                                    <Tooltip title="创建关系">
+                                        <Button size="small" icon={<LinkOutlined />} onClick={addNewRelation} className="border-gray-300 hover:bg-gray-50">
+                                            关系
+                                        </Button>
+                                    </Tooltip>
+                                    <Tooltip title="删除选中">
                                         <Button 
                                             size="small" 
                                             icon={<DeleteOutlined />} 
                                             danger
                                             onClick={deleteSelectedElement}
                                             disabled={!selectedElement}
-                                        >
-                                            删除
-                                        </Button>
+                                            className={!selectedElement ? 'opacity-50' : ''}
+                                        />
                                     </Tooltip>
                                 </div>
 
-                                {/* 发布/保存组 */}
-                                <div className="flex items-center gap-1 bg-white px-2 py-1.5 rounded-lg shadow-md border border-gray-100">
-                                    <Tooltip title={hasUnsavedChanges ? "保存当前修改" : "已保存"}>
+                                {/* 全局保存组 */}
+                                <div className="flex items-center gap-1 pl-2">
+                                    <Tooltip title={hasUnsavedChanges ? "保存修改" : "已保存"}>
                                         <Button 
                                             size="small" 
                                             icon={<SaveOutlined />} 
                                             onClick={handleSaveDraft}
                                             loading={loading}
                                             type={hasUnsavedChanges ? "primary" : "default"}
+                                            className={hasUnsavedChanges ? "bg-blue-600 hover:bg-blue-700 border-none" : ""}
                                         >
                                             保存
                                         </Button>
                                     </Tooltip>
-                                    <Tooltip title={isPublished ? "取消发布" : "发布到资产中心"}>
+                                    <Tooltip title={isPublished ? "已发布" : "发布到资产中心"}>
                                         <Button 
                                             size="small"
                                             type={isPublished ? "default" : "primary"}
                                             icon={isPublished ? <EyeOutlined /> : <CloudServerOutlined />}
                                             onClick={handleTogglePublish}
                                             loading={loading}
-                                            className={isPublished ? "" : "bg-green-600 hover:bg-green-700"}
+                                            className={isPublished ? "" : "bg-green-600 hover:bg-green-700 border-none"}
                                         >
                                             {isPublished ? '已发布' : '发布'}
                                         </Button>
                                     </Tooltip>
-                                    <Tooltip title="下载 TTL 格式文件">
-                                        <Button 
-                                            size="small" 
-                                            icon={<DownloadOutlined />} 
-                                            onClick={handleDownloadTTL}
-                                        >
-                                            下载
-                                        </Button>
+                                    <Tooltip title="下载 TTL">
+                                        <Button size="small" icon={<DownloadOutlined />} onClick={handleDownloadTTL} className="border-gray-300 hover:bg-gray-50" />
                                     </Tooltip>
+                                    
+                                    {/* 更多操作 */}
+                                    <Dropdown menu={{ items: moreMenuItems }} trigger={['click']}>
+                                        <Button size="small" icon={<MoreOutlined />} className="border-gray-300 hover:bg-gray-50" />
+                                    </Dropdown>
                                 </div>
                             </div>
                         </div>
 
                         {/* 返回按钮 */}
-                        <div 
-                            className={`absolute top-4 z-10 transition-all duration-300 ${
-                                isLeftPanelExpanded ? 'left-[240px]' : 'left-4'
-                            }`}
-                        >
+                        <div className="absolute top-3 left-3 z-20">
                             <Button
                                 icon={<ArrowLeftOutlined />}
                                 onClick={() => navigate('/my-projects')}
-                                className="shadow-sm bg-white"
+                                className="shadow-sm bg-white hover:bg-gray-50"
                             >
-                                返回项目列表
+                                返回
                             </Button>
                         </div>
 
-                        {/* 底部统计 */}
-                        <div 
-                            className={`absolute bottom-4 z-10 transition-all duration-300 ${
-                                isLeftPanelExpanded ? 'left-[240px]' : 'left-4'
-                            }`}
-                        >
-                            <div className="bg-white px-4 py-2 rounded-lg shadow-md border border-gray-100 flex flex-col space-y-1">
-                                <div className="flex items-center space-x-4">
-                                    <span className="text-gray-500 font-medium"><InfoCircleOutlined className="mr-1" /> 视图统计:</span>
-                                    <span><Tag color="blue">{nodes.length}</Tag> 实体</span>
-                                    <span><Tag color="green">{edges.length}</Tag> 关系</span>
+
+                        {/* 画布控制工具栏 - 右下角 */}
+                        <div className="absolute bottom-4 right-4 z-20 flex flex-col gap-2">
+                            {/* 统计面板 */}
+                            <div className="bg-white/90 backdrop-blur-sm px-3 py-2 rounded-lg shadow-lg border border-gray-200">
+                                <div className="flex items-center gap-3 text-sm">
+                                    <span className="text-gray-500"><InfoCircleOutlined className="mr-1" />视图:</span>
+                                    <Tag color="blue" className="font-medium">{nodes.length}</Tag>
+                                    <span className="text-gray-600">实体</span>
+                                    <Tag color="green" className="font-medium">{edges.length}</Tag>
+                                    <span className="text-gray-600">关系</span>
                                 </div>
+                            </div>
+                            
+                            {/* 画布缩放控制 */}
+                            <div className="bg-white/90 backdrop-blur-sm px-2 py-1.5 rounded-lg shadow-lg border border-gray-200 flex items-center gap-1">
+                                <Tooltip title="缩小">
+                                    <Button size="small" icon={<ZoomOutOutlined />} onClick={() => setCanvasZoom(z => Math.max(0.1, z - 0.1))} className="border-0" />
+                                </Tooltip>
+                                <span className="text-xs text-gray-600 w-12 text-center">{Math.round(canvasZoom * 100)}%</span>
+                                <Tooltip title="放大">
+                                    <Button size="small" icon={<ZoomInOutlined />} onClick={() => setCanvasZoom(z => Math.min(4, z + 0.1))} className="border-0" />
+                                </Tooltip>
+                                <Divider type="vertical" />
+                                <Tooltip title="适应屏幕">
+                                    <Button size="small" icon={<FullscreenOutlined />} onClick={() => setCanvasZoom(1)} className="border-0" />
+                                </Tooltip>
                             </div>
                         </div>
 
-                        {/* 力导向图组件 - 响应式布局 */}
+                        {/* 力导向图组件 */}
                         <div className="absolute inset-0">
                             <D3ForceGraph
                                 nodes={displayNodes}
@@ -1223,16 +1209,13 @@ const OntologyBuilderPage: React.FC = () => {
                                     }
                                 }}
                                 onNodeRightClick={(node) => {
-                                    // 右键点击类节点时，展开该类的实例
                                     const classId = node.id;
                                     setExpandedNodeIds(prev => {
                                         const newSet = new Set(prev);
                                         if (newSet.has(classId)) {
-                                            // 如果已展开，则收起（切换）
                                             newSet.delete(classId);
                                             message.info(`已收起 "${node.data?.label}" 的实例`);
                                         } else {
-                                            // 如果未展开，则展开
                                             newSet.add(classId);
                                             message.success(`已展开 "${node.data?.label}" 的实例`);
                                         }
@@ -1247,8 +1230,8 @@ const OntologyBuilderPage: React.FC = () => {
                         <Drawer
                             title={selectedElement ? (
                                 'position' in selectedElement
-                                    ? `编辑节点属性 - ${selectedElement.data?.label || '未命名'}`
-                                    : `编辑关系属性 - ${selectedElement.data?.label || '未命名'}`
+                                    ? `编辑节点 - ${selectedElement.data?.label || '未命名'}`
+                                    : `编辑关系 - ${selectedElement.data?.label || '未命名'}`
                             ) : "属性编辑"}
                             placement="right"
                             onClose={() => {
@@ -1257,167 +1240,115 @@ const OntologyBuilderPage: React.FC = () => {
                                 form.resetFields();
                             }}
                             open={isDrawerOpen}
-                            width={450}
+                            width={420}
                             destroyOnClose={true}
+                            className="property-drawer"
                         >
                             {selectedElement && (
                                 <Form
                                     form={form}
                                     layout="vertical"
                                     onFinish={handleSaveProperties}
-                                    initialValues={{
-                                        label: selectedElement.data?.label || '',
-                                        type: selectedElement.data?.type || 'owl:Class',
-                                        relation: selectedElement.data?.relation || selectedElement.data?.label || ''
-                                    }}
                                 >
                                     {'position' in selectedElement ? (
-                                        // 节点属性编辑
                                         <>
-                                            <SectionTitle icon={<EditOutlined />} title="基本属性" />
-
-                                            <Form.Item
-                                                name="label"
-                                                label="节点名称"
-                                                rules={[{ required: true, message: '请输入节点名称' }]}
-                                            >
+                                            <div className="flex items-center gap-2 mb-4 pb-3 border-b border-gray-100">
+                                                <EditOutlined className="text-blue-500" />
+                                                <span className="font-medium text-gray-700">节点属性</span>
+                                            </div>
+                                            
+                                            <Form.Item name="label" label="节点名称" rules={[{ required: true, message: '请输入节点名称' }]}>
                                                 <Input placeholder="请输入节点名称" />
                                             </Form.Item>
 
-                                            <Form.Item
-                                                name="type"
-                                                label="节点类型"
-                                            >
-                                                <Input disabled value={form.getFieldValue('type') === 'owl:Class' ? '类 (Class)' : form.getFieldValue('type') === 'owl:NamedIndividual' ? '实例 (Individual)' : form.getFieldValue('type')} />
+                                            <Form.Item name="type" label="节点类型">
+                                                <Input disabled value={form.getFieldValue('type') === 'owl:Class' ? '类 (Class)' : '实例 (Individual)'} />
                                             </Form.Item>
 
-                                            <SectionTitle icon={<TagsOutlined />} title="自定义属性" />
+                                            <div className="flex items-center gap-2 mb-3 pb-3 border-b border-gray-100">
+                                                <TagsOutlined className="text-purple-500" />
+                                                <span className="font-medium text-gray-700">自定义属性</span>
+                                            </div>
+                                            
                                             <Form.List name="properties">
                                                 {(fields, { add, remove }) => (
                                                     <>
                                                         {fields.map(({ key, name, ...restField }) => (
-                                                            <div
-                                                                key={key}
-                                                                style={{
-                                                                    display: 'flex',
-                                                                    gap: '10px',
-                                                                    marginBottom: 8,
-                                                                    alignItems: 'flex-start'
-                                                                }}
-                                                            >
+                                                            <div key={key} className="flex gap-2 mb-2 items-start">
                                                                 <Form.Item
                                                                     {...restField}
                                                                     name={[name, 'name']}
                                                                     rules={[{ required: true, message: '属性名不能为空' }]}
-                                                                    style={{ width: '120px', marginBottom: 0, flexShrink: 0 }}
+                                                                    className="flex-shrink-0 mb-0"
+                                                                    style={{ width: '100px' }}
                                                                 >
-                                                                    <Input placeholder="属性名" />
+                                                                    <Input placeholder="属性名" size="small" />
                                                                 </Form.Item>
-
                                                                 <Form.Item
                                                                     {...restField}
                                                                     name={[name, 'value']}
                                                                     rules={[{ required: true, message: '属性值不能为空' }]}
-                                                                    style={{ flex: 1, marginBottom: 0 }}
+                                                                    className="flex-1 mb-0"
                                                                 >
-                                                                    <Input.TextArea
-                                                                        placeholder="属性值"
-                                                                        autoSize={{ minRows: 1, maxRows: 6 }}
-                                                                    />
+                                                                    <Input.TextArea placeholder="属性值" autoSize={{ minRows: 1, maxRows: 4 }} size="small" />
                                                                 </Form.Item>
-
                                                                 <MinusCircleOutlined
                                                                     onClick={() => remove(name)}
-                                                                    style={{ marginTop: 8, color: '#999', cursor: 'pointer' }}
+                                                                    className="text-gray-400 hover:text-red-500 cursor-pointer mt-2 flex-shrink-0"
                                                                 />
                                                             </div>
                                                         ))}
-                                                        <Button type="dashed" onClick={() => add()} block icon={<PlusOutlined />}>
-                                                            添加自定义属性
+                                                        <Button type="dashed" onClick={() => add()} block icon={<PlusOutlined />} size="small" className="mt-2">
+                                                            添加属性
                                                         </Button>
                                                     </>
                                                 )}
                                             </Form.List>
                                         </>
                                     ) : (
-                                        // 关系属性编辑
                                         <>
-                                            <SectionTitle icon={<LinkOutlined />} title="关系属性" />
+                                            <div className="flex items-center gap-2 mb-4 pb-3 border-b border-gray-100">
+                                                <LinkOutlined className="text-green-500" />
+                                                <span className="font-medium text-gray-700">关系属性</span>
+                                            </div>
 
-                                            <Form.Item
-                                                name="label"
-                                                label="关系标签"
-                                                rules={[{ required: true, message: '请输入关系标签' }]}
-                                            >
+                                            <Form.Item name="label" label="关系标签" rules={[{ required: true, message: '请输入关系标签' }]}>
                                                 <Input placeholder="例如：关联、属于、包含" />
                                             </Form.Item>
 
-                                            <Form.Item
-                                                name="relation"
-                                                label="关系类型"
-                                                rules={[{ required: true, message: '请选择关系类型' }]}
-                                            >
+                                            <Form.Item name="relation" label="关系类型" rules={[{ required: true, message: '请选择关系类型' }]}>
                                                 <Select
                                                     showSearch
-                                                    placeholder="选择或输入自定义关系类型"
+                                                    placeholder="选择或输入关系类型"
                                                     optionFilterProp="label"
                                                     options={relationTypes}
-                                                    dropdownRender={(menu) => (
-                                                        <>
-                                                            {menu}
-                                                            <Divider style={{ margin: '8px 0' }} />
-                                                            <div style={{ padding: '4px 8px', cursor: 'pointer' }}>
-                                                                <Input
-                                                                    placeholder="输入自定义关系类型"
-                                                                    value={customRelationType}
-                                                                    onChange={(e) => setCustomRelationType(e.target.value)}
-                                                                    onPressEnter={() => {
-                                                                        if (customRelationType.trim()) {
-                                                                            form.setFieldsValue({ relation: customRelationType.trim() });
-                                                                        }
-                                                                    }}
-                                                                />
-                                                            </div>
-                                                        </>
-                                                    )}
                                                 />
                                             </Form.Item>
                                         </>
                                     )}
 
-                                    <div className="flex justify-end space-x-2 mt-6 pt-4 border-t border-gray-200">
-                                        <Button
-                                            onClick={() => {
-                                                setIsDrawerOpen(false);
-                                                setSelectedElement(null);
-                                                form.resetFields();
-                                            }}
-                                        >
+                                    <div className="flex justify-end gap-2 mt-6 pt-4 border-t border-gray-100">
+                                        <Button onClick={() => {
+                                            setIsDrawerOpen(false);
+                                            setSelectedElement(null);
+                                            form.resetFields();
+                                        }}>
                                             取消
                                         </Button>
-                                        <Button
-                                            icon={<DeleteOutlined />}
-                                            danger
-                                            onClick={deleteSelectedElement}
-                                        >
+                                        <Button icon={<DeleteOutlined />} danger onClick={deleteSelectedElement}>
                                             删除
                                         </Button>
                                         <Button type="primary" htmlType="submit" className="bg-blue-600">
-                                            保存修改
+                                            保存
                                         </Button>
                                     </div>
                                 </Form>
                             )}
                         </Drawer>
 
-                        {/* 抽取规则定义 Modal */}
+                        {/* 抽取规则 Modal */}
                         <Modal
-                            title={
-                                <div className="flex items-center space-x-2">
-                                    <CloudUploadOutlined style={{ color: '#indigo' }} />
-                                    <span>定义抽取规则 (可选)</span>
-                                </div>
-                            }
+                            title={<div className="flex items-center gap-2"><CloudUploadOutlined className="text-indigo-600" /><span>定义抽取规则</span></div>}
                             open={isRuleModalOpen}
                             onOk={handleStartExtraction}
                             onCancel={() => setIsRuleModalOpen(false)}
@@ -1426,215 +1357,99 @@ const OntologyBuilderPage: React.FC = () => {
                             width={800}
                         >
                             <div className="mb-4 text-gray-500 text-sm">
-                                请在下方配置主体、属性和关系，帮助 AI 更准确地从文档中提取您关注的内容。留空则按通用模式提取。
+                                配置主体、属性和关系，帮助 AI 更准确地提取内容。留空则按通用模式提取。
                             </div>
                             <Form form={ruleForm} layout="vertical">
-                                <SectionTitle icon={<DatabaseOutlined />} title="主体 (Class)" />
+                                <div className="flex items-center gap-2 mb-3 pb-2 border-b border-gray-100">
+                                    <DatabaseOutlined className="text-indigo-500" />
+                                    <span className="font-medium text-gray-700">主体配置</span>
+                                </div>
                                 <Form.List name="classes">
                                     {(fields, { add, remove }) => (
                                         <>
-                                            <div className="overflow-x-auto mb-4">
-                                                <table className="min-w-full divide-y divide-gray-200 border border-gray-200 rounded-lg">
+                                            <div className="overflow-x-auto mb-3">
+                                                <table className="w-full border border-gray-200 rounded-lg">
                                                     <thead className="bg-gray-50">
                                                         <tr>
-                                                            <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/3">
-                                                                主体 (Class)
-                                                            </th>
-                                                            <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/3">
-                                                                属性 (DataProp)
-                                                            </th>
-                                                            <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/3">
-                                                                关系 (ObjectProp)
-                                                            </th>
-                                                            <th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-12">
-                                                                操作
-                                                            </th>
+                                                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">主体 (Class)</th>
+                                                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">属性 (DataProp)</th>
+                                                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">关系 (ObjectProp)</th>
+                                                            <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 w-10">操作</th>
                                                         </tr>
                                                     </thead>
-                                                    <tbody className="bg-white divide-y divide-gray-200">
+                                                    <tbody className="divide-y divide-gray-200">
                                                         {fields.map(({ key, name, ...restField }) => (
-                                                            <tr key={key} className="hover:bg-gray-50">
-                                                                <td className="px-4 py-3 whitespace-nowrap">
-                                                                    <Form.Item
-                                                                        {...restField}
-                                                                        name={[name, 'class']}
-                                                                        rules={[{ required: true, message: '主体名称不能为空' }]}
-                                                                        noStyle
-                                                                    >
-                                                                        <Input placeholder="例如：技术与知识领域" />
+                                                            <tr key={key}>
+                                                                <td className="px-3 py-2">
+                                                                    <Form.Item {...restField} name={[name, 'class']} rules={[{ required: true, message: '主体不能为空' }]} className="mb-0">
+                                                                        <Input placeholder="例如：技术与知识领域" size="small" />
                                                                     </Form.Item>
                                                                 </td>
-                                                                <td className="px-4 py-3 whitespace-nowrap">
-                                                                    <Form.Item
-                                                                        {...restField}
-                                                                        name={[name, 'properties']}
-                                                                        noStyle
-                                                                    >
-                                                                        <Input placeholder="例如：描述，成熟度" />
+                                                                <td className="px-3 py-2">
+                                                                    <Form.Item {...restField} name={[name, 'properties']} className="mb-0">
+                                                                        <Input placeholder="描述，成熟度" size="small" />
                                                                     </Form.Item>
                                                                 </td>
-                                                                <td className="px-4 py-3 whitespace-nowrap">
-                                                                    <Form.Item
-                                                                        {...restField}
-                                                                        name={[name, 'relations']}
-                                                                        noStyle
-                                                                    >
-                                                                        <Input placeholder="例如：支撑 (创新载体), 应用于 (业务价值)" />
+                                                                <td className="px-3 py-2">
+                                                                    <Form.Item {...restField} name={[name, 'relations']} className="mb-0">
+                                                                        <Input placeholder="支撑，应用于" size="small" />
                                                                     </Form.Item>
                                                                 </td>
-                                                                <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
-                                                                    <MinusCircleOutlined
-                                                                        onClick={() => remove(name)}
-                                                                        className="text-red-500 hover:text-red-700 cursor-pointer"
-                                                                    />
+                                                                <td className="px-3 py-2 text-right">
+                                                                    <MinusCircleOutlined onClick={() => remove(name)} className="text-red-500 hover:text-red-700 cursor-pointer" />
                                                                 </td>
                                                             </tr>
                                                         ))}
                                                     </tbody>
                                                 </table>
                                             </div>
-                                            <Button type="dashed" onClick={() => add()} block icon={<PlusOutlined />}>添加主体配置</Button>
+                                            <Button type="dashed" onClick={() => add()} block icon={<PlusOutlined />} size="small">添加配置行</Button>
                                         </>
                                     )}
                                 </Form.List>
 
-                                <SectionTitle icon={<InfoCircleOutlined />} title="场景描述 (可选)" />
-                                <Form.Item
-                                    name="scenario"
-                                    label="场景描述"
-                                    tooltip="例如：分析这份半导体行业研报..."
-                                >
-                                    <Input.TextArea
-                                        rows={3}
-                                        placeholder="请输入场景描述，帮助 AI 理解上下文..."
-                                    />
-                                </Form.Item>
-                            </Form>
-                        </Modal>
-
-                        {/* 创建新关系 Modal */}
-                        <Modal
-                            title="创建新关系"
-                            open={isAddRelationModalOpen}
-                            onOk={handleConfirmNewRelation}
-                            onCancel={() => setIsAddRelationModalOpen(false)}
-                            okText="创建"
-                            cancelText="取消"
-                        >
-                            <Form form={relationForm} layout="vertical">
-                                <Form.Item
-                                    name="sourceNodeId"
-                                    label="起始节点"
-                                    rules={[{ required: true, message: '请选择起始节点' }]}
-                                >
-                                    <Select
-                                        showSearch
-                                        placeholder="选择起始节点"
-                                        optionFilterProp="label"
-                                        options={nodes.map(node => ({
-                                            label: `${node.data.label} (${node.data.type})`,
-                                            value: node.id
-                                        }))}
-                                    />
-                                </Form.Item>
-                                <Form.Item
-                                    name="targetNodeId"
-                                    label="目标节点"
-                                    rules={[{ required: true, message: '请选择目标节点' }]}
-                                >
-                                    <Select
-                                        showSearch
-                                        placeholder="选择目标节点"
-                                        optionFilterProp="label"
-                                        options={nodes.map(node => ({
-                                            label: `${node.data.label} (${node.data.type})`,
-                                            value: node.id
-                                        }))}
-                                    />
-                                </Form.Item>
-                                <Form.Item
-                                    name="relationType"
-                                    label="关系类型"
-                                    rules={[{ required: true, message: '请选择或输入关系类型' }]}
-                                >
-                                    <Select
-                                        showSearch
-                                        placeholder="选择或输入自定义关系类型"
-                                        optionFilterProp="label"
-                                        options={relationTypes}
-                                        dropdownRender={(menu) => (
-                                            <>
-                                                {menu}
-                                                <Divider style={{ margin: '8px 0' }} />
-                                                <div style={{ padding: '4px 8px', cursor: 'pointer' }}>
-                                                    <Input
-                                                        placeholder="输入自定义关系类型"
-                                                        value={customRelationType}
-                                                        onChange={(e) => setCustomRelationType(e.target.value)}
-                                                        onPressEnter={() => {
-                                                            if (customRelationType.trim()) {
-                                                                relationForm.setFieldsValue({ relationType: customRelationType.trim() });
-                                                            }
-                                                        }}
-                                                    />
-                                                </div>
-                                            </>
-                                        )}
-                                    />
-                                </Form.Item>
-                            </Form>
-                        </Modal>
-
-                        {/* 新增实例 Modal - 选择父类 */}
-                        <Modal
-                            title={
-                                <div className="flex items-center space-x-2">
-                                    <PlusOutlined style={{ color: '#fa8c16' }} />
-                                    <span>新增实例</span>
+                                <div className="flex items-center gap-2 mb-3 pb-2 border-b border-gray-100 mt-4">
+                                    <InfoCircleOutlined className="text-blue-500" />
+                                    <span className="font-medium text-gray-700">场景描述</span>
                                 </div>
-                            }
+                                <Form.Item name="scenario" label="场景描述" tooltip="帮助 AI 理解上下文">
+                                    <Input.TextArea rows={3} placeholder="例如：分析这份半导体行业研报..." />
+                                </Form.Item>
+                            </Form>
+                        </Modal>
+
+                        {/* 创建关系 Modal */}
+                        <Modal title="创建新关系" open={isAddRelationModalOpen} onOk={handleConfirmNewRelation} onCancel={() => setIsAddRelationModalOpen(false)} okText="创建" cancelText="取消">
+                            <Form form={relationForm} layout="vertical">
+                                <Form.Item name="sourceNodeId" label="起始节点" rules={[{ required: true, message: '请选择起始节点' }]}>
+                                    <Select options={nodes.map(node => ({ label: `${node.data.label} (${node.data.type})`, value: node.id }))} />
+                                </Form.Item>
+                                <Form.Item name="targetNodeId" label="目标节点" rules={[{ required: true, message: '请选择目标节点' }]}>
+                                    <Select options={nodes.map(node => ({ label: `${node.data.label} (${node.data.type})`, value: node.id }))} />
+                                </Form.Item>
+                                <Form.Item name="relationType" label="关系类型" rules={[{ required: true, message: '请选择关系类型' }]}>
+                                    <Select options={relationTypes} showSearch optionFilterProp="label" />
+                                </Form.Item>
+                            </Form>
+                        </Modal>
+
+                        {/* 新增实例 Modal */}
+                        <Modal
+                            title={<div className="flex items-center gap-2"><PlusOutlined className="text-orange-500" /><span>新增实例</span></div>}
                             open={isAddInstanceModalOpen}
                             onOk={handleConfirmAddInstance}
-                            onCancel={() => {
-                                setIsAddInstanceModalOpen(false);
-                                addInstanceForm.resetFields();
-                            }}
+                            onCancel={() => { setIsAddInstanceModalOpen(false); addInstanceForm.resetFields(); }}
                             okText="创建"
                             cancelText="取消"
-                            width={500}
                         >
-                            <div className="mb-4 text-gray-500 text-sm">
-                                请选择要归属的类，并输入实例名称。实例将通过 <Tag color="orange">rdf:type</Tag> 关系（本体论中的"属于"关系）关联到选中的类。
+                            <div className="mb-3 text-gray-500 text-sm">
+                                选择父类并输入实例名称，实例将通过 <Tag color="orange" className="mx-1">rdf:type</Tag> 关系关联到类。
                             </div>
-                            <Form
-                                form={addInstanceForm}
-                                layout="vertical"
-                                initialValues={{
-                                    instanceLabel: '',
-                                    parentClassId: ''
-                                }}
-                            >
-                                <Form.Item
-                                    name="parentClassId"
-                                    label="选择父类"
-                                    rules={[{ required: true, message: '请选择一个类作为父类' }]}
-                                >
-                                    <Select
-                                        showSearch
-                                        placeholder="选择一个类"
-                                        optionFilterProp="label"
-                                        options={nodes.filter(n => n.data?.type === 'owl:Class').map(node => ({
-                                            label: node.data?.label || '未命名类',
-                                            value: node.id
-                                        }))}
-                                    />
+                            <Form form={addInstanceForm} layout="vertical">
+                                <Form.Item name="parentClassId" label="选择父类" rules={[{ required: true, message: '请选择一个类' }]}>
+                                    <Select options={nodes.filter(n => n.data?.type === 'owl:Class').map(node => ({ label: node.data?.label || '未命名类', value: node.id }))} />
                                 </Form.Item>
-
-                                <Form.Item
-                                    name="instanceLabel"
-                                    label="实例名称"
-                                    rules={[{ required: true, message: '请输入实例名称' }]}
-                                >
+                                <Form.Item name="instanceLabel" label="实例名称" rules={[{ required: true, message: '请输入实例名称' }]}>
                                     <Input placeholder="请输入实例名称" />
                                 </Form.Item>
                             </Form>
@@ -1642,212 +1457,56 @@ const OntologyBuilderPage: React.FC = () => {
 
                         {/* 系统配置 Modal */}
                         <Modal
-                            title={
-                                <div className="flex items-center space-x-2">
-                                    <CloudServerOutlined style={{ color: '#1890ff' }} />
-                                    <span>模型服务配置 (仅管理员)</span>
-                                </div>
-                            }
+                            title={<div className="flex items-center gap-2"><CloudServerOutlined className="text-blue-500" /><span>模型服务配置 (管理员)</span></div>}
                             open={isConfigModalOpen}
                             onOk={handleSaveConfig}
                             onCancel={() => setIsConfigModalOpen(false)}
                             width={600}
-                            okText="保存配置"
+                            okText="保存"
                             cancelText="取消"
                             maskClosable={false}
                         >
-                            <div className="bg-yellow-50 p-3 mb-4 rounded border border-yellow-100 flex items-start space-x-2">
-                                <InfoCircleOutlined className="mt-1 text-yellow-600" />
-                                <div className="text-yellow-800 text-sm">
-                                    此处的配置将覆盖环境变量中的默认设置。修改后将立即在自动提取和构建任务中生效。
-                                </div>
+                            <div className="bg-yellow-50 p-3 mb-4 rounded border border-yellow-100 flex gap-2">
+                                <InfoCircleOutlined className="text-yellow-600 mt-0.5 flex-shrink-0" />
+                                <div className="text-yellow-800 text-sm">配置将覆盖环境变量，修改后立即在提取任务中生效。</div>
                             </div>
-
-                            <Form
-                                form={configForm}
-                                layout="vertical"
-                                initialValues={{
-                                    api_key: '',
-                                    base_url: '',
-                                    model: '',
-                                    chunk_size: 15000,
-                                    chunk_overlap: 500,
-                                    request_interval: 2,
-                                    streaming_enabled: false,
-                                    milvus_enabled: false,
-                                    neo4j_uri: 'bolt://localhost:7687',
-                                    neo4j_username: 'neo4j',
-                                    neo4j_password: 'password',
-                                    embedding_base_url: 'http://localhost:11434/v1',
-                                    embedding_model: 'nomic-embed-text:latest',
-                                    milvus_host: '127.0.0.1',
-                                    milvus_port: '19530'
-                                }}
-                            >
-                                <div className="grid grid-cols-2 gap-4">
-                                    <Form.Item
-                                        name="base_url"
-                                        label="API Endpoint (Base URL)"
-                                        className="col-span-2"
-                                        rules={[{ required: true, message: '请输入 API 端点' }]}
-                                    >
-                                        <Input placeholder="例如：https://api.openai.com/v1" />
+                            <Form form={configForm} layout="vertical">
+                                <div className="grid grid-cols-2 gap-3">
+                                    <Form.Item name="base_url" label="API Endpoint" className="col-span-2" rules={[{ required: true, message: '请输入 API 端点' }]}>
+                                        <Input placeholder="https://api.openai.com/v1" />
                                     </Form.Item>
-
-                                    <Form.Item
-                                        name="api_key"
-                                        label="API Key"
-                                        className="col-span-2"
-                                        rules={[{ required: true, message: '请输入 API Key' }]}
-                                    >
+                                    <Form.Item name="api_key" label="API Key" className="col-span-2" rules={[{ required: true, message: '请输入 API Key' }]}>
                                         <Input.Password placeholder="sk-..." />
                                     </Form.Item>
-
-                                    <Form.Item
-                                        name="model"
-                                        label="模型名称"
-                                        className="col-span-2"
-                                        rules={[{ required: true, message: '请输入模型名称' }]}
-                                    >
-                                        <Input placeholder="例如：gpt-3.5-turbo 或 gpt-4" />
+                                    <Form.Item name="model" label="模型名称" className="col-span-2" rules={[{ required: true, message: '请输入模型名称' }]}>
+                                        <Input placeholder="gpt-3.5-turbo" />
                                     </Form.Item>
-
-                                    <Form.Item
-                                        name="chunk_size"
-                                        label="提取分块大小 (Chunk Size)"
-                                    >
-                                        <Input type="number" suffix="字符" />
-                                    </Form.Item>
-
-                                    <Form.Item
-                                        name="chunk_overlap"
-                                        label="分块重叠 (Overlap)"
-                                    >
-                                        <Input type="number" suffix="字符" />
-                                    </Form.Item>
-
-                                    <Form.Item
-                                        name="request_interval"
-                                        label="请求间隔 (Interval)"
-                                    >
-                                        <Input type="number" suffix="秒" />
-                                    </Form.Item>
-
-                                    <Form.Item
-                                        name="streaming_enabled"
-                                        valuePropName="checked"
-                                        className="col-span-2"
-                                    >
+                                    <Form.Item name="chunk_size" label="分块大小"><Input type="number" suffix="字符" /></Form.Item>
+                                    <Form.Item name="chunk_overlap" label="重叠"><Input type="number" suffix="字符" /></Form.Item>
+                                    <Form.Item name="request_interval" label="请求间隔"><Input type="number" suffix="秒" /></Form.Item>
+                                    <Form.Item name="streaming_enabled" valuePropName="checked" className="col-span-2">
                                         <Switch checkedChildren="流式启用" unCheckedChildren="流式禁用" />
                                     </Form.Item>
-
-                                    <Form.Item
-                                        name="neo4j_uri"
-                                        label="Neo4j URI"
-                                        className="col-span-2"
-                                        rules={[{ required: true, message: '请输入 Neo4j URI' }]}
-                                    >
-                                        <Input placeholder="例如：bolt://localhost:7687" />
+                                    <Form.Item name="neo4j_uri" label="Neo4j URI" className="col-span-2" rules={[{ required: true, message: '请输入 Neo4j URI' }]}>
+                                        <Input placeholder="bolt://localhost:7687" />
                                     </Form.Item>
-
-                                    <Form.Item
-                                        name="neo4j_username"
-                                        label="Neo4j 用户名"
-                                        className="col-span-1"
-                                        rules={[{ required: true, message: '请输入 Neo4j 用户名' }]}
-                                    >
-                                        <Input placeholder="neo4j" />
-                                    </Form.Item>
-
-                                    <Form.Item
-                                        name="neo4j_password"
-                                        label="Neo4j 密码"
-                                        className="col-span-1"
-                                        rules={[{ required: true, message: '请输入 Neo4j 密码' }]}
-                                    >
-                                        <Input.Password placeholder="password" />
-                                    </Form.Item>
-
-                                    <Form.Item
-                                        name="milvus_enabled"
-                                        valuePropName="checked"
-                                        className="col-span-2"
-                                    >
+                                    <Form.Item name="neo4j_username" label="Neo4j 用户名"><Input placeholder="neo4j" /></Form.Item>
+                                    <Form.Item name="neo4j_password" label="Neo4j 密码"><Input.Password placeholder="password" /></Form.Item>
+                                    <Form.Item name="milvus_enabled" valuePropName="checked" className="col-span-2">
                                         <Switch checkedChildren="Milvus 启用" unCheckedChildren="Milvus 禁用" />
                                     </Form.Item>
-
-                                    <Form.Item
-                                        name="embedding_base_url"
-                                        label="Embedding API 地址"
-                                        className="col-span-2"
-                                        rules={[{ required: true, message: '请输入 Embedding API 地址' }]}
-                                    >
-                                        <Input placeholder="例如：http://localhost:11434/v1" />
-                                    </Form.Item>
-
-                                    <Form.Item
-                                        name="embedding_model"
-                                        label="Embedding 模型"
-                                        className="col-span-2"
-                                        rules={[{ required: true, message: '请输入 Embedding 模型名称' }]}
-                                    >
-                                        <Input placeholder="例如：nomic-embed-text:latest" />
-                                    </Form.Item>
-
-                                    <Form.Item
-                                        name="milvus_host"
-                                        label="Milvus 主机"
-                                        className="col-span-1"
-                                        rules={[{ required: true, message: '请输入 Milvus 主机地址' }]}
-                                    >
-                                        <Input placeholder="127.0.0.1" />
-                                    </Form.Item>
-
-                                    <Form.Item
-                                        name="milvus_port"
-                                        label="Milvus 端口"
-                                        className="col-span-1"
-                                        rules={[{ required: true, message: '请输入 Milvus 端口' }]}
-                                    >
-                                        <Input placeholder="19530" />
-                                    </Form.Item>
+                                    <Form.Item name="embedding_base_url" label="Embedding 地址" className="col-span-2"><Input placeholder="http://localhost:11434/v1" /></Form.Item>
+                                    <Form.Item name="embedding_model" label="Embedding 模型" className="col-span-2"><Input placeholder="nomic-embed-text:latest" /></Form.Item>
+                                    <Form.Item name="milvus_host" label="Milvus 主机"><Input placeholder="127.0.0.1" /></Form.Item>
+                                    <Form.Item name="milvus_port" label="Milvus 端口"><Input placeholder="19530" /></Form.Item>
                                 </div>
-
-                                <div className="mt-6 pt-4 border-t border-gray-200">
-                                    <h3 className="font-medium text-gray-700 mb-3">连通性测试</h3>
-                                    <div className="grid grid-cols-2 gap-3">
-                                        <Button
-                                            type="default"
-                                            onClick={testLLMConnectivity}
-                                            loading={testingLLM}
-                                            icon={<CloudServerOutlined />}
-                                        >
-                                            测试大模型连通性
-                                        </Button>
-                                        <Button
-                                            type="default"
-                                            onClick={testNeo4JConnectivity}
-                                            loading={testingNeo4J}
-                                            icon={<DatabaseOutlined />}
-                                        >
-                                            测试 Neo4j 连通性
-                                        </Button>
-                                        <Button
-                                            type="default"
-                                            onClick={testEmbeddingConnectivity}
-                                            loading={testingEmbedding}
-                                            icon={<ApiOutlined />}
-                                        >
-                                            测试 Embedding 连通性
-                                        </Button>
-                                        <Button
-                                            type="default"
-                                            onClick={testMilvusConnectivity}
-                                            loading={testingMilvus}
-                                            icon={<ClusterOutlined />}
-                                        >
-                                            测试 Milvus 连通性
-                                        </Button>
+                                <div className="mt-4 pt-4 border-t border-gray-200">
+                                    <h4 className="font-medium text-gray-700 mb-3 text-sm">连通性测试</h4>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <Button onClick={testLLMConnectivity} loading={testingLLM} size="small"><CloudServerOutlined className="mr-1" />大模型</Button>
+                                        <Button onClick={testNeo4JConnectivity} loading={testingNeo4J} size="small"><DatabaseOutlined className="mr-1" />Neo4j</Button>
+                                        <Button onClick={testEmbeddingConnectivity} loading={testingEmbedding} size="small"><ApiOutlined className="mr-1" />Embedding</Button>
+                                        <Button onClick={testMilvusConnectivity} loading={testingMilvus} size="small"><ClusterOutlined className="mr-1" />Milvus</Button>
                                     </div>
                                 </div>
                             </Form>
@@ -1858,12 +1517,5 @@ const OntologyBuilderPage: React.FC = () => {
         </div>
     );
 };
-
-const SectionTitle = ({ icon, title }: { icon: any, title: string }) => (
-    <div className="flex items-center space-x-2 mb-4 font-medium text-gray-700">
-        {icon}
-        <span>{title}</span>
-    </div>
-);
 
 export default OntologyBuilderPage;

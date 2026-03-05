@@ -49,7 +49,7 @@
 
 ## 🎨 模块二：前端图引擎重构 (AntV G6 Integration)
 
-**指令：全面移除 React Flow 依赖，使用 AntV G6 (v5或最新稳定版) 接管可视化。**
+**指令：全面移除 React Flow 依赖，使用 AntV G6接管可视化。**
 
 ### 1. 视觉分层体系 (Neo4j Style Hierarchy)
 
