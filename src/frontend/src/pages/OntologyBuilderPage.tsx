@@ -964,7 +964,7 @@ const OntologyBuilderPage: React.FC = () => {
                 <div className="flex-1 flex overflow-hidden">
                     {/* 左侧展开面板 - 使用 Flex 布局，展开时推挤主内容区 */}
                     <div
-                        className={`bg-white transition-all duration-300 ease-in-out flex-shrink-0 overflow-hidden relative ${
+                        className={`bg-white transition-all duration-300 ease-in-out flex-shrink-0 relative ${
                             isLeftPanelExpanded ? 'w-[380px] shadow-lg' : 'w-0'
                         }`}
                         style={{
@@ -972,7 +972,22 @@ const OntologyBuilderPage: React.FC = () => {
                             borderRight: isLeftPanelExpanded ? '1px solid #e5e7eb' : 'none'
                         }}
                     >
-                        <div className="h-full flex flex-col" style={{ minWidth: isLeftPanelExpanded ? '380px' : '0' }}>
+                        {/* 收起按钮 - 仅在面板展开时显示在面板右侧边缘 */}
+                        {isLeftPanelExpanded && (
+                            <button
+                                className="absolute top-1/2 -translate-y-1/2 z-[100] bg-white shadow-md rounded-r-lg p-2 hover:bg-gray-50 transition-all duration-300 border border-gray-200 border-l-0"
+                                style={{
+                                    right: '-32px',
+                                }}
+                                onClick={() => setIsLeftPanelExpanded(false)}
+                                title="收起列表"
+                            >
+                                <LeftOutlined />
+                            </button>
+                        )}
+                        
+                        <div className="h-full flex flex-col overflow-hidden" style={{ minWidth: isLeftPanelExpanded ? '380px' : '0' }}>
+                            
                             {/* 面板头部 - 搜索和操作 */}
                             <div className="p-3 border-b border-gray-100 flex-shrink-0">
                                 <div className="flex items-center justify-between mb-2">
@@ -1033,17 +1048,17 @@ const OntologyBuilderPage: React.FC = () => {
                     <div className="flex-1 flex flex-col min-w-0 relative">
                         <Navbar breadcrumbs={breadcrumbs} />
 
-                        {/* 展开/收起按钮 - 垂直居中贴边左侧面板 */}
-                        <button
-                            className="absolute top-1/2 -translate-y-1/2 z-30 bg-white shadow-md rounded-r-lg p-2 hover:bg-gray-50 transition-all duration-300"
-                            style={{
-                                left: isLeftPanelExpanded ? '380px' : '0px',
-                            }}
-                            onClick={() => setIsLeftPanelExpanded(!isLeftPanelExpanded)}
-                            title={isLeftPanelExpanded ? '收起列表' : '展开列表'}
-                        >
-                            {isLeftPanelExpanded ? <LeftOutlined /> : <RightOutlined />}
-                        </button>
+                        {/* 展开按钮 - 仅在面板收起时显示 */}
+                        {!isLeftPanelExpanded && (
+                            <button
+                                className="absolute top-1/2 -translate-y-1/2 z-30 bg-white shadow-md rounded-r-lg p-2 hover:bg-gray-50 transition-all duration-300"
+                                style={{ left: '0px' }}
+                                onClick={() => setIsLeftPanelExpanded(true)}
+                                title="展开列表"
+                            >
+                                <RightOutlined />
+                            </button>
+                        )}
                         
                         {loading && (
                             <div className="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center z-50">
