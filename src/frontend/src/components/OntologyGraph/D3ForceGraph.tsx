@@ -51,6 +51,18 @@ interface D3ForceGraphProps {
     height?: number;
     className?: string;
     highlightNodeId?: string | null;
+    onForceParamsChange?: (params: ForceParams) => void;
+}
+
+// 力导向参数接口
+interface ForceParams {
+    linkDistance: number;
+    chargeStrength: number;
+    chargeDistanceMax: number;
+    collisionRadius: number;
+    centerStrength: number;
+    linkStrength: number;
+    collisionStrength: number;
 }
 
 /**
@@ -63,8 +75,8 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
     onEdgeClick,
     onNodesChange,
     onNodeRightClick,
-    width = window.innerWidth - 300,
-    height = window.innerHeight - 150,
+    width: propWidth,
+    height: propHeight,
     className = '',
     highlightNodeId = null
 }) => {
@@ -73,6 +85,42 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
     const simulationRef = useRef<any>(null);
     const [isDragging, setIsDragging] = useState(false);
     const [zoomLevel, setZoomLevel] = useState(1);
+    
+    // 滑轨控制状态 (0-100, 50 为自动/标准模式)
+    const [spacingSlider, setSpacingSlider] = useState(50);
+    const [showSlider, setShowSlider] = useState(false);
+    
+    // 响应式容器大小
+    const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+    
+    // 监听窗口大小变化
+    useEffect(() => {
+        const updateContainerSize = () => {
+            if (containerRef.current) {
+                const rect = containerRef.current.getBoundingClientRect();
+                setContainerSize({
+                    width: rect.width || window.innerWidth - 300,
+                    height: rect.height || window.innerHeight - 150
+                });
+            } else {
+                setContainerSize({
+                    width: propWidth || window.innerWidth - 300,
+                    height: propHeight || window.innerHeight - 150
+                });
+            }
+        };
+        
+        // 初始化
+        updateContainerSize();
+        
+        // 监听窗口大小变化
+        window.addEventListener('resize', updateContainerSize);
+        return () => window.removeEventListener('resize', updateContainerSize);
+    }, [propWidth, propHeight]);
+    
+    // 使用容器大小或 props 传入的大小
+    const width = propWidth || containerSize.width;
+    const height = propHeight || containerSize.height;
 
     // 获取节点半径
     const getNodeRadius = useCallback((node: OntologyNode) => {
@@ -150,20 +198,23 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                 };
             });
 
-        // 创建力模拟 - 使用更稳定的参数
+        // 获取自适应力导向参数
+        const forceParams = getAdaptiveForceParams();
+
+        // 创建力模拟 - 使用自适应参数
         const simulation = forceSimulation(d3Nodes)
             .force("link", forceLink(d3Links)
                 .id((d: any) => d.id)
-                .distance(150)
-                .strength(0.6))
+                .distance(forceParams.linkDistance)
+                .strength(forceParams.linkStrength))
             .force("charge", forceManyBody()
-                .strength(-300)
-                .distanceMax(400))
+                .strength(forceParams.chargeStrength)
+                .distanceMax(forceParams.chargeDistanceMax))
             .force("center", forceCenter(centerX, centerY)
-                .strength(0.05))
+                .strength(forceParams.centerStrength))
             .force("collision", forceCollide()
-                .radius((d: any) => d.radius + 10)
-                .strength(0.7)
+                .radius((d: any) => d.radius + forceParams.collisionRadius)
+                .strength(forceParams.collisionStrength)
                 .iterations(2));
 
         simulationRef.current = simulation;
@@ -580,6 +631,100 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
         };
     }, []);
 
+    // 根据节点数量和滑轨设置计算力导向参数
+    const getAdaptiveForceParams = useCallback(() => {
+        const nodeCount = nodes.length;
+        
+        // 基础参数（基于节点数量的自适应值）
+        let baseLinkDistance = 150;
+        let baseChargeStrength = -300;
+        let baseChargeDistanceMax = 400;
+        let baseCollisionRadius = 10;
+        let baseCenterStrength = 0.05;
+        let baseLinkStrength = 0.6;
+        let baseCollisionStrength = 0.7;
+        
+        // 根据节点数量确定基础值
+        if (nodeCount <= 20) {
+            baseLinkDistance = 120;
+            baseChargeStrength = -200;
+            baseChargeDistanceMax = 300;
+            baseCollisionRadius = 8;
+            baseCenterStrength = 0.1;
+            baseLinkStrength = 0.7;
+        } else if (nodeCount <= 50) {
+            baseLinkDistance = 150;
+            baseChargeStrength = -300;
+            baseChargeDistanceMax = 400;
+            baseCollisionRadius = 10;
+            baseCenterStrength = 0.05;
+            baseLinkStrength = 0.6;
+        } else if (nodeCount <= 100) {
+            baseLinkDistance = 180;
+            baseChargeStrength = -400;
+            baseChargeDistanceMax = 500;
+            baseCollisionRadius = 12;
+            baseCenterStrength = 0.03;
+            baseLinkStrength = 0.5;
+        } else {
+            baseLinkDistance = 200 + Math.log2(nodeCount - 100) * 20;
+            baseChargeStrength = -500 - (nodeCount - 100) * 2;
+            baseChargeDistanceMax = 600 + (nodeCount - 100) * 3;
+            baseCollisionRadius = 15 + Math.log2(nodeCount - 100) * 2;
+            baseCenterStrength = 0.02;
+            baseLinkStrength = 0.4;
+            baseCollisionStrength = 0.9;
+        }
+        
+        // 滑轨调节因子 (0-100, 50 为标准模式)
+        // 0 = 最紧凑，50 = 自适应标准，100 = 最宽松
+        const sliderFactor = (spacingSlider - 50) / 50; // -1 到 1
+        
+        // 根据滑轨位置调整参数
+        const linkDistance = baseLinkDistance * (1 + sliderFactor * 0.8); // ±80% 调节
+        const chargeStrength = baseChargeStrength * (1 + sliderFactor * 0.8); // ±80% 调节
+        const chargeDistanceMax = baseChargeDistanceMax * (1 + sliderFactor * 0.5); // ±50% 调节
+        const collisionRadius = baseCollisionRadius * (1 + sliderFactor * 0.5); // ±50% 调节
+        const centerStrength = baseCenterStrength * (1 - sliderFactor * 0.5); // 紧凑时中心引力更强
+        const linkStrength = baseLinkStrength;
+        const collisionStrength = baseCollisionStrength;
+        
+        return {
+            linkDistance: Math.round(linkDistance),
+            chargeStrength: Math.round(chargeStrength),
+            chargeDistanceMax: Math.round(chargeDistanceMax),
+            collisionRadius: Math.round(collisionRadius),
+            centerStrength: parseFloat(centerStrength.toFixed(3)),
+            linkStrength: parseFloat(linkStrength.toFixed(2)),
+            collisionStrength: parseFloat(collisionStrength.toFixed(2))
+        };
+    }, [nodes.length, spacingSlider]);
+    
+    // 处理滑轨变化
+    const handleSliderChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+        const newValue = parseInt(e.target.value, 10);
+        setSpacingSlider(newValue);
+        
+        // 延迟重新计算布局，避免频繁更新
+        setTimeout(() => {
+            if (simulationRef.current) {
+                const forceParams = getAdaptiveForceParams();
+                simulationRef.current.force("link")?.distance(forceParams.linkDistance);
+                simulationRef.current.force("charge")?.strength(forceParams.chargeStrength);
+                simulationRef.current.alpha(0.3).restart();
+            }
+        }, 50);
+    }, [getAdaptiveForceParams]);
+    
+    // 获取滑轨标签文本
+    const getSliderLabel = () => {
+        if (spacingSlider < 25) return '紧凑';
+        if (spacingSlider < 50) return '较紧';
+        if (spacingSlider === 50) return '标准';
+        if (spacingSlider < 75) return '较松';
+        return '宽松';
+    };
+
     // 渲染图表
     useEffect(() => {
         if (nodes.length > 0) {
@@ -628,6 +773,38 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                     display: 'block'
                 }}
             />
+            {/* 节点间距调节滑轨 */}
+            <div className="absolute top-4 right-4 bg-white bg-opacity-95 rounded-lg shadow-lg p-3 z-10 w-64">
+                <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-medium text-gray-600">节点间距</span>
+                    <span className={`text-xs font-medium px-2 py-0.5 rounded ${
+                        spacingSlider < 25 ? 'bg-red-100 text-red-700' :
+                        spacingSlider < 50 ? 'bg-orange-100 text-orange-700' :
+                        spacingSlider === 50 ? 'bg-green-100 text-green-700' :
+                        spacingSlider < 75 ? 'bg-blue-100 text-blue-700' :
+                        'bg-purple-100 text-purple-700'
+                    }`}>
+                        {getSliderLabel()}
+                    </span>
+                </div>
+                <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={spacingSlider}
+                    onChange={handleSliderChange}
+                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
+                    style={{
+                        background: `linear-gradient(to right, #ef4444 0%, #f97316 25%, #22c55e 50%, #3b82f6 75%, #a855f7 100%)`
+                    }}
+                />
+                <div className="flex justify-between mt-1 text-xs text-gray-400">
+                    <span>紧凑</span>
+                    <span>标准</span>
+                    <span>宽松</span>
+                </div>
+            </div>
+            
             <div className="absolute bottom-4 right-4 flex gap-2 items-center">
                 <div className="bg-white bg-opacity-90 text-gray-700 px-3 py-1.5 rounded shadow text-sm pointer-events-none z-10">
                     {nodes.length} 个节点，{edges.length} 条边 {zoomLevel !== 1 && `(缩放：${Math.round(zoomLevel * 100)}%)`}

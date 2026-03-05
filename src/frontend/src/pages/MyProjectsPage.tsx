@@ -81,13 +81,13 @@ const MyProjectsPage: React.FC = () => {
                 onCreateProject={() => setIsModalOpen(true)}
             />
 
-            <div className="p-6">
+            <div className="p-4 sm:p-6">
                 {loading ? (
                     <div className="flex justify-center items-center h-96">
                         <Spin size="large" />
                     </div>
                 ) : projects.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-96">
+                    <div className="flex flex-col items-center justify-center h-96 px-4">
                         <Empty
                             description="还没有项目，创建第一个项目开始吧！"
                             image={Empty.PRESENTED_IMAGE_SIMPLE}
@@ -103,15 +103,15 @@ const MyProjectsPage: React.FC = () => {
                         </Empty>
                     </div>
                 ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
                         {projects.map((project) => (
                             <Card
                                 key={project.id}
                                 hoverable
                                 className="rounded-xl shadow-md hover:shadow-xl transition-shadow duration-300"
                                 cover={
-                                    <div className="h-40 bg-gradient-to-br from-blue-400 via-purple-400 to-pink-400 flex items-center justify-center">
-                                        <div className="text-white text-6xl font-bold opacity-20">
+                                    <div className="h-32 sm:h-40 bg-gradient-to-br from-blue-400 via-purple-400 to-pink-400 flex items-center justify-center">
+                                        <div className="text-white text-4xl sm:text-6xl font-bold opacity-20">
                                             {project.name.charAt(0).toUpperCase()}
                                         </div>
                                     </div>
@@ -121,23 +121,26 @@ const MyProjectsPage: React.FC = () => {
                                         type="text"
                                         icon={<EyeOutlined />}
                                         onClick={() => navigate(`/ontology-builder/${project.id}`)}
+                                        className="text-xs sm:text-sm"
                                     >
-                                        查看
+                                        <span className="hidden sm:inline">查看</span>
                                     </Button>,
                                     <Button
                                         type="text"
                                         icon={<EditOutlined />}
                                         onClick={() => navigate(`/ontology-builder/${project.id}`)}
+                                        className="text-xs sm:text-sm"
                                     >
-                                        编辑
+                                        <span className="hidden sm:inline">编辑</span>
                                     </Button>,
                                     <Button
                                         type="text"
                                         danger
                                         icon={<DeleteOutlined />}
                                         onClick={() => handleDeleteProject(project.id)}
+                                        className="text-xs sm:text-sm"
                                     >
-                                        删除
+                                        <span className="hidden sm:inline">删除</span>
                                     </Button>,
                                 ]}
                             >
@@ -146,7 +149,7 @@ const MyProjectsPage: React.FC = () => {
                                         <div className="flex items-center justify-between">
                                             <span className="truncate">{project.name}</span>
                                             {project.is_published && (
-                                                <Tag color="green" className="ml-2">
+                                                <Tag color="green" className="ml-2 flex-shrink-0">
                                                     已发布
                                                 </Tag>
                                             )}
@@ -159,10 +162,10 @@ const MyProjectsPage: React.FC = () => {
                                             </div>
                                             <div className="flex items-center justify-between text-xs">
                                                 <span>
-                                                    节点: {project.graph_data?.nodes?.length || 0}
+                                                    节点：{project.graph_data?.nodes?.length || 0}
                                                 </span>
                                                 <span>
-                                                    关系: {project.graph_data?.edges?.length || 0}
+                                                    关系：{project.graph_data?.edges?.length || 0}
                                                 </span>
                                             </div>
                                         </div>

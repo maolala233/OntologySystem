@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Layout, Menu, Avatar, Dropdown, Button } from 'antd';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import {
@@ -24,6 +24,25 @@ const AppLayout: React.FC = () => {
     const navigate = useNavigate();
     const location = useLocation();
     const [collapsed, setCollapsed] = useState(false);
+    const [isMobile, setIsMobile] = useState(false);
+
+    // 响应式布局：检测屏幕宽度
+    useEffect(() => {
+        const checkMobile = () => {
+            const mobile = window.innerWidth < 768;
+            setIsMobile(mobile);
+            if (mobile) {
+                setCollapsed(true);
+            }
+        };
+
+        // 初始化检查
+        checkMobile();
+
+        // 监听窗口大小变化
+        window.addEventListener('resize', checkMobile);
+        return () => window.removeEventListener('resize', checkMobile);
+    }, []);
 
     const user = JSON.parse(localStorage.getItem('user') || '{}');
 
@@ -203,7 +222,7 @@ const AppLayout: React.FC = () => {
 
     return (
         <Layout className="min-h-screen">
-            {/* 深色侧边栏 */}
+            {/* 深色侧边栏 - 固定宽度 240px，确保一致布局 */}
             <Sider
                 collapsible
                 collapsed={collapsed}
@@ -211,7 +230,11 @@ const AppLayout: React.FC = () => {
                 theme="dark"
                 width={240}
                 className="shadow-lg sticky top-0 h-screen flex flex-col"
-                style={{ position: 'sticky', top: 0, height: '100vh' }}
+                style={{
+                    position: 'sticky',
+                    top: 0,
+                    height: '100vh',
+                }}
             >
                 {/* Logo 区域 */}
                 <div className="h-16 flex items-center justify-center bg-[#001529] border-b border-gray-700">

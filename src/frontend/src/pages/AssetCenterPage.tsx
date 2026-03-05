@@ -72,20 +72,21 @@ const AssetCenterPage: React.FC = () => {
         <div className="min-h-screen bg-gray-50">
             <Navbar breadcrumbs={breadcrumbs} onSearch={handleSearch} />
 
-            <div className="p-6">
-                {/* 过滤和排序栏 */}
-                <div className="mb-6 flex items-center justify-between bg-white p-4 rounded-lg shadow-sm">
-                    <div className="flex items-center space-x-4">
-                        <span className="text-gray-600 font-medium">
+            <div className="p-4 sm:p-6">
+                {/* 过滤和排序栏 - 响应式设计 */}
+                <div className="mb-4 sm:mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0 bg-white p-3 sm:p-4 rounded-lg shadow-sm">
+                    <div className="flex items-center space-x-2 sm:space-x-4">
+                        <span className="text-gray-600 font-medium text-sm sm:text-base">
                             共 {filteredProjects.length} 个公开本体
                         </span>
                     </div>
-                    <div className="flex items-center space-x-4">
-                        <span className="text-gray-600">排序:</span>
+                    <div className="flex items-center space-x-2 sm:space-x-4 w-full sm:w-auto">
+                        <span className="text-gray-600 text-sm sm:text-base">排序:</span>
                         <Select
                             value={sortBy}
                             onChange={setSortBy}
-                            style={{ width: 150 }}
+                            style={{ width: '100%', minWidth: 120 }}
+                            className="flex-1 sm:flex-none"
                             options={[
                                 { label: '最新发布', value: 'latest' },
                                 { label: '节点数量', value: 'nodes' },
@@ -99,7 +100,7 @@ const AssetCenterPage: React.FC = () => {
                         <Spin size="large" />
                     </div>
                 ) : filteredProjects.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-96">
+                    <div className="flex flex-col items-center justify-center h-96 px-4">
                         <Empty
                             description={
                                 searchText ? '没有找到匹配的本体' : '还没有公开的本体'
@@ -108,14 +109,14 @@ const AssetCenterPage: React.FC = () => {
                         />
                     </div>
                 ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
                         {filteredProjects.map((project) => (
                             <Card
                                 key={project.id}
                                 hoverable
                                 className="rounded-xl shadow-md hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1"
                                 cover={
-                                    <div className="h-48 bg-gradient-to-br from-indigo-400 via-purple-400 to-pink-400 relative overflow-hidden">
+                                    <div className="h-40 sm:h-48 bg-gradient-to-br from-indigo-400 via-purple-400 to-pink-400 relative overflow-hidden">
                                         {/* 装饰性图案 */}
                                         <div className="absolute inset-0 opacity-20">
                                             <div className="absolute top-4 left-4 w-16 h-16 border-4 border-white rounded-full"></div>
@@ -125,7 +126,7 @@ const AssetCenterPage: React.FC = () => {
 
                                         {/* 项目首字母 */}
                                         <div className="absolute inset-0 flex items-center justify-center">
-                                            <div className="text-white text-7xl font-bold opacity-30">
+                                            <div className="text-white text-5xl sm:text-7xl font-bold opacity-30">
                                                 {project.name.charAt(0).toUpperCase()}
                                             </div>
                                         </div>
@@ -142,26 +143,26 @@ const AssetCenterPage: React.FC = () => {
                             >
                                 <Card.Meta
                                     title={
-                                        <div className="text-lg font-semibold text-gray-800 truncate">
+                                        <div className="text-base sm:text-lg font-semibold text-gray-800 truncate">
                                             {project.name}
                                         </div>
                                     }
                                     description={
-                                        <div className="space-y-3">
+                                        <div className="space-y-2 sm:space-y-3">
                                             <div className="text-gray-500 text-sm line-clamp-2 min-h-[40px]">
                                                 {project.description || '暂无描述'}
                                             </div>
 
                                             {/* 统计信息 */}
-                                            <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+                                            <div className="flex items-center justify-between pt-2 border-t border-gray-100 text-xs sm:text-sm">
                                                 <div className="flex items-center space-x-1 text-blue-600">
                                                     <NodeIndexOutlined />
-                                                    <span className="text-sm font-medium">
+                                                    <span className="font-medium">
                                                         {project.graph_data?.nodes?.length || 0} 节点
                                                     </span>
                                                 </div>
                                                 <div className="flex items-center space-x-1 text-purple-600">
-                                                    <span className="text-sm font-medium">
+                                                    <span className="font-medium">
                                                         {project.graph_data?.edges?.length || 0} 关系
                                                     </span>
                                                 </div>
@@ -170,7 +171,7 @@ const AssetCenterPage: React.FC = () => {
                                             {/* 作者信息 */}
                                             <div className="flex items-center space-x-2 text-gray-400 text-xs pt-1">
                                                 <UserOutlined />
-                                                <span>创建者: {project.owner?.username || '未知'}</span>
+                                                <span>创建者：{project.owner?.username || '未知'}</span>
                                             </div>
                                         </div>
                                     }

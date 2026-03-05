@@ -2,12 +2,21 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 强制一致的布局和渲染行为 */
+html {
+  font-size: 16px; /* 强制基础字体大小 */
+  -webkit-text-size-adjust: 100%; /* 防止移动端自动调整 */
+  text-size-adjust: 100%;
+}
+
 html,
 body,
 #root {
   height: 100%;
+  width: 100%;
   margin: 0;
   padding: 0;
+  overflow-x: hidden;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
@@ -15,8 +24,112 @@ body,
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* 确保根容器使用一致的布局 */
+#root {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 强制所有页面使用一致的最大宽度和居中布局 */
+.min-h-screen {
+  max-width: 100%;
+}
+
+/* 确保 Ant Design 组件在所有环境下使用一致的渲染 */
+.ant-layout-sider {
+  min-width: 240px !important;
+  max-width: 240px !important;
+}
+
+.ant-layout-sider-collapsed {
+  min-width: 80px !important;
+  max-width: 80px !important;
+}
+
 .app-container {
   height: 100%;
+}
+
+/* 响应式布局基础 */
+:root {
+  --header-height: 64px;
+  --sider-width: 240px;
+  --sider-collapsed-width: 80px;
+}
+
+/* 确保布局组件正确响应窗口大小 */
+.ant-layout {
+  min-height: 100vh;
+}
+
+.ant-layout-sider {
+  flex-shrink: 0;
+}
+
+/* 响应式侧边栏 - 小屏幕自动收起 */
+@media (max-width: 768px) {
+  .ant-layout-sider {
+    width: var(--sider-collapsed-width) !important;
+    min-width: var(--sider-collapsed-width) !important;
+    max-width: var(--sider-collapsed-width) !important;
+  }
+}
+
+/* 响应式内容区域 */
+.ant-layout-content {
+  overflow-x: auto;
+}
+
+/* 卡片响应式布局 */
+.ant-card {
+  margin-bottom: 16px;
+}
+
+@media (min-width: 576px) {
+  .ant-card {
+    margin-bottom: 0;
+  }
+}
+
+/* 面包屑响应式 */
+.ant-breadcrumb {
+  font-size: 14px;
+}
+
+@media (max-width: 576px) {
+  .ant-breadcrumb {
+    font-size: 12px;
+  }
+}
+
+/* 统计卡片响应式 */
+.ant-statistic {
+  width: 100%;
+}
+
+.ant-statistic-title {
+  font-size: 14px;
+}
+
+.ant-statistic-content {
+  font-size: 24px;
+}
+
+@media (min-width: 768px) {
+  .ant-statistic-title {
+    font-size: 16px;
+  }
+  .ant-statistic-content {
+    font-size: 30px;
+  }
+}
+
+/* 按钮响应式 */
+@media (max-width: 576px) {
+  .ant-btn {
+    padding: 4px 8px;
+    font-size: 14px;
+  }
 }
 
 /* 自定义动画 */
@@ -129,4 +242,64 @@ body,
 
 .d3-force-graph circle.node:active {
   cursor: grabbing;
+}
+
+/* 滑轨样式 */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 8px;
+  border-radius: 4px;
+  outline: none;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #666;
+  cursor: pointer;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  transition: all 0.2s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  background: #f0f0f0;
+  border-color: #3b82f6;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #666;
+  cursor: pointer;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  transition: all 0.2s ease;
+}
+
+input[type="range"]::-moz-range-thumb:hover {
+  background: #f0f0f0;
+  border-color: #3b82f6;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  width: 100%;
+  height: 8px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+input[type="range"]::-moz-range-track {
+  width: 100%;
+  height: 8px;
+  cursor: pointer;
+  border-radius: 4px;
 }

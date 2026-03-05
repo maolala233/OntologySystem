@@ -1030,134 +1030,149 @@ const OntologyBuilderPage: React.FC = () => {
                             </div>
                         )}
 
-                        {/* 顶部工具栏 */}
-                        <div className="absolute top-4 right-4 z-10">
-                            <Space className="bg-white p-2 rounded-lg shadow-md border border-gray-100 flex-wrap max-w-[calc(100vw-400px)]">
-                                {/* 阶段 1: 上传文档提取 Schema */}
-                                <Upload
-                                    accept=".txt,.pdf,.doc,.docx"
-                                    showUploadList={false}
-                                    beforeUpload={beforeUpload}
-                                >
-                                    <Tooltip title={localStorage.getItem(`project_${projectId}_schema_graph`) ? "已有 Schema，点击将重新提取" : "定义规则并上传文档提取骨架 (类 + 关系)"}>
-                                        <Button type="primary" icon={<CloudUploadOutlined />} className="bg-indigo-600">
-                                            {localStorage.getItem(`project_${projectId}_schema_graph`) ? "重新提取骨架" : "自动提取骨架"}
-                                        </Button>
-                                    </Tooltip>
-                                </Upload>
-
-                                {/* 阶段 2: 提取实例按钮 */}
-                                <Tooltip title={
-                                    !localStorage.getItem(`project_${projectId}_schema_graph`) 
-                                        ? "请先上传文档提取骨架后再进行实例提取" 
-                                        : "根据当前骨架和原文档提取实例"
-                                }>
-                                    <Button 
-                                        icon={<DatabaseOutlined />} 
-                                        onClick={() => {
-                                            const schemaGraphStr = localStorage.getItem(`project_${projectId}_schema_graph`);
-                                            if (!schemaGraphStr) {
-                                                message.warning('请先上传文档提取骨架，然后再进行实例提取');
-                                                return;
-                                            }
-                                            Modal.confirm({
-                                                title: '确认提取实例',
-                                                content: '将根据当前骨架结构和原文档内容提取实例。提取过程中请保持页面打开。',
-                                                okText: '开始提取',
-                                                cancelText: '取消',
-                                                onOk: () => {
-                                                    handleStartInstanceExtraction();
-                                                }
-                                            });
-                                        }}
-                                        className="bg-orange-500 text-white"
-                                        disabled={!localStorage.getItem(`project_${projectId}_schema_graph`)}
+                        {/* 顶部工具栏 - 优化布局 */}
+                        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 w-full max-w-[90%]">
+                            {/* 主工具栏 - 分组布局 */}
+                            <div className="flex items-center justify-center gap-2 flex-wrap">
+                                {/* AI 提取组 */}
+                                <div className="flex items-center gap-1 bg-white px-2 py-1.5 rounded-lg shadow-md border border-gray-100">
+                                    <span className="text-xs text-gray-500 font-medium px-2">AI 提取</span>
+                                    <Upload
+                                        accept=".txt,.pdf,.doc,.docx"
+                                        showUploadList={false}
+                                        beforeUpload={beforeUpload}
                                     >
-                                        提取实例
-                                    </Button>
-                                </Tooltip>
-
-                                <Upload
-                                    accept=".ttl"
-                                    showUploadList={false}
-                                    beforeUpload={handleUploadTTL}
-                                >
-                                    <Tooltip title="上传 TTL 文件直接解析">
-                                        <Button icon={<FileTextOutlined />} className="bg-purple-600 text-white">
-                                            上传 TTL 文件
+                                        <Tooltip title={localStorage.getItem(`project_${projectId}_schema_graph`) ? "已有 Schema，点击将重新提取" : "定义规则并上传文档提取骨架 (类 + 关系)"}>
+                                            <Button size="small" type="primary" icon={<CloudUploadOutlined />} className="bg-indigo-600">
+                                                {localStorage.getItem(`project_${projectId}_schema_graph`) ? "重新提取" : "提取骨架"}
+                                            </Button>
+                                        </Tooltip>
+                                    </Upload>
+                                    <Tooltip title={
+                                        !localStorage.getItem(`project_${projectId}_schema_graph`) 
+                                            ? "请先上传文档提取骨架后再进行实例提取" 
+                                            : "根据当前骨架和原文档提取实例"
+                                    }>
+                                        <Button 
+                                            size="small"
+                                            icon={<DatabaseOutlined />} 
+                                            onClick={() => {
+                                                const schemaGraphStr = localStorage.getItem(`project_${projectId}_schema_graph`);
+                                                if (!schemaGraphStr) {
+                                                    message.warning('请先上传文档提取骨架，然后再进行实例提取');
+                                                    return;
+                                                }
+                                                Modal.confirm({
+                                                    title: '确认提取实例',
+                                                    content: '将根据当前骨架结构和原文档内容提取实例。提取过程中请保持页面打开。',
+                                                    okText: '开始提取',
+                                                    cancelText: '取消',
+                                                    onOk: () => {
+                                                        handleStartInstanceExtraction();
+                                                    }
+                                                });
+                                            }}
+                                            className="bg-orange-500 text-white"
+                                            disabled={!localStorage.getItem(`project_${projectId}_schema_graph`)}
+                                        >
+                                            提取实例
                                         </Button>
                                     </Tooltip>
-                                </Upload>
+                                    <Upload
+                                        accept=".ttl"
+                                        showUploadList={false}
+                                        beforeUpload={handleUploadTTL}
+                                    >
+                                        <Tooltip title="上传 TTL 文件直接解析">
+                                            <Button size="small" icon={<FileTextOutlined />} className="bg-purple-600 text-white">
+                                                上传 TTL
+                                            </Button>
+                                        </Tooltip>
+                                    </Upload>
+                                </div>
 
-                                <Button
-                                    icon={<PlusOutlined />}
-                                    onClick={addNewClass}
-                                    className="border-blue-500 text-blue-600 hover:text-blue-700 hover:border-blue-700"
-                                >
-                                    新增类
-                                </Button>
+                                {/* 节点管理组 */}
+                                <div className="flex items-center gap-1 bg-white px-2 py-1.5 rounded-lg shadow-md border border-gray-100">
+                                    <span className="text-xs text-gray-500 font-medium px-2">节点</span>
+                                    <Tooltip title="添加新的类节点">
+                                        <Button size="small" icon={<PlusOutlined />} onClick={addNewClass} className="border-blue-500 text-blue-600">
+                                            新增类
+                                        </Button>
+                                    </Tooltip>
+                                    <Tooltip title="添加实例节点">
+                                        <Button size="small" icon={<PlusOutlined />} onClick={addNewInstance} className="border-orange-500 text-orange-600">
+                                            新增实例
+                                        </Button>
+                                    </Tooltip>
+                                    <Tooltip title="展开/收起所有实例节点">
+                                        <Button 
+                                            size="small" 
+                                            icon={<EyeOutlined />} 
+                                            onClick={expandAllInstances}
+                                            disabled={nodes.filter(n => n.data?.type === 'owl:NamedIndividual').length === 0}
+                                        >
+                                            实例
+                                        </Button>
+                                    </Tooltip>
+                                </div>
 
-                                <Button
-                                    icon={<PlusOutlined />}
-                                    onClick={addNewInstance}
-                                    className="border-orange-500 text-orange-600 hover:text-orange-700 hover:border-orange-700"
-                                >
-                                    新增实例
-                                </Button>
+                                {/* 关系管理组 */}
+                                <div className="flex items-center gap-1 bg-white px-2 py-1.5 rounded-lg shadow-md border border-gray-100">
+                                    <span className="text-xs text-gray-500 font-medium px-2">关系</span>
+                                    <Tooltip title="创建节点间的新关系">
+                                        <Button size="small" icon={<LinkOutlined />} onClick={addNewRelation}>
+                                            创建关系
+                                        </Button>
+                                    </Tooltip>
+                                    <Tooltip title="删除选中的节点或关系">
+                                        <Button 
+                                            size="small" 
+                                            icon={<DeleteOutlined />} 
+                                            danger
+                                            onClick={deleteSelectedElement}
+                                            disabled={!selectedElement}
+                                        >
+                                            删除
+                                        </Button>
+                                    </Tooltip>
+                                </div>
 
-                                <Button
-                                    icon={<EyeOutlined />}
-                                    onClick={expandAllInstances}
-                                    disabled={nodes.filter(n => n.data?.type === 'owl:NamedIndividual').length === 0}
-                                >
-                                    展开/收起所有实例
-                                </Button>
-
-                                <Button
-                                    icon={<PlusOutlined />}
-                                    onClick={addNewRelation}
-                                >
-                                    创建新关系
-                                </Button>
-
-                                <Button
-                                    icon={<DeleteOutlined />}
-                                    danger
-                                    onClick={deleteSelectedElement}
-                                    disabled={!selectedElement}
-                                >
-                                    删除
-                                </Button>
-
-                                <Divider type="vertical" />
-
-                                <Button
-                                    icon={<SaveOutlined />}
-                                    onClick={handleSaveDraft}
-                                    loading={loading}
-                                    type={hasUnsavedChanges ? "primary" : "default"}
-                                    ghost={hasUnsavedChanges}
-                                >
-                                    保存草稿
-                                </Button>
-
-                                <Button
-                                    type={isPublished ? "default" : "primary"}
-                                    icon={isPublished ? <EyeOutlined /> : <CloudServerOutlined />}
-                                    onClick={handleTogglePublish}
-                                    loading={loading}
-                                    className={isPublished ? "" : "bg-green-600 hover:bg-green-700"}
-                                >
-                                    {isPublished ? '已发布资产 (点击关闭)' : '发布资产中心'}
-                                </Button>
-
-                                <Button
-                                    icon={<DownloadOutlined />}
-                                    onClick={handleDownloadTTL}
-                                >
-                                    下载 TTL
-                                </Button>
-                            </Space>
+                                {/* 发布/保存组 */}
+                                <div className="flex items-center gap-1 bg-white px-2 py-1.5 rounded-lg shadow-md border border-gray-100">
+                                    <Tooltip title={hasUnsavedChanges ? "保存当前修改" : "已保存"}>
+                                        <Button 
+                                            size="small" 
+                                            icon={<SaveOutlined />} 
+                                            onClick={handleSaveDraft}
+                                            loading={loading}
+                                            type={hasUnsavedChanges ? "primary" : "default"}
+                                        >
+                                            保存
+                                        </Button>
+                                    </Tooltip>
+                                    <Tooltip title={isPublished ? "取消发布" : "发布到资产中心"}>
+                                        <Button 
+                                            size="small"
+                                            type={isPublished ? "default" : "primary"}
+                                            icon={isPublished ? <EyeOutlined /> : <CloudServerOutlined />}
+                                            onClick={handleTogglePublish}
+                                            loading={loading}
+                                            className={isPublished ? "" : "bg-green-600 hover:bg-green-700"}
+                                        >
+                                            {isPublished ? '已发布' : '发布'}
+                                        </Button>
+                                    </Tooltip>
+                                    <Tooltip title="下载 TTL 格式文件">
+                                        <Button 
+                                            size="small" 
+                                            icon={<DownloadOutlined />} 
+                                            onClick={handleDownloadTTL}
+                                        >
+                                            下载
+                                        </Button>
+                                    </Tooltip>
+                                </div>
+                            </div>
                         </div>
 
                         {/* 返回按钮 */}
@@ -1187,13 +1202,10 @@ const OntologyBuilderPage: React.FC = () => {
                                     <span><Tag color="blue">{nodes.length}</Tag> 实体</span>
                                     <span><Tag color="green">{edges.length}</Tag> 关系</span>
                                 </div>
-                                <div className="text-[10px] text-gray-400">
-                                    提示：可以
-                                </div>
                             </div>
                         </div>
 
-                        {/* 力导向图组件 */}
+                        {/* 力导向图组件 - 响应式布局 */}
                         <div className="absolute inset-0">
                             <D3ForceGraph
                                 nodes={displayNodes}
@@ -1227,8 +1239,6 @@ const OntologyBuilderPage: React.FC = () => {
                                         return newSet;
                                     });
                                 }}
-                                width={window.innerWidth - (isLeftPanelExpanded ? 420 : 60)}
-                                height={window.innerHeight - 60}
                                 highlightNodeId={highlightNodeId}
                             />
                         </div>
