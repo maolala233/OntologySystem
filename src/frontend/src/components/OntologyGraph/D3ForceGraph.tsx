@@ -822,47 +822,9 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                 </div>
             </div>
             
-            <div className="absolute bottom-4 right-4 flex gap-2 items-center">
+            <div className="absolute bottom-4 right-4">
                 <div className="bg-white bg-opacity-90 text-gray-700 px-3 py-1.5 rounded shadow text-sm pointer-events-none z-10">
                     {nodes.length} 个节点，{edges.length} 条边 {zoomLevel !== 1 && `(缩放：${Math.round(zoomLevel * 100)}%)`}
-                </div>
-                <div className="flex gap-1">
-                    <button 
-                        className="bg-white bg-opacity-90 hover:bg-white text-gray-700 px-2 py-1.5 rounded shadow text-sm z-10"
-                        onClick={() => {
-                            if (svgRef.current) {
-                                const svg = select(svgRef.current);
-                                svg.transition().duration(300).call((d3Zoom<SVGSVGElement, unknown>()).scaleBy, 1.2);
-                            }
-                        }}
-                        title="放大"
-                    >
-                        +
-                    </button>
-                    <button 
-                        className="bg-white bg-opacity-90 hover:bg-white text-gray-700 px-2 py-1.5 rounded shadow text-sm z-10"
-                        onClick={() => {
-                            if (svgRef.current) {
-                                const svg = select(svgRef.current);
-                                svg.transition().duration(300).call((d3Zoom<SVGSVGElement, unknown>()).scaleBy, 0.8);
-                            }
-                        }}
-                        title="缩小"
-                    >
-                        −
-                    </button>
-                    <button 
-                        className="bg-white bg-opacity-90 hover:bg-white text-gray-700 px-2 py-1.5 rounded shadow text-sm z-10"
-                        onClick={() => {
-                            if (svgRef.current) {
-                                const svg = select(svgRef.current);
-                                svg.transition().duration(300).call((d3Zoom<SVGSVGElement, unknown>()).scaleTo, 1);
-                            }
-                        }}
-                        title="重置缩放"
-                    >
-                        ⟲
-                    </button>
                 </div>
             </div>
         </div>

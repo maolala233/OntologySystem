@@ -108,6 +108,9 @@ const OntologyBuilderPage: React.FC = () => {
     // 树形列表搜索
     const [treeSearchValue, setTreeSearchValue] = useState('');
     
+    // 树形列表展开状态（仅控制列表内部显示，不影响画布）
+    const [manualExpandedKeys, setManualExpandedKeys] = useState<Set<string>>(new Set());
+    
     // 画布缩放控制
     const [canvasZoom, setCanvasZoom] = useState(1);
 
@@ -882,39 +885,26 @@ const OntologyBuilderPage: React.FC = () => {
         }
     };
 
-    // 全部展开/折叠
+    // 全部展开/折叠（仅控制列表内部显示，不影响画布）
     const expandAllTreeNodes = () => {
-        const allClassIds = nodes.filter(n => n.data?.type === 'owl:Class').map(n => n.id);
-        setExpandedNodeIds(new Set(allClassIds));
-        message.success('已展开所有类节点');
+        // 展开所有节点（包括类和其实例）
+        const allKeys = new Set(buildTreeData().map((node: any) => node.key));
+        setManualExpandedKeys(allKeys);
+        message.success('已展开列表');
     };
 
     const collapseAllTreeNodes = () => {
-        setExpandedNodeIds(new Set());
-        message.success('已收起所有类节点');
+        setManualExpandedKeys(new Set());
+        message.success('已收起列表');
     };
 
-    // 更多操作菜单
-    const moreMenuItems: MenuProps['items'] = [
-        {
-            key: 'expand-all',
-            icon: <ExpandOutlined />,
-            label: '展开所有实例',
-            onClick: expandAllInstances,
-        },
-        {
-            key: 'expand-tree-all',
-            icon: <ExpandOutlined />,
-            label: '展开树形列表',
-            onClick: expandAllTreeNodes,
-        },
-        {
-            key: 'collapse-tree-all',
-            icon: <ShrinkOutlined />,
-            label: '收起树形列表',
-            onClick: collapseAllTreeNodes,
-        },
-    ];
+    // 处理单个节点的展开/收起
+    const onTreeExpand = (keys: React.Key[]) => {
+        setManualExpandedKeys(new Set(keys as string[]));
+    };
+
+    // 更多操作菜单（已移除树形列表操作，因为左侧面板已有独立按钮）
+    const moreMenuItems: MenuProps['items'] = [];
 
     const classCount = nodes.filter(n => n.data?.type === 'owl:Class').length;
     const instanceCount = nodes.filter(n => n.data?.type === 'owl:NamedIndividual').length;
@@ -1017,9 +1007,28 @@ const OntologyBuilderPage: React.FC = () => {
                             
                             {/* 树形列表 */}
                             <div className="flex-1 overflow-auto p-2">
+                                <style>{`
+                                    .custom-tree .ant-tree-treenode {
+                                        padding: 2px 0;
+                                    }
+                                    .custom-tree .ant-tree-node-content-wrapper {
+                                        padding: 2px 8px;
+                                        min-height: 24px;
+                                        line-height: 20px;
+                                    }
+                                    .custom-tree .ant-tree-indent-unit {
+                                        width: 16px;
+                                    }
+                                    .custom-tree .ant-tree-switcher {
+                                        width: 20px;
+                                        height: 24px;
+                                        line-height: 24px;
+                                    }
+                                `}</style>
                                 <Tree
                                     showIcon
-                                    defaultExpandAll
+                                    expandedKeys={Array.from(manualExpandedKeys)}
+                                    onExpand={onTreeExpand}
                                     selectedKeys={selectedElement ? [selectedElement.id] : []}
                                     onSelect={onTreeSelect}
                                     treeData={buildTreeData()}
@@ -1115,20 +1124,20 @@ const OntologyBuilderPage: React.FC = () => {
                                             关系
                                         </Button>
                                     </Tooltip>
-                                    <Tooltip title="删除选中">
-                                        <Button 
-                                            size="small" 
-                                            icon={<DeleteOutlined />} 
-                                            danger
-                                            onClick={deleteSelectedElement}
-                                            disabled={!selectedElement}
-                                            className={!selectedElement ? 'opacity-50' : ''}
-                                        />
-                                    </Tooltip>
                                 </div>
 
                                 {/* 全局保存组 */}
                                 <div className="flex items-center gap-1 pl-2">
+                                    <Tooltip title="展开/收起所有实例">
+                                        <Button 
+                                            size="small" 
+                                            icon={Array.from(expandedNodeIds).length > 0 ? <ShrinkOutlined /> : <ExpandOutlined />} 
+                                            onClick={expandAllInstances}
+                                            className="border-cyan-500 text-cyan-600 hover:bg-cyan-50"
+                                        >
+                                            展开/收起所有实例
+                                        </Button>
+                                    </Tooltip>
                                     <Tooltip title={hasUnsavedChanges ? "保存修改" : "已保存"}>
                                         <Button 
                                             size="small" 
@@ -1157,10 +1166,6 @@ const OntologyBuilderPage: React.FC = () => {
                                         <Button size="small" icon={<DownloadOutlined />} onClick={handleDownloadTTL} className="border-gray-300 hover:bg-gray-50" />
                                     </Tooltip>
                                     
-                                    {/* 更多操作 */}
-                                    <Dropdown menu={{ items: moreMenuItems }} trigger={['click']}>
-                                        <Button size="small" icon={<MoreOutlined />} className="border-gray-300 hover:bg-gray-50" />
-                                    </Dropdown>
                                 </div>
                             </div>
                         </div>
