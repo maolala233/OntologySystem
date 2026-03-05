@@ -785,8 +785,8 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                     display: 'block'
                 }}
             />
-            {/* 节点间距调节滑轨 */}
-            <div className="absolute top-4 right-4 bg-white bg-opacity-95 rounded-lg shadow-lg p-3 z-10 w-64">
+            {/* 节点间距调节滑轨 - 使用 fixed 定位固定在屏幕右上角，不随左侧面板移动 */}
+            <div className="fixed top-[80px] right-4 bg-white bg-opacity-95 rounded-lg shadow-lg p-3 z-[1000] w-64">
                 <div className="flex items-center justify-between mb-2">
                     <span className="text-xs font-medium text-gray-600">节点间距</span>
                     <span className={`text-xs font-medium px-2 py-0.5 rounded ${
