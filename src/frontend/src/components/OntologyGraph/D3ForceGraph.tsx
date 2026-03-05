@@ -692,13 +692,24 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
         // 0 = 最紧凑，50 = 自适应标准，100 = 最宽松
         const sliderFactor = (spacingSlider - 50) / 50; // -1 到 1
         
-        // 根据滑轨位置调整参数
-        const linkDistance = baseLinkDistance * (1 + sliderFactor * 0.8); // ±80% 调节
-        const chargeStrength = baseChargeStrength * (1 + sliderFactor * 0.8); // ±80% 调节
-        const chargeDistanceMax = baseChargeDistanceMax * (1 + sliderFactor * 0.5); // ±50% 调节
-        const collisionRadius = baseCollisionRadius * (1 + sliderFactor * 0.5); // ±50% 调节
-        const centerStrength = baseCenterStrength * (1 - sliderFactor * 0.5); // 紧凑时中心引力更强
-        const linkStrength = baseLinkStrength;
+        // 优化调节范围，确保节点间距可控，不会太分散
+        // linkDistance: 控制所有边（连接）的长度 - 影响有边连接的节点间距
+        // 紧凑时缩短边，宽松时适度延长边
+        const linkDistance = baseLinkDistance * (1 + sliderFactor * 0.6); // ±60% 调节，适中效果
+        // chargeStrength: 控制所有节点之间的排斥力 - 影响所有节点间距（包括没有边的节点）
+        // 紧凑时增加排斥力让节点不重叠，宽松时适度减少排斥力但保持一定距离
+        const chargeStrength = baseChargeStrength * (1 + sliderFactor * 0.4); // ±40% 调节，温和效果
+        // chargeDistanceMax: 排斥力作用的最大距离 - 决定多远距离内的节点会相互排斥
+        // 紧凑时增加作用距离防止节点聚集，宽松时适度增加
+        const chargeDistanceMax = baseChargeDistanceMax * (1 + sliderFactor * 0.3); // ±30% 调节
+        // collisionRadius: 控制节点碰撞半径 - 防止节点重叠
+        const collisionRadius = baseCollisionRadius * (1 + sliderFactor * 0.3); // ±30% 调节
+        // centerStrength: 中心引力强度 - 控制簇与簇之间的聚集程度
+        // 紧凑时（slider < 50）：增强中心引力，让各簇更聚集在中心
+        // 宽松时（slider > 50）：也保持一定中心引力，防止节点飞散太远
+        const centerStrength = baseCenterStrength * (1 - sliderFactor * 0.3); // ±30% 调节，保持适度引力
+        // linkStrength: 边的拉力强度
+        const linkStrength = baseLinkStrength * (1 - sliderFactor * 0.1); // ±10% 调节，轻微变化
         const collisionStrength = baseCollisionStrength;
         
         return {
@@ -789,13 +800,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             <div className="fixed top-[80px] right-4 bg-white bg-opacity-95 rounded-lg shadow-lg p-3 z-[1000] w-64">
                 <div className="flex items-center justify-between mb-2">
                     <span className="text-xs font-medium text-gray-600">节点间距</span>
-                    <span className={`text-xs font-medium px-2 py-0.5 rounded ${
-                        spacingSlider < 25 ? 'bg-red-100 text-red-700' :
-                        spacingSlider < 50 ? 'bg-orange-100 text-orange-700' :
-                        spacingSlider === 50 ? 'bg-green-100 text-green-700' :
-                        spacingSlider < 75 ? 'bg-blue-100 text-blue-700' :
-                        'bg-purple-100 text-purple-700'
-                    }`}>
+                    <span className="text-xs font-medium text-gray-500">
                         {getSliderLabel()}
                     </span>
                 </div>
@@ -807,7 +812,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                     onChange={handleSliderChange}
                     className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
                     style={{
-                        background: `linear-gradient(to right, #ef4444 0%, #f97316 25%, #22c55e 50%, #3b82f6 75%, #a855f7 100%)`
+                        background: `linear-gradient(to right, #bae6fd 0%, #0ea5e9 50%, #0369a1 100%)`
                     }}
                 />
                 <div className="flex justify-between mt-1 text-xs text-gray-400">
