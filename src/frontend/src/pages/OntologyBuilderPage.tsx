@@ -531,29 +531,38 @@ const OntologyBuilderPage: React.FC = () => {
     const handleStartInstanceExtraction = async () => {
         if (!projectId) return;
 
-        setLoading(true);
-
         try {
             const textContent = localStorage.getItem(`project_${projectId}_text_content`) || '';
             const schemaGraphStr = localStorage.getItem(`project_${projectId}_schema_graph`);
             
             if (!schemaGraphStr) {
                 message.warning('请先上传文件提取 Schema，然后再进行实例提取');
-                setLoading(false);
                 return;
             }
 
             const schemaGraph = JSON.parse(schemaGraphStr);
 
+            // 使用异步模式，支持取消
             const response = await projectsApi.extractInstances(Number(projectId), {
                 text_content: textContent,
                 schema_graph: schemaGraph,
                 chunk_size: 15000,
                 chunk_overlap: 500,
                 request_interval: 2,
+                async_mode: true,
             });
 
-            if (response.graph_data) {
+            // 如果返回 task_id，说明是异步任务
+            if (response.task_id) {
+                setCurrentTaskId(response.task_id);
+                setIsProgressModalOpen(true);
+                setTaskStatus('running');
+                setTaskProgress(0);
+                setTaskMessage('开始实例提取...');
+                connectToProgressStream(response.task_id);
+                message.info('任务已启动，请在进度窗口查看进度');
+            } else if (response.graph_data) {
+                // 同步模式返回结果（保持向后兼容）
                 const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
                     response.graph_data.nodes || [],
                     response.graph_data.edges || []
@@ -572,8 +581,6 @@ const OntologyBuilderPage: React.FC = () => {
         } catch (error: any) {
             const errorDetail = error.response?.data?.detail || error.message || '未知错误';
             message.error(`实例提取失败：${errorDetail}`);
-        } finally {
-            setLoading(false);
         }
     };
 
@@ -957,38 +964,121 @@ const OntologyBuilderPage: React.FC = () => {
         
         console.log('[SSE] 连接建立:', taskId);
         
-        es.onmessage = (event) => {
+        // 处理 progress 事件（常规进度更新）
+        es.addEventListener('progress', (event: MessageEvent) => {
             try {
                 const data = JSON.parse(event.data);
-                console.log('[SSE] 收到消息:', data);
+                console.log('[SSE] 进度更新:', data);
                 setTaskProgress(data.progress || 0);
                 setTaskMessage(data.message || '');
                 setTaskDetail(data.detail || '');
                 setTaskStatus(data.status || 'running');
-                
-                if (data.status === 'completed') {
-                    console.log('[SSE] 任务完成');
-                    setIsProgressModalOpen(false);
-                    message.success(data.message || '任务完成！');
-                    es.close();
-                    eventSourceRef.current = null;
-                } else if (data.status === 'failed') {
-                    console.log('[SSE] 任务失败');
-                    setIsProgressModalOpen(false);
-                    message.error(data.error || data.message || '任务失败');
-                    es.close();
-                    eventSourceRef.current = null;
-                } else if (data.status === 'cancelled') {
-                    console.log('[SSE] 任务取消');
-                    setIsProgressModalOpen(false);
-                    message.info('任务已取消');
-                    es.close();
-                    eventSourceRef.current = null;
-                }
             } catch (e) {
-                console.error('[SSE] 消息解析失败:', e, event.data);
+                console.error('[SSE] progress 消息解析失败:', e, event.data);
             }
-        };
+        });
+        
+        // 处理 completed 事件
+        es.addEventListener('completed', (event: MessageEvent) => {
+            try {
+                const data = JSON.parse(event.data);
+                console.log('[SSE] 任务完成:', data);
+                
+                // 从任务结果中获取 graph_data 并更新画布
+                if (data.result && data.result.graph_data) {
+                    const graphData = data.result.graph_data;
+                    const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
+                        graphData.nodes || [],
+                        graphData.edges || []
+                    );
+                    setNodes(layoutedNodes);
+                    setEdges(layoutedEdges);
+                    
+                    // 同时保存 schema_graph 和 text_content 到 localStorage 供实例提取使用
+                    if (data.result.schema_graph) {
+                        localStorage.setItem(`project_${projectId}_schema_graph`, JSON.stringify(data.result.schema_graph));
+                    }
+                    if (data.result.text_content) {
+                        localStorage.setItem(`project_${projectId}_text_content`, data.result.text_content);
+                    }
+                    
+                    // 如果是实例提取完成（结果中包含 instances），自动展开所有实例
+                    if (data.result.instances && data.result.instances.length > 0) {
+                        // 找出所有有实例的类 ID
+                        const classIdsWithInstances = new Set<string>();
+                        const updatedEdges = layoutedEdges || [];
+                        updatedEdges.forEach(edge => {
+                            const label = edge.data?.label || edge.label || '';
+                            const isInstanceRelation = label === 'rdf:type' || label === 'type';
+                            if (isInstanceRelation) {
+                                const classId = String(edge.target);
+                                classIdsWithInstances.add(classId);
+                            }
+                        });
+                        
+                        if (classIdsWithInstances.size > 0) {
+                            setExpandedNodeIds(classIdsWithInstances);
+                            console.log('[SSE] 实例提取完成，自动展开类:', Array.from(classIdsWithInstances));
+                        }
+                    }
+                }
+                
+                // 构建成功消息（支持实例提取的 discarded_edges_count）
+                let successMsg = data.message || '任务完成！';
+                if (data.result && data.result.discarded_edges_count > 0) {
+                    successMsg += ` (⚠️ ${data.result.discarded_edges_count} 条不合规连线已自动丢弃)`;
+                }
+                
+                setIsProgressModalOpen(false);
+                message.success(successMsg);
+                es.close();
+                eventSourceRef.current = null;
+            } catch (e) {
+                console.error('[SSE] completed 消息解析失败:', e, event.data);
+            }
+        });
+        
+        // 处理 failed 事件
+        es.addEventListener('failed', (event: MessageEvent) => {
+            try {
+                const data = JSON.parse(event.data);
+                console.log('[SSE] 任务失败:', data);
+                setIsProgressModalOpen(false);
+                message.error(data.error || data.message || '任务失败');
+                es.close();
+                eventSourceRef.current = null;
+            } catch (e) {
+                console.error('[SSE] failed 消息解析失败:', e, event.data);
+            }
+        });
+        
+        // 处理 cancelled 事件
+        es.addEventListener('cancelled', (event: MessageEvent) => {
+            try {
+                const data = JSON.parse(event.data);
+                console.log('[SSE] 任务取消:', data);
+                setIsProgressModalOpen(false);
+                message.info('任务已取消');
+                es.close();
+                eventSourceRef.current = null;
+            } catch (e) {
+                console.error('[SSE] cancelled 消息解析失败:', e, event.data);
+            }
+        });
+        
+        // 处理 error 事件
+        es.addEventListener('error', (event: MessageEvent) => {
+            try {
+                const data = JSON.parse(event.data);
+                console.error('[SSE] 错误:', data);
+                setIsProgressModalOpen(false);
+                message.error(data.error || 'SSE 连接错误');
+                es.close();
+                eventSourceRef.current = null;
+            } catch (e) {
+                console.error('[SSE] error 消息解析失败:', e, event.data);
+            }
+        });
         
         es.onopen = () => {
             console.log('[SSE] 连接已打开');

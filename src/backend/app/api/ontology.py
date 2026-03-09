@@ -355,7 +355,7 @@ async def extract_schema_endpoint(
 @router.post("/{project_id}/extract-instances")
 async def extract_instances_endpoint(
     project_id: int,
-    request_body: InstanceExtractionRequest,
+    request_body: str = Form(..., description="JSON 格式的请求体，包含 text_content, schema_graph 等"),
     async_mode: bool = Form(False, description="是否异步执行（支持取消）"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -374,6 +374,7 @@ async def extract_instances_endpoint(
     """
     from app.core.logging import logger
     from app.infrastructure.task_manager import task_manager, TaskCancelledError
+    import json as json_module
 
     db_project = db.query(Project).filter(Project.id == project_id).first()
     if not db_project:
@@ -382,10 +383,16 @@ async def extract_instances_endpoint(
         raise HTTPException(status_code=403, detail="No permission to upload to this project")
 
     try:
+        # 解析 JSON 格式的请求体
+        try:
+            request_data = json_module.loads(request_body)
+        except json_module.JSONDecodeError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid JSON in request_body: {str(e)}")
+        
         extractor = _build_extractor(db)
 
         # schema_graph 来自请求体（用户已审核版本）
-        schema_dict = request_body.schema_graph.model_dump()
+        schema_dict = request_data.get("schema_graph", {})
 
         if async_mode:
             # 异步模式：创建任务并后台执行
@@ -402,12 +409,12 @@ async def extract_instances_endpoint(
                     inst_result = await asyncio.get_event_loop().run_in_executor(
                         None,
                         lambda: extractor.extract_instances_with_constraints(
-                            text=request_body.text_content,
+                            text=request_data.get("text_content", ""),
                             schema_graph=schema_dict,
-                            chunk_size=request_body.chunk_size,
-                            chunk_overlap=request_body.chunk_overlap,
-                            request_interval=request_body.request_interval,
-                            product_code=request_body.product_code,
+                            chunk_size=request_data.get("chunk_size", 15000),
+                            chunk_overlap=request_data.get("chunk_overlap", 500),
+                            request_interval=request_data.get("request_interval", 2),
+                            product_code=request_data.get("product_code"),
                             task_id=task_id,
                             progress_callback=progress_callback,
                         )
@@ -438,9 +445,14 @@ async def extract_instances_endpoint(
                         result={
                             "instances": inst_result["instances"],
                             "graph_data": full_graph_data,
-                            "discarded_edges_count": inst_result["discarded_edges_count"],
+                            "discarded_edges_count": inst_result.get("discarded_edges_count", 0),
+                            "schema_graph": schema_dict,
+                            "text_content": request_data.get("text_content", ""),
                         },
-                        message=f"实例提取完成：{len(inst_result['instances'])} 个实例"
+                        message=f"实例提取完成：{len(inst_result['instances'])} 个实例" + (
+                            f" ({inst_result.get('discarded_edges_count', 0)} 条不合规连线已自动丢弃)" 
+                            if inst_result.get("discarded_edges_count", 0) > 0 else ""
+                        )
                     )
                 except TaskCancelledError:
                     task_manager.cancel_task(task_id, "用户取消任务")
@@ -459,44 +471,44 @@ async def extract_instances_endpoint(
             # 同步模式（默认，保持向后兼容）
             # ── 调用第二阶段引擎（带 Schema 约束） ──
             inst_result = extractor.extract_instances_with_constraints(
-                text=request_body.text_content,
+                text=request_data.get("text_content", ""),
                 schema_graph=schema_dict,
-                chunk_size=request_body.chunk_size,
-                chunk_overlap=request_body.chunk_overlap,
-                request_interval=request_body.request_interval,
-                product_code=request_body.product_code,
+                chunk_size=request_data.get("chunk_size", 15000),
+                chunk_overlap=request_data.get("chunk_overlap", 500),
+                request_interval=request_data.get("request_interval", 2),
+                product_code=request_data.get("product_code"),
             )
 
-        # 获取当前骨架 graph_data（前端画布最新状态）
-        current_graph = db_project.graph_data or {}
-        schema_graph_data = {
-            "nodes": current_graph.get("nodes", []),
-            "edges": current_graph.get("edges", []),
-        }
+            # 获取当前骨架 graph_data（前端画布最新状态）
+            current_graph = db_project.graph_data or {}
+            schema_graph_data = {
+                "nodes": current_graph.get("nodes", []),
+                "edges": current_graph.get("edges", []),
+            }
 
-        # 合并实例到完整图
-        full_graph_data = OntologyExtractor.merge_instances_to_graph_data(
-            schema_graph_data=schema_graph_data,
-            instances=inst_result["instances"],
-        )
+            # 合并实例到完整图
+            full_graph_data = OntologyExtractor.merge_instances_to_graph_data(
+                schema_graph_data=schema_graph_data,
+                instances=inst_result["instances"],
+            )
 
-        # 更新 project graph_data
-        db_project.graph_data = {
-            "schema": schema_dict,
-            **full_graph_data,
-        }
-        db.commit()
+            # 更新 project graph_data
+            db_project.graph_data = {
+                "schema": schema_dict,
+                **full_graph_data,
+            }
+            db.commit()
 
-        return {
-            "instances": inst_result["instances"],
-            "graph_data": full_graph_data,
-            "discarded_edges_count": inst_result["discarded_edges_count"],
-            "message": (
-                f"实例提取完成：{len(inst_result['instances'])} 个实例。"
-                f"{'⚠️ ' + str(inst_result['discarded_edges_count']) + ' 条不合规连线已自动丢弃。' if inst_result['discarded_edges_count'] > 0 else ''}"
-                f"请在画布中微调后点击「保存草稿」。"
-            ),
-        }
+            return {
+                "instances": inst_result["instances"],
+                "graph_data": full_graph_data,
+                "discarded_edges_count": inst_result["discarded_edges_count"],
+                "message": (
+                    f"实例提取完成：{len(inst_result['instances'])} 个实例。"
+                    f"{'⚠️ ' + str(inst_result['discarded_edges_count']) + ' 条不合规连线已自动丢弃。' if inst_result['discarded_edges_count'] > 0 else ''}"
+                    f"请在画布中微调后点击「保存草稿」。"
+                ),
+            }
 
     except Exception as e:
         logger.error(f"[extract-instances] 错误: {e}", exc_info=True)
