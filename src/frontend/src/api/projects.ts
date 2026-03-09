@@ -154,6 +154,7 @@ export const projectsApi = {
             chunk_size?: number;
             chunk_overlap?: number;
             request_interval?: number;
+            async_mode?: boolean;
         }
     ): Promise<any> => {
         const formData = new FormData();
@@ -170,6 +171,9 @@ export const projectsApi = {
         }
         if (options?.request_interval) {
             formData.append('request_interval', String(options.request_interval));
+        }
+        if (options?.async_mode) {
+            formData.append('async_mode', String(options.async_mode));
         }
 
         const response = await apiClient.post(
@@ -195,15 +199,39 @@ export const projectsApi = {
             chunk_overlap?: number;
             request_interval?: number;
             product_code?: string;
+            async_mode?: boolean;
         }
     ): Promise<any> => {
+        const formData = new FormData();
+        formData.append('async_mode', String(data.async_mode || false));
+        formData.append('request_body', JSON.stringify({
+            text_content: data.text_content,
+            schema_graph: data.schema_graph,
+            chunk_size: data.chunk_size,
+            chunk_overlap: data.chunk_overlap,
+            request_interval: data.request_interval,
+            product_code: data.product_code,
+        }));
+
         const response = await apiClient.post(
             `/api/projects/${projectId}/extract-instances`,
-            data,
+            formData,
             {
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'multipart/form-data' },
             }
         );
+        return response.data;
+    },
+
+    // 获取任务进度
+    getTaskProgress: async (projectId: number, taskId: string): Promise<any> => {
+        const response = await apiClient.get(`/api/projects/${projectId}/task/${taskId}/progress`);
+        return response.data;
+    },
+
+    // 取消任务
+    cancelTask: async (projectId: number, taskId: string): Promise<any> => {
+        const response = await apiClient.post(`/api/projects/${projectId}/task/${taskId}/cancel`);
         return response.data;
     },
 };

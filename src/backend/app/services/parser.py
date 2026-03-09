@@ -2,6 +2,7 @@
 # 功能：解析多种格式文件（PDF, DOCX, PPTX, XLS等）并提取文本内容
 
 import os
+import time
 import pypdf
 import docx
 from pptx import Presentation
@@ -18,13 +19,17 @@ def process_files(file_list: Union[List, str]) -> str:
     支持 PDF, DOCX, DOC, PPTX, XLSX, XLS, TXT, MD, CSV。
     """
     if not file_list:
+        logger.info("[文件解析] 文件列表为空，跳过解析")
         return ""
     
     text_accumulated = ""
     # 兼容 Gradio 的文件列表和普通路径列表
     files = file_list if isinstance(file_list, list) else [file_list]
     
-    for f in files:
+    logger.info(f"[文件解析] 开始解析 {len(files)} 个文件")
+    
+    for idx, f in enumerate(files):
+        parse_start_time = time.time()
         try:
             # 获取文件名和路径
             fname = f.name if hasattr(f, 'name') else str(f)
@@ -32,19 +37,40 @@ def process_files(file_list: Union[List, str]) -> str:
             fname_lower = fname.lower()
             file_content = ""
             
+            logger.info(f"[文件解析] [{idx+1}/{len(files)}] 开始处理文件：{base_name}")
+            
             # 使用 'file' 命令检测实际的文件类型 (MIME type)
+            mime_start_time = time.time()
             try:
                 mime_result = subprocess.run(['file', '--mime-type', '-b', fname], capture_output=True, text=True, check=True)
                 mime_type = mime_result.stdout.strip()
-            except:
+                logger.info(f"[文件解析] [{idx+1}/{len(files)}] 文件类型检测结果：MIME={mime_type}, 耗时={time.time()-mime_start_time:.2f}s")
+            except Exception as e:
+                logger.warning(f"[文件解析] [{idx+1}/{len(files)}] 文件类型检测失败：{e}")
                 mime_type = ""
 
             # 优先根据 MIME 类型处理，如果检测失败则根据后缀处理
             if mime_type == "application/pdf" or fname_lower.endswith(".pdf"):
+                logger.info(f"[文件解析] [{idx+1}/{len(files)}] 识别为 PDF 文件，开始提取文本...")
+                pdf_start_time = time.time()
                 reader = pypdf.PdfReader(fname)
-                file_content = "\n".join([page.extract_text() or "" for page in reader.pages])
+                total_pages = len(reader.pages)
+                logger.info(f"[文件解析] [{idx+1}/{len(files)}] PDF 文件共 {total_pages} 页，开始逐页提取...")
+                
+                page_texts = []
+                for page_idx, page in enumerate(reader.pages):
+                    page_start = time.time()
+                    page_text = page.extract_text() or ""
+                    page_texts.append(page_text)
+                    if (page_idx + 1) % 5 == 0 or page_idx == total_pages - 1:
+                        logger.info(f"[文件解析] [{idx+1}/{len(files)}] 已提取 {page_idx+1}/{total_pages} 页，当前页耗时={time.time()-page_start:.2f}s")
+                
+                file_content = "\n".join(page_texts)
+                logger.info(f"[文件解析] [{idx+1}/{len(files)}] PDF 文本提取完成，总耗时={time.time()-pdf_start_time:.2f}s, 内容长度={len(file_content)} 字符")
             
             elif mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" or fname_lower.endswith(".docx"):
+                logger.info(f"[文件解析] [{idx+1}/{len(files)}] 识别为 DOCX 文件，开始提取文本...")
+                docx_start_time = time.time()
                 doc = docx.Document(fname)
                 content_list = []
                 for para in doc.paragraphs:
@@ -56,6 +82,7 @@ def process_files(file_list: Union[List, str]) -> str:
                         if any(row_cells):
                             content_list.append(" | ".join(row_cells))
                 file_content = "\n".join(content_list)
+                logger.info(f"[文件解析] [{idx+1}/{len(files)}] DOCX 文本提取完成，耗时={time.time()-docx_start_time:.2f}s, 内容长度={len(file_content)} 字符")
 
             elif mime_type == "application/msword" or fname_lower.endswith(".doc"):
                 # 尝试 antiword
@@ -122,6 +149,8 @@ def process_files(file_list: Union[List, str]) -> str:
                             file_content = ""
 
             elif mime_type == "application/vnd.openxmlformats-officedocument.presentationml.presentation" or fname_lower.endswith(".pptx"):
+                logger.info(f"[文件解析] [{idx+1}/{len(files)}] 识别为 PPTX 文件，开始提取文本...")
+                pptx_start_time = time.time()
                 prs = Presentation(fname)
                 ppt_text = []
                 for i, slide in enumerate(prs.slides):
@@ -141,18 +170,23 @@ def process_files(file_list: Union[List, str]) -> str:
                     if slide_content:
                         ppt_text.append(f"[Page {i + 1}]:\n" + "\n".join(slide_content))
                 file_content = "\n".join(ppt_text)
+                logger.info(f"[文件解析] [{idx+1}/{len(files)}] PPTX 文本提取完成，耗时={time.time()-pptx_start_time:.2f}s, 内容长度={len(file_content)} 字符")
 
             elif "excel" in mime_type or "spreadsheet" in mime_type or fname_lower.endswith((".xlsx", ".xls")):
+                logger.info(f"[文件解析] [{idx+1}/{len(files)}] 识别为 Excel 文件，开始提取文本...")
+                excel_start_time = time.time()
                 try:
                     # 使用 openpyxl 引擎读取
                     dfs = pd.read_excel(fname, sheet_name=None, engine='openpyxl' if fname_lower.endswith('.xlsx') else None)
                     excel_parts = []
-                    for sheet_name, df in dfs.items():
+                    for sheet_idx, (sheet_name, df) in enumerate(dfs.items()):
                         if not df.empty:
                             # 使用 to_string 代替 to_markdown，避免依赖 tabulate 库
                             df_str = df.fillna("").astype(str).to_string(index=False)
                             excel_parts.append(f"\n-- Sheet: {sheet_name} --\n{df_str}\n")
+                            logger.info(f"[文件解析] [{idx+1}/{len(files)}] 已处理 Sheet {sheet_idx+1}/{len(dfs)}: {sheet_name}")
                     file_content = "\n".join(excel_parts)
+                    logger.info(f"[文件解析] [{idx+1}/{len(files)}] Excel 文本提取完成，耗时={time.time()-excel_start_time:.2f}s, 内容长度={len(file_content)} 字符")
                 except Exception as e:
                     logger.warning(f"Excel 解析出错 ({base_name}): {str(e)}")
                     file_content = ""
@@ -162,13 +196,17 @@ def process_files(file_list: Union[List, str]) -> str:
                     file_content = fo.read()
             
             if file_content.strip():
-                text_accumulated += f"\n\n<<<<<< 文件开始: {base_name} >>>>>>\n{file_content}\n<<<<<< 文件结束: {base_name} >>>>>>\n"
+                text_accumulated += f"\n\n<<<<<< 文件开始：{base_name} >>>>>>\n{file_content}\n<<<<<< 文件结束：{base_name} >>>>>>\n"
+                logger.info(f"[文件解析] [{idx+1}/{len(files)}] 文件处理成功，内容长度={len(file_content)} 字符")
             else:
                 logger.warning(f"[解析警告] 无法从 {base_name} 提取有效内容 (MIME: {mime_type})")
         
         except Exception as e:
-            logger.error(f"[读取失败] {base_name}: {str(e)}")
+            logger.error(f"[读取失败] {base_name}: {str(e)}", exc_info=True)
+        finally:
+            logger.info(f"[文件解析] [{idx+1}/{len(files)}] 文件处理完成，总耗时={time.time()-parse_start_time:.2f}s")
             
+    logger.info(f"[文件解析] 所有文件处理完成，累计内容长度={len(text_accumulated)} 字符")
     return text_accumulated
 
 

@@ -1,24 +1,28 @@
 # app/services/extractor.py - 本体抽取器服务（模块一重构版）
 #
 # 核心改造：
-# 1. 两阶段引擎: extract_schema() → 骨架提取（仅 Class + ObjectProperty）
+# 1. 两阶段引擎：extract_schema() → 骨架提取（仅 Class + ObjectProperty）
 #                extract_instances() → 约束下的实例提取（严格遵守 Schema）
 # 2. 确定性 ID:  废弃 LLM 随机英文名，使用 MD5(label + category) 保证跨轮次唯一
-# 3. 防御性校验: extract_instances() 中对不符合 Schema 约束的连线直接丢弃
+# 3. 防御性校验：extract_instances() 中对不符合 Schema 约束的连线直接丢弃
 # 4. 保留向量库同步（build_ontology 兼容旧接口，内部转为两阶段调用）
+# 5. 支持进度回调和任务取消
 
 import os
 import json
 import re
 import time
 import hashlib
+import asyncio
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as ConcurrentTimeoutError
 from datetime import datetime
-from typing import Optional, Dict, Any, List, Tuple, Set
+from typing import Optional, Dict, Any, List, Tuple, Set, Callable
 
 from rdflib import Graph, Literal, RDF, RDFS, OWL, Namespace, XSD, URIRef
 
 from app.infrastructure.llm_client import LLMClient
 from app.infrastructure.vector_client import VectorStoreManager
+from app.infrastructure.task_manager import task_manager, TaskCancelledError
 from app.core.logging import logger
 
 
@@ -176,16 +180,54 @@ class OntologyExtractor:
             db.close()
             return True
         except Exception as e:
-            logger.warning(f"获取流式配置失败，使用默认值: {e}")
+            logger.warning(f"获取流式配置失败，使用默认值：{e}")
             return True
 
-    def _call_llm(self, system_prompt: str, user_prompt: str) -> Optional[dict]:
-        """调用 LLM 并处理异常，返回解析后的 dict 或 None。"""
+    def _call_llm(self, system_prompt: str, user_prompt: str, task_id: Optional[str] = None, timeout: int = 300) -> Optional[dict]:
+        """
+        同步调用 LLM 并处理异常，返回解析后的 dict 或 None。
+        使用线程池执行 LLM 调用，支持超时和取消检查。
+        
+        参数:
+        - task_id: 任务 ID，用于在调用间隙检查取消标志
+        - timeout: LLM 调用超时时间（秒），默认 300 秒
+        """
         streaming = self._get_streaming_config()
         try:
-            return self.llm_client.call_llm(system_prompt, user_prompt, stream=streaming)
+            # 如果提供了 task_id，在调用前快速检查是否已取消
+            if task_id and task_manager.is_cancelled(task_id):
+                raise TaskCancelledError("Task cancelled before LLM call")
+            
+            # 使用线程池执行 LLM 调用，支持超时
+            executor = ThreadPoolExecutor(max_workers=1)
+            try:
+                # 注意：call_llm 的参数顺序是 (system_prompt, user_prompt, max_retries, stream, timeout, task_id)
+                # 必须使用关键字参数传入 stream、timeout 和 task_id，避免位置参数混淆
+                future = executor.submit(
+                    self.llm_client.call_llm,
+                    system_prompt,
+                    user_prompt,
+                    3,  # max_retries
+                    stream=streaming,
+                    timeout=timeout,
+                    task_id=task_id  # 传递 task_id 以支持取消检查
+                )
+                result = future.result(timeout=timeout + 10)  # 额外 10 秒缓冲
+            except ConcurrentTimeoutError:
+                logger.error(f"LLM 调用超时（timeout={timeout}s）")
+                return None
+            finally:
+                executor.shutdown(wait=False)
+            
+            # 调用后再次检查取消标志
+            if task_id and task_manager.is_cancelled(task_id):
+                raise TaskCancelledError("Task cancelled after LLM call")
+            
+            return result
+        except TaskCancelledError:
+            raise
         except Exception as e:
-            logger.error(f"LLM 调用失败: {e}")
+            logger.error(f"LLM 调用失败：{e}")
             return None
 
     # ──────────────────────────────────────────
@@ -206,7 +248,7 @@ class OntologyExtractor:
             if normalized.endswith(suffix):
                 normalized = normalized[: -len(suffix)]
                 break
-        # 去除无意义的“的”
+        # 去除无意义的"的"
         if normalized.endswith("的") and len(normalized) > 1:
             normalized = normalized[:-1]
 
@@ -227,13 +269,15 @@ class OntologyExtractor:
         chunk_size: int = 15000,
         chunk_overlap: int = 500,
         request_interval: int = 2,
+        task_id: Optional[str] = None,
+        progress_callback: Optional[Callable[[float, str], None]] = None,
     ) -> Dict[str, Any]:
         """
         第一阶段：从文本中提取本体骨架 (Schema)。
         
         约束：
         - 绝对禁止提取实例 (NamedIndividual)。
-        - 仅允许提取: OWL Class、Object Property (类与类的关系)、Data Property (属性字段)。
+        - 仅允许提取：OWL Class、Object Property (类与类的关系)、Data Property (属性字段)。
         - 所有 ID 使用确定性算法生成（MD5 prefix + label slug）。
         
         返回格式（dict）:
@@ -241,8 +285,26 @@ class OntologyExtractor:
             "classes": [{"id": ..., "label": ..., "sub_class_of": ..., "data_properties": [...]}],
             "object_properties": [{"id": ..., "label": ..., "domain": ..., "range": ...}],
         }
+        
+        参数:
+        - task_id: 任务 ID，用于支持取消操作
+        - progress_callback: 进度回调函数，签名：callback(progress: float, message: str)
         """
-        logger.info(f"[API1-SchemaExtraction] 开始骨架提取，意图: {user_intent or '通用'}")
+        logger.info(f"[API1-SchemaExtraction] 开始骨架提取，意图：{user_intent or '通用'}")
+        
+        # 进度回调辅助函数
+        def report_progress(progress: float, message: str = ""):
+            if progress_callback:
+                progress_callback(progress, message)
+            if task_id:
+                task_manager.update_progress(task_id, progress=progress, message=message)
+        
+        # 检查取消
+        def check_cancelled():
+            if task_id:
+                task_manager.check_cancelled(task_id)
+        
+        report_progress(0.0, "开始骨架提取...")
 
         # 意图聚焦前缀
         intent_instruction = ""
@@ -256,13 +318,13 @@ class OntologyExtractor:
 
 【严格约束 - 违反将导致任务失败】：
 1. 【禁止提取实例】: 绝对不允许提取任何具体实例 (NamedIndividual)。只提取抽象的「类」和「属性」。
-   - 错误示例: 提取「张三」「产品A」「订单001」→ 这些是实例，禁止！
-   - 正确示例: 提取「人员」「产品」「订单」→ 这些是类，允许！
+   - 错误示例：提取「张三」「产品 A」「订单 001」→ 这些是实例，禁止！
+   - 正确示例：提取「人员」「产品」「订单」→ 这些是类，允许！
 2. 【ID 不由你决定】: 你输出的 id 字段用于辅助识别，最终 ID 将由系统重新计算，请直接用英文语义名（如 "Product", "hasName"）。
 3. 【Label 必须中文】: 所有 label 字段必须是简洁中文（非英文）。
 4. 【Data Property】: 在 classes 的 data_properties 字段中列出该类应有的属性名称列表（字符串数组）。
 5. 【鼓励抽取隐含关系】: 如果文本中存在明确描述或强烈暗示的「系统 A 依赖于系统 B / A 调用 B / A 部署在 B 上 / A 与 B 对接」等关系，
-   即使没有出现“关系名称”这个词，也请将其提取为类与类之间的 ObjectProperty，
+   即使没有出现"关系名称"这个词，也请将其提取为类与类之间的 ObjectProperty，
    关系的 label 可用简洁中文动词短语（如「依赖于」「调用」「部署于」「对接」等）。
 {intent_instruction}
 """
@@ -301,14 +363,20 @@ class OntologyExtractor:
         all_obj_props: Dict[str, dict] = {}
 
         for i, chunk in enumerate(chunks):
+            # 检查取消
+            check_cancelled()
+            
             logger.info(f"[SchemaExtraction] 处理分块 {i+1}/{total_chunks}")
             user_prompt = user_prompt_template.format(chunk=chunk)
-            data = self._call_llm(system_prompt, user_prompt)
+            data = self._call_llm(system_prompt, user_prompt, task_id=task_id, timeout=300)
 
             if not data:
                 logger.warning(f"分块 {i+1}/{total_chunks} LLM 返回空，跳过")
                 if i < total_chunks - 1:
-                    time.sleep(request_interval)
+                    # 在等待期间也定期检查取消标志
+                    for _ in range(request_interval * 10):
+                        check_cancelled()
+                        time.sleep(0.1)
                 continue
 
             # 处理 classes
@@ -352,6 +420,10 @@ class OntologyExtractor:
                         "domain": raw_domain,   # 临时存原始文本，后续二次解析
                         "range": raw_range,
                     }
+
+            # 更新进度
+            progress = (i + 1) / total_chunks * 0.9  # 预留 10% 给后续处理
+            report_progress(progress, f"处理分块 {i+1}/{total_chunks}")
 
             if i < total_chunks - 1:
                 time.sleep(request_interval)
@@ -404,6 +476,7 @@ class OntologyExtractor:
             "object_properties": list(valid_obj_props.values()),
         }
 
+        report_progress(1.0, f"骨架提取完成：{len(result['classes'])} 个类，{len(result['object_properties'])} 个关系")
         logger.info(
             f"[SchemaExtraction] 完成：{len(result['classes'])} 个类，"
             f"{len(result['object_properties'])} 个关系"
@@ -417,6 +490,8 @@ class OntologyExtractor:
         chunk_size: int = 15000,
         chunk_overlap: int = 500,
         request_interval: int = 2,
+        task_id: Optional[str] = None,
+        progress_callback: Optional[Callable[[float, str], None]] = None,
     ) -> Dict[str, Any]:
         """
         对外暴露的「Schema Only」方法。
@@ -429,6 +504,8 @@ class OntologyExtractor:
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             request_interval=request_interval,
+            task_id=task_id,
+            progress_callback=progress_callback,
         )
 
     # ──────────────────────────────────────────
@@ -443,6 +520,8 @@ class OntologyExtractor:
         chunk_overlap: int = 500,
         request_interval: int = 2,
         product_code: Optional[str] = None,
+        task_id: Optional[str] = None,
+        progress_callback: Optional[Callable[[float, str], None]] = None,
     ) -> Dict[str, Any]:
         """
         第二阶段：在 Schema 约束下提取实例 (NamedIndividual)。
@@ -458,8 +537,26 @@ class OntologyExtractor:
             "instances": [...],
             "discarded_edges_count": 0,
         }
+        
+        参数:
+        - task_id: 任务 ID，用于支持取消操作
+        - progress_callback: 进度回调函数，签名：callback(progress: float, message: str)
         """
         logger.info("[API2-InstanceExtraction] 开始实例提取")
+        
+        # 进度回调辅助函数
+        def report_progress(progress: float, message: str = ""):
+            if progress_callback:
+                progress_callback(progress, message)
+            if task_id:
+                task_manager.update_progress(task_id, progress=progress, message=message)
+        
+        # 检查取消
+        def check_cancelled():
+            if task_id:
+                task_manager.check_cancelled(task_id)
+        
+        report_progress(0.0, "开始实例提取...")
 
         classes: List[dict] = schema_graph.get("classes", [])
         obj_props: List[dict] = schema_graph.get("object_properties", [])
@@ -469,11 +566,11 @@ class OntologyExtractor:
 
         # ── 构建约束描述给 LLM ──
         class_list_str = "\n".join(
-            f"  - 类 ID: {c['id']} | 中文名: {c['label']} | 属性字段: {', '.join(c.get('data_properties', []) or [])}"
+            f"  - 类 ID: {c['id']} | 中文名：{c['label']} | 属性字段：{', '.join(c.get('data_properties', []) or [])}"
             for c in classes
         )
         op_list_str = "\n".join(
-            f"  - 关系 ID: {op['id']} | 名称: {op['label']} | 起点类: {op['domain']} → 终点类: {op['range']}"
+            f"  - 关系 ID: {op['id']} | 名称：{op['label']} | 起点类：{op['domain']} → 终点类：{op['range']}"
             for op in obj_props
         ) or "  （当前 Schema 无 ObjectProperty）"
 
@@ -481,7 +578,7 @@ class OntologyExtractor:
         if product_code:
             domain_code_clause = (
                 f"\n【🔴 知识域隔离】所有实例 ID 必须以 `_{product_code}` 结尾，"
-                f"例如: `张三_HR` → `{make_deterministic_id('张三', 'Instance')}_{product_code}`。\n"
+                f"例如：`张三_HR` → `{make_deterministic_id('张三', 'Instance')}_{product_code}`。\n"
             )
 
         system_prompt = f"""你是一位精通 OWL2 DL 的本体工程师，正在执行「实例提取」任务。
@@ -494,8 +591,8 @@ class OntologyExtractor:
 {domain_code_clause}
 【严格约束】:
 1. 【区分属性与关系】: 
-   - 如果是文本值（如 "1.0版", "高性能"），放入 data_props。
-   - 如果是指向另一个**实体**（如指向 "算法A"），放入 object_props。
+   - 如果是文本值（如 "1.0 版", "高性能"），放入 data_props。
+   - 如果是指向另一个**实体**（如指向 "算法 A"），放入 object_props。
    - 不要把 "平台名称"、"版本" 等属性放到 object_props 里！
 2. 【仅实例化已定义的类】: type 字段的值必须是上方某个「类 ID」。绝对不能创建 Schema 以外的类型。
 3. 【连线必须符合 domain→range】: object_props 中使用的关系 ID 必须是上方已定义的，且起点/终点类型必须匹配。
@@ -503,11 +600,11 @@ class OntologyExtractor:
 5. 【ID 使用语义英文名】: 你输出的 id 用于辅助，系统将重新计算确定性 ID。
 6. 【Label 必须中文】: label 字段必须是中文。
 7. 【不遗漏】: 文本中出现的所有符合上述类定义的实体都必须提取，不得只举例代表。
-8. 【具体化命名原则】: 实例的 label 必须是文档中出现的最具体的专有名词或实体名称，例如“人行清算模拟系统”“二代支付系统”等。
-   绝对禁止直接照抄所属类的名称作为实例的 label（例如 type 为“清算系统”时，不允许实例 label 也叫“清算系统”）。
+8. 【具体化命名原则】: 实例的 label 必须是文档中出现的最具体的专有名词或实体名称，例如"人行清算模拟系统""二代支付系统"等。
+   绝对禁止直接照抄所属类的名称作为实例的 label（例如 type 为"清算系统"时，不允许实例 label 也叫"清算系统"）。
 9. 【消除同名冗余】: 如果提取出的实例 label 与它的 type（类的 ID 对应的中文标签）完全一样，说明你提取错了，必须回到上下文中寻找更具体的限定词，
-   例如不要提取出 label 为“监管机构”的实例，而应该提取出 label 为“国家金融监督管理总局”等更具体的机构名称。
-10. 【属性防冗余】: 如果某个专有名词（如“二代支付系统”“人行清算模拟系统”）已经作为实例的 label 出现，就不要再把同样的字符串重复放入 data_props 的“名称”“系统名称”等字段中；
+   例如不要提取出 label 为"监管机构"的实例，而应该提取出 label 为"国家金融监督管理总局"等更具体的机构名称。
+10. 【属性防冗余】: 如果某个专有名词（如"二代支付系统""人行清算模拟系统"）已经作为实例的 label 出现，就不要再把同样的字符串重复放入 data_props 的"名称""系统名称"等字段中；
     data_props 应主要用于存放该实例的版本号、金额、日期、状态等真正的数据字段，而不是简单重复 label。
 """
 
@@ -551,14 +648,20 @@ class OntologyExtractor:
         discarded_count = 0
 
         for i, chunk in enumerate(chunks):
+            # 检查取消
+            check_cancelled()
+            
             logger.info(f"[InstanceExtraction] 处理分块 {i+1}/{total_chunks}")
             user_prompt = user_prompt_template.format(chunk=chunk)
-            data = self._call_llm(system_prompt, user_prompt)
+            data = self._call_llm(system_prompt, user_prompt, task_id=task_id, timeout=300)
 
             if not data:
                 logger.warning(f"分块 {i+1}/{total_chunks} LLM 返回空，跳过")
                 if i < total_chunks - 1:
-                    time.sleep(request_interval)
+                    # 在等待期间也定期检查取消标志
+                    for _ in range(request_interval * 10):
+                        check_cancelled()
+                        time.sleep(0.1)
                 continue
 
             raw_instances = []
@@ -634,7 +737,7 @@ class OntologyExtractor:
                         else:
                             logger.warning(
                                 f"[EdgeDiscard] 实例 '{raw_label}' (Type: {resolved_type}) 试图通过关系 '{op_key}' 连接，"
-                                f"但被拦截。原因: 关系未在 Schema 中定义（ID/Label 均未匹配）。"
+                                f"但被拦截。原因：关系未在 Schema 中定义（ID/Label 均未匹配）。"
                             )
                             discarded_count += len(targets_list)
                             continue
@@ -645,7 +748,7 @@ class OntologyExtractor:
                     if not resolved_type or resolved_type != expected_domain:
                         logger.warning(
                             f"[EdgeDiscard] 实例 '{raw_label}' (Type: {resolved_type}) 试图通过关系 '{resolved_op_id}' 连接，"
-                            f"但被拦截。原因: Domain 不匹配（期望: {expected_domain}, 实际: {resolved_type}）。"
+                            f"但被拦截。原因：Domain 不匹配（期望：{expected_domain}, 实际：{resolved_type}）。"
                         )
                         discarded_count += len(targets_list)
                         continue
@@ -676,6 +779,10 @@ class OntologyExtractor:
                             existing["object_props"][op_id] = targets
                     existing["data_props"].update(inst.get("data_props", {}))
 
+            # 更新进度
+            progress = (i + 1) / total_chunks * 0.9  # 预留 10% 给后续处理
+            report_progress(progress, f"处理分块 {i+1}/{total_chunks}")
+
             if i < total_chunks - 1:
                 time.sleep(request_interval)
 
@@ -683,8 +790,9 @@ class OntologyExtractor:
             "instances": list(all_instances.values()),
             "discarded_edges_count": discarded_count,
         }
+        report_progress(1.0, f"实例提取完成：{len(result['instances'])} 个实例")
         logger.info(
-            f"[InstanceExtraction] 完成: {len(result['instances'])} 个实例，"
+            f"[InstanceExtraction] 完成：{len(result['instances'])} 个实例，"
             f"{discarded_count} 条不合规连线已丢弃"
         )
         return result
@@ -697,6 +805,8 @@ class OntologyExtractor:
         chunk_overlap: int = 500,
         request_interval: int = 2,
         product_code: Optional[str] = None,
+        task_id: Optional[str] = None,
+        progress_callback: Optional[Callable[[float, str], None]] = None,
     ) -> Dict[str, Any]:
         """
         对外暴露的「带 Schema 约束的实例提取」方法。
@@ -709,6 +819,8 @@ class OntologyExtractor:
             chunk_overlap=chunk_overlap,
             request_interval=request_interval,
             product_code=product_code,
+            task_id=task_id,
+            progress_callback=progress_callback,
         )
 
     # ──────────────────────────────────────────
@@ -840,7 +952,7 @@ class OntologyExtractor:
         try:
             g.parse(ttl_file_path, format="turtle")
         except Exception as e:
-            return f"❌ TTL 解析失败: {e}"
+            return f"❌ TTL 解析失败：{e}"
 
         labels: Dict[URIRef, str] = {}
         for s, p, o in g.triples((None, RDFS.label, None)):
@@ -910,6 +1022,7 @@ class OntologyExtractor:
         request_interval: int = 2,
         progress=None,
         product_code: Optional[str] = None,
+        task_id: Optional[str] = None,
     ) -> Tuple[str, str]:
         """
         兼容旧的一步式调用接口，内部转换为两阶段执行，
@@ -918,7 +1031,7 @@ class OntologyExtractor:
         logger.info(f"build_ontology (两阶段兼容模式) 调用 chunk_size={chunk_size}")
 
         if progress:
-            progress(0.0, desc="阶段1：骨架提取...")
+            progress(0.0, desc="阶段 1：骨架提取...")
 
         # Phase 1: Schema
         schema = self.extract_schema(
@@ -927,10 +1040,12 @@ class OntologyExtractor:
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             request_interval=request_interval,
+            task_id=task_id,
+            progress_callback=lambda p, m: progress(p, desc=m) if progress else None,
         )
 
         if progress:
-            progress(0.4, desc="阶段2：实例提取...")
+            progress(0.4, desc="阶段 2：实例提取...")
 
         # Phase 2: Instances
         inst_result = self.extract_instances(
@@ -940,6 +1055,8 @@ class OntologyExtractor:
             chunk_overlap=chunk_overlap,
             request_interval=request_interval,
             product_code=product_code,
+            task_id=task_id,
+            progress_callback=lambda p, m: progress(p, desc=m) if progress else None,
         )
 
         if progress:
@@ -996,9 +1113,9 @@ class OntologyExtractor:
         count_inst = len(list(master_g.subjects(RDF.type, OWL.NamedIndividual)))
         msg = (
             f"✅ 两阶段构建成功！\n"
-            f"- 类定义: {count_cls} 个\n"
-            f"- 实例: {count_inst} 个\n"
-            f"- 丢弃不合规连线: {inst_result['discarded_edges_count']} 条"
+            f"- 类定义：{count_cls} 个\n"
+            f"- 实例：{count_inst} 个\n"
+            f"- 丢弃不合规连线：{inst_result['discarded_edges_count']} 条"
         )
 
         if progress:

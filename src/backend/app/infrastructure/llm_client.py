@@ -1,16 +1,18 @@
-# app/infrastructure/llm_client.py - LLM客户端
-# 功能：封装LLM调用逻辑，提供统一的接口访问各种语言模型
+# app/infrastructure/llm_client.py - LLM 客户端
+# 功能：封装 LLM 调用逻辑，提供统一的接口访问各种语言模型
 
 import re
 import json
 import time
 import os
+import threading
 from typing import Dict, Any, Optional
 from openai import OpenAI
 from app.core.config import settings
 # 保留这些作为备用配置，但优先使用传入的参数
 
 from app.core.logging import logger
+from app.infrastructure.task_manager import TaskCancelledError
 
 
 class LLMClient:
@@ -27,9 +29,9 @@ class LLMClient:
         raw_url = base_url if base_url is not None else settings.LLM_BASE_URL
         self.base_url = self._clean_base_url(raw_url)
         
-        logger.info(f"LLMClient 正在初始化: model={self.model}, base_url={self.base_url}")
+        logger.info(f"LLMClient 正在初始化：model={self.model}, base_url={self.base_url}")
         
-        # 3. 检查是否为外部API（需要代理）
+        # 3. 检查是否为外部 API（需要代理）
         is_external_api = False
         if self.base_url:
             lowercase_url = self.base_url.lower()
@@ -41,7 +43,7 @@ class LLMClient:
         client_kwargs = {
             "base_url": self.base_url,
             "api_key": self.api_key if self.api_key else "EMPTY",
-            "timeout": 300.0
+            "timeout": 600.0  # 增加到 10 分钟，防止大文件处理超时
         }
         
         # 5. 设置认证头
@@ -58,34 +60,34 @@ class LLMClient:
                 client_kwargs["http_client"] = self._create_proxy_http_client()
                 logger.info("LLMClient 已启用代理连接")
             except Exception as e:
-                logger.warning(f"代理配置失败，使用默认连接: {e}")
+                logger.warning(f"代理配置失败，使用默认连接：{e}")
         
         # 7. 最终创建客户端
         try:
             self.client = OpenAI(**client_kwargs)
             logger.info("LLMClient 初始化完成")
         except Exception as e:
-            logger.error(f"LLMClient 创建失败: {e}")
+            logger.error(f"LLMClient 创建失败：{e}")
             raise
-            # 对于外部API，使用代理
+            # 对于外部 API，使用代理
             try:
                 client_kwargs["http_client"] = self._create_proxy_http_client()
             except Exception as e:
                 from app.core.logging import logger
-                logger.warning(f"代理配置失败，使用默认连接: {e}")
-                # 移除http_client参数以使用默认客户端
+                logger.warning(f"代理配置失败，使用默认连接：{e}")
+                # 移除 http_client 参数以使用默认客户端
                 if "http_client" in client_kwargs:
                     del client_kwargs["http_client"]
-        # 如果不是外部API，不设置http_client，让OpenAI使用默认客户端
+        # 如果不是外部 API，不设置 http_client，让 OpenAI 使用默认客户端
         
         self.client = OpenAI(**client_kwargs)
 
     def _create_proxy_http_client(self):
-        """创建支持代理的HTTP客户端"""
+        """创建支持代理的 HTTP 客户端"""
         import httpx
         from urllib.parse import urlparse
         
-        # 检查是否为OpenRouter服务，如果是则强制使用指定代理
+        # 检查是否为 OpenRouter 服务，如果是则强制使用指定代理
         if self.base_url and 'openrouter' in self.base_url.lower():
             proxy_to_use = "http://127.0.0.1:7890"
         else:
@@ -96,7 +98,7 @@ class LLMClient:
             proxy_to_use = https_proxy or http_proxy
         
         if proxy_to_use:
-            # 检查是否为SOCKS代理
+            # 检查是否为 SOCKS 代理
             if 'socks' in proxy_to_use.lower():
                 try:
                     from httpx_socks import SyncProxyTransport
@@ -104,22 +106,22 @@ class LLMClient:
                     if parsed.scheme.startswith('socks'):
                         return httpx.Client(transport=SyncProxyTransport.from_url(proxy_to_use))
                 except ImportError:
-                    # 如果没有安装httpx_socks，记录警告
+                    # 如果没有安装 httpx_socks，记录警告
                     from app.core.logging import logger
                     logger.warning("httpx_socks not installed for SOCKS proxy support. Install with: pip install httpx[socks]")
                     # 返回一个没有代理的客户端
                     return httpx.Client()
                 except Exception as e:
-                    # 处理URL格式错误或其他任何与代理相关的问题
+                    # 处理 URL 格式错误或其他任何与代理相关的问题
                     from app.core.logging import logger
                     logger.warning(f"Failed to create proxy client: {e}. Falling back to no proxy.")
                     return httpx.Client()
             else:
-                # 对于HTTP代理，使用httpx的proxy参数
+                # 对于 HTTP 代理，使用 httpx 的 proxy 参数
                 try:
                     return httpx.Client(proxy=proxy_to_use)
                 except ValueError as e:
-                    # 捕获代理URL格式错误
+                    # 捕获代理 URL 格式错误
                     from app.core.logging import logger
                     logger.warning(f"Invalid proxy URL format: {e}. Falling back to no proxy.")
                     return httpx.Client()
@@ -148,64 +150,160 @@ class LLMClient:
             
         return url
 
-    def call_llm(self, system_prompt: str, user_prompt: str, max_retries: int = 3, stream: bool = True) -> Dict[str, Any]:
+    def call_llm(self, system_prompt: str, user_prompt: str, max_retries: int = 3, stream: bool = True, timeout: Optional[float] = None, task_id: Optional[str] = None) -> Dict[str, Any]:
         """
         调用 LLM 接口
+        
+        参数:
+        - system_prompt: 系统提示词
+        - user_prompt: 用户提示词
+        - max_retries: 最大重试次数
+        - stream: 是否使用流式响应
+        - timeout: 超时时间（秒），如果为 None 则使用客户端默认超时
+        - task_id: 任务 ID，用于在流式响应中检查取消状态
         """
         from app.core.logging import logger
+        from app.infrastructure.task_manager import task_manager
         model_name = getattr(self, 'model', 'unknown-model')
-        logger.info(f"正在发起 LLM 调用: model={model_name}, stream={stream}")
+        call_start_time = time.time()
+        timeout_str = f"{timeout}s" if timeout else "default"
+        logger.info(f"正在发起 LLM 调用：model={model_name}, stream={stream}, timeout={timeout_str}")
+        logger.info(f"[LLM] 请求内容长度：system_prompt={len(system_prompt)} 字符，user_prompt={len(user_prompt)} 字符")
+        if task_id:
+            logger.info(f"[LLM] 任务 ID: {task_id}，将在流式响应中检查取消状态")
+        
         for attempt in range(max_retries):
+            response = None
             try:
-                response = self.client.chat.completions.create(
-                    model=model_name,
-                    messages=[
+                # 准备 API 调用参数
+                api_kwargs = {
+                    "model": model_name,
+                    "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
                     ],
-                    response_format={"type": "json_object"},
-                    temperature=0.1,
-                    stream=stream
-                )
+                    "response_format": {"type": "json_object"},
+                    "temperature": 0.1,
+                    "stream": stream,
+                    "max_tokens": 4096,  # 限制 vllm 输出长度，防止无限生成
+                    "stop": ["</s>", "\n\n\n"]  # 添加停止 token
+                }
+                
+                # 如果指定了 timeout，添加到参数中
+                if timeout is not None:
+                    api_kwargs["timeout"] = timeout
+                
+                response = self.client.chat.completions.create(**api_kwargs)
                 
                 if stream:
+                    logger.info(f"[LLM] 开始接收流式响应...")
+                    stream_start = time.time()
                     full_content = ""
-                    for chunk in response:
-                        if chunk.choices and chunk.choices[0].delta.content:
-                            full_content += chunk.choices[0].delta.content
-                    return self._repair_truncated_json(full_content)
+                    chunk_count = 0
+                    stream_timeout = timeout if timeout is not None else 120.0  # 默认 120 秒超时
+                    try:
+                        for chunk in response:
+                            # 检查取消标志
+                            if task_id and task_manager.is_cancelled(task_id):
+                                logger.info(f"[LLM] 检测到任务取消，中断流式响应 (已接收 {chunk_count} 个 chunk)")
+                                # 关闭连接以释放 LLM 服务端显存
+                                if hasattr(response, 'close'):
+                                    try:
+                                        response.close()
+                                    except Exception:
+                                        pass
+                                raise TaskCancelledError(f"Task {task_id} was cancelled during streaming")
+                            
+                            # 检查超时
+                            elapsed_time = time.time() - stream_start
+                            if elapsed_time > stream_timeout:
+                                logger.error(f"LLM 调用超时（timeout={stream_timeout}s），中断流式响应")
+                                # 关闭连接以释放 LLM 服务端显存
+                                if hasattr(response, 'close'):
+                                    try:
+                                        response.close()
+                                    except Exception:
+                                        pass
+                                raise TimeoutError(f"LLM streaming response timeout after {elapsed_time:.2f}s")
+                            
+                            if chunk.choices and chunk.choices[0].delta.content:
+                                full_content += chunk.choices[0].delta.content
+                                chunk_count += 1
+                                # 每 50 个 chunk 输出一次进度
+                                if chunk_count % 50 == 0:
+                                    logger.info(f"[LLM] 已接收 {chunk_count} 个 chunk, 当前内容长度={len(full_content)} 字符，耗时={time.time()-stream_start:.2f}s")
+                        logger.info(f"[LLM] 流式响应完成，总内容长度={len(full_content)} 字符，总耗时={time.time()-stream_start:.2f}s")
+                        return self._repair_truncated_json(full_content)
+                    except GeneratorExit:
+                        # 生成器被关闭，确保关闭连接
+                        if response and hasattr(response, 'close'):
+                            try:
+                                response.close()
+                            except Exception:
+                                pass
+                        raise
                 else:
                     # 检查响应是否有效
                     if not response or not response.choices:
                         from app.core.logging import logger
-                        logger.warning("LLM响应为空或无选择项，返回默认结构")
+                        logger.warning("LLM 响应为空或无选择项，返回默认结构")
                         return {"classes": [], "instances": []}
                     if len(response.choices) == 0:
                         from app.core.logging import logger
-                        logger.warning("LLM响应中choices为空，返回默认结构")
+                        logger.warning("LLM 响应中 choices 为空，返回默认结构")
                         return {"classes": [], "instances": []}
                     message_content = response.choices[0].message.content
                     if message_content is None:
                         from app.core.logging import logger
-                        logger.warning("LLM响应内容为空，返回默认结构")
+                        logger.warning("LLM 响应内容为空，返回默认结构")
                         return {"classes": [], "instances": []}
+                    logger.info(f"[LLM] 非流式响应，内容长度={len(message_content)} 字符")
                     return self._repair_truncated_json(message_content)
                     
+            except TaskCancelledError as e:
+                # 任务取消，直接抛出，不重试
+                from app.core.logging import logger
+                logger.info(f"任务被取消，停止重试：{e}")
+                # 确保关闭连接
+                if response and hasattr(response, 'close'):
+                    try:
+                        response.close()
+                    except Exception:
+                        pass
+                raise
+            except TimeoutError as e:
+                # 超时错误，直接抛出，不重试
+                from app.core.logging import logger
+                logger.info(f"LLM 调用超时，停止重试：{e}")
+                # 确保关闭连接
+                if response and hasattr(response, 'close'):
+                    try:
+                        response.close()
+                    except Exception:
+                        pass
+                raise
             except Exception as e:
+                # 确保在异常时关闭连接
+                if response and hasattr(response, 'close'):
+                    try:
+                        response.close()
+                    except Exception:
+                        pass
                 err_msg = str(e).lower()
                 if "429" in err_msg or "rate limit" in err_msg:
                     from app.core.logging import logger
-                    wait_time = (attempt + 1) * 10  # 第一次报错等10秒，第二次20秒...
+                    wait_time = (attempt + 1) * 10  # 第一次报错等 10 秒，第二次 20 秒...
                     logger.warning(f"触发 API 限流，正在进行第 {attempt+1} 次重试，等待 {wait_time} 秒...")
                     time.sleep(wait_time)
                 elif attempt < max_retries - 1:
                     from app.core.logging import logger
-                    logger.warning(f"LLM 调用失败: {e}，正在重试...")
+                    logger.warning(f"LLM 调用失败：{e}，正在重试... (尝试 {attempt+1}/{max_retries}, 已耗时={time.time()-call_start_time:.2f}s)")
                     time.sleep(2)
                 else:
                     from app.core.logging import logger
-                    logger.error(f"LLM 调用在 {max_retries} 次尝试后仍然失败: {str(e)}")
-                    raise Exception(f"LLM 调用在 {max_retries} 次尝试后仍然失败: {str(e)}")
+                    total_time = time.time() - call_start_time
+                    logger.error(f"LLM 调用在 {max_retries} 次尝试后仍然失败，总耗时={total_time:.2f}s: {str(e)}")
+                    raise Exception(f"LLM 调用在 {max_retries} 次尝试后仍然失败，总耗时={total_time:.2f}s: {str(e)}")
 
     def _repair_truncated_json(self, json_str: str) -> Dict[str, Any]:
         """
@@ -220,21 +318,21 @@ class LLMClient:
         clean = re.sub(r'```$', '', clean, flags=re.MULTILINE)
         clean = clean.strip()
 
-        # 检查是否包含明显的非JSON内容（比如纯文本回答）
+        # 检查是否包含明显的非 JSON 内容（比如纯文本回答）
         if clean.lower().startswith(('hello', 'hi ', 'i ', 'the ', 'this ', 'that ', 'yes', 'no', 'ok', 'sure', 'sorry', 'cannot', 'unable')):
             from app.core.logging import logger
-            logger.warning(f"检测到非JSON内容: {clean[:100]}...，返回默认结构")
+            logger.warning(f"检测到非 JSON 内容：{clean[:100]}...，返回默认结构")
             return {'classes': [], 'instances': []}
 
         try:
             return json.loads(clean)
         except json.JSONDecodeError:
             from app.core.logging import logger
-            logger.warning(f"检测到 JSON 解析错误，原始内容: {clean[:200]}..., 正在尝试自动修复...")
+            logger.warning(f"检测到 JSON 解析错误，原始内容：{clean[:200]}..., 正在尝试自动修复...")
             
             # 尝试更复杂的修复方法
             try:
-                # 尝试修复完整的JSON结构
+                # 尝试修复完整的 JSON 结构
                 fixed_json = self._try_fix_json_structure(clean)
                 if fixed_json:
                     parsed = json.loads(fixed_json)
@@ -246,11 +344,11 @@ class LLMClient:
                     return parsed
             except Exception as e:
                 from app.core.logging import logger
-                logger.debug(f"高级JSON修复失败: {e}")
+                logger.debug(f"高级 JSON 修复失败：{e}")
                 pass
             
-            # 尝试寻找可能的JSON部分
-            # 寻找JSON对象起始位置
+            # 尝试寻找可能的 JSON 部分
+            # 寻找 JSON 对象起始位置
             json_start = clean.find('{')
             if json_start != -1:
                 # 尝试找到匹配的结束位置
@@ -300,7 +398,7 @@ class LLMClient:
                     pass
             
             from app.core.logging import logger
-            logger.error(f"JSON 修复失败，返回默认结构，内容: {clean[:100]}...")
+            logger.error(f"JSON 修复失败，返回默认结构，内容：{clean[:100]}...")
             return {"classes": [], "instances": []}
     
     def _try_fix_json_structure(self, json_str: str) -> str:
@@ -339,7 +437,7 @@ class LLMClient:
             result += ']'
             arr_stack.pop()
         
-        # 确保JSON以合理的结构结尾
+        # 确保 JSON 以合理的结构结尾
         if result.endswith(','):
             result = result.rstrip(',')
         

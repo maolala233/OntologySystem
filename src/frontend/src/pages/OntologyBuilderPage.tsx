@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
     Drawer,
@@ -50,6 +50,10 @@ import {
     ZoomOutOutlined,
     FullscreenOutlined,
     MoreOutlined,
+    StopOutlined,
+    CheckCircleOutlined,
+    CloseCircleOutlined,
+    LoadingOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import Navbar from '../components/Layout/Navbar';
@@ -101,6 +105,18 @@ const OntologyBuilderPage: React.FC = () => {
     const [addInstanceForm] = Form.useForm();
     const [isNewNode, setIsNewNode] = useState(false);
     const [highlightNodeId, setHighlightNodeId] = useState<string | null>(null);
+    
+    // 任务进度相关状态
+    const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
+    const [taskProgress, setTaskProgress] = useState<number>(0);
+    const [taskMessage, setTaskMessage] = useState<string>('');
+    const [taskDetail, setTaskDetail] = useState<string>('');
+    const [taskStatus, setTaskStatus] = useState<'pending' | 'running' | 'completed' | 'failed' | 'cancelled'>('pending');
+    const [isProgressModalOpen, setIsProgressModalOpen] = useState(false);
+    const [eventSource, setEventSource] = useState<EventSource | null>(null);
+    
+    // SSE 连接引用（避免 state 更新导致的闭包问题）
+    const eventSourceRef = useRef<EventSource | null>(null);
 
     // 左侧面板展开状态
     const [isLeftPanelExpanded, setIsLeftPanelExpanded] = useState(false);
@@ -460,14 +476,26 @@ const OntologyBuilderPage: React.FC = () => {
         setLoading(true);
 
         try {
+            // 使用异步模式，支持取消
             const response = await projectsApi.extractSchema(Number(projectId), pendingFile, {
                 user_intent: values.scenario,
                 chunk_size: 15000,
                 chunk_overlap: 500,
                 request_interval: 2,
+                async_mode: true,
             });
 
-            if (response.schema_graph && response.graph_data) {
+            // 如果返回 task_id，说明是异步任务
+            if (response.task_id) {
+                setCurrentTaskId(response.task_id);
+                setIsProgressModalOpen(true);
+                setTaskStatus('running');
+                setTaskProgress(0);
+                setTaskMessage('开始骨架提取...');
+                connectToProgressStream(response.task_id);
+                message.info('任务已启动，请在进度窗口查看进度');
+            } else if (response.schema_graph && response.graph_data) {
+                // 同步模式返回结果
                 const textContent = response.text_content || '';
                 localStorage.setItem(`project_${projectId}_text_content`, textContent);
                 localStorage.setItem(`project_${projectId}_schema_graph`, JSON.stringify(response.schema_graph));
@@ -908,6 +936,156 @@ const OntologyBuilderPage: React.FC = () => {
 
     const classCount = nodes.filter(n => n.data?.type === 'owl:Class').length;
     const instanceCount = nodes.filter(n => n.data?.type === 'owl:NamedIndividual').length;
+
+    // 连接 SSE 进度流
+    const connectToProgressStream = useCallback((taskId: string) => {
+        if (!projectId) return;
+        
+        // 关闭之前的连接
+        const existingEs = eventSourceRef.current;
+        if (existingEs) {
+            existingEs.close();
+            eventSourceRef.current = null;
+        }
+
+        const baseUrl = window.location.origin;
+        // 注意：登录时存储的是 'access_token'，不是 'token'
+        const token = localStorage.getItem('access_token') || '';
+        
+        // EventSource 不支持 headers，使用 URL 参数传递 token
+        const es = new EventSource(`${baseUrl}/api/projects/${projectId}/task/${taskId}/progress-stream?token=${token}`);
+        
+        console.log('[SSE] 连接建立:', taskId);
+        
+        es.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                console.log('[SSE] 收到消息:', data);
+                setTaskProgress(data.progress || 0);
+                setTaskMessage(data.message || '');
+                setTaskDetail(data.detail || '');
+                setTaskStatus(data.status || 'running');
+                
+                if (data.status === 'completed') {
+                    console.log('[SSE] 任务完成');
+                    setIsProgressModalOpen(false);
+                    message.success(data.message || '任务完成！');
+                    es.close();
+                    eventSourceRef.current = null;
+                } else if (data.status === 'failed') {
+                    console.log('[SSE] 任务失败');
+                    setIsProgressModalOpen(false);
+                    message.error(data.error || data.message || '任务失败');
+                    es.close();
+                    eventSourceRef.current = null;
+                } else if (data.status === 'cancelled') {
+                    console.log('[SSE] 任务取消');
+                    setIsProgressModalOpen(false);
+                    message.info('任务已取消');
+                    es.close();
+                    eventSourceRef.current = null;
+                }
+            } catch (e) {
+                console.error('[SSE] 消息解析失败:', e, event.data);
+            }
+        };
+        
+        es.onopen = () => {
+            console.log('[SSE] 连接已打开');
+        };
+        
+        es.onerror = (error) => {
+            console.error('[SSE] 连接错误:', error);
+            // 只在非正常关闭时显示错误
+            if (es.readyState === EventSource.CLOSED) {
+                console.log('[SSE] 连接已正常关闭');
+            } else if (es.readyState === EventSource.CONNECTING) {
+                console.log('[SSE] 正在重连...');
+            } else {
+                // 只在真正错误时显示提示
+                console.log('[SSE] 连接断开，可能是任务已完成');
+            }
+            es.close();
+            if (eventSourceRef.current === es) {
+                eventSourceRef.current = null;
+            }
+        };
+        
+        eventSourceRef.current = es;
+    }, [projectId]);
+
+    // 取消任务
+    const handleCancelTask = useCallback(async () => {
+        if (!projectId || !currentTaskId) return;
+        
+        Modal.confirm({
+            title: '确认取消',
+            content: '确定要取消当前任务吗？',
+            okText: '确定',
+            cancelText: '取消',
+            onOk: async () => {
+                try {
+                    // 注意：登录时存储的是 'access_token'，不是 'token'
+                    const token = localStorage.getItem('access_token');
+                    console.log('[取消任务] 获取 token:', token ? '已获取' : 'null');
+                    
+                    if (!token) {
+                        message.error('未找到认证 token，请重新登录');
+                        return;
+                    }
+                    
+                    const baseUrl = window.location.origin;
+                    
+                    // 使用 URL 参数传递 token（与 SSE 一致）
+                    const response = await fetch(`${baseUrl}/api/projects/${projectId}/task/${currentTaskId}/cancel?token=${token}`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                    });
+                    
+                    // 处理空响应情况
+                    const responseText = await response.text();
+                    console.log('[取消任务] 响应状态:', response.status, '响应内容:', responseText);
+                    
+                    if (response.ok || response.status === 200) {
+                        message.info('任务取消请求已发送');
+                        // 关闭 SSE 连接
+                        if (eventSourceRef.current) {
+                            eventSourceRef.current.close();
+                            eventSourceRef.current = null;
+                        }
+                        // 更新 UI 状态
+                        setTaskStatus('cancelled');
+                        setTaskMessage('任务已取消');
+                    } else {
+                        let errorMsg = '取消失败';
+                        try {
+                            if (responseText) {
+                                const result = JSON.parse(responseText);
+                                errorMsg = result.message || errorMsg;
+                            }
+                        } catch (e) {
+                            console.log('无法解析响应为 JSON');
+                        }
+                        message.error(errorMsg);
+                    }
+                } catch (error: any) {
+                    console.error('[取消任务] 错误:', error);
+                    message.error('取消任务失败：' + (error.message || '未知错误'));
+                }
+            },
+        });
+    }, [projectId, currentTaskId]);
+
+    // 清理 SSE 连接
+    useEffect(() => {
+        return () => {
+            if (eventSource) {
+                eventSource.close();
+            }
+        };
+    }, [eventSource]);
 
     return (
         <div className="h-screen flex flex-col bg-gray-50">
@@ -1457,6 +1635,93 @@ const OntologyBuilderPage: React.FC = () => {
                                     <Input placeholder="请输入实例名称" />
                                 </Form.Item>
                             </Form>
+                        </Modal>
+
+                        {/* 任务进度 Modal */}
+                        <Modal
+                            title={
+                                <div className="flex items-center gap-2">
+                                    {taskStatus === 'running' && <LoadingOutlined className="text-blue-500 animate-spin" />}
+                                    {taskStatus === 'completed' && <CheckCircleOutlined className="text-green-500" />}
+                                    {taskStatus === 'failed' && <CloseCircleOutlined className="text-red-500" />}
+                                    {taskStatus === 'cancelled' && <CloseCircleOutlined className="text-gray-500" />}
+                                    <span>
+                                        {taskStatus === 'running' && '任务进行中...'}
+                                        {taskStatus === 'completed' && '任务完成'}
+                                        {taskStatus === 'failed' && '任务失败'}
+                                        {taskStatus === 'cancelled' && '任务已取消'}
+                                        {taskStatus === 'pending' && '任务等待中'}
+                                    </span>
+                                </div>
+                            }
+                            open={isProgressModalOpen}
+                            onCancel={() => {}}
+                            footer={
+                                <div className="flex justify-between">
+                                    <Button 
+                                        danger 
+                                        icon={<StopOutlined />} 
+                                        onClick={handleCancelTask}
+                                        disabled={taskStatus !== 'running' && taskStatus !== 'pending'}
+                                    >
+                                        取消任务
+                                    </Button>
+                                    <Button 
+                                        type="primary" 
+                                        onClick={() => setIsProgressModalOpen(false)}
+                                        disabled={taskStatus === 'running' || taskStatus === 'pending'}
+                                    >
+                                        关闭
+                                    </Button>
+                                </div>
+                            }
+                            width={500}
+                        >
+                            <div className="space-y-4">
+                                {/* 进度条 */}
+                                <div>
+                                    <div className="flex justify-between text-sm mb-1">
+                                        <span className="text-gray-600">进度</span>
+                                        <span className="font-medium">{Math.round(taskProgress * 100)}%</span>
+                                    </div>
+                                    <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+                                        <div 
+                                            className={`h-full transition-all duration-300 ${
+                                                taskStatus === 'completed' ? 'bg-green-500' :
+                                                taskStatus === 'failed' ? 'bg-red-500' :
+                                                taskStatus === 'cancelled' ? 'bg-gray-500' :
+                                                'bg-blue-500'
+                                            }`}
+                                            style={{ width: `${taskProgress * 100}%` }}
+                                        />
+                                    </div>
+                                </div>
+                                
+                                {/* 当前消息 */}
+                                {taskMessage && (
+                                    <div className="p-3 bg-blue-50 rounded-lg border border-blue-100">
+                                        <div className="flex items-start gap-2">
+                                            <LoadingOutlined className={`text-blue-500 mt-0.5 ${taskStatus !== 'running' ? 'hidden' : ''}`} />
+                                            <div className="text-sm text-gray-700">{taskMessage}</div>
+                                        </div>
+                                    </div>
+                                )}
+                                
+                                {/* 详细信息 */}
+                                {taskDetail && (
+                                    <div className="p-3 bg-gray-50 rounded-lg">
+                                        <div className="text-xs text-gray-500 mb-1">详细信息</div>
+                                        <div className="text-sm text-gray-700">{taskDetail}</div>
+                                    </div>
+                                )}
+                                
+                                {/* 任务 ID */}
+                                {currentTaskId && (
+                                    <div className="text-xs text-gray-400">
+                                        任务 ID: {currentTaskId.slice(0, 8)}...{currentTaskId.slice(-4)}
+                                    </div>
+                                )}
+                            </div>
                         </Modal>
 
                         {/* 系统配置 Modal */}

@@ -1,5 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Response, Form
-from fastapi.responses import StreamingResponse
+import asyncio
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Response, Form, Request
+from fastapi.responses import StreamingResponse, JSONResponse
+from sse_starlette.sse import EventSourceResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
 from urllib.parse import quote
@@ -202,9 +204,12 @@ async def extract_schema_endpoint(
     chunk_size: int = Form(15000),
     chunk_overlap: int = Form(500),
     request_interval: int = Form(2),
+    async_mode: str = Form("false", description="是否异步执行（支持取消）"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # 正确解析布尔值：只有 "true" (不区分大小写) 才为 True
+    is_async_mode = async_mode.lower() == "true"
     """
     【API 1 - 骨架提取】
     上传文档 → 提取 OWL Class + ObjectProperty + DataProperty 骨架 Schema。
@@ -215,14 +220,12 @@ async def extract_schema_endpoint(
     - schema_graph: 原始 Schema 数据（classes + object_properties）
     - graph_data: 前端可渲染的 {nodes, edges}
     - text_content: 解析后的文本内容（供阶段 2 使用）
-    """
-    """
-    【API 1 - 骨架提取】
-    上传文档 → 提取 OWL Class + ObjectProperty + DataProperty 骨架 Schema。
-    绝对禁止提取实例，结果供前端 Step 2 (Schema Review) 使用。
-    用户审核骨架后，将 schema_graph 传给 API 2 进行实例提取。
+    - task_id: 任务 ID（仅当 async_mode=True 时返回）
     """
     from app.core.logging import logger
+    from app.infrastructure.task_manager import task_manager, TaskCancelledError
+
+    logger.info(f"[extract-schema] 收到请求 - project_id={project_id}, async_mode={async_mode}, is_async_mode={is_async_mode}")
 
     db_project = db.query(Project).filter(Project.id == project_id).first()
     if not db_project:
@@ -241,45 +244,101 @@ async def extract_schema_endpoint(
         from app.services.parser import FileParser
         parser = FileParser()
         text_content = parser.parse_file(temp_path) or ""
+        logger.info(f"[extract-schema] 文件解析完成 - text_length={len(text_content)}")
 
         # 获取 LLM 配置
         extractor = _build_extractor(db)
 
-        # ── 调用第一阶段引擎（Schema Only） ──
-        schema = extractor.extract_schema_only(
-            text=text_content,
-            user_intent=user_intent,
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            request_interval=request_interval,
-        )
+        if is_async_mode:
+            # 异步模式：创建任务并后台执行
+            task_id = task_manager.create_task(message="开始骨架提取...")
+            logger.info(f"[extract-schema] 任务已创建 - task_id={task_id}")
+            task_manager.start_task(task_id, message="开始骨架提取...", detail="正在解析文件...")
+            
+            # 后台执行提取任务
+            async def run_extraction():
+                try:
+                    def progress_callback(progress: float, message: str):
+                        task_manager.update_progress(task_id, progress=progress, message=message)
+                    
+                    # 在线程池中运行同步提取方法
+                    schema = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda: extractor.extract_schema_only(
+                            text=text_content,
+                            user_intent=user_intent,
+                            chunk_size=chunk_size,
+                            chunk_overlap=chunk_overlap,
+                            request_interval=request_interval,
+                            task_id=task_id,
+                            progress_callback=progress_callback,
+                        )
+                    )
+                    
+                    # 转换为前端渲染格式
+                    graph_data = OntologyExtractor.schema_to_graph_data(schema)
+                    
+                    # 将骨架 schema 临时存到 project graph_data
+                    merged_graph = {
+                        "schema": schema,
+                        **graph_data,
+                    }
+                    db_project.graph_data = merged_graph
+                    db.commit()
+                    
+                    task_manager.complete_task(
+                        task_id,
+                        result={"schema_graph": schema, "graph_data": graph_data, "text_content": text_content},
+                        message=f"骨架提取完成：{len(schema['classes'])} 个类，{len(schema['object_properties'])} 个关系"
+                    )
+                except TaskCancelledError:
+                    task_manager.cancel_task(task_id, "用户取消任务")
+                except Exception as e:
+                    logger.error(f"[extract-schema] 错误：{e}", exc_info=True)
+                    task_manager.fail_task(task_id, str(e), "骨架提取失败")
+            
+            # 启动后台任务
+            asyncio.create_task(run_extraction())
+            
+            return {
+                "task_id": task_id,
+                "message": "任务已启动，请使用 task_id 查询进度",
+            }
+        else:
+            # 同步模式（默认，保持向后兼容）
+            schema = extractor.extract_schema_only(
+                text=text_content,
+                user_intent=user_intent,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                request_interval=request_interval,
+            )
 
-        # 转换为前端渲染格式
-        graph_data = OntologyExtractor.schema_to_graph_data(schema)
+            # 转换为前端渲染格式
+            graph_data = OntologyExtractor.schema_to_graph_data(schema)
 
-        # 将骨架 schema 临时存到 project graph_data（供 API 2 参考）
-        # 格式：{"schema": {...}, "nodes": [...], "edges": [...]}
-        merged_graph = {
-            "schema": schema,
-            **graph_data,
-        }
-        db_project.graph_data = merged_graph
-        db.commit()
+            # 将骨架 schema 临时存到 project graph_data
+            merged_graph = {
+                "schema": schema,
+                **graph_data,
+            }
+            db_project.graph_data = merged_graph
+            db.commit()
 
-        return {
-            "schema_graph": schema,
-            "graph_data": graph_data,
-            "text_content": text_content,  # 返回解析后的文本内容供阶段 2 使用
-            "message": (
-                f"骨架提取完成：{len(schema['classes'])} 个类，"
-                f"{len(schema['object_properties'])} 个关系。"
-                f"请在画布中审核、修改后，点击「提取实例」进入第二阶段。"
-            ),
-        }
+            return {
+                "schema_graph": schema,
+                "graph_data": graph_data,
+                "text_content": text_content,
+                "message": (
+                    f"骨架提取完成：{len(schema['classes'])} 个类，"
+                    f"{len(schema['object_properties'])} 个关系。"
+                    f"请在画布中审核、修改后，点击「提取实例」进入第二阶段。"
+                ),
+            }
 
     except Exception as e:
-        logger.error(f"[extract-schema] 错误: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"骨架提取失败: {str(e)}")
+        logger.error(f"[extract-schema] 错误：{e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"骨架提取失败：{str(e)}")
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
@@ -297,6 +356,7 @@ async def extract_schema_endpoint(
 async def extract_instances_endpoint(
     project_id: int,
     request_body: InstanceExtractionRequest,
+    async_mode: bool = Form(False, description="是否异步执行（支持取消）"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -306,8 +366,14 @@ async def extract_instances_endpoint(
     - 模型只能实例化 schema_graph.classes 中已定义的类；
     - 连线必须符合 domain → range 约束，否则后端自动丢弃；
     - 所有实例 ID 使用确定性算法生成。
+    
+    返回包含：
+    - instances: 实例列表
+    - graph_data: 前端可渲染的 {nodes, edges}
+    - task_id: 任务 ID（仅当 async_mode=True 时返回）
     """
     from app.core.logging import logger
+    from app.infrastructure.task_manager import task_manager, TaskCancelledError
 
     db_project = db.query(Project).filter(Project.id == project_id).first()
     if not db_project:
@@ -321,15 +387,85 @@ async def extract_instances_endpoint(
         # schema_graph 来自请求体（用户已审核版本）
         schema_dict = request_body.schema_graph.model_dump()
 
-        # ── 调用第二阶段引擎（带 Schema 约束） ──
-        inst_result = extractor.extract_instances_with_constraints(
-            text=request_body.text_content,
-            schema_graph=schema_dict,
-            chunk_size=request_body.chunk_size,
-            chunk_overlap=request_body.chunk_overlap,
-            request_interval=request_body.request_interval,
-            product_code=request_body.product_code,
-        )
+        if async_mode:
+            # 异步模式：创建任务并后台执行
+            task_id = task_manager.create_task(message="开始实例提取...")
+            task_manager.start_task(task_id, message="开始实例提取...", detail="正在解析文件...")
+            
+            # 后台执行提取任务
+            async def run_extraction():
+                try:
+                    def progress_callback(progress: float, message: str):
+                        task_manager.update_progress(task_id, progress=progress, message=message)
+                    
+                    # 在线程池中运行同步提取方法
+                    inst_result = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda: extractor.extract_instances_with_constraints(
+                            text=request_body.text_content,
+                            schema_graph=schema_dict,
+                            chunk_size=request_body.chunk_size,
+                            chunk_overlap=request_body.chunk_overlap,
+                            request_interval=request_body.request_interval,
+                            product_code=request_body.product_code,
+                            task_id=task_id,
+                            progress_callback=progress_callback,
+                        )
+                    )
+
+                    # 获取当前骨架 graph_data（前端画布最新状态）
+                    current_graph = db_project.graph_data or {}
+                    schema_graph_data = {
+                        "nodes": current_graph.get("nodes", []),
+                        "edges": current_graph.get("edges", []),
+                    }
+
+                    # 合并实例到完整图
+                    full_graph_data = OntologyExtractor.merge_instances_to_graph_data(
+                        schema_graph_data=schema_graph_data,
+                        instances=inst_result["instances"],
+                    )
+
+                    # 更新 project graph_data
+                    db_project.graph_data = {
+                        "schema": schema_dict,
+                        **full_graph_data,
+                    }
+                    db.commit()
+
+                    task_manager.complete_task(
+                        task_id,
+                        result={
+                            "instances": inst_result["instances"],
+                            "graph_data": full_graph_data,
+                            "discarded_edges_count": inst_result["discarded_edges_count"],
+                        },
+                        message=f"实例提取完成：{len(inst_result['instances'])} 个实例"
+                    )
+                except TaskCancelledError:
+                    task_manager.cancel_task(task_id, "用户取消任务")
+                except Exception as e:
+                    logger.error(f"[extract-instances] 错误：{e}", exc_info=True)
+                    task_manager.fail_task(task_id, str(e), "实例提取失败")
+            
+            # 启动后台任务
+            asyncio.create_task(run_extraction())
+            
+            return {
+                "task_id": task_id,
+                "message": "任务已启动，请使用 task_id 查询进度",
+            }
+        else:
+            # 同步模式（默认，保持向后兼容）
+            # ── 调用第二阶段引擎（带 Schema 约束） ──
+            inst_result = extractor.extract_instances_with_constraints(
+                text=request_body.text_content,
+                schema_graph=schema_dict,
+                chunk_size=request_body.chunk_size,
+                chunk_overlap=request_body.chunk_overlap,
+                request_interval=request_body.request_interval,
+                product_code=request_body.product_code,
+            )
 
         # 获取当前骨架 graph_data（前端画布最新状态）
         current_graph = db_project.graph_data or {}
@@ -841,3 +977,232 @@ def convert_ttl_to_graph_data(ttl_content: str):
 
 # 向后兼容（旧函数名）
 convert_ttl_to_react_flow = convert_ttl_to_graph_data
+
+
+# ─────────────────────────────────────────────
+#  ★ 任务进度和取消 API
+# ─────────────────────────────────────────────
+
+@router.get("/{project_id}/task/{task_id}/progress")
+async def get_task_progress(
+    project_id: int,
+    task_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    获取任务进度（轮询方式）
+    """
+    from app.infrastructure.task_manager import task_manager
+    
+    db_project = db.query(Project).filter(Project.id == project_id).first()
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if db_project.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="No permission to access this project's tasks")
+    
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    return task.to_dict()
+
+
+@router.get("/{project_id}/task/{task_id}/progress-stream")
+async def stream_task_progress(
+    project_id: int,
+    task_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    流式推送任务进度（Server-Sent Events）
+    前端使用 EventSource 连接
+    
+    支持两种认证方式：
+    1. Cookie/Session 认证（通过 Depends(get_current_user)）
+    2. URL 参数 token 认证（用于 EventSource，因为 EventSource 不支持自定义 headers）
+    """
+    from app.infrastructure.task_manager import task_manager
+    from app.core.logging import logger
+    
+    logger.info(f"[progress-stream] 收到请求 - project_id={project_id}, task_id={task_id}")
+    
+    # 尝试从 URL 参数获取 token 进行认证（EventSource 方式）
+    token = request.query_params.get("token")
+    
+    current_user = None
+    if token:
+        # 从 token 解析用户
+        from app.api.auth import verify_token
+        try:
+            current_user = verify_token(token, db=db)
+            logger.info(f"[progress-stream] 认证成功 - user={current_user.username}")
+        except HTTPException as e:
+            logger.warning(f"SSE 认证失败：{e.detail}")
+            raise e
+        except Exception as e:
+            logger.warning(f"SSE 认证失败：{e}")
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+    else:
+        # 尝试从 Cookie/Session 获取用户（传统方式）
+        try:
+            # 对于 SSE，我们允许无认证访问（仅用于开发环境）
+            # 生产环境应该要求认证
+            raise HTTPException(status_code=401, detail="Authentication required. Please provide a token.")
+        except HTTPException:
+            raise
+    
+    db_project = db.query(Project).filter(Project.id == project_id).first()
+    if not db_project:
+        logger.warning(f"[progress-stream] 项目不存在 - {project_id}")
+        raise HTTPException(status_code=404, detail="Project not found")
+    if db_project.owner_id != current_user.id:
+        logger.warning(f"[progress-stream] 用户无权访问 - project={project_id}, user={current_user.id}")
+        raise HTTPException(status_code=403, detail="No permission to access this project's tasks")
+    
+    task = task_manager.get_task(task_id)
+    logger.info(f"[progress-stream] 任务查询结果 - task={task}")
+    if not task:
+        logger.warning(f"[progress-stream] 任务不存在 - {task_id}")
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    async def event_generator():
+        """生成 SSE 事件流"""
+        try:
+            while True:
+                task = task_manager.get_task(task_id)
+                if not task:
+                    yield {
+                        "event": "error",
+                        "data": json.dumps({"error": "Task not found"})
+                    }
+                    break
+                
+                yield {
+                    "event": "progress",
+                    "data": json.dumps(task.to_dict())
+                }
+                
+                # 如果任务已完成/失败/取消，发送最终状态并断开
+                if task.status.value in ("completed", "failed", "cancelled"):
+                    yield {
+                        "event": task.status.value,
+                        "data": json.dumps(task.to_dict())
+                    }
+                    break
+                
+                # 等待 500ms 后再次推送
+                await asyncio.sleep(0.5)
+        except asyncio.CancelledError:
+            logger.info(f"SSE 连接被取消：{task_id}")
+        except Exception as e:
+            logger.error(f"SSE 错误：{e}")
+            yield {
+                "event": "error",
+                "data": json.dumps({"error": str(e)})
+            }
+    
+    return EventSourceResponse(event_generator())
+
+
+@router.post("/{project_id}/task/{task_id}/cancel")
+async def cancel_task(
+    project_id: int,
+    task_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    取消任务
+    支持两种认证方式：
+    1. Bearer Token (Authorization header)
+    2. URL 参数 token (用于不支持 headers 的场景)
+    """
+    from app.infrastructure.task_manager import task_manager
+    from app.core.logging import logger
+    from app.api.auth import verify_token
+    
+    try:
+        # 尝试从 URL 参数获取 token（主要方式）
+        token = request.query_params.get("token")
+        
+        # 如果没有 URL 参数，尝试从 Authorization header 获取
+        if not token:
+            auth_header = request.headers.get("Authorization")
+            if auth_header and auth_header.startswith("Bearer "):
+                token = auth_header[7:]
+        
+        if not token:
+            logger.warning("取消任务：未提供 token")
+            raise HTTPException(status_code=401, detail="Authentication required")
+        
+        # 验证 token 获取用户
+        current_user = verify_token(token, db=db)
+        logger.info(f"取消任务：用户认证成功 - {current_user.username}")
+        
+        # 验证项目权限
+        db_project = db.query(Project).filter(Project.id == project_id).first()
+        if not db_project:
+            logger.warning(f"取消任务：项目不存在 - {project_id}")
+            raise HTTPException(status_code=404, detail="Project not found")
+        if db_project.owner_id != current_user.id:
+            logger.warning(f"取消任务：用户无权取消 - project={project_id}, user={current_user.id}")
+            raise HTTPException(status_code=403, detail="No permission to cancel this project's tasks")
+        
+        # 获取任务
+        task = task_manager.get_task(task_id)
+        if not task:
+            logger.warning(f"取消任务：任务不存在 - {task_id}")
+            raise HTTPException(status_code=404, detail="Task not found")
+        
+        logger.info(f"取消任务：{task_id}, 当前状态：{task.status.value}")
+        
+        # 检查任务是否已经完成或已取消
+        if task.status.value in ("completed", "failed", "cancelled"):
+            logger.info(f"取消任务：任务已在终端状态 - {task.status.value}")
+            return {
+                "message": f"Task already in terminal state: {task.status.value}",
+                "task_id": task_id,
+                "status": task.status.value
+            }
+        
+        # 执行取消
+        success = task_manager.cancel_task(task_id, "用户取消任务")
+        logger.info(f"取消任务结果：success={success}")
+        
+        if success:
+            return {"message": "Task cancelled successfully", "task_id": task_id, "status": "cancelled"}
+        else:
+            return {"message": "Failed to cancel task", "task_id": task_id}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"取消任务异常：{e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"取消任务失败：{str(e)}")
+
+
+@router.get("/{project_id}/tasks")
+async def get_project_tasks(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    获取项目所有任务列表
+    """
+    from app.infrastructure.task_manager import task_manager
+    
+    db_project = db.query(Project).filter(Project.id == project_id).first()
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if db_project.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="No permission to access this project's tasks")
+    
+    all_tasks = task_manager.get_all_tasks()
+    
+    # 返回所有任务（前端可以过滤）
+    return {
+        "tasks": {task_id: task.to_dict() for task_id, task in all_tasks.items()}
+    }

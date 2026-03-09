@@ -2,6 +2,7 @@
 fastapi>=0.100.0
 uvicorn>=0.20.0
 python-multipart
+sse-starlette>=1.6.0
 pymysql
 cryptography
 SQLAlchemy>=2.0.0

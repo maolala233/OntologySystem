@@ -2,17 +2,17 @@ import axios from 'axios';
 
 // 运行时动态获取API基础URL - 不依赖构建时的环境变量
 const getApiBaseUrl = () => {
-    // 方法1: 从URL参数获取（用于测试）
+    // 方法 1: 从 URL 参数获取（用于测试）
     const urlParams = new URLSearchParams(window.location.search);
     const apiHost = urlParams.get('api_host');
     if (apiHost) {
-        return `http://${apiHost}:3001`;
+        return `http://${apiHost}:8000`;
     }
     
-    // 方法2: 使用当前页面的host（推荐）
+    // 方法 2: 使用当前页面的 host（推荐）
     const currentHost = window.location.host;
     
-    // 如果是localhost或127.0.0.1，使用localhost:3001
+    // 如果是 localhost 或 127.0.0.1，使用 localhost:3001
     if (currentHost === 'localhost' || currentHost === '127.0.0.1') {
         return 'http://localhost:3001';
     }
