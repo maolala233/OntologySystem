@@ -17,7 +17,7 @@ export interface UpdateProjectRequest {
 
 // 阶段 1: Schema 提取请求参数
 export interface SchemaExtractionRequest {
-    file: File;
+    file: File | File[];
     user_intent?: string;
     chunk_size?: number;
     chunk_overlap?: number;
@@ -145,10 +145,10 @@ export const projectsApi = {
 
     // ==================== 两阶段提取 API ====================
 
-    // 阶段 1: 提取 Schema（骨架提取）
+    // 阶段 1: 提取 Schema（骨架提取）- 支持多文件
     extractSchema: async (
         projectId: number,
-        file: File,
+        files: File | File[],
         options?: {
             user_intent?: string;
             chunk_size?: number;
@@ -158,7 +158,12 @@ export const projectsApi = {
         }
     ): Promise<any> => {
         const formData = new FormData();
-        formData.append('file', file);
+        
+        // 支持单个或多个文件
+        const fileArray = Array.isArray(files) ? files : [files];
+        fileArray.forEach((file) => {
+            formData.append('files', file);
+        });
         
         if (options?.user_intent) {
             formData.append('user_intent', options.user_intent);

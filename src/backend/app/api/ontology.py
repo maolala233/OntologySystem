@@ -199,7 +199,7 @@ def unpublish_project(
 @router.post("/{project_id}/extract-schema")
 async def extract_schema_endpoint(
     project_id: int,
-    file: UploadFile = File(...),
+    files: List[UploadFile] = File(..., description="支持多文件上传"),
     user_intent: Optional[str] = Form(None, description="用户意图/关注领域（可选）"),
     chunk_size: int = Form(15000),
     chunk_overlap: int = Form(500),
@@ -225,7 +225,7 @@ async def extract_schema_endpoint(
     from app.core.logging import logger
     from app.infrastructure.task_manager import task_manager, TaskCancelledError
 
-    logger.info(f"[extract-schema] 收到请求 - project_id={project_id}, async_mode={async_mode}, is_async_mode={is_async_mode}")
+    logger.info(f"[extract-schema] 收到请求 - project_id={project_id}, async_mode={async_mode}, is_async_mode={is_async_mode}, file_count={len(files)}")
 
     db_project = db.query(Project).filter(Project.id == project_id).first()
     if not db_project:
@@ -233,18 +233,30 @@ async def extract_schema_endpoint(
     if db_project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="No permission to upload to this project")
 
-    # 保存临时文件
+    # 保存临时文件（支持多文件）
     os.makedirs("temp_uploads", exist_ok=True)
-    temp_path = os.path.join("temp_uploads", file.filename)
-    with open(temp_path, "wb") as buf:
-        buf.write(await file.read())
-
+    temp_paths = []
     try:
-        # 解析文件文本
+        for uploaded_file in files:
+            temp_path = os.path.join("temp_uploads", uploaded_file.filename)
+            with open(temp_path, "wb") as buf:
+                buf.write(await uploaded_file.read())
+            temp_paths.append(temp_path)
+        
+        logger.info(f"[extract-schema] 已保存 {len(temp_paths)} 个临时文件")
+
+        # 解析文件文本（支持多文件合并）
         from app.services.parser import FileParser
         parser = FileParser()
-        text_content = parser.parse_file(temp_path) or ""
-        logger.info(f"[extract-schema] 文件解析完成 - text_length={len(text_content)}")
+        text_contents = []
+        for temp_path in temp_paths:
+            text_content = parser.parse_file(temp_path) or ""
+            text_contents.append(text_content)
+            logger.info(f"[extract-schema] 文件解析完成 - file={temp_path}, text_length={len(text_content)}")
+        
+        # 合并所有文件内容
+        combined_text = "\n\n".join(text_contents)
+        logger.info(f"[extract-schema] 合并后总文本长度={len(combined_text)}")
 
         # 获取 LLM 配置
         extractor = _build_extractor(db)
@@ -253,7 +265,7 @@ async def extract_schema_endpoint(
             # 异步模式：创建任务并后台执行
             task_id = task_manager.create_task(message="开始骨架提取...")
             logger.info(f"[extract-schema] 任务已创建 - task_id={task_id}")
-            task_manager.start_task(task_id, message="开始骨架提取...", detail="正在解析文件...")
+            task_manager.start_task(task_id, message="开始骨架提取...", detail=f"正在解析 {len(temp_paths)} 个文件...")
             
             # 后台执行提取任务
             async def run_extraction():
@@ -261,11 +273,11 @@ async def extract_schema_endpoint(
                     def progress_callback(progress: float, message: str):
                         task_manager.update_progress(task_id, progress=progress, message=message)
                     
-                    # 在线程池中运行同步提取方法
+                    # 在线程池中运行同步提取方法（使用合并后的文本）
                     schema = await asyncio.get_event_loop().run_in_executor(
                         None,
                         lambda: extractor.extract_schema_only(
-                            text=text_content,
+                            text=combined_text,
                             user_intent=user_intent,
                             chunk_size=chunk_size,
                             chunk_overlap=chunk_overlap,
@@ -288,8 +300,8 @@ async def extract_schema_endpoint(
                     
                     task_manager.complete_task(
                         task_id,
-                        result={"schema_graph": schema, "graph_data": graph_data, "text_content": text_content},
-                        message=f"骨架提取完成：{len(schema['classes'])} 个类，{len(schema['object_properties'])} 个关系"
+                        result={"schema_graph": schema, "graph_data": graph_data, "text_content": combined_text},
+                        message=f"骨架提取完成：{len(schema['classes'])} 个类，{len(schema['object_properties'])} 个关系（来自 {len(files)} 个文件）"
                     )
                 except TaskCancelledError:
                     task_manager.cancel_task(task_id, "用户取消任务")
@@ -307,7 +319,7 @@ async def extract_schema_endpoint(
         else:
             # 同步模式（默认，保持向后兼容）
             schema = extractor.extract_schema_only(
-                text=text_content,
+                text=combined_text,
                 user_intent=user_intent,
                 chunk_size=chunk_size,
                 chunk_overlap=chunk_overlap,
@@ -328,10 +340,10 @@ async def extract_schema_endpoint(
             return {
                 "schema_graph": schema,
                 "graph_data": graph_data,
-                "text_content": text_content,
+                "text_content": combined_text,
                 "message": (
                     f"骨架提取完成：{len(schema['classes'])} 个类，"
-                    f"{len(schema['object_properties'])} 个关系。"
+                    f"{len(schema['object_properties'])} 个关系（来自 {len(files)} 个文件）。"
                     f"请在画布中审核、修改后，点击「提取实例」进入第二阶段。"
                 ),
             }
@@ -340,8 +352,10 @@ async def extract_schema_endpoint(
         logger.error(f"[extract-schema] 错误：{e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"骨架提取失败：{str(e)}")
     finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+        # 清理所有临时文件
+        for temp_path in temp_paths:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
 
 
 # ─────────────────────────────────────────────

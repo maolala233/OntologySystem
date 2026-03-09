@@ -83,7 +83,7 @@ const OntologyBuilderPage: React.FC = () => {
     const [selectedElement, setSelectedElement] = useState<OntologyNode | OntologyEdge | null>(null);
     const [isDrawerOpen, setIsDrawerOpen] = useState(false);
     const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
-    const [pendingFile, setPendingFile] = useState<File | null>(null);
+    const [pendingFiles, setPendingFiles] = useState<File[]>([]);
     const [loading, setLoading] = useState(false);
     const [projectName, setProjectName] = useState('');
     const [isPublished, setIsPublished] = useState(false);
@@ -462,22 +462,23 @@ const OntologyBuilderPage: React.FC = () => {
         });
     };
 
-    const beforeUpload = (file: File) => {
-        setPendingFile(file);
+    const beforeUpload = (file: File, fileList: File[]) => {
+        // 支持多选文件，收集所有选中的文件
+        setPendingFiles(fileList);
         setIsRuleModalOpen(true);
         return false;
     };
 
     const handleStartSchemaExtraction = async () => {
-        if (!projectId || !pendingFile) return;
+        if (!projectId || pendingFiles.length === 0) return;
 
         const values = await ruleForm.validateFields();
         setIsRuleModalOpen(false);
         setLoading(true);
 
         try {
-            // 使用异步模式，支持取消
-            const response = await projectsApi.extractSchema(Number(projectId), pendingFile, {
+            // 使用异步模式，支持取消，传递多个文件
+            const response = await projectsApi.extractSchema(Number(projectId), pendingFiles, {
                 user_intent: values.scenario,
                 chunk_size: 15000,
                 chunk_overlap: 500,
@@ -524,7 +525,7 @@ const OntologyBuilderPage: React.FC = () => {
             message.error(`Schema 提取失败：${errorDetail}`);
         } finally {
             setLoading(false);
-            setPendingFile(null);
+            setPendingFiles([]);
         }
     };
 
@@ -585,7 +586,7 @@ const OntologyBuilderPage: React.FC = () => {
     };
 
     const handleStartExtraction = async () => {
-        if (!projectId || !pendingFile) return;
+        if (!projectId || pendingFiles.length === 0) return;
 
         const schemaGraphStr = localStorage.getItem(`project_${projectId}_schema_graph`);
         
@@ -1348,8 +1349,14 @@ const OntologyBuilderPage: React.FC = () => {
                             <div className="flex items-center gap-1 bg-white/95 backdrop-blur-sm px-2 py-1.5 rounded-lg shadow-lg border border-gray-200">
                                 {/* 数据导入/导出组 */}
                                 <div className="flex items-center gap-1 pr-2 border-r border-gray-200">
-                                    <Upload accept=".txt,.pdf,.doc,.docx" showUploadList={false} beforeUpload={beforeUpload}>
-                                        <Tooltip title={localStorage.getItem(`project_${projectId}_schema_graph`) ? "重新提取骨架" : "提取骨架"}>
+                                    <Upload 
+                                        accept=".txt,.pdf,.doc,.docx" 
+                                        showUploadList={false} 
+                                        beforeUpload={beforeUpload}
+                                        multiple={true}
+                                        maxCount={10}
+                                    >
+                                        <Tooltip title={localStorage.getItem(`project_${projectId}_schema_graph`) ? "重新提取骨架" : "提取骨架（支持多选）"}>
                                             <Button size="small" type="primary" icon={<CloudUploadOutlined />} className="bg-indigo-600 hover:bg-indigo-700 border-none">
                                                 骨架
                                             </Button>
