@@ -434,13 +434,10 @@ async def extract_instances_endpoint(
                         )
                     )
 
-                    # 获取当前骨架 graph_data（前端画布最新状态）
-                    current_graph = db_project.graph_data or {}
-                    schema_graph_data = {
-                        "nodes": current_graph.get("nodes", []),
-                        "edges": current_graph.get("edges", []),
-                    }
-
+                    # 【关键修复】从前端传递的 schema_graph 构建基础图数据，而不是依赖数据库
+                    # 这样确保实例是添加到用户指定的 schema 框架上
+                    schema_graph_data = OntologyExtractor.schema_to_graph_data(schema_dict)
+                    
                     # 合并实例到完整图
                     full_graph_data = OntologyExtractor.merge_instances_to_graph_data(
                         schema_graph_data=schema_graph_data,
@@ -493,13 +490,10 @@ async def extract_instances_endpoint(
                 product_code=request_data.get("product_code"),
             )
 
-            # 获取当前骨架 graph_data（前端画布最新状态）
-            current_graph = db_project.graph_data or {}
-            schema_graph_data = {
-                "nodes": current_graph.get("nodes", []),
-                "edges": current_graph.get("edges", []),
-            }
-
+            # 【关键修复】从前端传递的 schema_graph 构建基础图数据，而不是依赖数据库
+            # 这样确保实例是添加到用户指定的 schema 框架上
+            schema_graph_data = OntologyExtractor.schema_to_graph_data(schema_dict)
+            
             # 合并实例到完整图
             full_graph_data = OntologyExtractor.merge_instances_to_graph_data(
                 schema_graph_data=schema_graph_data,
@@ -618,6 +612,163 @@ async def upload_document(
             os.remove(temp_path)
 
 
+@router.post("/{project_id}/parse-files")
+async def parse_files(
+    project_id: int,
+    files: List[UploadFile] = File(..., description="文件列表（支持 PDF/DOC/DOCX/TXT）"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    解析文件获取文本内容（不提取 schema）。
+    用于 TTL 导入骨架后，上传文档进行实例提取的场景。
+    只解析文件获取文本，不修改任何 schema 数据。
+    """
+    from app.core.logging import logger
+    from app.services.parser import FileParser
+
+    db_project = db.query(Project).filter(Project.id == project_id).first()
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if db_project.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="No permission to upload to this project")
+
+    os.makedirs("temp_uploads", exist_ok=True)
+    temp_paths = []
+    try:
+        for uploaded_file in files:
+            temp_path = os.path.join("temp_uploads", uploaded_file.filename)
+            with open(temp_path, "wb") as buf:
+                buf.write(await uploaded_file.read())
+            temp_paths.append(temp_path)
+        
+        logger.info(f"[parse-files] 已保存 {len(temp_paths)} 个临时文件")
+
+        # 解析文件文本（支持多文件合并）
+        parser = FileParser()
+        text_contents = []
+        for temp_path in temp_paths:
+            text_content = parser.parse_file(temp_path) or ""
+            text_contents.append(text_content)
+            logger.info(f"[parse-files] 文件解析完成 - file={temp_path}, text_length={len(text_content)}")
+        
+        # 合并所有文件内容
+        combined_text = "\n\n".join(text_contents)
+        logger.info(f"[parse-files] 合并后总文本长度={len(combined_text)}")
+
+        return {
+            "text_content": combined_text,
+            "message": f"文件解析完成：{len(files)} 个文件，总文本长度={len(combined_text)} 字符",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[parse-files] 错误：{e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"文件解析失败：{str(e)}")
+    finally:
+        for temp_path in temp_paths:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+
+@router.post("/{project_id}/parse-ttl-schema")
+async def parse_ttl_schema(
+    project_id: int,
+    files: List[UploadFile] = File(..., description="TTL 文件列表"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    解析 TTL 文件提取骨架 Schema（仅包含类和 ObjectProperty）。
+    用于 Step 1 构建类结构，之后可进行 Step 2 实例提取。
+    """
+    from app.core.logging import logger
+    
+    db_project = db.query(Project).filter(Project.id == project_id).first()
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if db_project.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="No permission to upload to this project")
+
+    os.makedirs("temp_uploads", exist_ok=True)
+    temp_paths = []
+    try:
+        for uploaded_file in files:
+            if not uploaded_file.filename.lower().endswith('.ttl'):
+                raise HTTPException(status_code=400, detail=f"只支持 TTL 文件：{uploaded_file.filename}")
+            temp_path = os.path.join("temp_uploads", uploaded_file.filename)
+            with open(temp_path, "wb") as buf:
+                buf.write(await uploaded_file.read())
+            temp_paths.append(temp_path)
+        
+        logger.info(f"[parse-ttl-schema] 已保存 {len(temp_paths)} 个 TTL 文件")
+
+        # 解析所有 TTL 文件
+        all_nodes = []
+        all_edges = []
+        combined_ttl_content = ""
+        
+        for temp_path in temp_paths:
+            with open(temp_path, "r", encoding='utf-8') as ttl_file:
+                ttl_content = ttl_file.read()
+                combined_ttl_content += ttl_content + "\n\n"
+                
+                nodes, edges = convert_ttl_to_graph_data(ttl_content)
+                all_nodes.extend(nodes)
+                all_edges.extend(edges)
+        
+        # 去重节点和边
+        seen_node_ids = set()
+        unique_nodes = []
+        for node in all_nodes:
+            if node['id'] not in seen_node_ids:
+                seen_node_ids.add(node['id'])
+                unique_nodes.append(node)
+        
+        seen_edge_ids = set()
+        unique_edges = []
+        for edge in all_edges:
+            edge_id = f"{edge['source']}_{edge['target']}_{edge.get('label', '')}"
+            if edge_id not in seen_edge_ids:
+                seen_edge_ids.add(edge_id)
+                unique_edges.append(edge)
+        
+        # 从 TTL 中提取 schema（仅类和 ObjectProperty）
+        schema_dict = extract_schema_from_ttl(combined_ttl_content)
+        
+        # 构建 graph_data
+        graph_data = {
+            "nodes": unique_nodes,
+            "edges": unique_edges,
+        }
+        
+        # 更新项目 graph_data
+        db_project.graph_data = {
+            "schema": schema_dict,
+            **graph_data,
+        }
+        db_project.ttl_content = combined_ttl_content
+        db.commit()
+        
+        # 仅统计类的数量
+        class_count = len([n for n in unique_nodes if n['data'].get('type') == 'owl:Class'])
+
+        return {
+            "schema_graph": schema_dict,
+            "graph_data": graph_data,
+            "message": f"TTL 骨架解析成功：{class_count} 个类",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[parse-ttl-schema] 错误：{e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"TTL 骨架解析失败：{str(e)}")
+    finally:
+        for temp_path in temp_paths:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+
 @router.post("/{project_id}/upload-ttl")
 async def upload_ttl_file(
     project_id: int,
@@ -625,7 +776,7 @@ async def upload_ttl_file(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """专门用于上传 TTL 文件的端点。"""
+    """专门用于上传 TTL 文件的端点（完整解析，包含实例）。"""
     db_project = db.query(Project).filter(Project.id == project_id).first()
     if not db_project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -651,12 +802,12 @@ async def upload_ttl_file(
             "nodes": nodes,
             "edges": edges,
             "ttl_filename": file.filename,
-            "message": f"成功解析TTL文件，包含 {len(nodes)} 个实体和 {len(edges)} 个关系",
+            "message": f"成功解析 TTL 文件，包含 {len(nodes)} 个实体和 {len(edges)} 个关系",
         }
     except Exception as e:
         from app.core.logging import logger
         logger.error(f"TTL parsing error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"TTL文件解析失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"TTL 文件解析失败：{str(e)}")
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
@@ -862,14 +1013,40 @@ def generate_ttl_from_graph_data(nodes: List[dict], edges: List[dict]) -> str:
             g.add((dataprop_uri, RDFS.label, Literal(prop_name, lang="zh")))
             g.add((uri, dataprop_uri, Literal(str(prop_value))))
 
+    # 首先收集所有已定义的 ObjectProperty（从 schema 中）
+    # 这样可以避免重复创建 ObjectProperty，也能保持正确的标签
+    existing_obj_properties = {}  # relation_label -> prop_id
+    
+    # 从 nodes 中获取 schema 信息（schema 可能在第一个 node 的 data 中，或者在 graph_data 顶层）
+    # 实际上 schema 在 graph_data 的顶层，但 generate_ttl_from_graph_data 只接收 nodes 和 edges
+    # 所以我们从 edges 中收集所有 ObjectProperty 关系及其 prop_id
+    
+    # 遍历边，先收集所有 ObjectProperty 关系及其 prop_id
+    for edge in edges:
+        edge_data = edge.get('data', {})
+        relation = edge_data.get('relation', '')
+        prop_id = edge_data.get('prop_id', '')
+        
+        # 只收集 ObjectProperty 关系（排除 subClassOf 和 type）
+        if relation and relation not in ('rdf:type', 'type', 'subClassOf', 'subclass_of'):
+            # 使用 relation 作为 key，因为它是关系的唯一标识
+            if prop_id:
+                existing_obj_properties[relation] = prop_id
+            else:
+                # 如果没有 prop_id，使用 relation 本身作为 prop_id
+                existing_obj_properties[relation] = relation
+
     for edge in edges:
         source_id = str(edge['source'])
         target_id = str(edge['target'])
+        edge_data = edge.get('data', {})
+        
         relation_label = (
             edge.get('label')
-            or (edge.get('data') or {}).get('label')
+            or edge_data.get('label')
             or 'relatedTo'
         )
+        relation = edge_data.get('relation', relation_label)
 
         if source_id in node_uris and target_id in node_uris:
             source_uri = node_uris[source_id]
@@ -877,11 +1054,16 @@ def generate_ttl_from_graph_data(nodes: List[dict], edges: List[dict]) -> str:
 
             if relation_label in ('rdf:type', 'type'):
                 g.add((source_uri, RDF.type, target_uri))
-            elif relation_label == 'subClassOf':
+            elif relation_label in ('subClassOf', 'subclass_of') or relation == 'subclass_of':
+                # 使用标准的 rdfs:subClassOf
                 g.add((source_uri, RDFS.subClassOf, target_uri))
             else:
                 import re as _re
-                prop_id = _re.sub(r'[^a-zA-Z0-9_]', '_', relation_label)
+                # 优先使用 schema 中定义的 prop_id
+                prop_id = existing_obj_properties.get(relation)
+                if not prop_id:
+                    # 如果没有 prop_id，使用 relation_label 生成
+                    prop_id = _re.sub(r'[^a-zA-Z0-9_\-]', '_', relation_label)
                 objprop_uri = ex[prop_id]
                 g.add((objprop_uri, RDF.type, OWL.ObjectProperty))
                 g.add((objprop_uri, RDFS.label, Literal(relation_label, lang="zh")))
@@ -894,10 +1076,144 @@ def generate_ttl_from_graph_data(nodes: List[dict], edges: List[dict]) -> str:
 generate_ttl_from_react_flow = generate_ttl_from_graph_data
 
 
+def extract_schema_from_ttl(ttl_content: str) -> dict:
+    """
+    从 TTL 内容中提取骨架 Schema（包含类、ObjectProperty 和 DatatypeProperty）。
+    用于支持上传 TTL 文件构建类结构。
+    
+    重要：TTL 文件中子类可能没有显式声明 a owl:Class，而是通过 rdfs:subClassOf 关系隐式成为类。
+    本函数会同时处理显式和隐式声明的类。
+    """
+    from rdflib import Graph, RDF, RDFS, OWL, Namespace, URIRef
+    
+    g = Graph()
+    g.parse(data=ttl_content, format="turtle")
+    
+    classes = []
+    object_properties = []
+    datatype_properties = []
+    
+    # 首先收集所有 DatatypeProperty 及其 domain 信息
+    datatype_prop_domains = {}  # prop_uri -> [domain_classes]
+    for prop in g.subjects(RDF.type, OWL.DatatypeProperty):
+        prop_id = str(prop).split('#')[-1] if '#' in str(prop) else str(prop).split('/')[-1]
+        label = prop_id
+        for obj in g.objects(prop, RDFS.label):
+            label = str(obj)
+            if hasattr(obj, 'language') and obj.language == 'zh':
+                break
+        
+        # 获取 domain（可能是一个类或多个类）
+        domains = []
+        for domain in g.objects(prop, RDFS.domain):
+            domain_id = str(domain).split('#')[-1] if '#' in str(domain) else str(domain).split('/')[-1]
+            domains.append(domain_id)
+        
+        datatype_prop_domains[str(prop)] = {
+            'id': prop_id,
+            'label': label,
+            'domains': domains,
+        }
+    
+    # 收集所有类 URI（包括显式和隐式声明的类）
+    class_uris = set()
+    
+    # 1. 显式声明为 owl:Class 的节点
+    for subj in g.subjects(RDF.type, OWL.Class):
+        class_uris.add(subj)
+    
+    # 2. 通过 rdfs:subClassOf 关系隐式成为类的节点（作为子类或父类）
+    for subj, obj in g.subject_objects(RDFS.subClassOf):
+        class_uris.add(subj)  # 子类
+        class_uris.add(obj)   # 父类
+    
+    # 3. 作为 ObjectProperty 的 domain 或 range 的节点（也是类）
+    for prop in g.subjects(RDF.type, OWL.ObjectProperty):
+        for domain in g.objects(prop, RDFS.domain):
+            class_uris.add(domain)
+        for range_ in g.objects(prop, RDFS.range):
+            class_uris.add(range_)
+    
+    # 提取所有类
+    for cls in class_uris:
+        cls_uri = str(cls)
+        cls_id = str(cls).split('#')[-1] if '#' in str(cls) else str(cls).split('/')[-1]
+        label = cls_id
+        for obj in g.objects(cls, RDFS.label):
+            label = str(obj)
+            if hasattr(obj, 'language') and obj.language == 'zh':
+                break
+        
+        # 获取父类
+        parent_classes = []
+        for parent in g.objects(cls, RDFS.subClassOf):
+            parent_id = str(parent).split('#')[-1] if '#' in str(parent) else str(parent).split('/')[-1]
+            parent_classes.append(parent_id)
+        
+        # 获取数据属性 - 通过 rdfs:domain 关联
+        data_properties = []
+        for prop_uri, prop_info in datatype_prop_domains.items():
+            if cls_id in prop_info['domains']:
+                data_properties.append(prop_info['label'])
+        
+        classes.append({
+            "id": cls_id,
+            "label": label,
+            "parent_classes": parent_classes,
+            "data_properties": list(set(data_properties)),
+        })
+    
+    # 提取所有 ObjectProperty
+    for prop in g.subjects(RDF.type, OWL.ObjectProperty):
+        prop_id = str(prop).split('#')[-1] if '#' in str(prop) else str(prop).split('/')[-1]
+        label = prop_id
+        for obj in g.objects(prop, RDFS.label):
+            label = str(obj)
+            if hasattr(obj, 'language') and obj.language == 'zh':
+                break
+        
+        # 获取 domain 和 range
+        domains = []
+        ranges = []
+        for domain in g.objects(prop, RDFS.domain):
+            domain_id = str(domain).split('#')[-1] if '#' in str(domain) else str(domain).split('/')[-1]
+            domains.append(domain_id)
+        for range_ in g.objects(prop, RDFS.range):
+            range_id = str(range_).split('#')[-1] if '#' in str(range_) else str(range_).split('/')[-1]
+            ranges.append(range_id)
+        
+        object_properties.append({
+            "id": prop_id,
+            "label": label,
+            "domain": domains[0] if domains else "",
+            "range": ranges[0] if ranges else "",
+        })
+    
+    return {
+        "classes": classes,
+        "object_properties": object_properties,
+        "datatype_properties": list(datatype_prop_domains.values()),
+    }
+
+
 def convert_ttl_to_graph_data(ttl_content: str):
     """
     将 TTL 转换为前端可渲染的 (nodes, edges) 二元组。
+    支持解析 DatatypeProperty 作为节点的自定义属性。
+    
+    注意：TTL 中的 DatatypeProperty 定义（如 ex:documentTitle a owl:DatatypeProperty）
+    只是声明了属性的存在，而不是具体的属性值。
+    只有当 TTL 中有实际的属性值（如 ex:SomeDocument ex:documentTitle "报告标题"）时，
+    才会被解析为节点的 properties。
+    
+    本函数会将 schema 中定义的 data_properties 添加到对应类节点的 properties 中，
+    以便前端在编辑节点时显示这些预定义的属性。
+    
+    重要：TTL 文件中子类可能没有显式声明 a owl:Class，而是通过 rdfs:subClassOf 关系隐式成为类。
+    本函数会同时处理显式和隐式声明的类。
     """
+    from rdflib import Graph, RDF, RDFS, OWL, Namespace, URIRef, Literal
+    
     g = Graph()
     g.parse(data=ttl_content, format="turtle")
 
@@ -905,7 +1221,33 @@ def convert_ttl_to_graph_data(ttl_content: str):
     edges = []
     processed_nodes: set = set()
 
+    # 首先收集所有 DatatypeProperty 及其 domain 信息
+    datatype_props = {}  # prop_uri -> {'id': str, 'label': str, 'domain': str}
+    for prop in g.subjects(RDF.type, OWL.DatatypeProperty):
+        prop_uri = str(prop)
+        prop_id = str(prop).split('#')[-1] if '#' in str(prop) else str(prop).split('/')[-1]
+        label = prop_id
+        for obj in g.objects(prop, RDFS.label):
+            label = str(obj)
+            if hasattr(obj, 'language') and obj.language == 'zh':
+                break
+        
+        # 获取 domain
+        domains = list(g.objects(prop, RDFS.domain))
+        domain_id = str(domains[0]).split('#')[-1] if domains else None
+        
+        datatype_props[prop_uri] = {
+            'id': prop_id,
+            'label': label,
+            'domain': domain_id,
+        }
+    
+    # 调试日志：打印收集到的 DatatypeProperty
+    from app.core.logging import logger
+    logger.info(f"[convert_ttl_to_graph_data] 找到 {len(datatype_props)} 个 DatatypeProperty: {list(datatype_props.values())}")
+
     def add_node(uri, node_type_category: str) -> str:
+        node_uri = str(uri)
         node_id = str(uri).split('#')[-1] if '#' in str(uri) else str(uri).split('/')[-1]
         if node_id in processed_nodes:
             return node_id
@@ -917,12 +1259,38 @@ def convert_ttl_to_graph_data(ttl_content: str):
                 break
 
         props = {}
+        
+        # 1. 解析直接关联的数据属性值（通过谓词 - 对象匹配）
         for pred, obj in g.predicate_objects(uri):
-            if str(pred) not in [str(RDF.type), str(RDFS.label), str(RDFS.subClassOf),
-                                  str(RDFS.domain), str(RDFS.range)]:
+            pred_uri = str(pred)
+            
+            # 跳过元属性
+            if pred_uri in [str(RDF.type), str(RDFS.label), str(RDFS.subClassOf),
+                            str(RDFS.domain), str(RDFS.range)]:
+                continue
+            
+            # 检查这个谓词是否是一个 DatatypeProperty
+            if pred_uri in datatype_props:
+                prop_info = datatype_props[pred_uri]
+                prop_label = prop_info['label']
+                # 只收集字面量值（非 URI）
+                if isinstance(obj, Literal) or not str(obj).startswith('http'):
+                    props[prop_label] = str(obj)
+                    logger.info(f"[convert_ttl_to_graph_data] 节点 {node_id} 添加属性 {prop_label} = {str(obj)}")
+            else:
+                # 对于未显式声明为 DatatypeProperty 的谓词，也尝试收集
                 p_name = str(pred).split('#')[-1]
-                if not str(obj).startswith('http'):
+                if isinstance(obj, Literal) or not str(obj).startswith('http'):
                     props[p_name] = str(obj)
+
+        # 2. 如果是类节点，添加 schema 中定义的 data_properties 作为预定义属性
+        if node_type_category == "owl:Class":
+            for prop_uri, prop_info in datatype_props.items():
+                domain_id = prop_info['domain']
+                if domain_id == node_id and prop_info['label'] not in props:
+                    # 将预定义属性添加到 properties 中，值为空字符串（表示待填写）
+                    props[prop_info['label']] = ""
+                    logger.info(f"[convert_ttl_to_graph_data] 类 {node_id} 添加预定义属性 {prop_info['label']}")
 
         nodes.append({
             "id": node_id,
@@ -937,11 +1305,49 @@ def convert_ttl_to_graph_data(ttl_content: str):
         processed_nodes.add(node_id)
         return node_id
 
+    # 收集所有类 URI（包括显式和隐式声明的类）
+    class_uris = set()
+    
+    # 1. 显式声明为 owl:Class 的节点
     for subj in g.subjects(RDF.type, OWL.Class):
-        add_node(subj, "owl:Class")
+        class_uris.add(subj)
+    
+    # 2. 通过 rdfs:subClassOf 关系隐式成为类的节点（作为子类或父类）
+    for subj, obj in g.subject_objects(RDFS.subClassOf):
+        class_uris.add(subj)  # 子类
+        class_uris.add(obj)   # 父类
+    
+    # 3. 作为 ObjectProperty 的 domain 或 range 的节点（也是类）
+    for prop in g.subjects(RDF.type, OWL.ObjectProperty):
+        for domain in g.objects(prop, RDFS.domain):
+            class_uris.add(domain)
+        for range_ in g.objects(prop, RDFS.range):
+            class_uris.add(range_)
+    
+    logger.info(f"[convert_ttl_to_graph_data] 收集到 {len(class_uris)} 个类")
 
+    # 添加所有类节点
+    for uri in class_uris:
+        add_node(uri, "owl:Class")
+
+    # 添加所有实例节点
     for subj in g.subjects(RDF.type, OWL.NamedIndividual):
         add_node(subj, "owl:NamedIndividual")
+
+    # rdfs:subClassOf 边（子类关系）
+    for subj, obj in g.subject_objects(RDFS.subClassOf):
+        subj_id = str(subj).split('#')[-1] if '#' in str(subj) else str(subj).split('/')[-1]
+        obj_id = str(obj).split('#')[-1] if '#' in str(obj) else str(obj).split('/')[-1]
+        if subj_id in processed_nodes and obj_id in processed_nodes:
+            edges.append({
+                "id": f"e_subclass_{subj_id}_{obj_id}",
+                "source": subj_id,
+                "target": obj_id,
+                "label": "rdfs:subClassOf",
+                "type": "custom",
+                "data": {"label": "subClassOf", "relation": "subclass_of"},
+            })
+            logger.info(f"[convert_ttl_to_graph_data] 添加子类关系边：{subj_id} -> {obj_id}")
 
     # ObjectProperty domain → range 边
     for prop in g.subjects(RDF.type, OWL.ObjectProperty):
@@ -949,6 +1355,10 @@ def convert_ttl_to_graph_data(ttl_content: str):
         range_ = list(g.objects(prop, RDFS.range))
         label_objs = list(g.objects(prop, RDFS.label))
         prop_label = str(label_objs[0]) if label_objs else str(prop).split('#')[-1]
+        
+        # 获取 prop_id（从 URI 中提取）
+        prop_uri_str = str(prop)
+        prop_id = prop_uri_str.split('#')[-1] if '#' in prop_uri_str else prop_uri_str.split('/')[-1]
 
         if domain and range_:
             source_id = add_node(domain[0], "owl:Class")
@@ -959,7 +1369,11 @@ def convert_ttl_to_graph_data(ttl_content: str):
                 "target": target_id,
                 "label": prop_label,
                 "type": "custom",
-                "data": {"label": prop_label},
+                "data": {
+                    "label": prop_label,
+                    "relation": prop_label,
+                    "prop_id": prop_id,  # 添加 prop_id 以便导出时使用
+                },
             })
 
     # rdf:type 虚线边
@@ -979,10 +1393,13 @@ def convert_ttl_to_graph_data(ttl_content: str):
                 "data": {"label": "type"},
             })
 
-    # 实例间普通关系边
+    # 实例间普通关系边（ObjectProperty 或其他关系）
     for subj, pred, obj in g.triples((None, None, None)):
         if str(pred) in [str(RDF.type), str(RDFS.label), str(RDFS.subClassOf),
                          str(RDFS.domain), str(RDFS.range)]:
+            continue
+        # 跳过 DatatypeProperty（已作为属性处理）
+        if str(pred) in datatype_props:
             continue
         subj_str = str(subj).split('#')[-1]
         if subj_str in processed_nodes and str(obj).startswith('http'):
@@ -998,6 +1415,7 @@ def convert_ttl_to_graph_data(ttl_content: str):
                     "data": {"label": pred_label},
                 })
 
+    logger.info(f"[convert_ttl_to_graph_data] 返回 {len(nodes)} 个节点，{len(edges)} 个边")
     return nodes, edges
 
 

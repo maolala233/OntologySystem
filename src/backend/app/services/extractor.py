@@ -326,6 +326,10 @@ class OntologyExtractor:
 5. 【鼓励抽取隐含关系】: 如果文本中存在明确描述或强烈暗示的「系统 A 依赖于系统 B / A 调用 B / A 部署在 B 上 / A 与 B 对接」等关系，
    即使没有出现"关系名称"这个词，也请将其提取为类与类之间的 ObjectProperty，
    关系的 label 可用简洁中文动词短语（如「依赖于」「调用」「部署于」「对接」等）。
+6. 【必须提取子类关系】: 如果文本中存在类的继承/层级关系（如"A 是 B 的一种"、"A 属于 B 类"、"A 是 B 的子类"、"A 包括 B"等），
+   必须在 sub_class_of 字段中明确指出父类。这是构建本体层级的关键！
+   - 示例：如果文本提到"量子密钥分发设备是一种量子设备"，则"量子密钥分发设备"的 sub_class_of 应该是"量子设备"的 id。
+   - 示例：如果文本提到"系统包括认证系统和审计系统"，则"认证系统"和"审计系统"的 sub_class_of 应该是"系统"的 id。
 {intent_instruction}
 """
 
@@ -565,10 +569,40 @@ class OntologyExtractor:
             return {"instances": [], "discarded_edges_count": 0}
 
         # ── 构建约束描述给 LLM ──
-        class_list_str = "\n".join(
-            f"  - 类 ID: {c['id']} | 中文名：{c['label']} | 属性字段：{', '.join(c.get('data_properties', []) or [])}"
-            for c in classes
-        )
+        # 首先建立 class_id → class_info 的映射，方便查找父类和子类
+        class_id_to_info: Dict[str, dict] = {c['id']: c for c in classes}
+        
+        # 找出每个类的子类（谁是我的子类）
+        class_to_subclasses: Dict[str, List[str]] = {c['id']: [] for c in classes}
+        for c in classes:
+            # 支持 parent_classes 和 sub_class_of 两种字段
+            parent_classes = c.get('parent_classes', []) or c.get('sub_class_of', None)
+            if parent_classes:
+                if isinstance(parent_classes, str):
+                    parent_classes = [parent_classes]
+                for parent_id in parent_classes:
+                    if parent_id in class_to_subclasses:
+                        class_to_subclasses[parent_id].append(c['id'])
+        
+        # 构建类列表字符串，包含子类信息
+        class_list_items = []
+        for c in classes:
+            cid = c['id']
+            label = c['label']
+            props = ', '.join(c.get('data_properties', []) or []) or '无'
+            
+            # 获取该类的子类
+            subclasses = class_to_subclasses.get(cid, [])
+            subclass_info = ""
+            if subclasses:
+                subclass_labels = [class_id_to_info.get(sc, {}).get('label', sc) for sc in subclasses]
+                subclass_info = f" | 子类：{', '.join(subclass_labels)}"
+            
+            class_list_items.append(
+                f"  - 类 ID: {cid} | 中文名：{label} | 属性字段：{props}{subclass_info}"
+            )
+        class_list_str = "\n".join(class_list_items)
+        
         op_list_str = "\n".join(
             f"  - 关系 ID: {op['id']} | 名称：{op['label']} | 起点类：{op['domain']} → 终点类：{op['range']}"
             for op in obj_props
@@ -589,6 +623,11 @@ class OntologyExtractor:
 【已审核的关系 Schema（连线只能使用这些关系，且必须符合 domain→range）】:
 {op_list_str}
 {domain_code_clause}
+【子类继承说明】:
+- 如果某个类有子类，你可以将实例分配给该类或其任意子类。
+- 例如：如果"设备"有子类"量子设备"，而文档中提到"量子密钥分发设备"，则应该将其实例化为"量子设备"类（更具体的子类），而不是"设备"类（父类）。
+- 优先将实例分配给最具体的子类（叶子类），而不是父类。
+
 【严格约束】:
 1. 【区分属性与关系】: 
    - 如果是文本值（如 "1.0 版", "高性能"），放入 data_props。
@@ -832,11 +871,13 @@ class OntologyExtractor:
         """
         将 Schema（classes + object_properties）转换为前端可渲染的 {nodes, edges}。
         节点类型统一为 'owl:Class'。
+        同时处理 parent_classes/sub_class_of 关系，生成子类关系边。
         """
         nodes = []
         edges = []
         processed = set()
 
+        # 首先处理所有类节点
         for cls in schema.get("classes", []):
             cid = cls["id"]
             if cid in processed:
@@ -848,11 +889,32 @@ class OntologyExtractor:
                 "data": {
                     "label": cls["label"],
                     "type": "owl:Class",
-                    "properties": {dp: "" for dp in cls.get("data_properties", [])},
+                    "properties": {dp: "" for dp in cls.get("data_properties", []) or []},
                 },
             })
             processed.add(cid)
 
+        # 然后处理子类关系（parent_classes）
+        for cls in schema.get("classes", []):
+            cid = cls["id"]
+            # 支持 parent_classes 和 sub_class_of 两种字段名
+            parent_classes = cls.get("parent_classes", []) or cls.get("sub_class_of", None)
+            if parent_classes:
+                # parent_classes 可能是字符串或列表
+                if isinstance(parent_classes, str):
+                    parent_classes = [parent_classes]
+                for parent_id in parent_classes:
+                    if parent_id and parent_id in processed:
+                        edges.append({
+                            "id": f"e_subclass_{cid}_{parent_id}",
+                            "source": cid,
+                            "target": parent_id,
+                            "label": "subClassOf",
+                            "type": "custom",
+                            "data": {"label": "subClassOf", "relation": "subclass_of"},
+                        })
+
+        # 处理 ObjectProperty 关系
         for op in schema.get("object_properties", []):
             src = op["domain"]
             tgt = op["range"]

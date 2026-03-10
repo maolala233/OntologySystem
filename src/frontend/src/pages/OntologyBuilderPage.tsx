@@ -67,6 +67,13 @@ import D3ForceGraph from '../components/OntologyGraph/D3ForceGraph';
 const { TreeNode } = Tree;
 const { Search } = AntInput;
 
+// 扩展 Window 接口以支持自定义属性
+declare global {
+    interface Window {
+        shouldExtractInstancesAfterFileSelect?: boolean;
+    }
+}
+
 const OntologyBuilderPage: React.FC = () => {
     const { projectId } = useParams<{ projectId: string }>();
     const navigate = useNavigate();
@@ -84,6 +91,8 @@ const OntologyBuilderPage: React.FC = () => {
     const [isDrawerOpen, setIsDrawerOpen] = useState(false);
     const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
     const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+    const [isSchemaTypeModalOpen, setIsSchemaTypeModalOpen] = useState(false);
+    const [schemaExtractionType, setSchemaExtractionType] = useState<'llm' | 'ttl'>('llm');
     const [loading, setLoading] = useState(false);
     const [projectName, setProjectName] = useState('');
     const [isPublished, setIsPublished] = useState(false);
@@ -462,11 +471,102 @@ const OntologyBuilderPage: React.FC = () => {
         });
     };
 
-    const beforeUpload = (file: File, fileList: File[]) => {
-        // 支持多选文件，收集所有选中的文件
-        setPendingFiles(fileList);
-        setIsRuleModalOpen(true);
-        return false;
+    const handleSchemaButtonClick = () => {
+        // 如果已有 schema，直接打开规则配置（LLM 提取）
+        if (localStorage.getItem(`project_${projectId}_schema_graph`)) {
+            setIsRuleModalOpen(true);
+        } else {
+            // 第一次提取，让用户选择方式
+            setIsSchemaTypeModalOpen(true);
+        }
+    };
+
+    const handleSchemaTypeConfirm = () => {
+        setIsSchemaTypeModalOpen(false);
+        if (schemaExtractionType === 'ttl') {
+            // TTL 方式：触发文件选择
+            const fileInput = document.getElementById('ttl-schema-input');
+            if (fileInput) {
+                fileInput.click();
+            }
+        } else {
+            // LLM 方式：触发文件选择
+            const fileInput = document.getElementById('llm-schema-input');
+            if (fileInput) {
+                fileInput.click();
+            }
+        }
+    };
+
+    const handleUploadTTLSchema = async (files: File[]) => {
+        if (!projectId || files.length === 0) return;
+        
+        setLoading(true);
+        try {
+            const formData = new FormData();
+            files.forEach(file => {
+                formData.append('files', file);
+            });
+
+            const response = await apiClient.post(
+                `/api/projects/${projectId}/parse-ttl-schema`,
+                formData,
+                {
+                    headers: { 'Content-Type': 'multipart/form-data' },
+                }
+            );
+
+            if (response.data && response.data.schema_graph) {
+                // 保存 schema 到 localStorage
+                localStorage.setItem(`project_${projectId}_schema_graph`, JSON.stringify(response.data.schema_graph));
+                
+                // 更新画布
+                const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
+                    response.data.graph_data.nodes || [],
+                    response.data.graph_data.edges || []
+                );
+                setNodes(layoutedNodes);
+                setEdges(layoutedEdges);
+                
+                message.success(response.data.message || 'TTL 骨架解析成功！');
+                
+                // 提示用户需要上传文档进行实例提取，提供上传按钮
+                Modal.confirm({
+                    title: 'TTL 骨架解析成功',
+                    content: (
+                        <div>
+                            <p>类结构已成功解析，共 {response.data.schema_graph?.classes?.length || 0} 个类。</p>
+                            <p className="mt-3 text-gray-600 font-medium">
+                                是否现在上传文档进行实例提取？
+                            </p>
+                            <p className="mt-2 text-sm text-gray-500">
+                                支持格式：TXT、PDF、DOC、DOCX（可多选）
+                            </p>
+                        </div>
+                    ),
+                    okText: '上传文档',
+                    cancelText: '稍后上传',
+                    onOk: () => {
+                        // 触发文档文件选择，并设置回调标志
+                        const fileInput = document.getElementById('llm-schema-input');
+                        if (fileInput) {
+                            // 设置标志，表示文件选择后需要直接进行实例提取
+                            window.shouldExtractInstancesAfterFileSelect = true;
+                            fileInput.click();
+                        }
+                    },
+                    onCancel: () => {
+                        // 用户选择稍后上传，不做任何操作
+                    },
+                });
+            }
+        } catch (error: any) {
+            const errorDetail = error.response?.data?.detail || error.message || '未知错误';
+            message.error(`TTL 骨架解析失败：${errorDetail}`);
+        } finally {
+            setLoading(false);
+            setPendingFiles([]);
+        }
     };
 
     const handleStartSchemaExtraction = async () => {
@@ -540,6 +640,31 @@ const OntologyBuilderPage: React.FC = () => {
                 message.warning('请先上传文件提取 Schema，然后再进行实例提取');
                 return;
             }
+            
+            // 检查是否有文本内容（TTL 方式构建骨架时没有文本内容）
+            if (!textContent || textContent.trim() === '') {
+                Modal.info({
+                    title: '需要上传文档',
+                    content: (
+                        <div>
+                            <p>当前骨架是通过 TTL 文件导入的，没有关联的原始文档。</p>
+                            <p className="mt-2 text-gray-600">
+                                实例提取需要基于原始文档内容进行抽取。请上传相关文档（TXT/PDF/DOC/DOCX），
+                                系统将基于已定义的类结构从文档中提取实例。
+                            </p>
+                        </div>
+                    ),
+                    okText: '上传文档',
+                    onOk: () => {
+                        // 触发文档文件选择
+                        const fileInput = document.getElementById('llm-schema-input');
+                        if (fileInput) {
+                            fileInput.click();
+                        }
+                    },
+                });
+                return;
+            }
 
             const schemaGraph = JSON.parse(schemaGraphStr);
 
@@ -589,12 +714,112 @@ const OntologyBuilderPage: React.FC = () => {
         if (!projectId || pendingFiles.length === 0) return;
 
         const schemaGraphStr = localStorage.getItem(`project_${projectId}_schema_graph`);
+        const textContent = localStorage.getItem(`project_${projectId}_text_content`) || '';
         
-        if (schemaGraphStr) {
+        // 如果已有 schema 且有文本内容，直接进行实例提取
+        if (schemaGraphStr && textContent) {
             setIsRuleModalOpen(false);
             await handleStartInstanceExtraction();
-        } else {
+        } 
+        // 如果已有 schema 但没有文本内容（TTL 方式构建的骨架），使用新上传的文件进行实例提取
+        else if (schemaGraphStr && !textContent) {
+            setIsRuleModalOpen(false);
+            await handleStartInstanceExtractionWithFiles();
+        }
+        // 如果是第一次提取（没有 schema），进行骨架提取
+        else {
             await handleStartSchemaExtraction();
+        }
+    };
+
+    const handleStartInstanceExtractionWithFiles = async () => {
+        /**
+         * 当用户通过 TTL 方式构建骨架后，上传文档进行实例提取时使用
+         * 调用后端 API 解析文件（支持 PDF/DOC/DOCX/TXT）
+         * 
+         * 关键点：
+         * 1. 只解析文件获取文本内容，不重新提取 schema
+         * 2. 使用 TTL 导入的 schema 进行实例提取
+         * 3. 实例会添加到已有的类结构框架上
+         * 4. 在调用实例提取前，先保存当前画布状态到数据库
+         */
+        if (!projectId || pendingFiles.length === 0) return;
+
+        setLoading(true);
+        try {
+            // 获取已保存的 schema（使用 TTL 导入的 schema）
+            const schemaGraphStr = localStorage.getItem(`project_${projectId}_schema_graph`);
+            if (!schemaGraphStr) {
+                message.error('Schema 不存在，请先提取骨架');
+                return;
+            }
+            
+            const schemaGraph = JSON.parse(schemaGraphStr);
+
+            // 【关键修复】在调用实例提取前，先保存当前画布状态到数据库
+            // 这样后端才能从 db_project.graph_data 中获取到正确的类结构
+            await projectsApi.updateProject(Number(projectId), {
+                graph_data: { nodes, edges },
+            });
+            await projectsApi.updateOntology(Number(projectId), { nodes, edges });
+            message.info('已保存当前画布状态，开始解析文件...');
+
+            // 使用新的 parseFiles API 解析文件获取文本内容
+            const parseResponse = await projectsApi.parseFiles(Number(projectId), pendingFiles);
+            
+            // 获取解析后的文本内容（parseResponse 已经是 response.data）
+            const textContent = parseResponse?.text_content || '';
+            if (!textContent) {
+                message.error('文件解析失败，未获取到文本内容');
+                return;
+            }
+            
+            // 保存文本内容到 localStorage
+            localStorage.setItem(`project_${projectId}_text_content`, textContent);
+
+            // 使用异步模式进行实例提取
+            // 使用 TTL 导入的 schema，实例会添加到已有类结构上
+            const instanceResponse = await projectsApi.extractInstances(Number(projectId), {
+                text_content: textContent,
+                schema_graph: schemaGraph,  // 使用 TTL 的 schema，不是新提取的
+                chunk_size: 15000,
+                chunk_overlap: 500,
+                request_interval: 2,
+                async_mode: true,
+            });
+
+            // 如果返回 task_id，说明是异步任务
+            if (instanceResponse.task_id) {
+                setCurrentTaskId(instanceResponse.task_id);
+                setIsProgressModalOpen(true);
+                setTaskStatus('running');
+                setTaskProgress(0);
+                setTaskMessage('开始实例提取...');
+                connectToProgressStream(instanceResponse.task_id);
+                message.info('任务已启动，请在进度窗口查看进度');
+            } else if (instanceResponse.graph_data) {
+                // 同步模式返回结果
+                const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
+                    instanceResponse.graph_data.nodes || [],
+                    instanceResponse.graph_data.edges || []
+                );
+                setNodes(layoutedNodes);
+                setEdges(layoutedEdges);
+                
+                let successMsg = instanceResponse.message || `实例提取完成：${instanceResponse.instances?.length || 0} 个实例`;
+                if (instanceResponse.discarded_edges_count > 0) {
+                    successMsg += ` (⚠️ ${instanceResponse.discarded_edges_count} 条不合规连线已自动丢弃)`;
+                }
+                message.success(successMsg);
+            } else {
+                message.warning('实例提取完成，但未发现有效实例');
+            }
+        } catch (error: any) {
+            const errorDetail = error.response?.data?.detail || error.message || '未知错误';
+            message.error(`实例提取失败：${errorDetail}`);
+        } finally {
+            setLoading(false);
+            setPendingFiles([]);
         }
     };
 
@@ -637,6 +862,7 @@ const OntologyBuilderPage: React.FC = () => {
     const expandAllInstances = () => {
         const classIdsWithInstances = new Set<string>();
         
+        // 遍历所有边，找到 rdf:type 关系（实例 -> 类）
         edges.forEach(edge => {
             const label = edge.data?.label || edge.label || '';
             const relation = edge.data?.relation || '';
@@ -657,7 +883,14 @@ const OntologyBuilderPage: React.FC = () => {
             if (classIdsWithInstances.size > 0) {
                 message.success(`已展开 ${classIdsWithInstances.size} 个类的实例`);
             } else {
-                message.info('没有找到实例关联的类');
+                // 检查是否有实例节点存在
+                const instanceNodes = nodes.filter(n => n.data?.type === 'owl:NamedIndividual');
+                if (instanceNodes.length > 0) {
+                    // 有实例但没有找到关联的类，可能是 rdf:type 关系缺失
+                    message.warning('发现实例节点，但未找到实例与类的关联关系。请确保实例已通过 rdf:type 关系关联到类。');
+                } else {
+                    message.info('当前没有实例节点。请先提取实例或手动添加实例。');
+                }
             }
         }
     };
@@ -1349,19 +1582,65 @@ const OntologyBuilderPage: React.FC = () => {
                             <div className="flex items-center gap-1 bg-white/95 backdrop-blur-sm px-2 py-1.5 rounded-lg shadow-lg border border-gray-200">
                                 {/* 数据导入/导出组 */}
                                 <div className="flex items-center gap-1 pr-2 border-r border-gray-200">
-                                    <Upload 
-                                        accept=".txt,.pdf,.doc,.docx" 
-                                        showUploadList={false} 
-                                        beforeUpload={beforeUpload}
-                                        multiple={true}
-                                        maxCount={10}
-                                    >
-                                        <Tooltip title={localStorage.getItem(`project_${projectId}_schema_graph`) ? "重新提取骨架" : "提取骨架（支持多选）"}>
-                                            <Button size="small" type="primary" icon={<CloudUploadOutlined />} className="bg-indigo-600 hover:bg-indigo-700 border-none">
-                                                骨架
-                                            </Button>
-                                        </Tooltip>
-                                    </Upload>
+                                    {/* 隐藏的 LLM 文件输入 */}
+                                    <input
+                                        id="llm-schema-input"
+                                        type="file"
+                                        accept=".txt,.pdf,.doc,.docx"
+                                        multiple
+                                        style={{ display: 'none' }}
+                                        onChange={async (e) => {
+                                            const files = Array.from(e.target.files || []);
+                                            if (files.length > 0) {
+                                                setPendingFiles(files);
+                                                
+                                                // 检查是否已有 schema（TTL 导入或之前已提取过）
+                                                const schemaGraphStr = localStorage.getItem(`project_${projectId}_schema_graph`);
+                                                
+                                                // 检查是否需要直接进行实例提取（TTL 导入后上传文档的场景）
+                                                const shouldExtractAfterFileSelect = window.shouldExtractInstancesAfterFileSelect || false;
+                                                window.shouldExtractInstancesAfterFileSelect = false; // 重置标志
+                                                
+                                                // 如果已有 schema 或者是 TTL 导入后的文件选择，直接进行实例提取
+                                                if (schemaGraphStr || shouldExtractAfterFileSelect) {
+                                                    // 直接开始实例提取，不打开规则配置弹窗
+                                                    setTimeout(() => {
+                                                        handleStartInstanceExtractionWithFiles();
+                                                    }, 100);
+                                                } else {
+                                                    // 第一次提取，打开规则配置弹窗
+                                                    setIsRuleModalOpen(true);
+                                                }
+                                            }
+                                            e.target.value = '';
+                                        }}
+                                    />
+                                    {/* 隐藏的 TTL 文件输入 */}
+                                    <input
+                                        id="ttl-schema-input"
+                                        type="file"
+                                        accept=".ttl"
+                                        multiple
+                                        style={{ display: 'none' }}
+                                        onChange={(e) => {
+                                            const files = Array.from(e.target.files || []);
+                                            if (files.length > 0) {
+                                                handleUploadTTLSchema(files);
+                                            }
+                                            e.target.value = '';
+                                        }}
+                                    />
+                                    <Tooltip title={localStorage.getItem(`project_${projectId}_schema_graph`) ? "重新提取骨架" : "提取骨架（支持多选）"}>
+                                        <Button 
+                                            size="small" 
+                                            type="primary" 
+                                            icon={<CloudUploadOutlined />} 
+                                            className="bg-indigo-600 hover:bg-indigo-700 border-none"
+                                            onClick={handleSchemaButtonClick}
+                                        >
+                                            骨架
+                                        </Button>
+                                    </Tooltip>
                                     <Tooltip title={localStorage.getItem(`project_${projectId}_schema_graph`) ? "提取实例" : "请先提取骨架"}>
                                         <Button 
                                             size="small"
@@ -1625,6 +1904,57 @@ const OntologyBuilderPage: React.FC = () => {
                             )}
                         </Drawer>
 
+                        {/* 骨架提取方式选择 Modal */}
+                        <Modal
+                            title={<div className="flex items-center gap-2"><CloudUploadOutlined className="text-indigo-600" /><span>选择骨架构建方式</span></div>}
+                            open={isSchemaTypeModalOpen}
+                            onCancel={() => setIsSchemaTypeModalOpen(false)}
+                            footer={null}
+                            width={500}
+                        >
+                            <div className="py-4">
+                                <p className="text-gray-600 mb-4">请选择构建骨架（类结构）的方式：</p>
+                                <div className="space-y-3">
+                                    <div 
+                                        className={`p-4 border rounded-lg cursor-pointer transition-all ${schemaExtractionType === 'llm' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200 hover:border-gray-300'}`}
+                                        onClick={() => setSchemaExtractionType('llm')}
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${schemaExtractionType === 'llm' ? 'border-indigo-500 bg-indigo-500' : 'border-gray-300'}`}>
+                                                {schemaExtractionType === 'llm' && <div className="w-2 h-2 rounded-full bg-white" />}
+                                            </div>
+                                            <div>
+                                                <div className="font-medium text-gray-800">大模型提取</div>
+                                                <div className="text-sm text-gray-500">上传文档（TXT/PDF/DOC/DOCX），通过 AI 自动提取类结构</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div 
+                                        className={`p-4 border rounded-lg cursor-pointer transition-all ${schemaExtractionType === 'ttl' ? 'border-purple-500 bg-purple-50' : 'border-gray-200 hover:border-gray-300'}`}
+                                        onClick={() => setSchemaExtractionType('ttl')}
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${schemaExtractionType === 'ttl' ? 'border-purple-500 bg-purple-500' : 'border-gray-300'}`}>
+                                                {schemaExtractionType === 'ttl' && <div className="w-2 h-2 rounded-full bg-white" />}
+                                            </div>
+                                            <div>
+                                                <div className="font-medium text-gray-800">上传 TTL 文件</div>
+                                                <div className="text-sm text-gray-500">上传已有的 TTL 本体文件，解析其中的类和关系</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="flex justify-end mt-6">
+                                    <Space>
+                                        <Button onClick={() => setIsSchemaTypeModalOpen(false)}>取消</Button>
+                                        <Button type="primary" onClick={handleSchemaTypeConfirm} className="bg-indigo-600">
+                                            确定
+                                        </Button>
+                                    </Space>
+                                </div>
+                            </div>
+                        </Modal>
+
                         {/* 抽取规则 Modal */}
                         <Modal
                             title={<div className="flex items-center gap-2"><CloudUploadOutlined className="text-indigo-600" /><span>定义抽取规则</span></div>}
@@ -1759,7 +2089,7 @@ const OntologyBuilderPage: React.FC = () => {
                                         danger 
                                         icon={<StopOutlined />} 
                                         onClick={handleCancelTask}
-                                        disabled={taskStatus !== 'running' && taskStatus !== 'pending'}
+                                        disabled={taskStatus === 'completed' || taskStatus === 'failed' || taskStatus === 'cancelled' || !currentTaskId}
                                     >
                                         取消任务
                                     </Button>

@@ -239,4 +239,28 @@ export const projectsApi = {
         const response = await apiClient.post(`/api/projects/${projectId}/task/${taskId}/cancel`);
         return response.data;
     },
+
+    // 解析文件获取文本内容（不提取 schema）- 支持多文件
+    parseFiles: async (
+        projectId: number,
+        files: File | File[]
+    ): Promise<any> => {
+        const formData = new FormData();
+        
+        // 支持单个或多个文件
+        const fileArray = Array.isArray(files) ? files : [files];
+        fileArray.forEach((file) => {
+            formData.append('files', file);
+        });
+
+        const response = await apiClient.post(
+            `/api/projects/${projectId}/parse-files`,
+            formData,
+            {
+                headers: { 'Content-Type': 'multipart/form-data' },
+            }
+        );
+        // response.data 已经是后端返回的数据对象
+        return response.data;
+    },
 };
