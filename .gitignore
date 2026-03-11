@@ -19,5 +19,5 @@ src/frontend/dist/
 *.log
 *.docx
 *.txt
-
+*.pdf
 
