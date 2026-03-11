@@ -948,6 +948,63 @@ class OntologyExtractor:
         # 方便通过 label 查找实例 det_id
         label_to_inst_id: Dict[str, str] = {}
 
+        # 实例去重：检测并合并相似实例
+        # 问题：LLM 可能在多个 chunk 中提取出同一实体的不同版本（如"量子安全平台 1.0"、"量子安全平台 2.0"等）
+        # 解决方案：对同一 label 前缀的实例进行分组，只保留最完整的一个
+        
+        def get_instance_prefix(label: str) -> str:
+            """提取实例 label 的前缀（去除版本号等后缀）"""
+            # 匹配常见版本号模式：1.0, 2.0, V1, V2 等
+            import re
+            # 移除末尾的版本号模式
+            prefix = re.sub(r'[\s_]?[vV]?[\d\.]+$', '', label.strip())
+            return prefix.strip()
+        
+        # 按 label 前缀和 type 分组实例
+        from collections import defaultdict
+        inst_groups: Dict[Tuple[str, str], List[dict]] = defaultdict(list)
+        for inst in instances:
+            prefix = get_instance_prefix(inst["label"])
+            type_key = inst.get("type", "")
+            inst_groups[(prefix, type_key)].append(inst)
+        
+        # 对每组实例进行去重：保留属性最完整的那个
+        deduplicated_instances: List[dict] = []
+        for (prefix, type_key), group in inst_groups.items():
+            if len(group) == 1:
+                deduplicated_instances.append(group[0])
+            else:
+                # 选择属性最丰富的实例
+                def count_props(inst):
+                    obj_count = len(inst.get("object_props", {}))
+                    data_count = len(inst.get("data_props", {}))
+                    return obj_count + data_count
+                
+                # 按属性数量排序，保留最丰富的那个
+                best_inst = max(group, key=count_props)
+                
+                # 合并所有实例的属性到最佳实例
+                for inst in group:
+                    if inst["id"] != best_inst["id"]:
+                        # 合并 object_props
+                        for op_id, targets in inst.get("object_props", {}).items():
+                            if op_id not in best_inst["object_props"]:
+                                best_inst["object_props"][op_id] = []
+                            for t in targets:
+                                if t not in best_inst["object_props"][op_id]:
+                                    best_inst["object_props"][op_id].append(t)
+                        # 合并 data_props
+                        for dp_name, value in inst.get("data_props", {}).items():
+                            if dp_name not in best_inst["data_props"]:
+                                best_inst["data_props"][dp_name] = value
+                
+                deduplicated_instances.append(best_inst)
+        
+        logger.info(f"[merge_instances_to_graph_data] 实例去重：{len(instances)} -> {len(deduplicated_instances)}")
+        
+        # 使用去重后的实例列表
+        instances = deduplicated_instances
+        
         for inst in instances:
             iid = inst["id"]
             if iid not in existing_ids:

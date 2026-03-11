@@ -155,6 +155,7 @@ export const projectsApi = {
             chunk_overlap?: number;
             request_interval?: number;
             async_mode?: boolean;
+            save_documents?: boolean;
         }
     ): Promise<any> => {
         const formData = new FormData();
@@ -177,8 +178,11 @@ export const projectsApi = {
         if (options?.request_interval) {
             formData.append('request_interval', String(options.request_interval));
         }
-        if (options?.async_mode) {
+        if (options?.async_mode !== undefined) {
             formData.append('async_mode', String(options.async_mode));
+        }
+        if (options?.save_documents !== undefined) {
+            formData.append('save_documents', String(options.save_documents));
         }
 
         const response = await apiClient.post(
@@ -261,6 +265,67 @@ export const projectsApi = {
             }
         );
         // response.data 已经是后端返回的数据对象
+        return response.data;
+    },
+
+    // 获取项目已上传的文档列表
+    getDocuments: async (projectId: number): Promise<any> => {
+        const response = await apiClient.get(`/api/projects/${projectId}/documents`);
+        return response.data;
+    },
+
+    // 删除项目文档
+    deleteDocument: async (projectId: number, docId: number): Promise<any> => {
+        const response = await apiClient.delete(`/api/projects/${projectId}/documents/${docId}`);
+        return response.data;
+    },
+
+    // 清空项目所有文档
+    clearAllDocuments: async (projectId: number): Promise<any> => {
+        const response = await apiClient.post(`/api/projects/${projectId}/documents/clear-all`);
+        return response.data;
+    },
+
+    // 基于已上传文档 ID 进行骨架提取
+    extractSchemaFromDocuments: async (
+        projectId: number,
+        documentIds: number[],
+        options?: {
+            user_intent?: string;
+            chunk_size?: number;
+            chunk_overlap?: number;
+            request_interval?: number;
+            async_mode?: boolean;
+        }
+    ): Promise<any> => {
+        const formData = new FormData();
+        
+        // 传递文档 ID 列表（逗号分隔）
+        formData.append('document_ids', documentIds.join(','));
+        
+        if (options?.user_intent) {
+            formData.append('user_intent', options.user_intent);
+        }
+        if (options?.chunk_size) {
+            formData.append('chunk_size', String(options.chunk_size));
+        }
+        if (options?.chunk_overlap) {
+            formData.append('chunk_overlap', String(options.chunk_overlap));
+        }
+        if (options?.request_interval) {
+            formData.append('request_interval', String(options.request_interval));
+        }
+        if (options?.async_mode !== undefined) {
+            formData.append('async_mode', String(options.async_mode));
+        }
+
+        const response = await apiClient.post(
+            `/api/projects/${projectId}/extract-schema-from-documents`,
+            formData,
+            {
+                headers: { 'Content-Type': 'multipart/form-data' },
+            }
+        );
         return response.data;
     },
 };

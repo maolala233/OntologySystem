@@ -54,6 +54,8 @@ import {
     CheckCircleOutlined,
     CloseCircleOutlined,
     LoadingOutlined,
+    FileDoneOutlined,
+    ClearOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import Navbar from '../components/Layout/Navbar';
@@ -114,6 +116,11 @@ const OntologyBuilderPage: React.FC = () => {
     const [addInstanceForm] = Form.useForm();
     const [isNewNode, setIsNewNode] = useState(false);
     const [highlightNodeId, setHighlightNodeId] = useState<string | null>(null);
+    
+    // 文档管理相关状态
+    const [uploadedDocuments, setUploadedDocuments] = useState<any[]>([]);
+    const [isDocumentModalOpen, setIsDocumentModalOpen] = useState(false);
+    const [isDocLoading, setIsDocLoading] = useState(false);
     
     // 任务进度相关状态
     const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
@@ -472,11 +479,23 @@ const OntologyBuilderPage: React.FC = () => {
     };
 
     const handleSchemaButtonClick = () => {
-        // 如果已有 schema，直接打开规则配置（LLM 提取）
+        // 如果已有 schema，提示用户是否重新提取
         if (localStorage.getItem(`project_${projectId}_schema_graph`)) {
-            setIsRuleModalOpen(true);
+            Modal.confirm({
+                title: '重新提取骨架',
+                content: '当前项目已有提取的骨架，重新提取将覆盖现有骨架。确定继续吗？',
+                okText: '确定',
+                cancelText: '取消',
+                onOk: () => {
+                    // 清除之前的 schema
+                    localStorage.removeItem(`project_${projectId}_schema_graph`);
+                    localStorage.removeItem(`project_${projectId}_text_content`);
+                    // 打开方式选择弹窗
+                    setIsSchemaTypeModalOpen(true);
+                }
+            });
         } else {
-            // 第一次提取，让用户选择方式
+            // 第一次提取，打开方式选择弹窗
             setIsSchemaTypeModalOpen(true);
         }
     };
@@ -490,11 +509,9 @@ const OntologyBuilderPage: React.FC = () => {
                 fileInput.click();
             }
         } else {
-            // LLM 方式：触发文件选择
-            const fileInput = document.getElementById('llm-schema-input');
-            if (fileInput) {
-                fileInput.click();
-            }
+            // LLM 方式：打开文档管理 Modal，让用户先上传文档
+            // 用户可以在文档管理 Modal 中浏览文档，然后点击"开始骨架提取"进入规则配置
+            handleOpenDocumentModal();
         }
     };
 
@@ -578,12 +595,14 @@ const OntologyBuilderPage: React.FC = () => {
 
         try {
             // 使用异步模式，支持取消，传递多个文件
+            // save_documents: true 确保上传的文件保存到数据库
             const response = await projectsApi.extractSchema(Number(projectId), pendingFiles, {
                 user_intent: values.scenario,
                 chunk_size: 15000,
                 chunk_overlap: 500,
                 request_interval: 2,
                 async_mode: true,
+                save_documents: true,
             });
 
             // 如果返回 task_id，说明是异步任务
@@ -656,9 +675,11 @@ const OntologyBuilderPage: React.FC = () => {
                     ),
                     okText: '上传文档',
                     onOk: () => {
-                        // 触发文档文件选择
+                        // 触发文档文件选择，并设置标志
                         const fileInput = document.getElementById('llm-schema-input');
                         if (fileInput) {
+                            // 设置标志，表示文件选择后需要直接进行实例提取
+                            window.shouldExtractInstancesAfterFileSelect = true;
                             fileInput.click();
                         }
                     },
@@ -732,7 +753,7 @@ const OntologyBuilderPage: React.FC = () => {
         }
     };
 
-    const handleStartInstanceExtractionWithFiles = async () => {
+    const handleStartInstanceExtractionWithFiles = async (files?: File[]) => {
         /**
          * 当用户通过 TTL 方式构建骨架后，上传文档进行实例提取时使用
          * 调用后端 API 解析文件（支持 PDF/DOC/DOCX/TXT）
@@ -742,8 +763,12 @@ const OntologyBuilderPage: React.FC = () => {
          * 2. 使用 TTL 导入的 schema 进行实例提取
          * 3. 实例会添加到已有的类结构框架上
          * 4. 在调用实例提取前，先保存当前画布状态到数据库
+         * 
+         * 参数:
+         * - files: 可选的文件数组，如果提供则直接使用，否则使用 pendingFiles 状态
          */
-        if (!projectId || pendingFiles.length === 0) return;
+        const filesToUse = files || pendingFiles;
+        if (!projectId || filesToUse.length === 0) return;
 
         setLoading(true);
         try {
@@ -765,7 +790,7 @@ const OntologyBuilderPage: React.FC = () => {
             message.info('已保存当前画布状态，开始解析文件...');
 
             // 使用新的 parseFiles API 解析文件获取文本内容
-            const parseResponse = await projectsApi.parseFiles(Number(projectId), pendingFiles);
+            const parseResponse = await projectsApi.parseFiles(Number(projectId), filesToUse);
             
             // 获取解析后的文本内容（parseResponse 已经是 response.data）
             const textContent = parseResponse?.text_content || '';
@@ -819,7 +844,10 @@ const OntologyBuilderPage: React.FC = () => {
             message.error(`实例提取失败：${errorDetail}`);
         } finally {
             setLoading(false);
-            setPendingFiles([]);
+            // 只在没有传入 files 参数时才清空 pendingFiles（避免重复清空）
+            if (!files) {
+                setPendingFiles([]);
+            }
         }
     };
 
@@ -1088,97 +1116,104 @@ const OntologyBuilderPage: React.FC = () => {
         }
     };
 
-    // 构建树形数据（带搜索过滤）
-    const buildTreeData = useCallback(() => {
-        const classNodes = nodes.filter(n => n.data?.type === 'owl:Class');
-        const instanceNodes = nodes.filter(n => n.data?.type === 'owl:NamedIndividual');
+    // ==================== 文档管理相关函数 ====================
 
-        const classToInstances: Record<string, any[]> = {};
-        instanceNodes.forEach(instance => {
-            const parentClassEdge = edges.find(e =>
-                e.source === instance.id &&
-                (e.label === 'rdf:type' || e.data?.label === 'type' || e.data?.relation === 'instance_of')
-            );
-            if (parentClassEdge && parentClassEdge.target) {
-                if (!classToInstances[parentClassEdge.target]) {
-                    classToInstances[parentClassEdge.target] = [];
-                }
-                classToInstances[parentClassEdge.target].push(instance);
-            }
-        });
-
-        // 搜索过滤
-        const filterNode = (title: string) => {
-            if (!treeSearchValue) return true;
-            return title.toLowerCase().includes(treeSearchValue.toLowerCase());
-        };
-
-        return classNodes.map(classNode => {
-            const classTitle = classNode.data?.label || '未命名类';
-            const children = classToInstances[classNode.id]?.map(instance => {
-                const instanceTitle = instance.data?.label || '未命名实例';
-                return {
-                    title: instanceTitle,
-                    key: instance.id,
-                    icon: <span className="inline-block w-3 h-3 rounded-full bg-[#f79767] mr-2" />,
-                    isLeaf: true,
-                    searchableTitle: instanceTitle,
-                };
-            }) || [];
-
-            return {
-                title: classTitle,
-                key: classNode.id,
-                icon: <span className="inline-block w-3 h-3 rounded-full bg-[#4cc9f0] mr-2" />,
-                children,
-                searchableTitle: classTitle,
-            };
-        }).filter(node => {
-            // 如果节点本身或子节点匹配搜索，则显示
-            if (!treeSearchValue) return true;
-            const selfMatch = node.searchableTitle?.toLowerCase().includes(treeSearchValue.toLowerCase());
-            const childrenMatch = node.children?.some((child: any) => 
-                child.searchableTitle?.toLowerCase().includes(treeSearchValue.toLowerCase())
-            );
-            return selfMatch || childrenMatch;
-        });
-    }, [nodes, edges, treeSearchValue]);
-
-    // 树节点点击
-    const onTreeSelect: TreeProps['onSelect'] = (selectedKeys) => {
-        if (selectedKeys.length === 0) return;
-        const key = selectedKeys[0] as string;
-        const node = nodes.find(n => n.id === key);
-        if (node) {
-            onNodeClick(node);
+    // 加载已上传文档列表
+    const loadDocuments = useCallback(async () => {
+        if (!projectId) return;
+        setIsDocLoading(true);
+        try {
+            const response = await projectsApi.getDocuments(Number(projectId));
+            // 确保 uploadedDocuments 是数组，并映射后端字段到前端字段
+            const docsArray = Array.isArray(response) ? response : (response.documents || response.data || []);
+            const mappedDocs = docsArray.map((doc: any) => ({
+                id: doc.id,
+                file_name: doc.filename || doc.file_name,  // 后端返回 filename
+                file_size: doc.file_size,
+                uploaded_at: doc.created_at || doc.uploaded_at,  // 后端返回 created_at
+            }));
+            setUploadedDocuments(mappedDocs);
+        } catch (error: any) {
+            message.error(error.response?.data?.detail || '加载文档列表失败');
+            setUploadedDocuments([]);
+        } finally {
+            setIsDocLoading(false);
         }
-    };
+    }, [projectId]);
 
-    // 全部展开/折叠（仅控制列表内部显示，不影响画布）
-    const expandAllTreeNodes = () => {
-        // 展开所有节点（包括类和其实例）
-        const allKeys = new Set(buildTreeData().map((node: any) => node.key));
-        setManualExpandedKeys(allKeys);
-        message.success('已展开列表');
-    };
+    // 删除单个文档
+    const handleDeleteDocument = useCallback(async (docId: number, docName: string) => {
+        if (!projectId) return;
+        
+        Modal.confirm({
+            title: '确认删除',
+            content: `确定要删除文档"${docName}"吗？`,
+            okText: '确定',
+            cancelText: '取消',
+            okButtonProps: { danger: true },
+            onOk: async () => {
+                try {
+                    await projectsApi.deleteDocument(Number(projectId), docId);
+                    message.success('文档已删除');
+                    // 重新加载文档列表
+                    loadDocuments();
+                } catch (error: any) {
+                    message.error(error.response?.data?.detail || '删除文档失败');
+                }
+            },
+        });
+    }, [projectId, loadDocuments]);
 
-    const collapseAllTreeNodes = () => {
-        setManualExpandedKeys(new Set());
-        message.success('已收起列表');
-    };
+    // 清空所有文档
+    const handleClearAllDocuments = useCallback(async () => {
+        if (!projectId) return;
+        
+        Modal.confirm({
+            title: '确认清空',
+            content: '确定要清空该项目下所有文档吗？此操作不可恢复！',
+            okText: '确定',
+            cancelText: '取消',
+            okButtonProps: { danger: true },
+            onOk: async () => {
+                try {
+                    await projectsApi.clearAllDocuments(Number(projectId));
+                    message.success('所有文档已清空');
+                    setUploadedDocuments([]);
+                    setIsDocumentModalOpen(false);
+                } catch (error: any) {
+                    message.error(error.response?.data?.detail || '清空文档失败');
+                }
+            },
+        });
+    }, [projectId]);
 
-    // 处理单个节点的展开/收起
-    const onTreeExpand = (keys: React.Key[]) => {
-        setManualExpandedKeys(new Set(keys as string[]));
-    };
+    // 打开文档管理 Modal
+    const handleOpenDocumentModal = useCallback(() => {
+        setIsDocumentModalOpen(true);
+        loadDocuments();
+    }, [loadDocuments]);
 
-    // 更多操作菜单（已移除树形列表操作，因为左侧面板已有独立按钮）
-    const moreMenuItems: MenuProps['items'] = [];
+    // 上传文档到数据库（只保存，不自动开始提取）
+    const handleUploadDocuments = useCallback(async (files: File[]) => {
+        if (!projectId || files.length === 0) return;
+        
+        setLoading(true);
+        try {
+            // 使用 parseFiles API 解析文件并保存到数据库
+            const response = await projectsApi.parseFiles(Number(projectId), files);
+            
+            message.success(`已上传 ${files.length} 个文档，请在文档管理界面查看`);
+            
+            // 刷新文档列表
+            loadDocuments();
+        } catch (error: any) {
+            message.error(error.response?.data?.detail || '上传文档失败');
+        } finally {
+            setLoading(false);
+        }
+    }, [projectId, loadDocuments]);
 
-    const classCount = nodes.filter(n => n.data?.type === 'owl:Class').length;
-    const instanceCount = nodes.filter(n => n.data?.type === 'owl:NamedIndividual').length;
-
-    // 连接 SSE 进度流
+    // 连接 SSE 进度流（提前定义，避免循环引用）
     const connectToProgressStream = useCallback((taskId: string) => {
         if (!projectId) return;
         
@@ -1337,6 +1372,179 @@ const OntologyBuilderPage: React.FC = () => {
         
         eventSourceRef.current = es;
     }, [projectId]);
+
+    // 从 Modal 开始骨架提取
+    const handleStartSchemaExtractionFromModal = useCallback(async () => {
+        if (!projectId || uploadedDocuments.length === 0) {
+            message.warning('请先上传文档再进行骨架提取');
+            return;
+        }
+        // 关闭文档管理 Modal
+        setIsDocumentModalOpen(false);
+        // 打开规则配置弹窗
+        setIsRuleModalOpen(true);
+    }, [projectId, uploadedDocuments]);
+
+    // 从规则配置 Modal 开始骨架提取（使用文档 ID 调用 API）
+    const handleStartSchemaExtractionWithDocIds = useCallback(async () => {
+        if (!projectId || uploadedDocuments.length === 0) {
+            message.warning('请先上传文档再进行骨架提取');
+            return;
+        }
+
+        const values = await ruleForm.validateFields();
+        setIsRuleModalOpen(false);
+        setLoading(true);
+
+        try {
+            // 使用文档 ID 列表调用新的 API
+            const docIds = uploadedDocuments.map(doc => doc.id);
+            
+            // 使用异步模式，支持取消
+            const response = await projectsApi.extractSchemaFromDocuments(Number(projectId), docIds, {
+                user_intent: values.scenario,
+                chunk_size: 15000,
+                chunk_overlap: 500,
+                request_interval: 2,
+                async_mode: true,
+            });
+
+            // 如果返回 task_id，说明是异步任务
+            if (response.task_id) {
+                setCurrentTaskId(response.task_id);
+                setIsProgressModalOpen(true);
+                setTaskStatus('running');
+                setTaskProgress(0);
+                setTaskMessage('开始骨架提取...');
+                connectToProgressStream(response.task_id);
+                message.info('任务已启动，请在进度窗口查看进度');
+            } else if (response.schema_graph && response.graph_data) {
+                // 同步模式返回结果
+                const textContent = response.text_content || '';
+                localStorage.setItem(`project_${projectId}_text_content`, textContent);
+                localStorage.setItem(`project_${projectId}_schema_graph`, JSON.stringify(response.schema_graph));
+
+                const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
+                    response.graph_data.nodes || [],
+                    response.graph_data.edges || []
+                );
+                setNodes(layoutedNodes);
+                setEdges(layoutedEdges);
+                
+                message.success(response.message || `骨架提取完成！`);
+            } else {
+                message.warning('提取完成，但未发现有效的本体节点');
+            }
+        } catch (error: any) {
+            const errorDetail = error.response?.data?.detail || error.message || '未知错误';
+            message.error(`Schema 提取失败：${errorDetail}`);
+        } finally {
+            setLoading(false);
+        }
+    }, [projectId, uploadedDocuments, connectToProgressStream]);
+
+    // 从 Modal 开始实例提取
+    const handleStartInstanceExtractionFromModal = useCallback(async () => {
+        if (!projectId || uploadedDocuments.length === 0) {
+            message.warning('请先上传文档再进行实例提取');
+            return;
+        }
+        // 关闭文档管理 Modal
+        setIsDocumentModalOpen(false);
+        // 调用实例提取函数
+        await handleStartInstanceExtraction();
+    }, [projectId, uploadedDocuments]);
+
+    // 构建树形数据（带搜索过滤）
+    const buildTreeData = useCallback(() => {
+        const classNodes = nodes.filter(n => n.data?.type === 'owl:Class');
+        const instanceNodes = nodes.filter(n => n.data?.type === 'owl:NamedIndividual');
+
+        const classToInstances: Record<string, any[]> = {};
+        instanceNodes.forEach(instance => {
+            const parentClassEdge = edges.find(e =>
+                e.source === instance.id &&
+                (e.label === 'rdf:type' || e.data?.label === 'type' || e.data?.relation === 'instance_of')
+            );
+            if (parentClassEdge && parentClassEdge.target) {
+                if (!classToInstances[parentClassEdge.target]) {
+                    classToInstances[parentClassEdge.target] = [];
+                }
+                classToInstances[parentClassEdge.target].push(instance);
+            }
+        });
+
+        // 搜索过滤
+        const filterNode = (title: string) => {
+            if (!treeSearchValue) return true;
+            return title.toLowerCase().includes(treeSearchValue.toLowerCase());
+        };
+
+        return classNodes.map(classNode => {
+            const classTitle = classNode.data?.label || '未命名类';
+            const children = classToInstances[classNode.id]?.map(instance => {
+                const instanceTitle = instance.data?.label || '未命名实例';
+                return {
+                    title: instanceTitle,
+                    key: instance.id,
+                    icon: <span className="inline-block w-3 h-3 rounded-full bg-[#f79767] mr-2" />,
+                    isLeaf: true,
+                    searchableTitle: instanceTitle,
+                };
+            }) || [];
+
+            return {
+                title: classTitle,
+                key: classNode.id,
+                icon: <span className="inline-block w-3 h-3 rounded-full bg-[#4cc9f0] mr-2" />,
+                children,
+                searchableTitle: classTitle,
+            };
+        }).filter(node => {
+            // 如果节点本身或子节点匹配搜索，则显示
+            if (!treeSearchValue) return true;
+            const selfMatch = node.searchableTitle?.toLowerCase().includes(treeSearchValue.toLowerCase());
+            const childrenMatch = node.children?.some((child: any) => 
+                child.searchableTitle?.toLowerCase().includes(treeSearchValue.toLowerCase())
+            );
+            return selfMatch || childrenMatch;
+        });
+    }, [nodes, edges, treeSearchValue]);
+
+    // 树节点点击
+    const onTreeSelect: TreeProps['onSelect'] = (selectedKeys) => {
+        if (selectedKeys.length === 0) return;
+        const key = selectedKeys[0] as string;
+        const node = nodes.find(n => n.id === key);
+        if (node) {
+            onNodeClick(node);
+        }
+    };
+
+    // 全部展开/折叠（仅控制列表内部显示，不影响画布）
+    const expandAllTreeNodes = () => {
+        // 展开所有节点（包括类和其实例）
+        const allKeys = new Set(buildTreeData().map((node: any) => node.key));
+        setManualExpandedKeys(allKeys);
+        message.success('已展开列表');
+    };
+
+    const collapseAllTreeNodes = () => {
+        setManualExpandedKeys(new Set());
+        message.success('已收起列表');
+    };
+
+    // 处理单个节点的展开/收起
+    const onTreeExpand = (keys: React.Key[]) => {
+        setManualExpandedKeys(new Set(keys as string[]));
+    };
+
+    // 更多操作菜单（已移除树形列表操作，因为左侧面板已有独立按钮）
+    const moreMenuItems: MenuProps['items'] = [];
+
+    const classCount = nodes.filter(n => n.data?.type === 'owl:Class').length;
+    const instanceCount = nodes.filter(n => n.data?.type === 'owl:NamedIndividual').length;
+
 
     // 取消任务
     const handleCancelTask = useCallback(async () => {
@@ -1592,24 +1800,21 @@ const OntologyBuilderPage: React.FC = () => {
                                         onChange={async (e) => {
                                             const files = Array.from(e.target.files || []);
                                             if (files.length > 0) {
-                                                setPendingFiles(files);
-                                                
                                                 // 检查是否已有 schema（TTL 导入或之前已提取过）
                                                 const schemaGraphStr = localStorage.getItem(`project_${projectId}_schema_graph`);
                                                 
-                                                // 检查是否需要直接进行实例提取（TTL 导入后上传文档的场景）
-                                                const shouldExtractAfterFileSelect = window.shouldExtractInstancesAfterFileSelect || false;
-                                                window.shouldExtractInstancesAfterFileSelect = false; // 重置标志
-                                                
-                                                // 如果已有 schema 或者是 TTL 导入后的文件选择，直接进行实例提取
-                                                if (schemaGraphStr || shouldExtractAfterFileSelect) {
-                                                    // 直接开始实例提取，不打开规则配置弹窗
-                                                    setTimeout(() => {
-                                                        handleStartInstanceExtractionWithFiles();
-                                                    }, 100);
+                                                // 如果已有 schema，直接上传文件到数据库，不自动开始提取
+                                                if (schemaGraphStr) {
+                                                    // 上传文件到数据库保存
+                                                    await handleUploadDocuments(files);
+                                                    // 上传完成后打开文档管理 Modal
+                                                    handleOpenDocumentModal();
                                                 } else {
-                                                    // 第一次提取，打开规则配置弹窗
-                                                    setIsRuleModalOpen(true);
+                                                    // 第一次提取骨架：先上传文件到数据库，然后打开文档管理 Modal
+                                                    // 让用户浏览文档情况，再点击"开始骨架提取"进入规则配置
+                                                    await handleUploadDocuments(files);
+                                                    // 打开文档管理 Modal
+                                                    handleOpenDocumentModal();
                                                 }
                                             }
                                             e.target.value = '';
@@ -1645,13 +1850,21 @@ const OntologyBuilderPage: React.FC = () => {
                                         <Button 
                                             size="small"
                                             icon={<DatabaseOutlined />} 
-                                            onClick={handleStartInstanceExtraction}
+                                            onClick={() => {
+                                                if (localStorage.getItem(`project_${projectId}_schema_graph`)) {
+                                                    // 有 schema 时，打开文档管理 Modal
+                                                    handleOpenDocumentModal();
+                                                } else {
+                                                    message.warning('请先提取骨架，然后再进行实例提取');
+                                                }
+                                            }}
                                             className="bg-orange-500 text-white hover:bg-orange-600 border-none"
                                             disabled={!localStorage.getItem(`project_${projectId}_schema_graph`)}
                                         >
                                             实例
                                         </Button>
                                     </Tooltip>
+                                    {/* 开始实例提取按钮 - 仅在文档管理 Modal 中显示 */}
                                     <Upload accept=".ttl" showUploadList={false} beforeUpload={handleUploadTTL}>
                                         <Tooltip title="上传 TTL 文件">
                                             <Button size="small" icon={<FileTextOutlined />} className="border-purple-500 text-purple-600 hover:bg-purple-50">
@@ -1742,7 +1955,7 @@ const OntologyBuilderPage: React.FC = () => {
                                 <div className="flex items-center gap-3 text-sm">
                                     <span className="text-gray-500"><InfoCircleOutlined className="mr-1" />视图:</span>
                                     <Tag color="blue" className="font-medium">{nodes.length}</Tag>
-                                    <span className="text-gray-600">实体</span>
+                                    <span className="text-gray-600">节点</span>
                                     <Tag color="green" className="font-medium">{edges.length}</Tag>
                                     <span className="text-gray-600">关系</span>
                                 </div>
@@ -1959,7 +2172,16 @@ const OntologyBuilderPage: React.FC = () => {
                         <Modal
                             title={<div className="flex items-center gap-2"><CloudUploadOutlined className="text-indigo-600" /><span>定义抽取规则</span></div>}
                             open={isRuleModalOpen}
-                            onOk={handleStartExtraction}
+                            onOk={() => {
+                                // 判断是从文档管理 Modal 打开的（有 uploadedDocuments）还是从文件选择打开的（有 pendingFiles）
+                                if (uploadedDocuments.length > 0 && pendingFiles.length === 0) {
+                                    // 从文档管理 Modal 打开，使用文档 ID 调用 API
+                                    handleStartSchemaExtractionWithDocIds();
+                                } else {
+                                    // 从文件选择打开，使用传统方式
+                                    handleStartExtraction();
+                                }
+                            }}
                             onCancel={() => setIsRuleModalOpen(false)}
                             okText="开始提取"
                             cancelText="取消"
@@ -2149,6 +2371,144 @@ const OntologyBuilderPage: React.FC = () => {
                                     </div>
                                 )}
                             </div>
+                        </Modal>
+
+                        {/* 文档管理 Modal */}
+                        <Modal
+                            title={
+                                <div className="flex items-center gap-2">
+                                    <FileDoneOutlined className="text-green-500" />
+                                    <span>已上传文档管理</span>
+                                </div>
+                            }
+                            open={isDocumentModalOpen}
+                            onCancel={() => setIsDocumentModalOpen(false)}
+                            footer={null}
+                            width={700}
+                        >
+                            <div className="py-2">
+                                {isDocLoading ? (
+                                    <div className="flex justify-center py-8">
+                                        <Spin tip="加载中..." />
+                                    </div>
+                                ) : uploadedDocuments.length === 0 ? (
+                                    <div className="text-center py-8 text-gray-400">
+                                        <FileTextOutlined className="text-4xl mb-2" />
+                                        <p>暂无已上传文档</p>
+                                        <p className="text-sm mt-1 mb-4">请先上传文档进行骨架或实例提取</p>
+                                        <Button 
+                                            type="primary" 
+                                            icon={<CloudUploadOutlined />}
+                                            onClick={() => {
+                                                setIsDocumentModalOpen(false);
+                                                // 触发骨架按钮的文件选择
+                                                const fileInput = document.getElementById('llm-schema-input');
+                                                if (fileInput) {
+                                                    fileInput.click();
+                                                }
+                                            }}
+                                        >
+                                            上传文档
+                                        </Button>
+                                    </div>
+                                ) : (
+                                    <>
+                                        {/* 顶部操作栏 - 添加上传文档按钮 */}
+                                        <div className="flex justify-between items-center mb-3 pb-3 border-b border-gray-100">
+                                            <div className="text-sm text-gray-500">
+                                                已上传 {uploadedDocuments.length} 个文档
+                                            </div>
+                                            <Button 
+                                                type="primary" 
+                                                icon={<CloudUploadOutlined />}
+                                                onClick={() => {
+                                                    // 触发骨架按钮的文件选择
+                                                    const fileInput = document.getElementById('llm-schema-input');
+                                                    if (fileInput) {
+                                                        fileInput.click();
+                                                    }
+                                                }}
+                                            >
+                                                上传文档
+                                            </Button>
+                                        </div>
+                                        
+                                        <div className="max-h-80 overflow-auto">
+                                            <table className="w-full text-sm">
+                                                <thead className="bg-gray-50 sticky top-0">
+                                                    <tr>
+                                                        <th className="px-3 py-2 text-left font-medium text-gray-600">文件名</th>
+                                                        <th className="px-3 py-2 text-left font-medium text-gray-600">大小</th>
+                                                        <th className="px-3 py-2 text-left font-medium text-gray-600">上传时间</th>
+                                                        <th className="px-3 py-2 text-center font-medium text-gray-600 w-24">操作</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-gray-100">
+                                                    {uploadedDocuments.map((doc: any) => (
+                                                        <tr key={doc.id} className="hover:bg-gray-50">
+                                                            <td className="px-3 py-2">
+                                                                <div className="flex items-center gap-2">
+                                                                    <FileTextOutlined className="text-gray-400" />
+                                                                    <span className="truncate max-w-xs">{doc.file_name}</span>
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-3 py-2 text-gray-500">
+                                                                {(doc.file_size / 1024).toFixed(2)} KB
+                                                            </td>
+                                                            <td className="px-3 py-2 text-gray-500">
+                                                                {doc.uploaded_at ? new Date(doc.uploaded_at).toLocaleString('zh-CN') : '未知'}
+                                                            </td>
+                                                            <td className="px-3 py-2 text-center">
+                                                                <Tooltip title="删除">
+                                                                    <Button 
+                                                                        type="text" 
+                                                                        size="small" 
+                                                                        danger
+                                                                        icon={<DeleteOutlined />}
+                                                                        onClick={() => handleDeleteDocument(doc.id, doc.file_name)}
+                                                                    />
+                                                                </Tooltip>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                            
+                            {/* 底部操作区 */}
+                            {uploadedDocuments.length > 0 && (
+                                <div className="flex justify-between items-center pt-4 border-t border-gray-200 mt-4">
+                                    <div className="text-sm text-gray-500">
+                                        共 {uploadedDocuments.length} 个文档
+                                    </div>
+                                    <Space>
+                                        <Button onClick={() => setIsDocumentModalOpen(false)}>关闭</Button>
+                                        {/* 如果没有 schema，显示骨架提取按钮；如果有 schema，显示实例提取按钮 */}
+                                        {!localStorage.getItem(`project_${projectId}_schema_graph`) ? (
+                                            <Button 
+                                                type="primary" 
+                                                icon={<CloudUploadOutlined />} 
+                                                onClick={handleStartSchemaExtractionFromModal}
+                                                className="bg-indigo-600 hover:bg-indigo-700"
+                                            >
+                                                开始骨架提取
+                                            </Button>
+                                        ) : (
+                                            <Button 
+                                                type="primary" 
+                                                icon={<DatabaseOutlined />} 
+                                                onClick={handleStartInstanceExtractionFromModal}
+                                                className="bg-orange-500 hover:bg-orange-600"
+                                            >
+                                                开始实例提取
+                                            </Button>
+                                        )}
+                                    </Space>
+                                </div>
+                            )}
                         </Modal>
 
                         {/* 系统配置 Modal */}

@@ -50,3 +50,6 @@ requests>=2.31.0
 
 # SOCKS 代理支持
 httpx[socks]>=0.25.0
+
+# 时区处理
+pytz>=2023.3

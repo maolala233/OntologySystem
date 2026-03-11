@@ -18,5 +18,6 @@ src/frontend/dist/
 *.ttl
 *.log
 *.docx
+*.txt
 
 

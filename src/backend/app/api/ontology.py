@@ -5,7 +5,7 @@ from sse_starlette.sse import EventSourceResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
 from urllib.parse import quote
-from app.infrastructure.database import get_db, Project, User, SystemConfig
+from app.infrastructure.database import get_db, Project, User, SystemConfig, UploadedDocument
 from app.schemas.ontology import ProjectCreate, ProjectUpdate, ProjectResponse
 from app.schemas.extraction import (
     SchemaExtractionRequest, SchemaExtractionResponse,
@@ -196,6 +196,169 @@ def unpublish_project(
 #  输出：仅含 Class 和 ObjectProperty 的骨架图
 # ─────────────────────────────────────────────
 
+# ─────────────────────────────────────────────
+#  ★ 基于已上传文档 ID 进行骨架提取（新增）
+# ─────────────────────────────────────────────
+
+@router.post("/{project_id}/extract-schema-from-documents")
+async def extract_schema_from_documents(
+    project_id: int,
+    document_ids: str = Form(..., description="已上传文档 ID 列表，逗号分隔"),
+    user_intent: Optional[str] = Form(None, description="用户意图/关注领域（可选）"),
+    chunk_size: int = Form(15000),
+    chunk_overlap: int = Form(500),
+    request_interval: int = Form(2),
+    async_mode: str = Form("true", description="是否异步执行（支持取消）"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    【API - 基于已上传文档进行骨架提取】
+    基于数据库中已上传的文档 ID 进行骨架提取，不需要重新上传文件。
+    适用于文档管理 Modal 中点击"开始骨架提取"的场景。
+    """
+    from app.core.logging import logger
+    from app.infrastructure.task_manager import task_manager, TaskCancelledError
+
+    # 解析文档 ID 列表
+    doc_ids = [int(id.strip()) for id in document_ids.split(',') if id.strip()]
+    if not doc_ids:
+        raise HTTPException(status_code=400, detail="请提供至少一个文档 ID")
+
+    logger.info(f"[extract-schema-from-documents] 收到请求 - project_id={project_id}, doc_ids={doc_ids}")
+
+    db_project = db.query(Project).filter(Project.id == project_id).first()
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if db_project.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="No permission to upload to this project")
+
+    # 从数据库获取文档记录
+    documents = db.query(UploadedDocument).filter(
+        UploadedDocument.id.in_(doc_ids),
+        UploadedDocument.project_id == project_id
+    ).all()
+
+    if not documents:
+        raise HTTPException(status_code=404, detail="未找到指定的文档")
+
+    if len(documents) != len(doc_ids):
+        raise HTTPException(status_code=400, detail="部分文档不存在或不属于该项目")
+
+    # 获取文件路径列表
+    temp_paths = [doc.file_path for doc in documents if doc.file_path]
+    logger.info(f"[extract-schema-from-documents] 共 {len(temp_paths)} 个文件")
+
+    # 解析文件文本（支持多文件合并）
+    from app.services.parser import FileParser
+    parser = FileParser()
+    text_contents = []
+    for temp_path in temp_paths:
+        if os.path.exists(temp_path):
+            text_content = parser.parse_file(temp_path) or ""
+            text_contents.append(text_content)
+            logger.info(f"[extract-schema-from-documents] 文件解析完成 - file={temp_path}, text_length={len(text_content)}")
+        else:
+            logger.warning(f"[extract-schema-from-documents] 文件不存在 - {temp_path}")
+    
+    # 合并所有文件内容
+    combined_text = "\n\n".join(text_contents)
+    logger.info(f"[extract-schema-from-documents] 合并后总文本长度={len(combined_text)}")
+
+    # 获取 LLM 配置
+    extractor = _build_extractor(db)
+
+    # 异步模式
+    is_async_mode = async_mode.lower() == "true"
+    
+    if is_async_mode:
+        # 异步模式：创建任务并后台执行
+        task_id = task_manager.create_task(message="开始骨架提取...")
+        logger.info(f"[extract-schema-from-documents] 任务已创建 - task_id={task_id}")
+        task_manager.start_task(task_id, message="开始骨架提取...", detail=f"正在解析 {len(documents)} 个文档...")
+        
+        # 后台执行提取任务
+        async def run_extraction():
+            try:
+                def progress_callback(progress: float, message: str):
+                    task_manager.update_progress(task_id, progress=progress, message=message)
+                
+                # 在线程池中运行同步提取方法（使用合并后的文本）
+                schema = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: extractor.extract_schema_only(
+                        text=combined_text,
+                        user_intent=user_intent,
+                        chunk_size=chunk_size,
+                        chunk_overlap=chunk_overlap,
+                        request_interval=request_interval,
+                        task_id=task_id,
+                        progress_callback=progress_callback,
+                    )
+                )
+                
+                # 转换为前端渲染格式
+                graph_data = OntologyExtractor.schema_to_graph_data(schema)
+                
+                # 将骨架 schema 临时存到 project graph_data
+                merged_graph = {
+                    "schema": schema,
+                    **graph_data,
+                }
+                db_project.graph_data = merged_graph
+                db.commit()
+                
+                task_manager.complete_task(
+                    task_id,
+                    result={"schema_graph": schema, "graph_data": graph_data, "text_content": combined_text},
+                    message=f"骨架提取完成：{len(schema['classes'])} 个类，{len(schema['object_properties'])} 个关系（来自 {len(documents)} 个文档）"
+                )
+            except TaskCancelledError:
+                task_manager.cancel_task(task_id, "用户取消任务")
+            except Exception as e:
+                logger.error(f"[extract-schema-from-documents] 错误：{e}", exc_info=True)
+                task_manager.fail_task(task_id, str(e), "骨架提取失败")
+        
+        # 启动后台任务
+        asyncio.create_task(run_extraction())
+        
+        return {
+            "task_id": task_id,
+            "message": "任务已启动，请使用 task_id 查询进度",
+        }
+    else:
+        # 同步模式
+        schema = extractor.extract_schema_only(
+            text=combined_text,
+            user_intent=user_intent,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            request_interval=request_interval,
+        )
+
+        # 转换为前端渲染格式
+        graph_data = OntologyExtractor.schema_to_graph_data(schema)
+
+        # 将骨架 schema 临时存到 project graph_data
+        merged_graph = {
+            "schema": schema,
+            **graph_data,
+        }
+        db_project.graph_data = merged_graph
+        db.commit()
+
+        return {
+            "schema_graph": schema,
+            "graph_data": graph_data,
+            "text_content": combined_text,
+            "message": (
+                f"骨架提取完成：{len(schema['classes'])} 个类，"
+                f"{len(schema['object_properties'])} 个关系（来自 {len(documents)} 个文档）。"
+                f"请在画布中审核、修改后，点击「提取实例」进入第二阶段。"
+            ),
+        }
+
+
 @router.post("/{project_id}/extract-schema")
 async def extract_schema_endpoint(
     project_id: int,
@@ -205,11 +368,15 @@ async def extract_schema_endpoint(
     chunk_overlap: int = Form(500),
     request_interval: int = Form(2),
     async_mode: str = Form("false", description="是否异步执行（支持取消）"),
+    save_documents: bool = Form("true", description="是否保存文档记录到数据库"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     # 正确解析布尔值：只有 "true" (不区分大小写) 才为 True
     is_async_mode = async_mode.lower() == "true"
+    # 正确解析 save_documents 参数
+    should_save_documents = save_documents.lower() == "true" or save_documents is True
+    
     """
     【API 1 - 骨架提取】
     上传文档 → 提取 OWL Class + ObjectProperty + DataProperty 骨架 Schema。
@@ -221,11 +388,12 @@ async def extract_schema_endpoint(
     - graph_data: 前端可渲染的 {nodes, edges}
     - text_content: 解析后的文本内容（供阶段 2 使用）
     - task_id: 任务 ID（仅当 async_mode=True 时返回）
+    - saved_documents: 保存的文档记录列表（当 save_documents=true 时）
     """
     from app.core.logging import logger
     from app.infrastructure.task_manager import task_manager, TaskCancelledError
 
-    logger.info(f"[extract-schema] 收到请求 - project_id={project_id}, async_mode={async_mode}, is_async_mode={is_async_mode}, file_count={len(files)}")
+    logger.info(f"[extract-schema] 收到请求 - project_id={project_id}, async_mode={async_mode}, is_async_mode={is_async_mode}, file_count={len(files)}, save_documents={should_save_documents}")
 
     db_project = db.query(Project).filter(Project.id == project_id).first()
     if not db_project:
@@ -233,17 +401,60 @@ async def extract_schema_endpoint(
     if db_project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="No permission to upload to this project")
 
+    # 创建永久存储目录（用于保存文档记录）
+    if should_save_documents:
+        os.makedirs("src/backend/uploads", exist_ok=True)
+        os.makedirs(f"src/backend/uploads/projects/{project_id}", exist_ok=True)
+    
     # 保存临时文件（支持多文件）
     os.makedirs("temp_uploads", exist_ok=True)
     temp_paths = []
+    saved_docs = []
+    
     try:
         for uploaded_file in files:
-            temp_path = os.path.join("temp_uploads", uploaded_file.filename)
-            with open(temp_path, "wb") as buf:
-                buf.write(await uploaded_file.read())
-            temp_paths.append(temp_path)
+            # 如果需要保存文档记录，创建永久存储
+            if should_save_documents:
+                import uuid
+                unique_filename = f"{uuid.uuid4()}_{uploaded_file.filename}"
+                file_path = os.path.join(f"src/backend/uploads/projects/{project_id}", unique_filename)
+                
+                # 保存文件到永久目录
+                with open(file_path, "wb") as buf:
+                    buf.write(await uploaded_file.read())
+                
+                # 获取文件大小
+                file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
+                
+                # 获取文件类型
+                file_ext = uploaded_file.filename.split('.')[-1].lower() if '.' in uploaded_file.filename else ''
+                
+                # 创建数据库记录
+                doc_record = UploadedDocument(
+                    project_id=project_id,
+                    filename=uploaded_file.filename,
+                    file_path=file_path,
+                    file_size=file_size,
+                    file_type=file_ext,
+                )
+                db.add(doc_record)
+                saved_docs.append(doc_record)
+                temp_paths.append(file_path)
+                
+                logger.info(f"[extract-schema] 已保存文档 - {uploaded_file.filename} -> {file_path}")
+            else:
+                # 不保存文档记录，只保存到临时目录
+                temp_path = os.path.join("temp_uploads", uploaded_file.filename)
+                with open(temp_path, "wb") as buf:
+                    buf.write(await uploaded_file.read())
+                temp_paths.append(temp_path)
         
-        logger.info(f"[extract-schema] 已保存 {len(temp_paths)} 个临时文件")
+        # 如果需要保存文档记录，提交数据库事务
+        if should_save_documents and saved_docs:
+            db.commit()
+            logger.info(f"[extract-schema] 已保存 {len(saved_docs)} 个文档记录到数据库")
+        
+        logger.info(f"[extract-schema] 共保存 {len(temp_paths)} 个文件")
 
         # 解析文件文本（支持多文件合并）
         from app.services.parser import FileParser
@@ -253,6 +464,16 @@ async def extract_schema_endpoint(
             text_content = parser.parse_file(temp_path) or ""
             text_contents.append(text_content)
             logger.info(f"[extract-schema] 文件解析完成 - file={temp_path}, text_length={len(text_content)}")
+            
+            # 如果保存了文档记录，同时更新文本内容
+            if saved_docs:
+                for doc in saved_docs:
+                    if doc.file_path == temp_path:
+                        doc.text_content = text_content
+                        break
+        
+        if saved_docs:
+            db.commit()
         
         # 合并所有文件内容
         combined_text = "\n\n".join(text_contents)
@@ -315,6 +536,15 @@ async def extract_schema_endpoint(
             return {
                 "task_id": task_id,
                 "message": "任务已启动，请使用 task_id 查询进度",
+                "saved_documents": [
+                    {
+                        "id": doc.id,
+                        "filename": doc.filename,
+                        "file_size": doc.file_size,
+                        "file_type": doc.file_type,
+                    }
+                    for doc in saved_docs
+                ] if saved_docs else [],
             }
         else:
             # 同步模式（默认，保持向后兼容）
@@ -341,6 +571,15 @@ async def extract_schema_endpoint(
                 "schema_graph": schema,
                 "graph_data": graph_data,
                 "text_content": combined_text,
+                "saved_documents": [
+                    {
+                        "id": doc.id,
+                        "filename": doc.filename,
+                        "file_size": doc.file_size,
+                        "file_type": doc.file_type,
+                    }
+                    for doc in saved_docs
+                ] if saved_docs else [],
                 "message": (
                     f"骨架提取完成：{len(schema['classes'])} 个类，"
                     f"{len(schema['object_properties'])} 个关系（来自 {len(files)} 个文件）。"
@@ -350,11 +589,13 @@ async def extract_schema_endpoint(
 
     except Exception as e:
         logger.error(f"[extract-schema] 错误：{e}", exc_info=True)
+        if should_save_documents:
+            db.rollback()
         raise HTTPException(status_code=500, detail=f"骨架提取失败：{str(e)}")
     finally:
-        # 清理所有临时文件
+        # 清理临时文件（只清理 temp_uploads 目录中的文件）
         for temp_path in temp_paths:
-            if os.path.exists(temp_path):
+            if temp_path.startswith("temp_uploads") and os.path.exists(temp_path):
                 os.remove(temp_path)
 
 
@@ -616,6 +857,7 @@ async def upload_document(
 async def parse_files(
     project_id: int,
     files: List[UploadFile] = File(..., description="文件列表（支持 PDF/DOC/DOCX/TXT）"),
+    save_documents: bool = Form(True, description="是否保存文档记录到数据库"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -623,9 +865,13 @@ async def parse_files(
     解析文件获取文本内容（不提取 schema）。
     用于 TTL 导入骨架后，上传文档进行实例提取的场景。
     只解析文件获取文本，不修改任何 schema 数据。
+    
+    参数:
+    - save_documents: 是否保存文档记录到数据库（默认 True）
     """
     from app.core.logging import logger
     from app.services.parser import FileParser
+    import shutil
 
     db_project = db.query(Project).filter(Project.id == project_id).first()
     if not db_project:
@@ -633,16 +879,50 @@ async def parse_files(
     if db_project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="No permission to upload to this project")
 
-    os.makedirs("temp_uploads", exist_ok=True)
+    # 创建永久存储目录
+    os.makedirs("src/backend/uploads", exist_ok=True)
+    os.makedirs(f"src/backend/uploads/projects/{project_id}", exist_ok=True)
+    
     temp_paths = []
+    saved_docs = []
+    
     try:
         for uploaded_file in files:
-            temp_path = os.path.join("temp_uploads", uploaded_file.filename)
-            with open(temp_path, "wb") as buf:
+            # 生成唯一文件名避免冲突
+            import uuid
+            unique_filename = f"{uuid.uuid4()}_{uploaded_file.filename}"
+            file_path = os.path.join(f"src/backend/uploads/projects/{project_id}", unique_filename)
+            
+            # 保存文件
+            with open(file_path, "wb") as buf:
                 buf.write(await uploaded_file.read())
-            temp_paths.append(temp_path)
+            temp_paths.append(file_path)
+            
+            # 获取文件大小
+            file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
+            
+            # 获取文件类型
+            file_ext = uploaded_file.filename.split('.')[-1].lower() if '.' in uploaded_file.filename else ''
+            
+            logger.info(f"[parse-files] 已保存文件 - {uploaded_file.filename} -> {file_path}")
+            
+            # 如果要求保存文档记录，创建数据库记录
+            if save_documents:
+                doc_record = UploadedDocument(
+                    project_id=project_id,
+                    filename=uploaded_file.filename,
+                    file_path=file_path,
+                    file_size=file_size,
+                    file_type=file_ext,
+                )
+                db.add(doc_record)
+                saved_docs.append(doc_record)
         
-        logger.info(f"[parse-files] 已保存 {len(temp_paths)} 个临时文件")
+        if save_documents and saved_docs:
+            db.commit()
+            logger.info(f"[parse-files] 已保存 {len(saved_docs)} 个文档记录到数据库")
+        
+        logger.info(f"[parse-files] 共保存 {len(temp_paths)} 个文件")
 
         # 解析文件文本（支持多文件合并）
         parser = FileParser()
@@ -651,6 +931,16 @@ async def parse_files(
             text_content = parser.parse_file(temp_path) or ""
             text_contents.append(text_content)
             logger.info(f"[parse-files] 文件解析完成 - file={temp_path}, text_length={len(text_content)}")
+            
+            # 如果保存了文档记录，同时更新文本内容
+            if saved_docs:
+                for doc in saved_docs:
+                    if doc.file_path == temp_path:
+                        doc.text_content = text_content
+                        break
+        
+        if saved_docs:
+            db.commit()
         
         # 合并所有文件内容
         combined_text = "\n\n".join(text_contents)
@@ -659,16 +949,23 @@ async def parse_files(
         return {
             "text_content": combined_text,
             "message": f"文件解析完成：{len(files)} 个文件，总文本长度={len(combined_text)} 字符",
+            "saved_documents": [
+                {
+                    "id": doc.id,
+                    "filename": doc.filename,
+                    "file_size": doc.file_size,
+                    "file_type": doc.file_type,
+                }
+                for doc in saved_docs
+            ] if saved_docs else [],
         }
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"[parse-files] 错误：{e}", exc_info=True)
+        if save_documents:
+            db.rollback()
         raise HTTPException(status_code=500, detail=f"文件解析失败：{str(e)}")
-    finally:
-        for temp_path in temp_paths:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
 
 
 @router.post("/{project_id}/parse-ttl-schema")
@@ -1015,26 +1312,38 @@ def generate_ttl_from_graph_data(nodes: List[dict], edges: List[dict]) -> str:
 
     # 首先收集所有已定义的 ObjectProperty（从 schema 中）
     # 这样可以避免重复创建 ObjectProperty，也能保持正确的标签
-    existing_obj_properties = {}  # relation_label -> prop_id
+    existing_obj_properties = {}  # relation -> (prop_id, label)
     
-    # 从 nodes 中获取 schema 信息（schema 可能在第一个 node 的 data 中，或者在 graph_data 顶层）
-    # 实际上 schema 在 graph_data 的顶层，但 generate_ttl_from_graph_data 只接收 nodes 和 edges
-    # 所以我们从 edges 中收集所有 ObjectProperty 关系及其 prop_id
+    # 定义无效的 prop_id 集合
+    INVALID_PROP_IDS = {'', '_', '__', '___', '____', '_____', '______', '_______', '________'}
     
     # 遍历边，先收集所有 ObjectProperty 关系及其 prop_id
     for edge in edges:
         edge_data = edge.get('data', {})
         relation = edge_data.get('relation', '')
         prop_id = edge_data.get('prop_id', '')
+        label = edge_data.get('label', relation)
         
         # 只收集 ObjectProperty 关系（排除 subClassOf 和 type）
         if relation and relation not in ('rdf:type', 'type', 'subClassOf', 'subclass_of'):
-            # 使用 relation 作为 key，因为它是关系的唯一标识
-            if prop_id:
-                existing_obj_properties[relation] = prop_id
+            # 检查 prop_id 是否有效
+            if prop_id and prop_id not in INVALID_PROP_IDS:
+                existing_obj_properties[relation] = (prop_id, label)
             else:
-                # 如果没有 prop_id，使用 relation 本身作为 prop_id
-                existing_obj_properties[relation] = relation
+                # 如果没有有效的 prop_id，使用 label 生成有意义的 prop_id
+                if label and label not in INVALID_PROP_IDS:
+                    try:
+                        from pypinyin import lazy_pinyin
+                        generated_id = '_'.join(lazy_pinyin(label))
+                    except ImportError:
+                        generated_id = f"prop_{abs(hash(label)) % 10000}"
+                    # 确保是有效的 URI 片段
+                    generated_id = re.sub(r'[^a-zA-Z0-9_]', '_', generated_id)
+                    if not generated_id or generated_id in INVALID_PROP_IDS or generated_id.strip('_') == '':
+                        generated_id = f"prop_{abs(hash(label)) % 10000}"
+                    existing_obj_properties[relation] = (generated_id, label)
+                else:
+                    existing_obj_properties[relation] = (relation, label)
 
     for edge in edges:
         source_id = str(edge['source'])
@@ -1058,12 +1367,23 @@ def generate_ttl_from_graph_data(nodes: List[dict], edges: List[dict]) -> str:
                 # 使用标准的 rdfs:subClassOf
                 g.add((source_uri, RDFS.subClassOf, target_uri))
             else:
-                import re as _re
                 # 优先使用 schema 中定义的 prop_id
-                prop_id = existing_obj_properties.get(relation)
-                if not prop_id:
-                    # 如果没有 prop_id，使用 relation_label 生成
-                    prop_id = _re.sub(r'[^a-zA-Z0-9_\-]', '_', relation_label)
+                prop_info = existing_obj_properties.get(relation)
+                if prop_info:
+                    prop_id, label = prop_info
+                else:
+                    # 如果没有找到，使用 relation_label 生成
+                    try:
+                        from pypinyin import lazy_pinyin
+                        prop_id = '_'.join(lazy_pinyin(relation_label))
+                    except ImportError:
+                        prop_id = f"prop_{abs(hash(relation_label)) % 10000}"
+                
+                # 确保 prop_id 是有效的 URI 片段
+                prop_id = re.sub(r'[^a-zA-Z0-9_]', '_', str(prop_id))
+                if not prop_id or prop_id in INVALID_PROP_IDS or (isinstance(prop_id, str) and prop_id.strip('_') == ''):
+                    prop_id = f"prop_{abs(hash(relation_label)) % 10000}"
+                
                 objprop_uri = ex[prop_id]
                 g.add((objprop_uri, RDF.type, OWL.ObjectProperty))
                 g.add((objprop_uri, RDFS.label, Literal(relation_label, lang="zh")))
@@ -1649,4 +1969,141 @@ async def get_project_tasks(
     # 返回所有任务（前端可以过滤）
     return {
         "tasks": {task_id: task.to_dict() for task_id, task in all_tasks.items()}
+    }
+
+
+# ─────────────────────────────────────────────
+#  ★ 文档管理 API
+# ─────────────────────────────────────────────
+
+@router.get("/{project_id}/documents")
+async def get_project_documents(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    获取项目已上传的文档列表
+    """
+    from app.core.logging import logger
+    import pytz
+    from datetime import timezone
+    
+    db_project = db.query(Project).filter(Project.id == project_id).first()
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if db_project.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="No permission to access this project's documents")
+    
+    documents = db.query(UploadedDocument).filter(
+        UploadedDocument.project_id == project_id
+    ).order_by(UploadedDocument.created_at.desc()).all()
+    
+    # 获取时区
+    tz_utc = pytz.UTC
+    tz_china = pytz.timezone('Asia/Shanghai')
+    
+    return {
+        "documents": [
+            {
+                "id": doc.id,
+                "filename": doc.filename,
+                "file_size": doc.file_size,
+                "file_type": doc.file_type,
+                "created_at": tz_utc.localize(doc.created_at).astimezone(tz_china).isoformat() if doc.created_at else None,
+                "updated_at": tz_utc.localize(doc.updated_at).astimezone(tz_china).isoformat() if doc.updated_at else None,
+            }
+            for doc in documents
+        ]
+    }
+
+
+@router.delete("/{project_id}/documents/{doc_id}")
+async def delete_project_document(
+    project_id: int,
+    doc_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    删除项目已上传的文档
+    """
+    from app.core.logging import logger
+    import os
+    
+    db_project = db.query(Project).filter(Project.id == project_id).first()
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if db_project.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="No permission to delete this project's documents")
+    
+    document = db.query(UploadedDocument).filter(
+        UploadedDocument.id == doc_id,
+        UploadedDocument.project_id == project_id
+    ).first()
+    
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # 删除物理文件（如果存在）
+    if document.file_path and os.path.exists(document.file_path):
+        try:
+            os.remove(document.file_path)
+            logger.info(f"[delete-document] 已删除物理文件：{document.file_path}")
+        except Exception as e:
+            logger.warning(f"[delete-document] 删除物理文件失败：{e}")
+    
+    # 删除数据库记录
+    db.delete(document)
+    db.commit()
+    
+    logger.info(f"[delete-document] 已删除文档记录：{doc_id}, filename={document.filename}")
+    
+    return {
+        "message": f"文档 '{document.filename}' 已删除",
+        "doc_id": doc_id
+    }
+
+
+@router.post("/{project_id}/documents/clear-all")
+async def clear_all_documents(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    清空项目所有已上传的文档
+    """
+    from app.core.logging import logger
+    import os
+    
+    db_project = db.query(Project).filter(Project.id == project_id).first()
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if db_project.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="No permission to delete this project's documents")
+    
+    documents = db.query(UploadedDocument).filter(
+        UploadedDocument.project_id == project_id
+    ).all()
+    
+    deleted_count = 0
+    for doc in documents:
+        # 删除物理文件
+        if doc.file_path and os.path.exists(doc.file_path):
+            try:
+                os.remove(doc.file_path)
+            except Exception as e:
+                logger.warning(f"[clear-documents] 删除物理文件失败：{doc.file_path}, {e}")
+        
+        db.delete(doc)
+        deleted_count += 1
+    
+    db.commit()
+    
+    logger.info(f"[clear-documents] 已清空 {deleted_count} 个文档")
+    
+    return {
+        "message": f"已清空 {deleted_count} 个文档",
+        "deleted_count": deleted_count
     }

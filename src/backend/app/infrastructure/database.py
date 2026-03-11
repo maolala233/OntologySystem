@@ -43,6 +43,31 @@ class SystemConfig(Base):
     value = Column(JSON, nullable=False)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
+
+class UploadedDocument(Base):
+    """
+    已上传文档记录表
+    用于跟踪项目中上传的文档，支持文档管理（查看列表、删除等）
+    """
+    __tablename__ = "uploaded_documents"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
+    filename = Column(String(255), nullable=False)  # 原始文件名
+    file_path = Column(String(500), nullable=False)  # 文件存储路径
+    file_size = Column(Integer, nullable=True)  # 文件大小（字节）
+    file_type = Column(String(50), nullable=True)  # 文件类型：txt, pdf, doc, docx
+    text_content = Column(LONGTEXT, nullable=True)  # 解析后的文本内容
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    
+    # 关联项目
+    project = relationship("Project", back_populates="documents")
+
+
+# 更新 Project 模型，添加 documents 关系
+Project.documents = relationship("UploadedDocument", back_populates="project", cascade="all, delete-orphan")
+
 # 数据库连接 - 直接使用环境变量确保正确配置
 import os
 MYSQL_HOST = os.getenv('MYSQL_HOST', settings.MYSQL_HOST)
