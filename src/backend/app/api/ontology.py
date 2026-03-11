@@ -1263,6 +1263,7 @@ def generate_ttl_from_graph_data(nodes: List[dict], edges: List[dict]) -> str:
     使用 rdflib 保证 RDF 语义正确性。
     """
     from rdflib import Graph, Literal, RDF, RDFS, OWL, Namespace, URIRef
+    import hashlib
 
     g = Graph()
     ex = Namespace("http://www.example.org/auto_ontology#")
@@ -1282,6 +1283,38 @@ def generate_ttl_from_graph_data(nodes: List[dict], edges: List[dict]) -> str:
             return URIRef(node_id)
         clean = re.sub(r'[^a-zA-Z0-9_\-]', '_', node_id)
         return ex[clean]
+
+    def generate_safe_prop_id(original_name: str) -> str:
+        """
+        生成一个安全的属性ID，优先使用拼音，如果包含非ASCII字符则使用MD5哈希。
+        """
+        if not original_name:
+            return ""
+        
+        # 检查是否包含非ASCII字符
+        if not original_name.isascii():
+            try:
+                from pypinyin import lazy_pinyin
+                # 尝试使用拼音
+                pinyin_id = '_'.join(lazy_pinyin(original_name))
+                # 确保拼音结果是有效的URI片段
+                pinyin_id = re.sub(r'[^a-zA-Z0-9_]', '_', pinyin_id)
+                if pinyin_id and pinyin_id.strip('_') != '':
+                    return pinyin_id
+            except ImportError:
+                pass # Fallback to MD5 if pypinyin is not available
+
+            # 如果拼音失败或不可用，使用MD5哈希
+            md5_hash = hashlib.md5(original_name.encode('utf-8')).hexdigest()
+            return f"prop_{md5_hash}"
+        else:
+            # 如果是纯ASCII，直接清理
+            clean_id = re.sub(r'[^a-zA-Z0-9_]', '_', original_name)
+            if not clean_id or clean_id.strip('_') == '':
+                # Fallback for empty or all-underscore results from cleaning
+                md5_hash = hashlib.md5(original_name.encode('utf-8')).hexdigest()
+                return f"prop_{md5_hash}"
+            return clean_id
 
     node_uris: Dict[str, URIRef] = {}
     for node in nodes:
@@ -1303,12 +1336,21 @@ def generate_ttl_from_graph_data(nodes: List[dict], edges: List[dict]) -> str:
         g.add((uri, RDFS.label, Literal(node_label, lang="zh")))
 
         for prop_name, prop_value in node['data'].get('properties', {}).items():
-            if not prop_value:
+            dataprop_id = generate_safe_prop_id(prop_name)
+            if not dataprop_id:  # Should not happen with MD5 fallback
                 continue
-            dataprop_uri = ex[re.sub(r'[^a-zA-Z0-9_]', '_', prop_name)]
+            
+            dataprop_uri = ex[dataprop_id]
             g.add((dataprop_uri, RDF.type, OWL.DatatypeProperty))
             g.add((dataprop_uri, RDFS.label, Literal(prop_name, lang="zh")))
-            g.add((uri, dataprop_uri, Literal(str(prop_value))))
+            
+            # 如果是类节点，添加 rdfs:domain 关联（即使无值，也声明属性骨架）
+            if node_type == 'owl:Class':
+                g.add((dataprop_uri, RDFS.domain, uri))
+            
+            # 只有在有实际值时才添加三元组数据
+            if prop_value:
+                g.add((uri, dataprop_uri, Literal(str(prop_value), lang="zh") if isinstance(prop_value, str) else Literal(prop_value)))
 
     # 首先收集所有已定义的 ObjectProperty（从 schema 中）
     # 这样可以避免重复创建 ObjectProperty，也能保持正确的标签
@@ -1331,19 +1373,11 @@ def generate_ttl_from_graph_data(nodes: List[dict], edges: List[dict]) -> str:
                 existing_obj_properties[relation] = (prop_id, label)
             else:
                 # 如果没有有效的 prop_id，使用 label 生成有意义的 prop_id
-                if label and label not in INVALID_PROP_IDS:
-                    try:
-                        from pypinyin import lazy_pinyin
-                        generated_id = '_'.join(lazy_pinyin(label))
-                    except ImportError:
-                        generated_id = f"prop_{abs(hash(label)) % 10000}"
-                    # 确保是有效的 URI 片段
-                    generated_id = re.sub(r'[^a-zA-Z0-9_]', '_', generated_id)
-                    if not generated_id or generated_id in INVALID_PROP_IDS or generated_id.strip('_') == '':
-                        generated_id = f"prop_{abs(hash(label)) % 10000}"
-                    existing_obj_properties[relation] = (generated_id, label)
-                else:
-                    existing_obj_properties[relation] = (relation, label)
+                generated_id = generate_safe_prop_id(label)
+                if not generated_id:
+                    # Fallback if generate_safe_prop_id somehow fails
+                    generated_id = f"prop_{abs(hash(label)) % 10000}"
+                existing_obj_properties[relation] = (generated_id, label)
 
     for edge in edges:
         source_id = str(edge['source'])
@@ -1373,16 +1407,10 @@ def generate_ttl_from_graph_data(nodes: List[dict], edges: List[dict]) -> str:
                     prop_id, label = prop_info
                 else:
                     # 如果没有找到，使用 relation_label 生成
-                    try:
-                        from pypinyin import lazy_pinyin
-                        prop_id = '_'.join(lazy_pinyin(relation_label))
-                    except ImportError:
+                    prop_id = generate_safe_prop_id(relation_label)
+                    if not prop_id:
+                        # Fallback if generate_safe_prop_id somehow fails
                         prop_id = f"prop_{abs(hash(relation_label)) % 10000}"
-                
-                # 确保 prop_id 是有效的 URI 片段
-                prop_id = re.sub(r'[^a-zA-Z0-9_]', '_', str(prop_id))
-                if not prop_id or prop_id in INVALID_PROP_IDS or (isinstance(prop_id, str) and prop_id.strip('_') == ''):
-                    prop_id = f"prop_{abs(hash(relation_label)) % 10000}"
                 
                 objprop_uri = ex[prop_id]
                 g.add((objprop_uri, RDF.type, OWL.ObjectProperty))

@@ -386,6 +386,7 @@ class OntologyExtractor:
             # 处理 classes
             for cls in data.get("classes", []):
                 raw_label = cls.get("label", "").strip()
+                raw_llm_id = cls.get("id", "").strip()  # LLM 给出的原始英文 id（如 "Product"）
                 if not raw_label:
                     continue
                 norm_label = self._normalize_term(raw_label, user_intent=user_intent)
@@ -396,6 +397,7 @@ class OntologyExtractor:
                         "label": norm_label,
                         "sub_class_of": None,
                         "data_properties": list(cls.get("data_properties", [])),
+                        "_raw_llm_id": raw_llm_id,  # 保留 LLM 原始 id，用于后续 domain/range/subClassOf 解析
                     }
                 else:
                     # 合并 data_properties（去重）
@@ -437,27 +439,57 @@ class OntologyExtractor:
         label_to_det_id: Dict[str, str] = {
             v["label"]: k for k, v in all_classes.items()
         }
-        # 也支持原始英文 id → det_id 的映射（LLM 可能输出英文名）
-        raw_id_to_det_id: Dict[str, str] = {}
+        # 支持 LLM 原始英文 id → det_id 的映射（核心修复：LLM 输出 domain/range 时用的是它自己给的英文 id）
+        raw_llm_id_to_det_id: Dict[str, str] = {}
         for det_id, cls_data in all_classes.items():
-            raw_id_to_det_id[cls_data.get("id", "")] = det_id
+            llm_id = cls_data.get("_raw_llm_id", "")
+            if llm_id:
+                raw_llm_id_to_det_id[llm_id] = det_id
+            # 同时支持 det_id 自身作为 key（防御性）
+            raw_llm_id_to_det_id[det_id] = det_id
 
         def resolve_class_id(raw: str) -> Optional[str]:
-            """尽力解析出一个 det_id，找不到则返回 None。"""
+            """尽力解析出一个 det_id，找不到则返回 None。
+            
+            解析优先级：
+            1. raw 本身就是 det_id（如 C_xxx）
+            2. raw 与某个类的中文 label 完全匹配
+            3. raw 与某个类的 LLM 原始英文 id 完全匹配
+            4. 模糊匹配：raw 是某个类的 label 子字符串（或反之）
+            """
+            if not raw:
+                return None
+            # 1. 直接匹配 det_id
             if raw in all_classes:
-                return raw  # 已经是 det_id
+                return raw
+            # 2. 匹配中文 label
             if raw in label_to_det_id:
                 return label_to_det_id[raw]
-            if raw in raw_id_to_det_id:
-                return raw_id_to_det_id[raw]
+            # 3. 匹配 LLM 原始英文 id
+            if raw in raw_llm_id_to_det_id:
+                return raw_llm_id_to_det_id[raw]
+            # 4. 模糊匹配：不区分大小写的 LLM id 匹配
+            raw_lower = raw.lower()
+            for llm_id, det_id in raw_llm_id_to_det_id.items():
+                if llm_id.lower() == raw_lower:
+                    return det_id
+            # 5. 中文 label 模糊匹配（子字符串）
+            for lbl, did in label_to_det_id.items():
+                if raw in lbl or lbl in raw:
+                    return did
             return None
 
         # 修正 sub_class_of
         for det_id, cls_data in all_classes.items():
             raw_sco = cls_data.pop("_raw_sub_class_of", None)
+            cls_data.pop("_raw_llm_id", None)  # 清理临时字段
             if raw_sco:
                 resolved = resolve_class_id(raw_sco)
-                cls_data["sub_class_of"] = resolved
+                if resolved and resolved != det_id:  # 防止自引用
+                    cls_data["sub_class_of"] = resolved
+                    logger.info(f"[SchemaExtraction] 子类关系解析成功：{cls_data['label']} → {all_classes[resolved]['label']}")
+                else:
+                    logger.warning(f"[SchemaExtraction] 子类关系无法解析：{cls_data['label']} 的父类 '{raw_sco}' 未找到")
 
         # 修正 domain / range
         valid_obj_props: Dict[str, dict] = {}
@@ -468,11 +500,12 @@ class OntologyExtractor:
                 op_data["domain"] = domain_resolved
                 op_data["range"] = range_resolved
                 valid_obj_props[det_id] = op_data
+                logger.info(f"[SchemaExtraction] ObjectProperty '{op_data['label']}' 解析成功：{all_classes[domain_resolved]['label']} → {all_classes[range_resolved]['label']}")
             else:
                 logger.warning(
                     f"[SchemaExtraction] ObjectProperty '{op_data['label']}' "
                     f"domain/range 无法解析，已丢弃 "
-                    f"(domain={op_data['domain']}, range={op_data['range']})"
+                    f"(domain={op_data['domain']}→{domain_resolved}, range={op_data['range']}→{range_resolved})"
                 )
 
         result = {
@@ -1193,35 +1226,70 @@ class OntologyExtractor:
         master_g.add((onto_uri, OWL.versionInfo, Literal("2.0")))
 
         def get_uri(id_str: str) -> URIRef:
-            return self.EX[safe_id(id_str)]
+            """将 ID 字符串转换为安全 URI。
+            
+            对于类/实例/ObjectProperty，已经是 ASCII 确定性 ID（如 C_xxx），直接使用。
+            对于 data property 键（可能是中文），使用 MD5 哈希生成安全 URI。
+            """
+            import re
+            # 如果是纯 ASCII 且包含字母数字（如 C_xxx, OP_xxx, I_xxx），直接使用
+            if re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', id_str):
+                return self.EX[id_str]
+            # 否则用 MD5 生成安全 URI
+            md5_id = 'DP_' + hashlib.md5(id_str.encode('utf-8')).hexdigest()[:8]
+            return self.EX[md5_id]
 
+        def get_dp_uri(prop_name: str) -> URIRef:
+            """DataProperty 初定 URI：中文属性名特殊处理。"""
+            import re
+            # 纯 ASCII 合法 ID（如 OP_xxx, DP_xxx）直接使用
+            if re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', prop_name):
+                return self.EX[prop_name]
+            # 含中文的属性名：用 MD5 生成确定性 ID
+            md5_id = 'DP_' + hashlib.md5(prop_name.encode('utf-8')).hexdigest()[:8]
+            return self.EX[md5_id]
+
+        # 写入类相关内容（包括 DataProperty 声明）
         for cls in schema.get("classes", []):
-            uri = get_uri(cls["id"])
+            uri = self.EX[cls["id"]]  # 类 ID 已是 C_xxx 格式
             master_g.add((uri, RDF.type, OWL.Class))
             master_g.add((uri, RDFS.label, Literal(cls["label"], lang="zh")))
             if cls.get("sub_class_of"):
-                master_g.add((uri, RDFS.subClassOf, get_uri(cls["sub_class_of"])))
+                parent_id = cls["sub_class_of"]
+                parent_uri = self.EX[parent_id]  # 父类 ID 已是 C_xxx 格式
+                master_g.add((uri, RDFS.subClassOf, parent_uri))
+            # 声明该类的 DataProperty 骨架
+            for dp_name in cls.get("data_properties", []):
+                dp_uri = get_dp_uri(dp_name)
+                master_g.add((dp_uri, RDF.type, OWL.DatatypeProperty))
+                master_g.add((dp_uri, RDFS.label, Literal(dp_name, lang="zh")))
+                master_g.add((dp_uri, RDFS.domain, uri))
 
         for op in schema.get("object_properties", []):
-            uri = get_uri(op["id"])
-            master_g.add((uri, RDF.type, OWL.ObjectProperty))
-            master_g.add((uri, RDFS.label, Literal(op["label"], lang="zh")))
-            master_g.add((uri, RDFS.domain, get_uri(op["domain"])))
-            master_g.add((uri, RDFS.range, get_uri(op["range"])))
+            op_uri = self.EX[op["id"]]  # ObjectProperty ID 已是 OP_xxx 格式
+            master_g.add((op_uri, RDF.type, OWL.ObjectProperty))
+            master_g.add((op_uri, RDFS.label, Literal(op["label"], lang="zh")))
+            master_g.add((op_uri, RDFS.domain, self.EX[op["domain"]]))
+            master_g.add((op_uri, RDFS.range, self.EX[op["range"]]))
 
         for inst in inst_result.get("instances", []):
-            uri = get_uri(inst["id"])
-            master_g.add((uri, RDF.type, OWL.NamedIndividual))
-            master_g.add((uri, RDFS.label, Literal(inst["label"], lang="zh")))
-            master_g.add((uri, RDF.type, get_uri(inst["type"])))
+            inst_uri = self.EX[inst["id"]]  # 实例 ID 已是 I_xxx 格式
+            master_g.add((inst_uri, RDF.type, OWL.NamedIndividual))
+            master_g.add((inst_uri, RDFS.label, Literal(inst["label"], lang="zh")))
+            master_g.add((inst_uri, RDF.type, self.EX[inst["type"]]))
             for pid, targets in inst.get("object_props", {}).items():
                 for t in (targets if isinstance(targets, list) else [targets]):
-                    master_g.add((uri, get_uri(pid), get_uri(t)))
+                    # op ID 已是 OP_xxx, 目标实例 ID 已是 I_xxx
+                    master_g.add((inst_uri, self.EX[pid], self.EX[t]))
             for pid, val in inst.get("data_props", {}).items():
+                dp_uri = get_dp_uri(pid)
+                master_g.add((dp_uri, RDF.type, OWL.DatatypeProperty))
+                master_g.add((dp_uri, RDFS.label, Literal(pid, lang="zh")))
                 master_g.add((
-                    uri, get_uri(pid),
+                    inst_uri, dp_uri,
                     Literal(val, lang="zh") if isinstance(val, str) else Literal(val)
                 ))
+
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         os.makedirs("TTL", exist_ok=True)
