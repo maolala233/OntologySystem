@@ -328,4 +328,43 @@ export const projectsApi = {
         );
         return response.data;
     },
+
+    // 基于已上传文档 ID 进行实例提取
+    extractInstancesFromDocuments: async (
+        projectId: number,
+        documentIds: number[],
+        options?: {
+            chunk_size?: number;
+            chunk_overlap?: number;
+            request_interval?: number;
+            async_mode?: boolean;
+        }
+    ): Promise<any> => {
+        const formData = new FormData();
+        
+        // 传递文档 ID 列表（逗号分隔）
+        formData.append('document_ids', documentIds.join(','));
+        
+        if (options?.chunk_size) {
+            formData.append('chunk_size', String(options.chunk_size));
+        }
+        if (options?.chunk_overlap) {
+            formData.append('chunk_overlap', String(options.chunk_overlap));
+        }
+        if (options?.request_interval) {
+            formData.append('request_interval', String(options.request_interval));
+        }
+        if (options?.async_mode !== undefined) {
+            formData.append('async_mode', String(options.async_mode));
+        }
+
+        const response = await apiClient.post(
+            `/api/projects/${projectId}/extract-instances-from-documents`,
+            formData,
+            {
+                headers: { 'Content-Type': 'multipart/form-data' },
+            }
+        );
+        return response.data;
+    },
 };

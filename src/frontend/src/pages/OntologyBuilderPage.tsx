@@ -564,13 +564,8 @@ const OntologyBuilderPage: React.FC = () => {
                     okText: '上传文档',
                     cancelText: '稍后上传',
                     onOk: () => {
-                        // 触发文档文件选择，并设置回调标志
-                        const fileInput = document.getElementById('llm-schema-input');
-                        if (fileInput) {
-                            // 设置标志，表示文件选择后需要直接进行实例提取
-                            window.shouldExtractInstancesAfterFileSelect = true;
-                            fileInput.click();
-                        }
+                        // 打开文档管理 Modal，让用户上传文档
+                        handleOpenDocumentModal();
                     },
                     onCancel: () => {
                         // 用户选择稍后上传，不做任何操作
@@ -1443,17 +1438,76 @@ const OntologyBuilderPage: React.FC = () => {
         }
     }, [projectId, uploadedDocuments, connectToProgressStream]);
 
-    // 从 Modal 开始实例提取
+    // 从 Modal 开始实例提取（基于已上传文档 ID）
     const handleStartInstanceExtractionFromModal = useCallback(async () => {
         if (!projectId || uploadedDocuments.length === 0) {
             message.warning('请先上传文档再进行实例提取');
             return;
         }
+
+        // 获取已保存的 schema
+        const schemaGraphStr = localStorage.getItem(`project_${projectId}_schema_graph`);
+        if (!schemaGraphStr) {
+            message.warning('请先提取骨架再进行实例提取');
+            return;
+        }
+
         // 关闭文档管理 Modal
         setIsDocumentModalOpen(false);
-        // 调用实例提取函数
-        await handleStartInstanceExtraction();
-    }, [projectId, uploadedDocuments]);
+        setLoading(true);
+
+        try {
+            // 【关键修复】在调用实例提取前，先保存当前画布状态到数据库
+            await projectsApi.updateProject(Number(projectId), {
+                graph_data: { nodes, edges },
+            });
+            await projectsApi.updateOntology(Number(projectId), { nodes, edges });
+            message.info('已保存当前画布状态，开始实例提取...');
+
+            // 获取文档 ID 列表
+            const docIds = uploadedDocuments.map(doc => doc.id);
+
+            // 使用新的 API 基于已上传文档 ID 进行实例提取
+            const response = await projectsApi.extractInstancesFromDocuments(Number(projectId), docIds, {
+                chunk_size: 15000,
+                chunk_overlap: 500,
+                request_interval: 2,
+                async_mode: true,
+            });
+
+            // 如果返回 task_id，说明是异步任务
+            if (response.task_id) {
+                setCurrentTaskId(response.task_id);
+                setIsProgressModalOpen(true);
+                setTaskStatus('running');
+                setTaskProgress(0);
+                setTaskMessage('开始实例提取...');
+                connectToProgressStream(response.task_id);
+                message.info('任务已启动，请在进度窗口查看进度');
+            } else if (response.graph_data) {
+                // 同步模式返回结果
+                const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
+                    response.graph_data.nodes || [],
+                    response.graph_data.edges || []
+                );
+                setNodes(layoutedNodes);
+                setEdges(layoutedEdges);
+                
+                let successMsg = response.message || `实例提取完成：${response.instances?.length || 0} 个实例`;
+                if (response.discarded_edges_count > 0) {
+                    successMsg += ` (⚠️ ${response.discarded_edges_count} 条不合规连线已自动丢弃)`;
+                }
+                message.success(successMsg);
+            } else {
+                message.warning('实例提取完成，但未发现有效实例');
+            }
+        } catch (error: any) {
+            const errorDetail = error.response?.data?.detail || error.message || '未知错误';
+            message.error(`实例提取失败：${errorDetail}`);
+        } finally {
+            setLoading(false);
+        }
+    }, [projectId, uploadedDocuments, nodes, edges, connectToProgressStream]);
 
     // 构建树形数据（带搜索过滤）
     const buildTreeData = useCallback(() => {
@@ -1803,12 +1857,24 @@ const OntologyBuilderPage: React.FC = () => {
                                                 // 检查是否已有 schema（TTL 导入或之前已提取过）
                                                 const schemaGraphStr = localStorage.getItem(`project_${projectId}_schema_graph`);
                                                 
-                                                // 如果已有 schema，直接上传文件到数据库，不自动开始提取
+                                                // 检查是否是从"需要上传文档"Modal 或文档管理 Modal 触发的实例提取
+                                                const shouldExtractAfterUpload = window.shouldExtractInstancesAfterFileSelect === true;
+                                                
+                                                // 如果已有 schema，直接上传文件到数据库
                                                 if (schemaGraphStr) {
                                                     // 上传文件到数据库保存
                                                     await handleUploadDocuments(files);
-                                                    // 上传完成后打开文档管理 Modal
-                                                    handleOpenDocumentModal();
+                                                    
+                                                    // 如果是从实例提取流程触发的，直接开始实例提取
+                                                    if (shouldExtractAfterUpload) {
+                                                        // 重置标志
+                                                        window.shouldExtractInstancesAfterFileSelect = false;
+                                                        // 等待文件上传完成后，使用新上传的文件进行实例提取
+                                                        await handleStartInstanceExtractionWithFiles(files);
+                                                    } else {
+                                                        // 否则打开文档管理 Modal 让用户浏览
+                                                        handleOpenDocumentModal();
+                                                    }
                                                 } else {
                                                     // 第一次提取骨架：先上传文件到数据库，然后打开文档管理 Modal
                                                     // 让用户浏览文档情况，再点击"开始骨架提取"进入规则配置

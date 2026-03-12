@@ -600,6 +600,208 @@ async def extract_schema_endpoint(
 
 
 # ─────────────────────────────────────────────
+#  ★ 基于已上传文档 ID 进行实例提取（新增）
+# ─────────────────────────────────────────────
+
+@router.post("/{project_id}/extract-instances-from-documents")
+async def extract_instances_from_documents(
+    project_id: int,
+    document_ids: str = Form(..., description="已上传文档 ID 列表，逗号分隔"),
+    chunk_size: int = Form(15000),
+    chunk_overlap: int = Form(500),
+    request_interval: int = Form(2),
+    async_mode: str = Form("true", description="是否异步执行（支持取消）"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    【API - 基于已上传文档进行实例提取】
+    基于数据库中已上传的文档 ID 进行实例提取，不需要重新上传文件。
+    适用于文档管理 Modal 中点击"开始实例提取"的场景。
+    
+    关键点：
+    1. 从数据库获取已上传文档
+    2. 解析文档获取文本内容
+    3. 从项目 graph_data 中获取 schema（用户已审核的骨架）
+    4. 使用 schema 约束进行实例提取
+    """
+    from app.core.logging import logger
+    from app.infrastructure.task_manager import task_manager, TaskCancelledError
+
+    # 解析文档 ID 列表
+    doc_ids = [int(id.strip()) for id in document_ids.split(',') if id.strip()]
+    if not doc_ids:
+        raise HTTPException(status_code=400, detail="请提供至少一个文档 ID")
+
+    logger.info(f"[extract-instances-from-documents] 收到请求 - project_id={project_id}, doc_ids={doc_ids}")
+
+    db_project = db.query(Project).filter(Project.id == project_id).first()
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if db_project.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="No permission to upload to this project")
+
+    # 从数据库获取文档记录
+    documents = db.query(UploadedDocument).filter(
+        UploadedDocument.id.in_(doc_ids),
+        UploadedDocument.project_id == project_id
+    ).all()
+
+    if not documents:
+        raise HTTPException(status_code=404, detail="未找到指定的文档")
+
+    if len(documents) != len(doc_ids):
+        raise HTTPException(status_code=400, detail="部分文档不存在或不属于该项目")
+
+    # 获取文件路径列表
+    temp_paths = [doc.file_path for doc in documents if doc.file_path]
+    logger.info(f"[extract-instances-from-documents] 共 {len(temp_paths)} 个文件")
+
+    # 解析文件文本（支持多文件合并）
+    from app.services.parser import FileParser
+    parser = FileParser()
+    text_contents = []
+    for temp_path in temp_paths:
+        if os.path.exists(temp_path):
+            text_content = parser.parse_file(temp_path) or ""
+            text_contents.append(text_content)
+            logger.info(f"[extract-instances-from-documents] 文件解析完成 - file={temp_path}, text_length={len(text_content)}")
+        else:
+            logger.warning(f"[extract-instances-from-documents] 文件不存在 - {temp_path}")
+    
+    # 合并所有文件内容
+    combined_text = "\n\n".join(text_contents)
+    logger.info(f"[extract-instances-from-documents] 合并后总文本长度={len(combined_text)}")
+
+    # 从项目 graph_data 中获取 schema（用户已审核的版本）
+    schema_dict = (db_project.graph_data or {}).get("schema", {})
+    
+    # 如果没有 schema 字段，尝试从 nodes 和 edges 动态构建（兼容 TTL 导入场景）
+    if not schema_dict or not schema_dict.get("classes"):
+        nodes = (db_project.graph_data or {}).get("nodes", [])
+        edges = (db_project.graph_data or {}).get("edges", [])
+        if nodes or edges:
+            # 从 nodes 和 edges 构建 schema
+            schema_dict = build_schema_from_graph_data(nodes, edges)
+    
+    if not schema_dict or not schema_dict.get("classes"):
+        raise HTTPException(status_code=400, detail="请先提取骨架再进行实例提取")
+
+    # 获取 LLM 配置
+    extractor = _build_extractor(db)
+
+    # 异步模式
+    is_async_mode = async_mode.lower() == "true"
+    
+    if is_async_mode:
+        # 异步模式：创建任务并后台执行
+        task_id = task_manager.create_task(message="开始实例提取...")
+        logger.info(f"[extract-instances-from-documents] 任务已创建 - task_id={task_id}")
+        task_manager.start_task(task_id, message="开始实例提取...", detail=f"正在解析 {len(documents)} 个文档...")
+        
+        # 后台执行提取任务
+        async def run_extraction():
+            try:
+                def progress_callback(progress: float, message: str):
+                    task_manager.update_progress(task_id, progress=progress, message=message)
+                
+                # 在线程池中运行同步提取方法
+                inst_result = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: extractor.extract_instances_with_constraints(
+                        text=combined_text,
+                        schema_graph=schema_dict,
+                        chunk_size=chunk_size,
+                        chunk_overlap=chunk_overlap,
+                        request_interval=request_interval,
+                        task_id=task_id,
+                        progress_callback=progress_callback,
+                    )
+                )
+
+                # 从 schema 构建基础图数据
+                schema_graph_data = OntologyExtractor.schema_to_graph_data(schema_dict)
+                
+                # 合并实例到完整图
+                full_graph_data = OntologyExtractor.merge_instances_to_graph_data(
+                    schema_graph_data=schema_graph_data,
+                    instances=inst_result["instances"],
+                )
+
+                # 更新 project graph_data
+                db_project.graph_data = {
+                    "schema": schema_dict,
+                    **full_graph_data,
+                }
+                db.commit()
+
+                task_manager.complete_task(
+                    task_id,
+                    result={
+                        "instances": inst_result["instances"],
+                        "graph_data": full_graph_data,
+                        "discarded_edges_count": inst_result.get("discarded_edges_count", 0),
+                        "schema_graph": schema_dict,
+                        "text_content": combined_text,
+                    },
+                    message=f"实例提取完成：{len(inst_result['instances'])} 个实例" + (
+                        f" ({inst_result.get('discarded_edges_count', 0)} 条不合规连线已自动丢弃)" 
+                        if inst_result.get("discarded_edges_count", 0) > 0 else ""
+                    )
+                )
+            except TaskCancelledError:
+                task_manager.cancel_task(task_id, "用户取消任务")
+            except Exception as e:
+                logger.error(f"[extract-instances-from-documents] 错误：{e}", exc_info=True)
+                task_manager.fail_task(task_id, str(e), "实例提取失败")
+        
+        # 启动后台任务
+        asyncio.create_task(run_extraction())
+        
+        return {
+            "task_id": task_id,
+            "message": "任务已启动，请使用 task_id 查询进度",
+        }
+    else:
+        # 同步模式
+        inst_result = extractor.extract_instances_with_constraints(
+            text=combined_text,
+            schema_graph=schema_dict,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            request_interval=request_interval,
+            task_id=None,
+        )
+
+        # 从 schema 构建基础图数据
+        schema_graph_data = OntologyExtractor.schema_to_graph_data(schema_dict)
+        
+        # 合并实例到完整图
+        full_graph_data = OntologyExtractor.merge_instances_to_graph_data(
+            schema_graph_data=schema_graph_data,
+            instances=inst_result["instances"],
+        )
+
+        # 更新 project graph_data
+        db_project.graph_data = {
+            "schema": schema_dict,
+            **full_graph_data,
+        }
+        db.commit()
+
+        return {
+            "instances": inst_result["instances"],
+            "graph_data": full_graph_data,
+            "discarded_edges_count": inst_result.get("discarded_edges_count", 0),
+            "message": (
+                f"实例提取完成：{len(inst_result['instances'])} 个实例。"
+                f"{'⚠️ ' + str(inst_result.get('discarded_edges_count', 0)) + ' 条不合规连线已自动丢弃。' if inst_result.get('discarded_edges_count', 0) > 0 else ''}"
+                f"请在画布中微调后点击「保存草稿」。"
+            ),
+        }
+
+
+# ─────────────────────────────────────────────
 #  ★ 模块一 API 2：实例提取 (Instance Extraction)
 #
 #  POST /api/projects/{project_id}/extract-instances
@@ -1239,6 +1441,87 @@ def download_ttl(
 # ─────────────────────────────────────────────
 #  内部辅助函数
 # ─────────────────────────────────────────────
+
+def build_schema_from_graph_data(nodes: List[dict], edges: List[dict]) -> dict:
+    """
+    从 nodes 和 edges 动态构建 schema（兼容 TTL 导入场景）。
+    当 TTL 文件导入骨架时，graph_data 中可能没有 schema 字段，
+    但有 nodes 和 edges，本函数从这些数据中提取 schema。
+    """
+    from app.core.logging import logger
+    
+    classes = []
+    object_properties = []
+    
+    logger.info(f"[build_schema_from_graph_data] 开始从 {len(nodes)} 个节点和 {len(edges)} 个边构建 schema")
+    
+    # 从节点中提取类
+    for node in nodes:
+        node_type = node.get('data', {}).get('type', '')
+        if node_type == 'owl:Class':
+            node_id = str(node['id'])
+            node_label = node.get('data', {}).get('label', node_id)
+            
+            # 获取父类（通过 subclassOf 边）
+            parent_classes = []
+            for edge in edges:
+                edge_data = edge.get('data', {})
+                edge_relation = edge_data.get('relation', '')
+                edge_label = edge.get('label', '')
+                # 检查是否是 subclassOf 关系
+                if edge_relation == 'subclass_of' or edge_label in ('subClassOf', 'subclass_of'):
+                    if edge.get('source') == node_id:
+                        parent_classes.append(edge.get('target'))
+            
+            # 获取数据属性（从 properties 中提取键名）
+            data_properties = []
+            node_data = node.get('data', {})
+            properties = node_data.get('properties', {})
+            if isinstance(properties, dict):
+                data_properties = list(properties.keys())
+            
+            logger.info(f"[build_schema_from_graph_data] 添加类：{node_id}, label={node_label}, parent_classes={parent_classes}, data_properties={data_properties}")
+            
+            classes.append({
+                "id": node_id,
+                "label": node_label,
+                "parent_classes": parent_classes,
+                "data_properties": data_properties,
+            })
+    
+    # 从边中提取 ObjectProperty
+    for edge in edges:
+        edge_data = edge.get('data', {})
+        relation = edge_data.get('relation', '')
+        label = edge.get('label', '') or edge_data.get('label', '')
+        
+        # 只提取 ObjectProperty 关系（排除 subClassOf 和 type）
+        if relation and relation not in ('rdf:type', 'type', 'subClassOf', 'subclass_of'):
+            # 也检查 label 是否是 subclassOf 关系
+            if label in ('subClassOf', 'subclass_of'):
+                continue
+                
+            prop_id = edge_data.get('prop_id', '')
+            # 如果 prop_id 为空或无效，使用 label 生成
+            if not prop_id or prop_id in ('', '_', '__', '___'):
+                prop_id = label if label else relation
+            
+            logger.info(f"[build_schema_from_graph_data] 添加 ObjectProperty: {prop_id}, label={label}, domain={edge.get('source')}, range={edge.get('target')}")
+            
+            object_properties.append({
+                "id": prop_id,
+                "label": label,
+                "domain": edge.get('source', ''),
+                "range": edge.get('target', ''),
+            })
+    
+    logger.info(f"[build_schema_from_graph_data] 构建完成：{len(classes)} 个类，{len(object_properties)} 个 ObjectProperty")
+    
+    return {
+        "classes": classes,
+        "object_properties": object_properties,
+    }
+
 
 def _build_extractor(
     db: Session,
