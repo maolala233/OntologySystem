@@ -1,7 +1,8 @@
 # app/services/parser.py - 文件解析器服务
-# 功能：解析多种格式文件（PDF, DOCX, PPTX, XLS等）并提取文本内容
+# 功能：解析多种格式文件（PDF, DOCX, PPTX, XLS 等）并提取文本内容
 
 import os
+import re
 import time
 import pypdf
 import docx
@@ -11,6 +12,36 @@ import subprocess
 from typing import Union, List, Optional
 from app.core.exceptions import FileProcessingException
 from app.core.logging import logger
+
+
+def clean_surrogate_characters(text: str) -> str:
+    """
+    清理文本中的 Unicode 代理字符（surrogate characters）。
+    
+    代理字符是 Unicode 中 U+D800 到 U+DFFF 范围内的字符，它们用于 UTF-16 编码中的
+    辅助平面字符表示，但不能单独存在于有效的 UTF-8/UTF-32 文本中。
+    
+    PDF 文本提取时可能会产生这些无效字符，导致保存到 MySQL 时出现编码错误。
+    
+    Args:
+        text: 输入文本
+        
+    Returns:
+        清理后的文本
+    """
+    if not text:
+        return text
+    
+    # 移除所有代理字符（U+D800 到 U+DFFF）
+    # 这些字符在 Python 字符串中可能以 '\ud800' 到 '\udfff' 形式出现
+    cleaned_text = re.sub(r'[\ud800-\udfff]', '', text)
+    
+    # 记录是否有字符被清理
+    if len(cleaned_text) < len(text):
+        removed_count = len(text) - len(cleaned_text)
+        logger.warning(f"[clean_surrogate_characters] 已移除 {removed_count} 个 Unicode 代理字符")
+    
+    return cleaned_text
 
 
 def process_files(file_list: Union[List, str]) -> str:
@@ -196,6 +227,8 @@ def process_files(file_list: Union[List, str]) -> str:
                     file_content = fo.read()
             
             if file_content.strip():
+                # 清理 Unicode 代理字符，避免保存到数据库时出现编码错误
+                file_content = clean_surrogate_characters(file_content)
                 text_accumulated += f"\n\n<<<<<< 文件开始：{base_name} >>>>>>\n{file_content}\n<<<<<< 文件结束：{base_name} >>>>>>\n"
                 logger.info(f"[文件解析] [{idx+1}/{len(files)}] 文件处理成功，内容长度={len(file_content)} 字符")
             else:

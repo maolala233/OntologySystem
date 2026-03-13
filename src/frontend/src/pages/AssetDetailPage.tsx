@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Button, Spin, message, Descriptions, Tag, Card, Drawer, Form, Input, Divider } from 'antd';
-import { ArrowLeftOutlined, UserOutlined, InfoCircleOutlined, DeploymentUnitOutlined, UnorderedListOutlined, RightOutlined, LeftOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, UserOutlined, InfoCircleOutlined, DeploymentUnitOutlined, UnorderedListOutlined, RightOutlined, LeftOutlined, DownloadOutlined } from '@ant-design/icons';
 import Navbar from '../components/Layout/Navbar';
 import { projectsApi } from '../api/projects';
 import { ProjectData } from '../types/ontology';
@@ -224,6 +224,17 @@ const AssetDetailPage: React.FC = () => {
         }
     };
 
+    // 下载 TTL 文件
+    const handleDownloadTTL = async () => {
+        if (!projectId) return;
+        try {
+            await projectsApi.downloadTTL(Number(projectId));
+            message.success('TTL 文件导出成功');
+        } catch (error: any) {
+            message.error('TTL 文件导出失败');
+        }
+    };
+
     const breadcrumbs = [
         { title: '首页', path: '/' },
         { title: '资产中心', path: '/asset-center' },
@@ -340,6 +351,14 @@ const AssetDetailPage: React.FC = () => {
                         <div className="space-y-2">
                             <Button block onClick={toggleAllInstances} icon={<DeploymentUnitOutlined />}>
                                 {isAllExpanded ? '收起所有实例' : '展开所有实例'}
+                            </Button>
+                            <Button 
+                                block 
+                                onClick={() => handleDownloadTTL()} 
+                                icon={<DownloadOutlined />}
+                                type="primary"
+                            >
+                                导出 TTL 文件
                             </Button>
                         </div>
                     </div>

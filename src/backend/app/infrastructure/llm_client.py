@@ -326,32 +326,35 @@ class LLMClient:
 
         try:
             return json.loads(clean)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
             from app.core.logging import logger
             logger.warning(f"检测到 JSON 解析错误，原始内容：{clean[:200]}..., 正在尝试自动修复...")
+            logger.debug(f"JSON 解析错误详情：{e}")
             
             # 尝试更复杂的修复方法
+            fix_attempts = 0
             try:
                 # 尝试修复完整的 JSON 结构
+                fix_attempts += 1
                 fixed_json = self._try_fix_json_structure(clean)
                 if fixed_json:
+                    logger.debug(f"[JSON 修复尝试 {fix_attempts}] 结构修复：{len(fixed_json)} 字符")
                     parsed = json.loads(fixed_json)
                     # 确保必需字段存在
                     if "classes" not in parsed:
                         parsed["classes"] = []
                     if "instances" not in parsed:
                         parsed["instances"] = []
+                    logger.info(f"[JSON 修复成功] 方法：结构修复")
                     return parsed
             except Exception as e:
-                from app.core.logging import logger
-                logger.debug(f"高级 JSON 修复失败：{e}")
+                logger.debug(f"[JSON 修复尝试 {fix_attempts}] 结构修复失败：{e}")
                 pass
             
-            # 尝试寻找可能的 JSON 部分
-            # 寻找 JSON 对象起始位置
+            # 尝试寻找可能的 JSON 部分 - 括号平衡法
+            fix_attempts += 1
             json_start = clean.find('{')
             if json_start != -1:
-                # 尝试找到匹配的结束位置
                 bracket_count = 0
                 for i, char in enumerate(clean[json_start:], json_start):
                     if char == '{':
@@ -366,11 +369,14 @@ class LLMClient:
                                     parsed["classes"] = []
                                 if "instances" not in parsed:
                                     parsed["instances"] = []
+                                logger.info(f"[JSON 修复成功] 方法：括号平衡法，提取 {len(possible_json)} 字符")
                                 return parsed
-                            except:
-                                pass
+                            except json.JSONDecodeError as je:
+                                logger.debug(f"[JSON 修复尝试 {fix_attempts}] 括号平衡法失败：{je}")
                             break
             
+            # 尝试截断到最后一个完整对象
+            fix_attempts += 1
             last_object_end = clean.rfind("},")
             if last_object_end != -1:
                 fixed_json = clean[:last_object_end + 1] + "]}"
@@ -380,10 +386,14 @@ class LLMClient:
                         parsed["classes"] = []
                     if "instances" not in parsed:
                         parsed["instances"] = []
+                    logger.info(f"[JSON 修复成功] 方法：截断到最后对象，提取 {len(fixed_json)} 字符")
                     return parsed
-                except:
+                except json.JSONDecodeError as je:
+                    logger.debug(f"[JSON 修复尝试 {fix_attempts}] 截断法失败：{je}")
                     pass
             
+            # 尝试在最后一个 } 处截断
+            fix_attempts += 1
             last_bracket = clean.rfind("}")
             if last_bracket != -1:
                 fixed_json = clean[:last_bracket + 1] + "]}"
@@ -393,12 +403,30 @@ class LLMClient:
                         parsed["classes"] = []
                     if "instances" not in parsed:
                         parsed["instances"] = []
+                    logger.info(f"[JSON 修复成功] 方法：最后括号截断，提取 {len(fixed_json)} 字符")
                     return parsed
-                except:
+                except json.JSONDecodeError as je:
+                    logger.debug(f"[JSON 修复尝试 {fix_attempts}] 最后括号截断失败：{je}")
                     pass
             
-            from app.core.logging import logger
-            logger.error(f"JSON 修复失败，返回默认结构，内容：{clean[:100]}...")
+            # 新增：尝试使用 json5 或更宽松的解析
+            fix_attempts += 1
+            try:
+                # 尝试移除末尾的逗号等常见问题
+                cleaned = re.sub(r',\s*}', '}', clean)
+                cleaned = re.sub(r',\s*]', ']', cleaned)
+                parsed = json.loads(cleaned)
+                if "classes" not in parsed:
+                    parsed["classes"] = []
+                if "instances" not in parsed:
+                    parsed["instances"] = []
+                logger.info(f"[JSON 修复成功] 方法：逗号修复，提取 {len(cleaned)} 字符")
+                return parsed
+            except json.JSONDecodeError as je:
+                logger.debug(f"[JSON 修复尝试 {fix_attempts}] 逗号修复失败：{je}")
+                pass
+            
+            logger.error(f"JSON 修复失败 (共尝试 {fix_attempts} 种方法)，返回默认结构，原始内容前 200 字符：{clean[:200]}...")
             return {"classes": [], "instances": []}
     
     def _try_fix_json_structure(self, json_str: str) -> str:

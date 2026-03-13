@@ -1384,8 +1384,11 @@ def download_ttl(
 ):
     """
     下载 TTL 文件。
-    使用纯 ASCII 文件名避免编码问题。
+    文件名格式：ontology_[项目名称].ttl
+    直接使用中文项目名称（URL 编码）。
     """
+    from app.core.logging import logger
+    
     db_project = db.query(Project).filter(Project.id == project_id).first()
     if not db_project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -1403,7 +1406,6 @@ def download_ttl(
             try:
                 latest_ttl_content = generate_ttl_from_graph_data(nodes, edges)
             except Exception as e:
-                from app.core.logging import logger
                 logger.error(f"generate_ttl_from_graph_data 失败：{e}")
     
     # 如果 graph_data 为空或生成失败，使用 ttl_content
@@ -1413,29 +1415,41 @@ def download_ttl(
     if not latest_ttl_content:
         raise HTTPException(status_code=404, detail="TTL file not found for this project")
 
-    # 生成纯 ASCII 文件名（避免任何编码问题）
-    import re
-    safe_name = db_project.name
-    # 移除所有非 ASCII 字符
-    safe_name = safe_name.encode('ascii', 'ignore').decode('ascii')
-    # 替换剩余的特殊字符
-    safe_name = safe_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
-    safe_name = re.sub(r'[^\w\-_.]', '_', safe_name)
-    # 如果文件名为空，使用默认名
-    if not safe_name or safe_name == '_':
-        safe_name = f"project_{db_project.id}"
+    # 生成文件名：ontology_[项目名称].ttl
+    project_name = db_project.name
+    filename = f"ontology_{project_name}.ttl"
     
-    temp_filename = f"ontology_{db_project.id}_{safe_name}.ttl"
+    logger.info(f"[download-ttl] 项目名称：{project_name}, 文件名：{filename}")
+    
+    # 使用 quote 进行 URL 编码，确保中文文件名正确传递
+    # safe='' 表示所有特殊字符都要编码
+    from urllib.parse import quote
+    encoded_filename = quote(filename, safe='')
+    
+    logger.info(f"[download-ttl] 编码后文件名：{encoded_filename}")
     
     # 直接返回内容，不创建临时文件
-    return Response(
+    # 注意：Starlette 的 Response 默认使用 latin-1 编码 headers
+    # 所以 Content-Disposition 必须只包含 ASCII 字符
+    # filename* 使用 RFC 5987 格式，已经是 URL 编码的 ASCII 字符串
+    # filename 参数使用 ASCII 兼容的替代名称
+    
+    # 创建一个 ASCII 兼容的 filename（用于不支持 filename* 的浏览器）
+    ascii_filename = f"ontology_project_{project_id}.ttl"
+    
+    response = Response(
         content=latest_ttl_content.encode('utf-8'),
         media_type="text/turtle; charset=utf-8",
         headers={
-            "Content-Disposition": f'attachment; filename="{temp_filename}"',
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}; filename=\"{ascii_filename}\"",
             "Content-Type": "text/turtle; charset=utf-8",
+            "Access-Control-Expose-Headers": "Content-Disposition",
         },
     )
+    
+    logger.info(f"[download-ttl] Content-Disposition: attachment; filename*=UTF-8''{encoded_filename}; filename=\"{ascii_filename}\"")
+    
+    return response
 
 
 # ─────────────────────────────────────────────

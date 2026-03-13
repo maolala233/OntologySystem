@@ -125,22 +125,61 @@ export const projectsApi = {
     },
 
     // 下载 TTL 文件
-    downloadTTL: async (projectId: number): Promise<Blob> => {
+    downloadTTL: async (projectId: number): Promise<void> => {
+        // 先获取项目信息，使用项目名称构建文件名
+        let projectName = `project_${projectId}`;
+        try {
+            const projectInfo = await apiClient.get(`/api/projects/${projectId}`);
+            projectName = projectInfo.data?.name || `project_${projectId}`;
+        } catch (e) {
+            console.error('[downloadTTL] 获取项目信息失败:', e);
+        }
+        
         const response = await apiClient.get(`/api/projects/${projectId}/download-ttl`, {
             responseType: 'blob'
         });
+
+        // 从响应头获取文件名
+        const contentDisposition = response.headers['content-disposition'];
+        let filename = `ontology_${projectName}.ttl`;
+        
+        console.log('[downloadTTL] Content-Disposition:', contentDisposition);
+        
+        if (contentDisposition) {
+            // 优先解析 filename* 参数（RFC 5987，支持 UTF-8 中文）
+            // 格式：filename*=UTF-8''encoded_filename
+            const filenameStarMatch = contentDisposition.match(/filename\*\s*=\s*UTF-8''([^;\s]+)/i);
+            if (filenameStarMatch && filenameStarMatch[1]) {
+                const encodedFilename = filenameStarMatch[1].trim();
+                console.log('[downloadTTL] 解析 filename* 参数:', encodedFilename);
+                try {
+                    // 使用 decodeURIComponent 解码 URL 编码的字符串
+                    filename = decodeURIComponent(encodedFilename);
+                    console.log('[downloadTTL] 解码后文件名:', filename);
+                } catch (e) {
+                    console.error('[downloadTTL] 解码失败:', e);
+                    filename = encodedFilename;
+                }
+            } else {
+                // 回退到 filename 参数
+                const filenameMatch = contentDisposition.match(/filename="([^"]+)"/i);
+                if (filenameMatch && filenameMatch[1]) {
+                    filename = filenameMatch[1];
+                }
+            }
+        }
+        
+        console.log('[downloadTTL] 最终文件名:', filename);
 
         // 创建下载链接
         const url = window.URL.createObjectURL(new Blob([response.data]));
         const link = document.createElement('a');
         link.href = url;
-        link.setAttribute('download', `ontology_${projectId}.ttl`);
+        link.setAttribute('download', filename);
         document.body.appendChild(link);
         link.click();
         link.remove();
         window.URL.revokeObjectURL(url);
-
-        return response.data;
     },
 
     // ==================== 两阶段提取 API ====================
