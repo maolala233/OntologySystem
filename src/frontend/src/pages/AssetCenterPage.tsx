@@ -61,18 +61,7 @@ const AssetCenterPage: React.FC = () => {
                 projectCount: allProjects.filter(p => p.domain_id === domain.id).length,
             }));
             
-            // 添加一个"全部"选项
-            const allProjectsCount = allProjects.filter(p => !p.domain_id).length;
-            const allDomainOption: DomainWithCount = {
-                id: 0,
-                name: '全部',
-                description: null,
-                created_at: '',
-                updated_at: '',
-                projectCount: allProjectsCount,
-            };
-            
-            setDomains([allDomainOption, ...domainStats]);
+            setDomains(domainStats);
         } catch (error: any) {
             message.error('加载知识域失败');
         } finally {
@@ -181,11 +170,7 @@ const AssetCenterPage: React.FC = () => {
                             className="rounded-xl shadow-md hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1 cursor-pointer"
                             onClick={() => handleDomainSelect(domain)}
                             cover={
-                                <div className={`h-32 sm:h-40 relative overflow-hidden ${
-                                    domain.id === 0 
-                                        ? 'bg-gradient-to-br from-gray-400 via-gray-500 to-gray-600'
-                                        : 'bg-gradient-to-br from-indigo-400 via-purple-400 to-pink-400'
-                                }`}>
+                                <div className="h-32 sm:h-40 relative overflow-hidden bg-gradient-to-br from-indigo-400 via-purple-400 to-pink-400">
                                     {/* 装饰性图案 */}
                                     <div className="absolute inset-0 opacity-20">
                                         <div className="absolute top-4 left-4 w-16 h-16 border-4 border-white rounded-full"></div>
@@ -199,7 +184,7 @@ const AssetCenterPage: React.FC = () => {
 
                                     {/* 项目数量标签 */}
                                     <div className="absolute bottom-4 left-4 right-4">
-                                        <Tag color={domain.id === 0 ? 'default' : 'blue'} className="font-medium text-sm">
+                                        <Tag color="blue" className="font-medium text-sm">
                                             {domain.projectCount} 个项目
                                         </Tag>
                                     </div>

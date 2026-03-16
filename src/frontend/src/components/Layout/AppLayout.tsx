@@ -212,13 +212,24 @@ const AppLayout: React.FC = () => {
         },
     ];
 
+    // 管理员专属菜单项
+    const adminMenuItems = [];
+    
     if (user.username === 'admin') {
-        menuItems.push({
+        adminMenuItems.push({
+            key: '/domain-management',
+            icon: <ClusterOutlined />,
+            label: '知识域管理',
+        });
+        adminMenuItems.push({
             key: 'system-config-trigger',
             icon: <SettingOutlined />,
             label: '系统配置',
         });
     }
+    
+    // 合并菜单项
+    const allMenuItems = [...menuItems, ...adminMenuItems];
 
     return (
         <Layout className="min-h-screen">
@@ -256,7 +267,7 @@ const AppLayout: React.FC = () => {
                         theme="dark"
                         mode="inline"
                         selectedKeys={[location.pathname]}
-                        items={menuItems}
+                        items={allMenuItems}
                         onClick={({ key }) => {
                             if (key === 'system-config-trigger') {
                                 openConfigModal();

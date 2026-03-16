@@ -14,6 +14,7 @@ import MyProjectsPage from './pages/MyProjectsPage';
 import OntologyBuilderPage from './pages/OntologyBuilderPage';
 import AssetCenterPage from './pages/AssetCenterPage';
 import AssetDetailPage from './pages/AssetDetailPage';
+import DomainManagementPage from './pages/DomainManagementPage';
 
 function App() {
     return (
@@ -38,6 +39,7 @@ function App() {
                         <Route path="ontology-builder/:projectId" element={<OntologyBuilderPage />} />
                         <Route path="asset-center" element={<AssetCenterPage />} />
                         <Route path="asset-center/:projectId" element={<AssetDetailPage />} />
+                        <Route path="domain-management" element={<DomainManagementPage />} />
                     </Route>
 
                     {/* 404 重定向 */}
