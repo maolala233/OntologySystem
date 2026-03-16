@@ -281,19 +281,19 @@ const AppLayout: React.FC = () => {
                     />
                 </div>
 
-                {/* 用户信息 - 强制贴合在底部收起按钮上方 */}
+                {/* 用户信息和设置菜单 - 贴合在底部 */}
                 <div
-                    className="px-4"
+                    className="px-4 pb-2"
                     style={{
                         marginTop: 'auto',
-                        paddingBottom: '48px', // 精确匹配 Ant Design Sider Trigger 的高度
                         zIndex: 10,
                         position: 'relative',
                         background: 'transparent'
                     }}
                 >
+                    {/* 用户信息区域 */}
                     <Dropdown menu={{ items: userMenuItems }} placement="topRight">
-                        <div className="flex items-center space-x-3 p-2 rounded-lg hover:bg-gray-700 cursor-pointer transition-colors">
+                        <div className="flex items-center space-x-3 p-2 rounded-lg hover:bg-gray-700 cursor-pointer transition-colors mb-1">
                             <Avatar
                                 size={collapsed ? 32 : 40}
                                 icon={<UserOutlined />}
