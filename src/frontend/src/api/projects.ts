@@ -430,4 +430,35 @@ export const projectsApi = {
         );
         return response.data;
     },
+
+    // ==================== GraphRAG 问答 API ====================
+
+    // GraphRAG 问答接口
+    qaQuery: async (
+        projectId: number,
+        question: string,
+        options?: {
+            selected_domains?: string;
+            top_k?: number;
+        }
+    ): Promise<any> => {
+        const formData = new FormData();
+        formData.append('question', question);
+        
+        if (options?.selected_domains) {
+            formData.append('selected_domains', options.selected_domains);
+        }
+        if (options?.top_k !== undefined) {
+            formData.append('top_k', String(options.top_k));
+        }
+
+        const response = await apiClient.post(
+            `/api/projects/${projectId}/qa`,
+            formData,
+            {
+                headers: { 'Content-Type': 'multipart/form-data' },
+            }
+        );
+        return response.data;
+    },
 };

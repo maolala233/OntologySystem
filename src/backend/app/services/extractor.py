@@ -78,10 +78,25 @@ class OntologyExtractor:
         self.vector_manager = VectorStoreManager(collection_name=collection_name)
 
     # ──────────────────────────────────────────
-    # 文本切分工具
+    # 文本切分工具（带血缘信息）
     # ──────────────────────────────────────────
 
-    def _chunk_text(self, text: str, chunk_size: int = 15000, overlap: int = 500) -> List[str]:
+    def _chunk_text(
+        self, 
+        text: str, 
+        chunk_size: int = 15000, 
+        overlap: int = 500,
+        filename: str = "unknown",
+        start_chunk_index: int = 0
+    ) -> List[Dict[str, Any]]:
+        """
+        切分文本，每个切片携带血缘信息（filename, chunk_index）。
+        
+        返回格式：List[Dict]，每个 Dict 包含：
+        - text: 切片文本内容
+        - filename: 所属文件名
+        - chunk_index: 切片索引（从 start_chunk_index 开始）
+        """
         try:
             chunk_size = int(chunk_size)
         except (ValueError, TypeError):
@@ -90,10 +105,55 @@ class OntologyExtractor:
             overlap = int(overlap)
         except (ValueError, TypeError):
             overlap = 500
-        return self._recursive_split(
+        
+        raw_chunks = self._recursive_split(
             text, chunk_size, overlap,
             separators=["\n\n", "\n", "。 ", "！ ", "？ ", ". ", " ", ""]
         )
+        
+        # 为每个切片添加血缘信息
+        return [
+            {
+                "text": chunk,
+                "filename": filename,
+                "chunk_index": start_chunk_index + i,
+            }
+            for i, chunk in enumerate(raw_chunks)
+        ]
+
+    def _chunk_documents(
+        self,
+        documents: List[Dict[str, Any]],
+        chunk_size: int = 15000,
+        overlap: int = 500,
+    ) -> List[Dict[str, Any]]:
+        """
+        对多个文档进行切分，保持每个文档的血缘信息。
+        
+        参数:
+        - documents: 文档列表，每个文档包含 {"text": str, "filename": str}
+        
+        返回：所有切片的列表，每个切片携带完整的血缘信息
+        """
+        all_chunks = []
+        global_chunk_index = 0
+        
+        for doc in documents:
+            text = doc.get("text", "")
+            filename = doc.get("filename", "unknown")
+            
+            chunks = self._chunk_text(
+                text=text,
+                chunk_size=chunk_size,
+                overlap=overlap,
+                filename=filename,
+                start_chunk_index=global_chunk_index,
+            )
+            
+            all_chunks.extend(chunks)
+            global_chunk_index += len(chunks)
+        
+        return all_chunks
 
     def _sub_chunk_text(self, text: str, chunk_size: int = 800, overlap: int = 100) -> List[str]:
         try:
@@ -648,6 +708,11 @@ class OntologyExtractor:
                 f"例如：`张三_HR` → `{make_deterministic_id('张三', 'Instance')}_{product_code}`。\n"
             )
 
+        # 知识域上下文注入
+        domain_context = ""
+        if product_code:
+            domain_context = f"\n【📚 知识域上下文】当前提取任务属于【{product_code}】知识域。请确保提取的实例与该知识域相关。\n"
+
         system_prompt = f"""你是一位精通 OWL2 DL 的本体工程师，正在执行「实例提取」任务。
 
 【已审核的类 Schema（你只能实例化这些类）】:
@@ -656,6 +721,7 @@ class OntologyExtractor:
 【已审核的关系 Schema（连线只能使用这些关系，且必须符合 domain→range）】:
 {op_list_str}
 {domain_code_clause}
+{domain_context}
 【子类继承说明】:
 - 如果某个类有子类，你可以将实例分配给该类或其任意子类。
 - 例如：如果"设备"有子类"量子设备"，而文档中提到"量子密钥分发设备"，则应该将其实例化为"量子设备"类（更具体的子类），而不是"设备"类（父类）。
@@ -678,6 +744,10 @@ class OntologyExtractor:
    例如不要提取出 label 为"监管机构"的实例，而应该提取出 label 为"国家金融监督管理总局"等更具体的机构名称。
 10. 【属性防冗余】: 如果某个专有名词（如"二代支付系统""人行清算模拟系统"）已经作为实例的 label 出现，就不要再把同样的字符串重复放入 data_props 的"名称""系统名称"等字段中；
     data_props 应主要用于存放该实例的版本号、金额、日期、状态等真正的数据字段，而不是简单重复 label。
+11. 【🔴 强制溯源】: 每个实例**必须**包含 `source_quote` 字段，该字段必须一字不差地摘抄原文原句，作为提取该实例的依据。
+    - source_quote 必须是原文中的完整句子，不能改写或缩写。
+    - 如果无法找到直接支持的原文句子，该实例不应被提取。
+    - 示例：如果原文是"人行清算模拟系统是二代支付系统的重要组成部分"，则提取"人行清算模拟系统"实例时，source_quote 应该是"人行清算模拟系统是二代支付系统的重要组成部分"。
 """
 
         user_prompt_template = """【当前文本片段】:
@@ -690,6 +760,7 @@ class OntologyExtractor:
       "id": "ZhangSan",
       "type": "Employee",
       "label": "张三",
+      "source_quote": "张三同志现任技术部经理，工号 001，职级 P6。",
       "object_props": {{
         "worksIn": ["DeptA"]
       }},
@@ -700,6 +771,10 @@ class OntologyExtractor:
     }}
   ]
 }}
+
+【重要提醒】:
+- 每个实例**必须**包含 `source_quote` 字段，必须一字不差地摘抄上方文本片段中的原句。
+- source_quote 是提取该实例的唯一依据，不能编造或改写。
 """
 
         chunks = self._chunk_text(text, chunk_size=chunk_size, overlap=chunk_overlap)
@@ -723,8 +798,19 @@ class OntologyExtractor:
             # 检查取消
             check_cancelled()
             
-            logger.info(f"[InstanceExtraction] 处理分块 {i+1}/{total_chunks}")
-            user_prompt = user_prompt_template.format(chunk=chunk)
+            # chunk 现在是一个字典，包含 text, filename, chunk_index
+            if isinstance(chunk, dict):
+                chunk_text = chunk.get("text", "")
+                chunk_filename = chunk.get("filename", "unknown")
+                chunk_index = chunk.get("chunk_index", i)
+            else:
+                # 兼容旧格式（纯字符串）
+                chunk_text = chunk
+                chunk_filename = "unknown"
+                chunk_index = i
+            
+            logger.info(f"[InstanceExtraction] 处理分块 {i+1}/{total_chunks} (file={chunk_filename}, index={chunk_index})")
+            user_prompt = user_prompt_template.format(chunk=chunk_text)
             data = self._call_llm(system_prompt, user_prompt, task_id=task_id, timeout=300)
 
             if not data:
@@ -747,6 +833,23 @@ class OntologyExtractor:
                 continue
 
             for inst in raw_instances:
+                # ── 埋点入图：从 LLM 返回中提取 source_quote，并添加溯源信息 ──
+                source_quote = inst.get("source_quote", "")
+                
+                # 如果 LLM 没有返回 source_quote，尝试从 chunk 中 fallback
+                if not source_quote:
+                    # 尝试使用实例 label 作为 fallback
+                    source_quote = inst.get("label", "")
+                
+                # 将溯源信息以隐藏属性形式存入实例
+                inst["_source_file"] = chunk_filename
+                inst["_source_chunk_index"] = chunk_index
+                inst["_source_quote"] = source_quote
+                # 如果传入了 product_code，也存储 domain 信息
+                if product_code:
+                    inst["_domain"] = product_code
+                
+                logger.debug(f"[InstanceExtraction] 实例 '{inst.get('label')}' 溯源：file={chunk_filename}, chunk={chunk_index}")
                 raw_label = inst.get("label", "").strip()
                 raw_type = inst.get("type", "").strip()
 
@@ -1041,6 +1144,19 @@ class OntologyExtractor:
         for inst in instances:
             iid = inst["id"]
             if iid not in existing_ids:
+                # 合并 data_props 和溯源信息到节点 properties
+                node_properties = dict(inst.get("data_props", {}))
+                
+                # 将溯源信息作为隐藏属性添加到 properties 中（以_开头）
+                if "_source_file" in inst:
+                    node_properties["_source_file"] = inst["_source_file"]
+                if "_source_chunk_index" in inst:
+                    node_properties["_source_chunk_index"] = inst["_source_chunk_index"]
+                if "_source_quote" in inst:
+                    node_properties["_source_quote"] = inst["_source_quote"]
+                if "_domain" in inst:
+                    node_properties["_domain"] = inst["_domain"]
+                
                 nodes.append({
                     "id": iid,
                     "type": "custom",
@@ -1048,7 +1164,7 @@ class OntologyExtractor:
                     "data": {
                         "label": inst["label"],
                         "type": "owl:NamedIndividual",
-                        "properties": inst.get("data_props", {}),
+                        "properties": node_properties,
                     },
                 })
                 existing_ids.add(iid)
@@ -1092,13 +1208,32 @@ class OntologyExtractor:
     # ──────────────────────────────────────────
 
     def sync_ttl_to_vector_store(
-        self, ttl_file_path: str, progress=None, delete_old: bool = True
+        self, 
+        ttl_file_path: str, 
+        progress=None, 
+        delete_old: bool = True,
+        project_id: Optional[int] = None,
+        domain: Optional[str] = None,
     ) -> str:
+        """
+        同步 TTL 文件到向量库，支持知识域隔离和溯源信息。
+        
+        参数:
+        - ttl_file_path: TTL 文件路径
+        - progress: 进度回调函数
+        - delete_old: 是否删除旧数据
+        - project_id: 项目 ID，用于逻辑隔离
+        - domain: 知识域名称，用于按知识域过滤
+        """
         filename = os.path.basename(ttl_file_path)
         if delete_old:
-            self.vector_manager.delete_by_expr(
-                f'metadata like "%\\"source_file\\": \\"{filename}\\"%"'
-            )
+            # 使用 project_id 进行更精确的删除
+            if project_id:
+                self.vector_manager.delete_by_expr(f'project_id == {project_id}')
+            else:
+                self.vector_manager.delete_by_expr(
+                    f'metadata like "%\\"source_file\\": \\"{filename}\\"%"'
+                )
 
         g = Graph()
         try:
@@ -1127,38 +1262,80 @@ class OntologyExtractor:
             s_label = labels.get(s, s_id)
             p_id = get_local(p)
             p_label = labels.get(p, p_id)
+            
+            # ★ 从 TTL 中提取溯源信息（如果存在）
+            # 检查节点是否有 _source_file, _source_quote 等隐藏属性
+            source_file = filename  # 默认使用 TTL 文件名
+            source_quote = ""  # 默认使用三元组拼接的文本作为 fallback
+            
+            # 尝试从 TTL 中提取隐藏属性（如果 TTL 中包含这些属性）
+            for pred, obj in g.predicate_objects(s):
+                pred_local = get_local(pred)
+                if pred_local == "_source_file":
+                    source_file = str(obj)
+                elif pred_local == "_source_quote":
+                    source_quote = str(obj)
+                elif pred_local == "_domain":
+                    domain = str(obj)  # 从 TTL 中覆盖 domain
+            
             base_meta = {
                 "source": "ttl_sync",
-                "source_file": filename,
+                "source_file": source_file,
                 "subject": s_label,
                 "subject_id": s_id,
                 "predicate": p_id,
+                "_source_file": source_file,  # 冗余存储到 meta 中
+                "_source_quote": source_quote,
             }
+            
             if isinstance(o, URIRef):
                 o_id = get_local(o)
                 o_label = labels.get(o, o_id)
                 text = f"{s_label} 的 {p_label} 是 {o_label}"
-                meta = {**base_meta, "object": o_label, "object_id": o_id}
+                meta = {
+                    **base_meta, 
+                    "object": o_label, 
+                    "object_id": o_id,
+                }
             else:
                 o_val = str(o)
                 text = f"{s_label} 的 {p_label} 属性值为 {o_val}"
-                meta = {**base_meta, "object": o_val}
+                meta = {
+                    **base_meta, 
+                    "object": o_val,
+                }
+            
+            # 如果没有从 TTL 中提取到 source_quote，使用三元组拼接的文本作为 fallback
+            if not source_quote:
+                source_quote = text
 
             knowledge_texts.append(text)
             knowledge_metas.append(meta)
             count += 1
 
             if len(knowledge_texts) >= 100:
-                self.vector_manager.insert_data(knowledge_texts, knowledge_metas)
+                # ★ 传入 project_id 和 domain 参数，支持知识域隔离
+                self.vector_manager.insert_data(
+                    knowledge_texts, 
+                    knowledge_metas,
+                    project_id=project_id,
+                    domain=domain,
+                )
                 knowledge_texts = []
                 knowledge_metas = []
                 if progress:
                     progress(i / total, desc=f"同步中... {i}/{total}")
 
         if knowledge_texts:
-            self.vector_manager.insert_data(knowledge_texts, knowledge_metas)
+            # ★ 传入 project_id 和 domain 参数，支持知识域隔离
+            self.vector_manager.insert_data(
+                knowledge_texts, 
+                knowledge_metas,
+                project_id=project_id,
+                domain=domain,
+            )
 
-        return f"✅ 同步完成：共处理 {count} 条三元组到库 {self.vector_manager.collection_name}"
+        return f"✅ 同步完成：共处理 {count} 条三元组到库 {self.vector_manager.collection_name} (project_id={project_id}, domain={domain})"
 
     # ──────────────────────────────────────────
     # 兼容旧接口（内部转两阶段调用）

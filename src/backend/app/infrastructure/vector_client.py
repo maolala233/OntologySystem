@@ -288,15 +288,24 @@ class VectorStoreManager:
                 col.load()
                 return col
 
-            logger.info(f"创建新集合: {self.collection_name} (dim={self.embedding_dim})")
+            logger.info(f"创建新集合：{self.collection_name} (dim={self.embedding_dim})")
+            # ★ 多知识域逻辑隔离 Schema：
+            # - project_id (INT64): 项目 ID，用于按项目隔离数据
+            # - domain (VARCHAR): 知识域名称，用于按知识域过滤
+            # - source_file (VARCHAR): 源文件名，用于溯源
+            # - source_quote (VARCHAR): 原文引用，用于溯源
             fields = [
                 FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=True),
                 FieldSchema(name="vector", dtype=DataType.FLOAT_VECTOR, dim=self.embedding_dim),
                 FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=65535),
                 FieldSchema(name="metadata", dtype=DataType.VARCHAR, max_length=65535),
-                FieldSchema(name="content_hash", dtype=DataType.VARCHAR, max_length=64) # 用于去重
+                FieldSchema(name="content_hash", dtype=DataType.VARCHAR, max_length=64),  # 用于去重
+                FieldSchema(name="project_id", dtype=DataType.INT64),  # ★ 项目 ID，用于逻辑隔离
+                FieldSchema(name="domain", dtype=DataType.VARCHAR, max_length=255),  # ★ 知识域，用于过滤
+                FieldSchema(name="source_file", dtype=DataType.VARCHAR, max_length=255),  # ★ 源文件名
+                FieldSchema(name="source_quote", dtype=DataType.VARCHAR, max_length=65535),  # ★ 原文引用
             ]
-            schema = CollectionSchema(fields, "Knowledge Graph RAG Collection")
+            schema = CollectionSchema(fields, "Knowledge Graph RAG Collection with Domain Isolation")
             collection = Collection(self.collection_name, schema)
 
             index_params = {
@@ -305,10 +314,16 @@ class VectorStoreManager:
                 "params": {"nlist": 128}
             }
             collection.create_index(field_name="vector", index_params=index_params)
+            
+            # ★ 为 project_id 和 domain 创建标量索引，加速过滤查询
+            collection.create_index(field_name="project_id", index_name="idx_project_id")
+            collection.create_index(field_name="domain", index_name="idx_domain")
+            collection.create_index(field_name="source_file", index_name="idx_source_file")
+            
             collection.load()
             return collection
         except Exception as e:
-            logger.warning(f"集合创建/加载失败: {e}")
+            logger.warning(f"集合创建/加载失败：{e}")
             return None
 
     def get_embedding(self, text: str) -> List[float]:
@@ -325,7 +340,22 @@ class VectorStoreManager:
         content = f"{text}_{json.dumps(metadata, sort_keys=True)}"
         return hashlib.sha256(content.encode()).hexdigest()
 
-    def insert_data(self, texts: List[str], metadatas: List[Dict]):
+    def insert_data(
+        self, 
+        texts: List[str], 
+        metadatas: List[Dict],
+        project_id: Optional[int] = None,
+        domain: Optional[str] = None,
+    ):
+        """
+        插入数据到向量库，支持知识域隔离和溯源信息。
+        
+        参数:
+        - texts: 文本内容列表
+        - metadatas: 元数据列表（每个 Dict 可包含 source_file, source_quote 等）
+        - project_id: 项目 ID（可选），用于逻辑隔离
+        - domain: 知识域名称（可选），用于按知识域过滤
+        """
         # 强制重新检查 Milvus 配置状态
         self._force_check_milvus_config()
         logger.info(f"insert_data called - is_enabled: {self.is_enabled}, has_collection: {self.collection is not None}, texts_count: {len(texts) if texts else 0}")
@@ -337,6 +367,10 @@ class VectorStoreManager:
         valid_texts = []
         valid_metas = []
         hashes = []
+        project_ids = []
+        domains = []
+        source_files = []
+        source_quotes = []
 
         # 1. 批量获取向量并检查重复
         for t, m in zip(texts, metadatas):
@@ -369,10 +403,15 @@ class VectorStoreManager:
                     valid_texts.append(safe_text)
                     valid_metas.append(safe_meta)
                     hashes.append(c_hash)
+                    # ★ 提取标量字段用于隔离
+                    project_ids.append(project_id if project_id is not None else m.get("project_id", 0))
+                    domains.append(domain if domain is not None else m.get("domain", ""))
+                    source_files.append(m.get("source_file", ""))
+                    source_quotes.append(m.get("source_quote", safe_text))  # 如果没有 source_quote，使用文本作为 fallback
             except Exception as e:
-                logger.warning(f"数据处理失败: {e}")
+                logger.warning(f"数据处理失败：{e}")
 
-        # 2. 分批次存入 Milvus
+        # 2. 分批次存入 Milvus（包含标量字段）
         if vectors:
             batch_size = 50
             for i in range(0, len(vectors), batch_size):
@@ -380,12 +419,25 @@ class VectorStoreManager:
                 b_texts = valid_texts[i:i + batch_size]
                 b_metas = valid_metas[i:i + batch_size]
                 b_hashes = hashes[i:i + batch_size]
+                b_project_ids = project_ids[i:i + batch_size]
+                b_domains = domains[i:i + batch_size]
+                b_source_files = source_files[i:i + batch_size]
+                b_source_quotes = source_quotes[i:i + batch_size]
                 
                 try:
-                    self.collection.insert([b_vectors, b_texts, b_metas, b_hashes])
-                    logger.info(f"Milvus 写入成功: {len(b_vectors)} 条记录")
+                    self.collection.insert([
+                        b_vectors, 
+                        b_texts, 
+                        b_metas, 
+                        b_hashes,
+                        b_project_ids,
+                        b_domains,
+                        b_source_files,
+                        b_source_quotes,
+                    ])
+                    logger.info(f"Milvus 写入成功：{len(b_vectors)} 条记录 (project_id={project_id}, domain={domain})")
                 except Exception as e:
-                    logger.error(f"Milvus 写入失败: {e}")
+                    logger.error(f"Milvus 写入失败：{e}")
             
             self.collection.flush()
 
@@ -400,7 +452,27 @@ class VectorStoreManager:
         except Exception as e:
             logger.error(f"Milvus 删除失败: {e}")
 
-    def search(self, query_text: str, top_k: int = 5):
+    def search(
+        self, 
+        query_text: str, 
+        top_k: int = 5,
+        project_id: Optional[int] = None,
+        domain: Optional[str] = None,
+        source_file: Optional[str] = None,
+    ):
+        """
+        搜索向量库，支持按项目/知识域/源文件过滤。
+        
+        参数:
+        - query_text: 查询文本
+        - top_k: 返回结果数量
+        - project_id: 项目 ID（可选），用于按项目过滤
+        - domain: 知识域名称（可选），用于按知识域过滤
+        - source_file: 源文件名（可选），用于按文件过滤
+        
+        返回:
+        - 搜索结果列表，每个结果包含 text, metadata, distance, source_file, source_quote
+        """
         if not self.is_enabled or not self.collection:
             return []
         
@@ -411,15 +483,32 @@ class VectorStoreManager:
             logger.warning(f"top_k 参数 '{top_k}' 无法转换为整数，使用默认值 5")
             top_k_int = 5
         
+        # 构建过滤表达式
+        filter_expr = ""
+        if project_id is not None:
+            filter_expr = f"project_id == {project_id}"
+        if domain:
+            if filter_expr:
+                filter_expr += f" and domain == \"{domain}\""
+            else:
+                filter_expr = f"domain == \"{domain}\""
+        if source_file:
+            if filter_expr:
+                filter_expr += f" and source_file == \"{source_file}\""
+            else:
+                filter_expr = f"source_file == \"{source_file}\""
+        
         query_vec = self.get_embedding(query_text)
         search_params = {"metric_type": "COSINE", "params": {"nprobe": 10}}
         
+        # ★ 使用 expr 参数进行过滤
         results = self.collection.search(
             data=[query_vec],
             anns_field="vector",
             param=search_params,
             limit=top_k_int,
-            output_fields=["text", "metadata"]
+            expr=filter_expr if filter_expr else None,
+            output_fields=["text", "metadata", "project_id", "domain", "source_file", "source_quote"]
         )
         
         hits = []
@@ -427,7 +516,11 @@ class VectorStoreManager:
             hits.append({
                 "text": hit.entity.get("text"),
                 "metadata": json.loads(hit.entity.get("metadata")),
-                "distance": hit.distance
+                "distance": hit.distance,
+                "project_id": hit.entity.get("project_id"),
+                "domain": hit.entity.get("domain"),
+                "source_file": hit.entity.get("source_file"),
+                "source_quote": hit.entity.get("source_quote"),
             })
         return hits
 

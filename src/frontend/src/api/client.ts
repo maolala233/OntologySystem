@@ -12,7 +12,7 @@ const getApiBaseUrl = () => {
     // 方法 2: 使用当前页面的 host（推荐）
     const currentHost = window.location.host;
     
-    // 如果是 localhost 或 127.0.0.1，使用 localhost:3001
+    // 如果是 localhost 或 127.0.0.1，使用 localhost:3001（与后端端口一致）
     if (currentHost === 'localhost' || currentHost === '127.0.0.1') {
         return 'http://localhost:3001';
     }

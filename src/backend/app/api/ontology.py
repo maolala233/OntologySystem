@@ -667,9 +667,9 @@ async def extract_instances_from_documents(
     
     关键点：
     1. 从数据库获取已上传文档
-    2. 解析文档获取文本内容
+    2. 解析文档获取文本内容（带文档元数据：filename, chunk_index）
     3. 从项目 graph_data 中获取 schema（用户已审核的骨架）
-    4. 使用 schema 约束进行实例提取
+    4. 使用 schema 约束进行实例提取，传递知识域信息
     """
     from app.core.logging import logger
     from app.infrastructure.task_manager import task_manager, TaskCancelledError
@@ -733,6 +733,15 @@ async def extract_instances_from_documents(
     if not schema_dict or not schema_dict.get("classes"):
         raise HTTPException(status_code=400, detail="请先提取骨架再进行实例提取")
 
+    # 获取知识域信息（用于注入到 Prompt 中）
+    domain_name = ""
+    if db_project.domain_id:
+        domain = db.query(KnowledgeDomain).filter(KnowledgeDomain.id == db_project.domain_id).first()
+        if domain:
+            domain_name = domain.name
+    # 同时支持 domains 字段（多知识域逗号分隔）
+    domains_str = db_project.domains or domain_name
+    
     # 获取 LLM 配置
     extractor = _build_extractor(db)
 
@@ -751,7 +760,7 @@ async def extract_instances_from_documents(
                 def progress_callback(progress: float, message: str):
                     task_manager.update_progress(task_id, progress=progress, message=message)
                 
-                # 在线程池中运行同步提取方法
+                # 在线程池中运行同步提取方法，传递知识域信息
                 inst_result = await asyncio.get_event_loop().run_in_executor(
                     None,
                     lambda: extractor.extract_instances_with_constraints(
@@ -760,6 +769,7 @@ async def extract_instances_from_documents(
                         chunk_size=chunk_size,
                         chunk_overlap=chunk_overlap,
                         request_interval=request_interval,
+                        product_code=domains_str,  # 传递知识域作为 product_code
                         task_id=task_id,
                         progress_callback=progress_callback,
                     )
@@ -792,7 +802,7 @@ async def extract_instances_from_documents(
                     },
                     message=f"实例提取完成：{len(inst_result['instances'])} 个实例" + (
                         f" ({inst_result.get('discarded_edges_count', 0)} 条不合规连线已自动丢弃)" 
-                        if inst_result.get("discarded_edges_count", 0) > 0 else ""
+                        if inst_result.get('discarded_edges_count', 0) > 0 else ""
                     )
                 )
             except TaskCancelledError:
@@ -809,13 +819,14 @@ async def extract_instances_from_documents(
             "message": "任务已启动，请使用 task_id 查询进度",
         }
     else:
-        # 同步模式
+        # 同步模式，传递知识域信息
         inst_result = extractor.extract_instances_with_constraints(
             text=combined_text,
             schema_graph=schema_dict,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             request_interval=request_interval,
+            product_code=domains_str,  # 传递知识域作为 product_code
             task_id=None,
         )
 
@@ -2477,4 +2488,129 @@ async def clear_all_documents(
     return {
         "message": f"已清空 {deleted_count} 个文档",
         "deleted_count": deleted_count
+    }
+
+
+# ─────────────────────────────────────────────
+#  ★ GraphRAG 问答接口
+# ─────────────────────────────────────────────
+
+@router.post("/{project_id}/qa")
+async def qa_endpoint(
+    project_id: int,
+    question: str = Form(..., description="用户问题"),
+    selected_domains: Optional[str] = Form(None, description="选中的知识域列表，逗号分隔"),
+    top_k: int = Form(5, description="召回的 Top-K 结果数量"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    【GraphRAG 问答接口】
+    基于向量召回 + LLM 生成回答，支持知识域过滤和溯源。
+    
+    返回格式：
+    {
+        "answer": "回答内容 [1][2]...",
+        "references": [
+            {"id": 1, "file": "filename.pdf", "quote": "原文引用..."},
+            ...
+        ]
+    }
+    """
+    from app.core.logging import logger
+    from app.infrastructure.vector_client import VectorStoreManager
+    from app.infrastructure.llm_client import LLMClient
+    from app.infrastructure.database import SystemConfig
+    
+    db_project = db.query(Project).filter(Project.id == project_id).first()
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if db_project.owner_id != current_user.id and not db_project.is_published:
+        raise HTTPException(status_code=403, detail="No permission to access this project")
+    
+    # 获取 LLM 配置
+    db_config = db.query(SystemConfig).filter(SystemConfig.key == "llm_config").first()
+    llm_config = db_config.value if db_config else {}
+    
+    api_key = llm_config.get("api_key") or settings.VLLM_API_KEY
+    base_url = llm_config.get("base_url") or settings.VLLM_BASE_URL
+    model = llm_config.get("model") or settings.VLLM_MODEL
+    
+    # 初始化向量管理器
+    vector_manager = VectorStoreManager(collection_name=f"project_{project_id}")
+    
+    if not vector_manager.is_enabled or not vector_manager.collection:
+        raise HTTPException(status_code=503, detail="向量库未启用或不可用")
+    
+    # 构建 Milvus 过滤表达式
+    expr = f'project_id == {project_id}'
+    if selected_domains:
+        domains = [d.strip() for d in selected_domains.split(',') if d.strip()]
+        if domains:
+            domain_expr = ' or '.join([f'domain == "{d}"' for d in domains])
+            expr = f'{expr} and ({domain_expr})'
+    
+    logger.info(f"[QA] 使用过滤表达式：{expr}")
+    
+    # 向量召回
+    try:
+        results = vector_manager.search_with_expr(query_text=question, expr=expr, top_k=top_k)
+    except Exception as e:
+        logger.error(f"[QA] 向量召回失败：{e}")
+        raise HTTPException(status_code=500, detail=f"向量检索失败：{str(e)}")
+    
+    if not results:
+        return {
+            "answer": "未找到相关知识片段，请尝试其他问题或上传更多文档。",
+            "references": []
+        }
+    
+    # 构建参考上下文
+    context_parts = []
+    references = []
+    
+    for i, result in enumerate(results, 1):
+        metadata = result.get("metadata", {})
+        source_file = metadata.get("source_file", "未知文件")
+        source_quote = metadata.get("source_quote", metadata.get("text", result.get("text", "")))
+        
+        context_parts.append(f"[{i}] {source_quote}")
+        references.append({
+            "id": i,
+            "file": source_file,
+            "quote": source_quote,
+        })
+    
+    context = "\n\n".join(context_parts)
+    
+    # 构建 Prompt
+    system_prompt = """你是一位知识图谱问答专家。请基于提供的参考片段回答问题。
+
+【要求】：
+1. 只根据参考片段中的信息回答，不要编造未知内容。
+2. 在回答句末标注引用标号，例如 [1]、[2]。
+3. 如果参考片段中没有相关信息，请如实告知用户。
+"""
+    
+    user_prompt = f"""【参考片段】：
+{context}
+
+【用户问题】：
+{question}
+
+请回答用户的问题，并在句末标注引用标号。
+"""
+    
+    # 调用 LLM 生成回答
+    llm_client = LLMClient(api_key=api_key, base_url=base_url, model=model)
+    try:
+        response = llm_client.call_llm(system_prompt, user_prompt, max_retries=3, stream=False)
+        answer = response.get("content", "") if isinstance(response, dict) else str(response)
+    except Exception as e:
+        logger.error(f"[QA] LLM 调用失败：{e}")
+        raise HTTPException(status_code=500, detail=f"LLM 生成回答失败：{str(e)}")
+    
+    return {
+        "answer": answer,
+        "references": references,
     }

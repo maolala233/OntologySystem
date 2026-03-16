@@ -24,6 +24,7 @@ class Project(Base):
     description = Column(String(500), nullable=True)
     owner_id = Column(Integer, ForeignKey("users.id"))
     domain_id = Column(Integer, ForeignKey("knowledge_domains.id"), nullable=True)  # 知识域 ID
+    domains = Column(String(500), nullable=True)  # 知识域名称（冗余字段，用于快速访问，如"IT 架构，财务规范"）
     
     # 图谱数据（JSON 格式，用于前端 React Flow 渲染）
     graph_data = Column(JSON, nullable=True)

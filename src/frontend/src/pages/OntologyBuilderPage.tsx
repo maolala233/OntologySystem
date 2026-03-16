@@ -56,6 +56,9 @@ import {
     LoadingOutlined,
     FileDoneOutlined,
     ClearOutlined,
+    MessageOutlined,
+    BookOutlined,
+    SendOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import Navbar from '../components/Layout/Navbar';
@@ -63,11 +66,13 @@ import { OntologyNode, OntologyEdge } from '../types/ontology';
 import { projectsApi } from '../api/projects';
 import { getLayoutedElements } from '../utils/layoutUtils';
 import { systemApi } from '../api/system';
+import { getDomains, KnowledgeDomain } from '../api/domains';
 import apiClient from '../api/client';
 import D3ForceGraph from '../components/OntologyGraph/D3ForceGraph';
 import KnowledgeDomainSelector from '../components/KnowledgeDomainSelector';
 
 const { TreeNode } = Tree;
+const { TextArea } = Input;
 const { Search } = AntInput;
 
 // 扩展 Window 接口以支持自定义属性
@@ -121,6 +126,16 @@ const OntologyBuilderPage: React.FC = () => {
     const [isNewNode, setIsNewNode] = useState(false);
     const [highlightNodeId, setHighlightNodeId] = useState<string | null>(null);
     const [isDomainModalOpen, setIsDomainModalOpen] = useState(false);
+    
+    // GraphRAG 问答相关状态
+    const [isQAModalOpen, setIsQAModalOpen] = useState(false);
+    const [qaQuestion, setQaQuestion] = useState('');
+    const [qaAnswer, setQaAnswer] = useState('');
+    const [qaReferences, setQaReferences] = useState<any[]>([]);
+    const [isQALoading, setIsQALoading] = useState(false);
+    const [selectedQADomains, setSelectedQADomains] = useState<number[]>([]);
+    const [availableDomains, setAvailableDomains] = useState<KnowledgeDomain[]>([]);
+    const [isDomainsLoading, setIsDomainsLoading] = useState(false);
     
     // 文档管理相关状态
     const [uploadedDocuments, setUploadedDocuments] = useState<any[]>([]);
@@ -1659,6 +1674,79 @@ const OntologyBuilderPage: React.FC = () => {
     const instanceCount = nodes.filter(n => n.data?.type === 'owl:NamedIndividual').length;
 
 
+    // ==================== GraphRAG 问答相关函数 ====================
+
+    // 加载知识域列表（用于问答多选）
+    const loadAvailableDomains = useCallback(async () => {
+        setIsDomainsLoading(true);
+        try {
+            const domains = await getDomains();
+            setAvailableDomains(domains);
+        } catch (error: any) {
+            message.error('加载知识域列表失败');
+        } finally {
+            setIsDomainsLoading(false);
+        }
+    }, []);
+
+    // 打开问答 Modal
+    const handleOpenQAModal = useCallback(() => {
+        setIsQAModalOpen(true);
+        loadAvailableDomains();
+    }, [loadAvailableDomains]);
+
+    // 发送问题
+    const handleSendQuestion = useCallback(async () => {
+        if (!projectId || !qaQuestion.trim()) {
+            message.warning('请输入问题');
+            return;
+        }
+
+        setIsQALoading(true);
+        try {
+            // 构建选中的知识域字符串（逗号分隔）
+            const selectedDomainsStr = selectedQADomains.length > 0
+                ? selectedQADomains.map(id => {
+                    const domain = availableDomains.find(d => d.id === id);
+                    return domain?.name || '';
+                }).filter(Boolean).join(',')
+                : undefined;
+
+            const response = await projectsApi.qaQuery(Number(projectId), qaQuestion, {
+                selected_domains: selectedDomainsStr,
+                top_k: 5,
+            });
+
+            setQaAnswer(response.answer || '未生成回答');
+            setQaReferences(response.references || []);
+        } catch (error: any) {
+            const errorDetail = error.response?.data?.detail || error.message || '未知错误';
+            message.error(`问答失败：${errorDetail}`);
+            setQaAnswer('问答失败，请稍后重试');
+        } finally {
+            setIsQALoading(false);
+        }
+    }, [projectId, qaQuestion, selectedQADomains, availableDomains]);
+
+    // 知识域多选切换
+    const handleQADomainToggle = useCallback((domainId: number) => {
+        setSelectedQADomains(prev => {
+            if (prev.includes(domainId)) {
+                return prev.filter(id => id !== domainId);
+            } else {
+                return [...prev, domainId];
+            }
+        });
+    }, []);
+
+    // 清空问答状态
+    const handleClearQA = useCallback(() => {
+        setQaQuestion('');
+        setQaAnswer('');
+        setQaReferences([]);
+        setSelectedQADomains([]);
+    }, []);
+
     // 取消任务
     const handleCancelTask = useCallback(async () => {
         if (!projectId || !currentTaskId) return;
@@ -2699,6 +2787,163 @@ const OntologyBuilderPage: React.FC = () => {
                                         保存
                                     </Button>
                                 </div>
+                            </div>
+                        </Modal>
+
+                        {/* GraphRAG 问答 Modal */}
+                        <Modal
+                            title={
+                                <div className="flex items-center gap-2">
+                                    <MessageOutlined className="text-green-500" />
+                                    <span>GraphRAG 问答测试</span>
+                                </div>
+                            }
+                            open={isQAModalOpen}
+                            onCancel={() => {
+                                setIsQAModalOpen(false);
+                                handleClearQA();
+                            }}
+                            footer={null}
+                            width={700}
+                        >
+                            <div className="py-2">
+                                {/* 知识域多选区域 */}
+                                <div className="mb-4">
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <BookOutlined className="text-indigo-500" />
+                                        <span className="font-medium text-gray-700">选择知识域（多选）</span>
+                                    </div>
+                                    <div className="text-xs text-gray-500 mb-2">
+                                        选择要检索的知识域范围，不选择则默认在所有知识域中检索
+                                    </div>
+                                    {isDomainsLoading ? (
+                                        <div className="flex justify-center py-4">
+                                            <Spin size="small" />
+                                        </div>
+                                    ) : availableDomains.length === 0 ? (
+                                        <div className="text-center py-4 text-gray-400 text-sm">
+                                            暂无可用知识域
+                                        </div>
+                                    ) : (
+                                        <div className="flex flex-wrap gap-2 max-h-32 overflow-auto p-2 border border-gray-200 rounded-lg bg-gray-50">
+                                            {availableDomains.map((domain) => (
+                                                <Tag
+                                                    key={domain.id}
+                                                    color={selectedQADomains.includes(domain.id) ? 'blue' : 'default'}
+                                                    className={`cursor-pointer transition-all ${
+                                                        selectedQADomains.includes(domain.id)
+                                                            ? 'border-blue-500 text-blue-600'
+                                                            : 'border-gray-300 hover:border-gray-400'
+                                                    }`}
+                                                    onClick={() => handleQADomainToggle(domain.id)}
+                                                >
+                                                    {domain.name}
+                                                    {selectedQADomains.includes(domain.id) && (
+                                                        <CheckCircleOutlined className="ml-1 text-blue-500" />
+                                                    )}
+                                                </Tag>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* 问题输入区域 */}
+                                <div className="mb-4">
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <SendOutlined className="text-blue-500" />
+                                        <span className="font-medium text-gray-700">问题</span>
+                                    </div>
+                                    <TextArea
+                                        value={qaQuestion}
+                                        onChange={(e) => setQaQuestion(e.target.value)}
+                                        placeholder="请输入您的问题，例如：什么是本体论？"
+                                        rows={3}
+                                        disabled={isQALoading}
+                                        onPressEnter={(e) => {
+                                            if (!e.shiftKey) {
+                                                e.preventDefault();
+                                                handleSendQuestion();
+                                            }
+                                        }}
+                                    />
+                                    <div className="flex justify-end mt-2">
+                                        <Button
+                                            type="primary"
+                                            icon={isQALoading ? <LoadingOutlined spin /> : <SendOutlined />}
+                                            onClick={handleSendQuestion}
+                                            loading={isQALoading}
+                                            disabled={!qaQuestion.trim()}
+                                            className="bg-green-600 hover:bg-green-700"
+                                        >
+                                            {isQALoading ? '生成中...' : '发送问题'}
+                                        </Button>
+                                    </div>
+                                </div>
+
+                                {/* 答案显示区域 */}
+                                {qaAnswer && (
+                                    <div className="mb-4">
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <CheckCircleOutlined className="text-green-500" />
+                                            <span className="font-medium text-gray-700">答案</span>
+                                        </div>
+                                        <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
+                                            <div className="text-sm text-gray-800 whitespace-pre-wrap">{qaAnswer}</div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* 溯源引用区域 */}
+                                {qaReferences && qaReferences.length > 0 && (
+                                    <div>
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <BookOutlined className="text-purple-500" />
+                                            <span className="font-medium text-gray-700">溯源引用 ({qaReferences.length})</span>
+                                        </div>
+                                        <div className="max-h-48 overflow-auto space-y-2">
+                                            {qaReferences.map((ref, index) => (
+                                                <div
+                                                    key={ref.id}
+                                                    className="p-2 bg-gray-50 border border-gray-200 rounded-lg text-sm"
+                                                >
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <Tag color="purple" className="font-medium">[{index + 1}]</Tag>
+                                                        <span className="text-gray-600 font-medium">{ref.file}</span>
+                                                    </div>
+                                                    <div className="text-gray-500 pl-8 line-clamp-2">
+                                                        {ref.quote}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* 空状态提示 */}
+                                {!qaAnswer && !isQALoading && (
+                                    <div className="text-center py-8 text-gray-400">
+                                        <MessageOutlined className="text-4xl mb-2" />
+                                        <p>请输入问题开始问答</p>
+                                        <p className="text-sm mt-1">支持基于知识图谱的 RAG 检索和溯源</p>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* 底部操作区 */}
+                            <div className="flex justify-between items-center pt-4 border-t border-gray-200">
+                                <Button
+                                    onClick={handleClearQA}
+                                    icon={<ClearOutlined />}
+                                    disabled={isQALoading || (!qaAnswer && qaReferences.length === 0)}
+                                >
+                                    清空
+                                </Button>
+                                <Button onClick={() => {
+                                    setIsQAModalOpen(false);
+                                    handleClearQA();
+                                }}>
+                                    关闭
+                                </Button>
                             </div>
                         </Modal>
 

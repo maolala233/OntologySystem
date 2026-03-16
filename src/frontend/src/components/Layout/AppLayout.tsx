@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Layout, Menu, Avatar, Dropdown, Button } from 'antd';
+import { Layout, Menu, Avatar, Dropdown, Button, Modal, Input, Tag, Spin } from 'antd';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import {
     HomeOutlined,
@@ -13,12 +13,21 @@ import {
     ApiOutlined,
     ClusterOutlined,
     QuestionCircleOutlined,
+    MessageOutlined,
+    SendOutlined,
+    BookOutlined,
+    CheckCircleOutlined,
+    ClearOutlined,
+    LoadingOutlined,
 } from '@ant-design/icons';
-import { Modal, Form, Input, message, Divider, Switch } from 'antd';
+import { Form, message, Switch } from 'antd';
 import { systemApi } from '../../api/system';
 import apiClient from '../../api/client';
+import { getDomains, KnowledgeDomain } from '../../api/domains';
+import { projectsApi } from '../../api/projects';
 
 const { Sider, Content } = Layout;
+const { TextArea } = Input;
 
 const AppLayout: React.FC = () => {
     const navigate = useNavigate();
@@ -36,10 +45,7 @@ const AppLayout: React.FC = () => {
             }
         };
 
-        // 初始化检查
         checkMobile();
-
-        // 监听窗口大小变化
         window.addEventListener('resize', checkMobile);
         return () => window.removeEventListener('resize', checkMobile);
     }, []);
@@ -56,11 +62,21 @@ const AppLayout: React.FC = () => {
     const [configLoading, setConfigLoading] = useState(false);
     const [configForm] = Form.useForm();
 
-    // 新增：测试连通性状态
+    // 测试连通性状态
     const [testingLLM, setTestingLLM] = useState(false);
     const [testingNeo4J, setTestingNeo4J] = useState(false);
     const [testingEmbedding, setTestingEmbedding] = useState(false);
     const [testingMilvus, setTestingMilvus] = useState(false);
+
+    // GraphRAG 问答相关状态
+    const [isQAModalOpen, setIsQAModalOpen] = useState(false);
+    const [qaQuestion, setQaQuestion] = useState('');
+    const [qaAnswer, setQaAnswer] = useState('');
+    const [qaReferences, setQaReferences] = useState<any[]>([]);
+    const [isQALoading, setIsQALoading] = useState(false);
+    const [selectedQADomains, setSelectedQADomains] = useState<number[]>([]);
+    const [availableDomains, setAvailableDomains] = useState<KnowledgeDomain[]>([]);
+    const [isDomainsLoading, setIsDomainsLoading] = useState(false);
 
     const openConfigModal = async () => {
         setConfigLoading(true);
@@ -78,10 +94,8 @@ const AppLayout: React.FC = () => {
     const handleSaveConfig = async () => {
         try {
             const values = await configForm.validateFields();
-            // 确保所有配置项都包含在values中
             const configValues = {
                 ...values,
-                // 确保布尔值正确转换
                 streaming_enabled: values.streaming_enabled === true,
                 milvus_enabled: values.milvus_enabled === true,
             };
@@ -94,7 +108,6 @@ const AppLayout: React.FC = () => {
         }
     };
 
-    // 新增：测试大模型连通性
     const testLLMConnectivity = async () => {
         setTestingLLM(true);
         try {
@@ -106,13 +119,12 @@ const AppLayout: React.FC = () => {
                 message.error(response.data.message);
             }
         } catch (error: any) {
-            message.error(`大模型连通性测试失败: ${error.response?.data?.message || error.message}`);
+            message.error(`大模型连通性测试失败：${error.response?.data?.message || error.message}`);
         } finally {
             setTestingLLM(false);
         }
     };
 
-    // 新增：测试Neo4j连通性
     const testNeo4JConnectivity = async () => {
         setTestingNeo4J(true);
         try {
@@ -124,13 +136,12 @@ const AppLayout: React.FC = () => {
                 message.error(response.data.message);
             }
         } catch (error: any) {
-            message.error(`Neo4j连通性测试失败: ${error.response?.data?.message || error.message}`);
+            message.error(`Neo4j 连通性测试失败：${error.response?.data?.message || error.message}`);
         } finally {
             setTestingNeo4J(false);
         }
     };
 
-    // 新增：测试Embedding连通性
     const testEmbeddingConnectivity = async () => {
         setTestingEmbedding(true);
         try {
@@ -142,13 +153,12 @@ const AppLayout: React.FC = () => {
                 message.error(response.data.message);
             }
         } catch (error: any) {
-            message.error(`Embedding连通性测试失败: ${error.response?.data?.message || error.message}`);
+            message.error(`Embedding 连通性测试失败：${error.response?.data?.message || error.message}`);
         } finally {
             setTestingEmbedding(false);
         }
     };
 
-    // 新增：测试Milvus连通性
     const testMilvusConnectivity = async () => {
         setTestingMilvus(true);
         try {
@@ -160,10 +170,92 @@ const AppLayout: React.FC = () => {
                 message.error(response.data.message);
             }
         } catch (error: any) {
-            message.error(`Milvus连通性测试失败: ${error.response?.data?.message || error.message}`);
+            message.error(`Milvus 连通性测试失败：${error.response?.data?.message || error.message}`);
         } finally {
             setTestingMilvus(false);
         }
+    };
+
+    // ==================== GraphRAG 问答相关函数 ====================
+
+    // 加载知识域列表（用于问答多选）
+    const loadAvailableDomains = async () => {
+        setIsDomainsLoading(true);
+        try {
+            const domains = await getDomains();
+            setAvailableDomains(domains);
+        } catch (error: any) {
+            message.error('加载知识域列表失败');
+        } finally {
+            setIsDomainsLoading(false);
+        }
+    };
+
+    // 打开问答 Modal
+    const handleOpenQAModal = () => {
+        setIsQAModalOpen(true);
+        loadAvailableDomains();
+    };
+
+    // 发送问题
+    const handleSendQuestion = async () => {
+        if (!qaQuestion.trim()) {
+            message.warning('请输入问题');
+            return;
+        }
+
+        // 获取当前项目 ID（从 URL 路径）
+        const pathParts = location.pathname.split('/');
+        const projectId = pathParts[pathParts.length - 1];
+        
+        if (!projectId || isNaN(Number(projectId))) {
+            message.warning('请先选择或创建一个项目');
+            return;
+        }
+
+        setIsQALoading(true);
+        try {
+            // 构建选中的知识域字符串（逗号分隔）
+            const selectedDomainsStr = selectedQADomains.length > 0
+                ? selectedQADomains.map(id => {
+                    const domain = availableDomains.find(d => d.id === id);
+                    return domain?.name || '';
+                }).filter(Boolean).join(',')
+                : undefined;
+
+            const response = await projectsApi.qaQuery(Number(projectId), qaQuestion, {
+                selected_domains: selectedDomainsStr,
+                top_k: 5,
+            });
+
+            setQaAnswer(response.answer || '未生成回答');
+            setQaReferences(response.references || []);
+        } catch (error: any) {
+            const errorDetail = error.response?.data?.detail || error.message || '未知错误';
+            message.error(`问答失败：${errorDetail}`);
+            setQaAnswer('问答失败，请稍后重试');
+        } finally {
+            setIsQALoading(false);
+        }
+    };
+
+    // 知识域多选切换
+    const handleQADomainToggle = (domainId: number) => {
+        setSelectedQADomains(prev => {
+            if (prev.includes(domainId)) {
+                return prev.filter(id => id !== domainId);
+            } else {
+                return [...prev, domainId];
+            }
+        });
+    };
+
+    // 清空问答状态
+    const handleClearQA = () => {
+        setQaQuestion('');
+        setQaAnswer('');
+        setQaReferences([]);
+        setSelectedQADomains([]);
     };
 
     const userMenuItems = [
@@ -210,6 +302,11 @@ const AppLayout: React.FC = () => {
             icon: <QuestionCircleOutlined />,
             label: '问答',
         },
+        {
+            key: 'question-test',
+            icon: <MessageOutlined />,
+            label: '问答测试',
+        },
     ];
 
     // 管理员专属菜单项
@@ -233,7 +330,7 @@ const AppLayout: React.FC = () => {
 
     return (
         <Layout className="min-h-screen">
-            {/* 深色侧边栏 - 固定宽度 240px，确保一致布局 */}
+            {/* 深色侧边栏 */}
             <Sider
                 collapsible
                 collapsed={collapsed}
@@ -272,7 +369,11 @@ const AppLayout: React.FC = () => {
                             if (key === 'system-config-trigger') {
                                 openConfigModal();
                             } else if (key === 'question') {
+                                // 打开外部问答系统
                                 window.open('http://28.4.185.69:7861', '_blank');
+                            } else if (key === 'question-test') {
+                                // 打开 GraphRAG 问答测试 Modal
+                                handleOpenQAModal();
                             } else {
                                 navigate(key);
                             }
@@ -281,7 +382,7 @@ const AppLayout: React.FC = () => {
                     />
                 </div>
 
-                {/* 用户信息和设置菜单 - 贴合在底部 */}
+                {/* 用户信息区域 */}
                 <div
                     className="px-4 pb-2"
                     style={{
@@ -291,7 +392,6 @@ const AppLayout: React.FC = () => {
                         background: 'transparent'
                     }}
                 >
-                    {/* 用户信息区域 */}
                     <Dropdown menu={{ items: userMenuItems }} placement="topRight">
                         <div className="flex items-center space-x-3 p-2 rounded-lg hover:bg-gray-700 cursor-pointer transition-colors mb-1">
                             <Avatar
@@ -363,7 +463,7 @@ const AppLayout: React.FC = () => {
                             className="col-span-2"
                             rules={[{ required: true, message: '请输入 API 端点' }]}
                         >
-                            <Input placeholder="例如: https://api.openai.com/v1" />
+                            <Input placeholder="例如：https://api.openai.com/v1" />
                         </Form.Item>
 
                         <Form.Item
@@ -381,7 +481,7 @@ const AppLayout: React.FC = () => {
                             className="col-span-2"
                             rules={[{ required: true, message: '请输入模型名称' }]}
                         >
-                            <Input placeholder="例如: gpt-3.5-turbo 或 gpt-4" />
+                            <Input placeholder="例如：gpt-3.5-turbo 或 gpt-4" />
                         </Form.Item>
 
                         <Form.Item
@@ -405,7 +505,6 @@ const AppLayout: React.FC = () => {
                             <Input type="number" suffix="秒" />
                         </Form.Item>
 
-                        {/* 新增：大模型流式开关 */}
                         <Form.Item
                             name="streaming_enabled"
                             valuePropName="checked"
@@ -414,14 +513,13 @@ const AppLayout: React.FC = () => {
                             <Switch checkedChildren="流式启用" unCheckedChildren="流式禁用" />
                         </Form.Item>
 
-                        {/* 新增：Neo4j配置 */}
                         <Form.Item
                             name="neo4j_uri"
                             label="Neo4j URI"
                             className="col-span-2"
                             rules={[{ required: true, message: '请输入 Neo4j URI' }]}
                         >
-                            <Input placeholder="例如: bolt://localhost:7687" />
+                            <Input placeholder="例如：bolt://localhost:7687" />
                         </Form.Item>
 
                         <Form.Item
@@ -442,13 +540,12 @@ const AppLayout: React.FC = () => {
                             <Input.Password placeholder="password" />
                         </Form.Item>
 
-                        {/* 新增：Milvus配置 */}
                         <Form.Item
                             name="milvus_enabled"
                             valuePropName="checked"
                             className="col-span-2"
                         >
-                            <Switch checkedChildren="Milvus启用" unCheckedChildren="Milvus禁用" />
+                            <Switch checkedChildren="Milvus 启用" unCheckedChildren="Milvus 禁用" />
                         </Form.Item>
 
                         <Form.Item
@@ -457,7 +554,7 @@ const AppLayout: React.FC = () => {
                             className="col-span-2"
                             rules={[{ required: true, message: '请输入 Embedding API 地址' }]}
                         >
-                            <Input placeholder="例如: http://localhost:11434/v1" />
+                            <Input placeholder="例如：http://localhost:11434/v1" />
                         </Form.Item>
 
                         <Form.Item
@@ -466,7 +563,7 @@ const AppLayout: React.FC = () => {
                             className="col-span-2"
                             rules={[{ required: true, message: '请输入 Embedding 模型名称' }]}
                         >
-                            <Input placeholder="例如: nomic-embed-text:latest" />
+                            <Input placeholder="例如：nomic-embed-text:latest" />
                         </Form.Item>
 
                         <Form.Item
@@ -488,7 +585,7 @@ const AppLayout: React.FC = () => {
                         </Form.Item>
                     </div>
 
-                    {/* 新增：测试连通性区域 */}
+                    {/* 测试连通性区域 */}
                     <div className="mt-6 pt-4 border-t border-gray-200">
                         <h3 className="font-medium text-gray-700 mb-3">连通性测试</h3>
                         <div className="grid grid-cols-2 gap-3">
@@ -506,7 +603,7 @@ const AppLayout: React.FC = () => {
                                 loading={testingNeo4J}
                                 icon={<DatabaseOutlined />}
                             >
-                                测试Neo4j连通性
+                                测试 Neo4j 连通性
                             </Button>
                             <Button
                                 type="default"
@@ -514,7 +611,7 @@ const AppLayout: React.FC = () => {
                                 loading={testingEmbedding}
                                 icon={<ApiOutlined />}
                             >
-                                测试Embedding连通性
+                                测试 Embedding 连通性
                             </Button>
                             <Button
                                 type="default"
@@ -522,11 +619,168 @@ const AppLayout: React.FC = () => {
                                 loading={testingMilvus}
                                 icon={<ClusterOutlined />}
                             >
-                                测试Milvus连通性
+                                测试 Milvus 连通性
                             </Button>
                         </div>
                     </div>
                 </Form>
+            </Modal>
+
+            {/* GraphRAG 问答 Modal */}
+            <Modal
+                title={
+                    <div className="flex items-center gap-2">
+                        <MessageOutlined className="text-green-500" />
+                        <span>GraphRAG 问答测试</span>
+                    </div>
+                }
+                open={isQAModalOpen}
+                onCancel={() => {
+                    setIsQAModalOpen(false);
+                    handleClearQA();
+                }}
+                footer={null}
+                width={700}
+            >
+                <div className="py-2">
+                    {/* 知识域多选区域 */}
+                    <div className="mb-4">
+                        <div className="flex items-center gap-2 mb-2">
+                            <BookOutlined className="text-indigo-500" />
+                            <span className="font-medium text-gray-700">选择知识域（多选）</span>
+                        </div>
+                        <div className="text-xs text-gray-500 mb-2">
+                            选择要检索的知识域范围，不选择则默认在所有知识域中检索
+                        </div>
+                        {isDomainsLoading ? (
+                            <div className="flex justify-center py-4">
+                                <Spin size="small" />
+                            </div>
+                        ) : availableDomains.length === 0 ? (
+                            <div className="text-center py-4 text-gray-400 text-sm">
+                                暂无可用知识域
+                            </div>
+                        ) : (
+                            <div className="flex flex-wrap gap-2 max-h-32 overflow-auto p-2 border border-gray-200 rounded-lg bg-gray-50">
+                                {availableDomains.map((domain) => (
+                                    <Tag
+                                        key={domain.id}
+                                        color={selectedQADomains.includes(domain.id) ? 'blue' : 'default'}
+                                        className={`cursor-pointer transition-all ${
+                                            selectedQADomains.includes(domain.id)
+                                                ? 'border-blue-500 text-blue-600'
+                                                : 'border-gray-300 hover:border-gray-400'
+                                        }`}
+                                        onClick={() => handleQADomainToggle(domain.id)}
+                                    >
+                                        {domain.name}
+                                        {selectedQADomains.includes(domain.id) && (
+                                            <CheckCircleOutlined className="ml-1 text-blue-500" />
+                                        )}
+                                    </Tag>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* 问题输入区域 */}
+                    <div className="mb-4">
+                        <div className="flex items-center gap-2 mb-2">
+                            <SendOutlined className="text-blue-500" />
+                            <span className="font-medium text-gray-700">问题</span>
+                        </div>
+                        <TextArea
+                            value={qaQuestion}
+                            onChange={(e) => setQaQuestion(e.target.value)}
+                            placeholder="请输入您的问题，例如：什么是本体论？"
+                            rows={3}
+                            disabled={isQALoading}
+                            onPressEnter={(e) => {
+                                if (!e.shiftKey) {
+                                    e.preventDefault();
+                                    handleSendQuestion();
+                                }
+                            }}
+                        />
+                        <div className="flex justify-end mt-2">
+                            <Button
+                                type="primary"
+                                icon={isQALoading ? <LoadingOutlined spin /> : <SendOutlined />}
+                                onClick={handleSendQuestion}
+                                loading={isQALoading}
+                                disabled={!qaQuestion.trim()}
+                                className="bg-green-600 hover:bg-green-700"
+                            >
+                                {isQALoading ? '生成中...' : '发送问题'}
+                            </Button>
+                        </div>
+                    </div>
+
+                    {/* 答案显示区域 */}
+                    {qaAnswer && (
+                        <div className="mb-4">
+                            <div className="flex items-center gap-2 mb-2">
+                                <CheckCircleOutlined className="text-green-500" />
+                                <span className="font-medium text-gray-700">答案</span>
+                            </div>
+                            <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
+                                <div className="text-sm text-gray-800 whitespace-pre-wrap">{qaAnswer}</div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 溯源引用区域 */}
+                    {qaReferences && qaReferences.length > 0 && (
+                        <div>
+                            <div className="flex items-center gap-2 mb-2">
+                                <BookOutlined className="text-purple-500" />
+                                <span className="font-medium text-gray-700">溯源引用 ({qaReferences.length})</span>
+                            </div>
+                            <div className="max-h-48 overflow-auto space-y-2">
+                                {qaReferences.map((ref, index) => (
+                                    <div
+                                        key={ref.id}
+                                        className="p-2 bg-gray-50 border border-gray-200 rounded-lg text-sm"
+                                    >
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <Tag color="purple" className="font-medium">[{index + 1}]</Tag>
+                                            <span className="text-gray-600 font-medium">{ref.file}</span>
+                                        </div>
+                                        <div className="text-gray-500 pl-8 line-clamp-2">
+                                            {ref.quote}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 空状态提示 */}
+                    {!qaAnswer && !isQALoading && (
+                        <div className="text-center py-8 text-gray-400">
+                            <MessageOutlined className="text-4xl mb-2" />
+                            <p>请输入问题开始问答</p>
+                            <p className="text-sm mt-1">支持基于知识图谱的 RAG 检索和溯源</p>
+                        </div>
+                    )}
+                </div>
+
+                {/* 底部操作区 */}
+                <div className="flex justify-between items-center pt-4 border-t border-gray-200">
+                    <Button
+                        onClick={handleClearQA}
+                        icon={<ClearOutlined />}
+                        disabled={isQALoading || (!qaAnswer && qaReferences.length === 0)}
+                    >
+                        清空
+                    </Button>
+                    <Button onClick={() => {
+                        setIsQAModalOpen(false);
+                        handleClearQA();
+                    }}>
+                        关闭
+                    </Button>
+                </div>
             </Modal>
 
             {/* 主内容区 */}
