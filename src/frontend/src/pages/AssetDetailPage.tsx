@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Button, Spin, message, Descriptions, Tag, Card, Drawer, Form, Input, Divider } from 'antd';
-import { ArrowLeftOutlined, UserOutlined, InfoCircleOutlined, DeploymentUnitOutlined, UnorderedListOutlined, RightOutlined, LeftOutlined, DownloadOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, UserOutlined, InfoCircleOutlined, DeploymentUnitOutlined, UnorderedListOutlined, RightOutlined, LeftOutlined, DownloadOutlined, DatabaseOutlined } from '@ant-design/icons';
 import Navbar from '../components/Layout/Navbar';
 import { projectsApi } from '../api/projects';
 import { ProjectData } from '../types/ontology';
 import D3ForceGraph from '../components/OntologyGraph/D3ForceGraph';
 import { Tree } from 'antd';
+import { KnowledgeDomain } from '../api/domains';
 
 const { TreeNode } = Tree;
 
@@ -327,6 +328,19 @@ const AssetDetailPage: React.FC = () => {
                                 <span className="text-gray-700">{project.owner?.username || '未知'}</span>
                             </div>
                         </Card>
+                        {project.domain && (
+                            <Card title="知识域" size="small">
+                                <div className="flex items-start space-x-2">
+                                    <DatabaseOutlined className="text-indigo-500 mt-0.5 flex-shrink-0" />
+                                    <div className="flex-1">
+                                        <div className="font-medium text-gray-800">{project.domain.name}</div>
+                                        {project.domain.description && (
+                                            <div className="text-xs text-gray-500 mt-1">{project.domain.description}</div>
+                                        )}
+                                    </div>
+                                </div>
+                            </Card>
+                        )}
                         {project.graph_data?.nodes && (
                             <Card title="节点类型分布" size="small">
                                 {(() => {

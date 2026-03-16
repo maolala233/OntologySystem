@@ -65,6 +65,7 @@ import { getLayoutedElements } from '../utils/layoutUtils';
 import { systemApi } from '../api/system';
 import apiClient from '../api/client';
 import D3ForceGraph from '../components/OntologyGraph/D3ForceGraph';
+import KnowledgeDomainSelector from '../components/KnowledgeDomainSelector';
 
 const { TreeNode } = Tree;
 const { Search } = AntInput;
@@ -105,6 +106,9 @@ const OntologyBuilderPage: React.FC = () => {
     const [isAddRelationModalOpen, setIsAddRelationModalOpen] = useState(false);
     const [isCreatingProject, setIsCreatingProject] = useState(false);
     const [createProjectForm] = Form.useForm();
+    const [selectedDomainId, setSelectedDomainId] = useState<number | undefined>(undefined);
+    const [selectedDomainName, setSelectedDomainName] = useState<string | undefined>(undefined);
+    const [currentProjectDomain, setCurrentProjectDomain] = useState<any | null>(null);
     const [relationForm] = Form.useForm();
     const [form] = Form.useForm();
     const [ruleForm] = Form.useForm();
@@ -116,6 +120,7 @@ const OntologyBuilderPage: React.FC = () => {
     const [addInstanceForm] = Form.useForm();
     const [isNewNode, setIsNewNode] = useState(false);
     const [highlightNodeId, setHighlightNodeId] = useState<string | null>(null);
+    const [isDomainModalOpen, setIsDomainModalOpen] = useState(false);
     
     // 文档管理相关状态
     const [uploadedDocuments, setUploadedDocuments] = useState<any[]>([]);
@@ -193,6 +198,9 @@ const OntologyBuilderPage: React.FC = () => {
             const project = await projectsApi.getProject(Number(projectId));
             setProjectName(project.name);
             setIsPublished(project.is_published);
+            setCurrentProjectDomain(project.domain || null);
+            setSelectedDomainId(project.domain_id || undefined);
+            setSelectedDomainName(project.domain?.name || undefined);
 
             if (!project.graph_data || !project.graph_data.nodes || project.graph_data.nodes.length === 0) {
                 setNodes([]);
@@ -431,10 +439,58 @@ const OntologyBuilderPage: React.FC = () => {
         }
     };
 
+    // 打开知识域配置 Modal
+    const handleOpenDomainModal = () => {
+        setIsDomainModalOpen(true);
+    };
+
+    // 保存知识域配置
+    const handleSaveDomain = async (domainId: number | undefined, domainName: string | undefined) => {
+        if (!projectId) return;
+        
+        setLoading(true);
+        try {
+            await projectsApi.updateProject(Number(projectId), {
+                domain_id: domainId,
+                domain_name: domainName,
+            });
+            setCurrentProjectDomain(domainId ? { id: domainId, name: domainName } : null);
+            setSelectedDomainId(domainId);
+            setSelectedDomainName(domainName);
+            message.success('知识域已更新');
+            setIsDomainModalOpen(false);
+        } catch (error: any) {
+            message.error(error.response?.data?.detail || '更新知识域失败');
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const handleTogglePublish = async () => {
         if (!projectId) return;
 
         const actionText = isPublished ? '取消发布' : '发布资产';
+        
+        // 发布前检查是否已配置知识域
+        if (!isPublished && !currentProjectDomain) {
+            Modal.warning({
+                title: '发布失败',
+                content: (
+                    <div>
+                        <p>请先配置知识域，然后再发布到资产中心。</p>
+                        <p className="mt-2 text-gray-600">
+                            知识域用于对本体项目进行分类管理，是发布的必要条件。
+                        </p>
+                    </div>
+                ),
+                okText: '去配置',
+                onOk: () => {
+                    setIsDomainModalOpen(true);
+                },
+            });
+            return;
+        }
+
         const contentText = isPublished
             ? '取消发布后，该本体将从资产中心下架。确定吗？'
             : '发布后，您的本体将在资产中心公开展示。确定要发布吗？';
@@ -452,8 +508,10 @@ const OntologyBuilderPage: React.FC = () => {
                         message.success('已取消发布');
                     } else {
                         if (hasUnsavedChanges) {
+                            // 【关键修复】保存草稿时同时保存 domain_id，确保发布时知识域信息正确
                             await projectsApi.updateProject(Number(projectId), {
                                 graph_data: { nodes, edges },
+                                domain_id: currentProjectDomain?.id || selectedDomainId,
                             });
                             await projectsApi.updateOntology(Number(projectId), { nodes, edges });
                         }
@@ -470,7 +528,8 @@ const OntologyBuilderPage: React.FC = () => {
                         setLastSavedEdges([...edges]);
                     }
                 } catch (error: any) {
-                    message.error(error.response?.data?.detail || `${actionText}失败`);
+                    const errorMsg = error.response?.data?.detail || `${actionText}失败`;
+                    message.error(errorMsg);
                 } finally {
                     setLoading(false);
                 }
@@ -1687,7 +1746,9 @@ const OntologyBuilderPage: React.FC = () => {
                                 try {
                                     const newProject = await projectsApi.createProject({
                                         name: values.name,
-                                        description: values.description
+                                        description: values.description,
+                                        domain_id: selectedDomainId,
+                                        domain_name: selectedDomainName,
                                     });
                                     navigate(`/ontology-builder/${newProject.id}`);
                                     message.success('项目创建成功，已进入编辑界面');
@@ -1703,6 +1764,15 @@ const OntologyBuilderPage: React.FC = () => {
                             </Form.Item>
                             <Form.Item name="description" label="项目描述">
                                 <Input.TextArea rows={4} placeholder="简要描述这个项目的用途..." />
+                            </Form.Item>
+                            <Form.Item label="知识域" tooltip="选择或创建本项目所属的知识领域">
+                                <KnowledgeDomainSelector
+                                    value={selectedDomainId}
+                                    onChange={setSelectedDomainId}
+                                    domainName={selectedDomainName}
+                                    onDomainNameChange={setSelectedDomainName}
+                                    placeholder="选择知识域（可选）"
+                                />
                             </Form.Item>
                             <Form.Item>
                                 <Space className="w-full justify-end">
@@ -1998,7 +2068,16 @@ const OntologyBuilderPage: React.FC = () => {
                                     <Tooltip title="下载 TTL">
                                         <Button size="small" icon={<DownloadOutlined />} onClick={handleDownloadTTL} className="border-gray-300 hover:bg-gray-50" />
                                     </Tooltip>
-                                    
+                                    <Tooltip title="配置知识域">
+                                        <Button 
+                                            size="small" 
+                                            icon={<DatabaseOutlined />} 
+                                            onClick={handleOpenDomainModal}
+                                            className={currentProjectDomain ? "border-indigo-500 text-indigo-600 hover:bg-indigo-50" : "border-gray-300 hover:bg-gray-50"}
+                                        >
+                                            {currentProjectDomain?.name || '知识域'}
+                                        </Button>
+                                    </Tooltip>
                                 </div>
                             </div>
                         </div>
@@ -2575,6 +2654,47 @@ const OntologyBuilderPage: React.FC = () => {
                                     </Space>
                                 </div>
                             )}
+                        </Modal>
+
+                        {/* 知识域配置 Modal */}
+                        <Modal
+                            title={
+                                <div className="flex items-center gap-2">
+                                    <DatabaseOutlined className="text-indigo-600" />
+                                    <span>配置知识域</span>
+                                </div>
+                            }
+                            open={isDomainModalOpen}
+                            onCancel={() => setIsDomainModalOpen(false)}
+                            footer={null}
+                            width={500}
+                        >
+                            <div className="py-4">
+                                <p className="text-gray-600 mb-4">
+                                    选择或创建本项目所属的知识领域。知识域用于对本体项目进行分类管理。
+                                </p>
+                                <Form layout="vertical">
+                                    <Form.Item label="知识域" tooltip="选择已有知识域或创建新的知识域">
+                                        <KnowledgeDomainSelector
+                                            value={selectedDomainId}
+                                            onChange={setSelectedDomainId}
+                                            domainName={selectedDomainName}
+                                            onDomainNameChange={setSelectedDomainName}
+                                            placeholder="选择知识域"
+                                        />
+                                    </Form.Item>
+                                </Form>
+                                <div className="flex justify-end gap-2 mt-6 pt-4 border-t border-gray-100">
+                                    <Button onClick={() => setIsDomainModalOpen(false)}>取消</Button>
+                                    <Button 
+                                        type="primary" 
+                                        onClick={() => handleSaveDomain(selectedDomainId, selectedDomainName)}
+                                        className="bg-indigo-600 hover:bg-indigo-700"
+                                    >
+                                        保存
+                                    </Button>
+                                </div>
+                            </div>
                         </Modal>
 
                         {/* 系统配置 Modal */}

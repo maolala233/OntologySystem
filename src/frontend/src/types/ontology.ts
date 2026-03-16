@@ -1,6 +1,7 @@
 import { Node, Edge } from 'reactflow';
+import { KnowledgeDomain } from '../api/domains';
 
-// 合并两个OntologyNodeData接口定义
+// 合并两个 OntologyNodeData 接口定义
 export interface OntologyNodeData {
     label: string;
     labelEn?: string; // 支持英文
@@ -29,6 +30,8 @@ export interface ProjectData {
   is_published: boolean;
   owner?: User;
   owner_id?: number;
+  domain_id?: number;
+  domain?: KnowledgeDomain;
   created_at?: string;
   updated_at?: string;
 }

@@ -7,6 +7,8 @@ from typing import List, Optional, Dict, Any
 from urllib.parse import quote
 from app.infrastructure.database import get_db, Project, User, SystemConfig, UploadedDocument
 from app.schemas.ontology import ProjectCreate, ProjectUpdate, ProjectResponse
+from app.schemas.domain import KnowledgeDomainCreate
+from app.infrastructure.database import KnowledgeDomain
 from app.schemas.extraction import (
     SchemaExtractionRequest, SchemaExtractionResponse,
     InstanceExtractionRequest, InstanceExtractionResponse,
@@ -45,7 +47,14 @@ def get_public_projects(db: Session = Depends(get_db)):
 # 获取单个项目详情
 @router.get("/{project_id}", response_model=ProjectResponse)
 def get_project(project_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    project = db.query(Project).filter(Project.id == project_id).first()
+    from sqlalchemy.orm import joinedload
+    
+    # 使用 joinedload 预加载 domain 和 owner 信息
+    project = db.query(Project).options(
+        joinedload(Project.domain),
+        joinedload(Project.owner)
+    ).filter(Project.id == project_id).first()
+    
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     if not project.is_published and project.owner_id != current_user.id:
@@ -56,13 +65,34 @@ def get_project(project_id: int, current_user: User = Depends(get_current_user),
 @router.post("", response_model=ProjectResponse)
 def create_project(
     project_data: ProjectCreate,
+    domain_id: Optional[int] = None,
+    domain_name: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    # 处理知识域关联
+    resolved_domain_id = domain_id
+    
+    # 如果提供了 domain_name，查找或创建知识域
+    if domain_name:
+        domain = db.query(KnowledgeDomain).filter(
+            KnowledgeDomain.name == domain_name
+        ).first()
+        if not domain:
+            # 创建新知识域
+            new_domain = KnowledgeDomain(name=domain_name)
+            db.add(new_domain)
+            db.commit()
+            db.refresh(new_domain)
+            resolved_domain_id = new_domain.id
+        else:
+            resolved_domain_id = domain.id
+    
     new_project = Project(
         name=project_data.name,
         description=project_data.description,
         owner_id=current_user.id,
+        domain_id=resolved_domain_id,
         graph_data={"nodes": [], "edges": []},
         is_published=False
     )
@@ -85,12 +115,21 @@ def update_project(
     if db_project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="No permission to modify this project")
 
+    # ★ 已发布状态下禁止修改知识域
+    if project_update.domain_id is not None and db_project.is_published:
+        raise HTTPException(
+            status_code=400,
+            detail="项目已发布，无法修改知识域。请先取消发布状态，然后再修改知识域配置。"
+        )
+
     if project_update.name is not None:
         db_project.name = project_update.name
     if project_update.description is not None:
         db_project.description = project_update.description
     if project_update.graph_data is not None:
         db_project.graph_data = project_update.graph_data
+    if project_update.domain_id is not None:
+        db_project.domain_id = project_update.domain_id
 
     db.commit()
     db.refresh(db_project)
@@ -143,6 +182,13 @@ def publish_project(
         raise HTTPException(status_code=404, detail="Project not found")
     if db_project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="No permission to publish this project")
+
+    # ★ 发布前必须配置知识域
+    if not db_project.domain_id:
+        raise HTTPException(
+            status_code=400, 
+            detail="发布失败：请先配置知识域。点击工具栏「知识域」按钮进行配置。"
+        )
 
     # 发布前：生命周期 TTL 同步 —— 将最新图数据重新序列化覆盖 TTL
     if db_project.graph_data:

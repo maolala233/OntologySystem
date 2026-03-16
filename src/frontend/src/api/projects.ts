@@ -1,9 +1,12 @@
 import apiClient from './client';
 import { ProjectData } from '../types/ontology';
+import { KnowledgeDomain } from './domains';
 
 export interface CreateProjectRequest {
     name: string;
     description?: string;
+    domain_id?: number;
+    domain_name?: string;
 }
 
 export interface UpdateProjectRequest {
@@ -13,6 +16,8 @@ export interface UpdateProjectRequest {
         nodes: any[];
         edges: any[];
     };
+    domain_id?: number;
+    domain_name?: string;
 }
 
 // 阶段 1: Schema 提取请求参数
@@ -58,6 +63,25 @@ export const projectsApi = {
 
     // 创建新项目
     createProject: async (data: CreateProjectRequest): Promise<ProjectData> => {
+        // 构建 URL 参数
+        const params: Record<string, string> = {};
+        if (data.domain_id) {
+            params['domain_id'] = String(data.domain_id);
+        }
+        if (data.domain_name) {
+            params['domain_name'] = data.domain_name;
+        }
+        
+        // 如果有 URL 参数，使用 params 方式传递
+        if (Object.keys(params).length > 0) {
+            const queryString = new URLSearchParams(params).toString();
+            const response = await apiClient.post(`/api/projects?${queryString}`, {
+                name: data.name,
+                description: data.description,
+            });
+            return response.data;
+        }
+        
         const response = await apiClient.post('/api/projects', data);
         return response.data;
     },

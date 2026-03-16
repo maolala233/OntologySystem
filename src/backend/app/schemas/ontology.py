@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from typing import Optional, Dict, List, Any
 from datetime import datetime
+from .domain import KnowledgeDomainResponse
 
 class UserResponse(BaseModel):
     id: int
@@ -35,11 +36,14 @@ class ProjectUpdate(BaseModel):
     description: Optional[str] = None
     graph_data: Optional[Dict[str, Any]] = None
     is_published: Optional[bool] = None
+    domain_id: Optional[int] = None
 
 class ProjectResponse(ProjectBase):
     id: int
     owner_id: int
     owner: Optional[UserResponse] = None
+    domain_id: Optional[int] = None
+    domain: Optional[KnowledgeDomainResponse] = None
     graph_data: Optional[Dict[str, Any]] = None
     ttl_content: Optional[str] = None
     is_published: bool

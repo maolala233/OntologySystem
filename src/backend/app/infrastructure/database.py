@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, Text, JSON, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Boolean, Text, JSON, DateTime, ForeignKey, Text as SQLAlchemyText
 from sqlalchemy.dialects.mysql import VARCHAR, LONGTEXT
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
@@ -23,6 +23,7 @@ class Project(Base):
     name = Column(String(200), index=True)
     description = Column(String(500), nullable=True)
     owner_id = Column(Integer, ForeignKey("users.id"))
+    domain_id = Column(Integer, ForeignKey("knowledge_domains.id"), nullable=True)  # 知识域 ID
     
     # 图谱数据（JSON 格式，用于前端 React Flow 渲染）
     graph_data = Column(JSON, nullable=True)
@@ -35,6 +36,24 @@ class Project(Base):
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
     owner = relationship("User", back_populates="projects")
+    domain = relationship("KnowledgeDomain", back_populates="projects")
+
+class KnowledgeDomain(Base):
+    """
+    知识域字典表
+    用于标识本体项目所属的知识领域，如"IT 架构"、"财务规范"等
+    """
+    __tablename__ = "knowledge_domains"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), unique=True, index=True, nullable=False)  # 知识域名称
+    description = Column(String(500), nullable=True)  # 知识域描述
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    
+    # 关联项目
+    projects = relationship("Project", back_populates="domain")
+
 
 class SystemConfig(Base):
     __tablename__ = "system_configs"
@@ -68,6 +87,45 @@ class UploadedDocument(Base):
 # 更新 Project 模型，添加 documents 关系
 Project.documents = relationship("UploadedDocument", back_populates="project", cascade="all, delete-orphan")
 
+
+def init_knowledge_domains(db):
+    """
+    初始化知识域字典数据
+    创建一些常用的知识域分类
+    """
+    try:
+        # 检查是否已有知识域数据
+        domain_count = db.query(KnowledgeDomain).count()
+        if domain_count > 0:
+            print(f"ℹ️ [KnowledgeDomain] Found {domain_count} existing domains, skipping initialization")
+            return
+        
+        print("📝 [KnowledgeDomain] Creating initial knowledge domains...")
+        
+        # 创建常用知识域
+        initial_domains = [
+            KnowledgeDomain(name="IT 架构", description="信息技术架构相关的知识领域"),
+            KnowledgeDomain(name="财务规范", description="财务管理与规范相关的知识领域"),
+            KnowledgeDomain(name="医疗健康", description="医疗健康行业相关的知识领域"),
+            KnowledgeDomain(name="教育培训", description="教育培训行业相关的知识领域"),
+            KnowledgeDomain(name="制造业", description="制造业相关的知识领域"),
+            KnowledgeDomain(name="金融服务", description="金融服务行业相关的知识领域"),
+            KnowledgeDomain(name="法律合规", description="法律与合规相关的知识领域"),
+            KnowledgeDomain(name="通用领域", description="通用知识领域，适用于跨行业场景"),
+        ]
+        
+        for domain in initial_domains:
+            db.add(domain)
+        
+        db.commit()
+        print("✅ [KnowledgeDomain] Initial knowledge domains created")
+        for domain in initial_domains:
+            print(f"   - {domain.name}: {domain.description}")
+            
+    except Exception as e:
+        print(f"⚠️ [KnowledgeDomain] Failed to create initial domains: {e}")
+        db.rollback()
+
 # 数据库连接 - 直接使用环境变量确保正确配置
 import os
 MYSQL_HOST = os.getenv('MYSQL_HOST', settings.MYSQL_HOST)
@@ -99,7 +157,8 @@ def init_db():
     1. 创建数据库（如果使用 MySQL）
     2. 创建所有表
     3. 创建测试用户（如果不存在）
-    4. 创建示例项目（可选）
+    4. 创建知识域字典数据
+    5. 创建示例项目（可选）
     """
     # 如果是 MySQL，尝试先连接到服务器创建数据库（如果不存在）
     if settings.DATABASE_URL.startswith("mysql"):
@@ -130,11 +189,16 @@ def init_db():
     print("✅ [Database] All tables created")
     
     # 创建测试用户和示例数据
-    _create_initial_data()
-
-def _create_initial_data():
-    """创建初始测试数据"""
     db = SessionLocal()
+    try:
+        _create_initial_data(db)
+        # 初始化知识域字典
+        init_knowledge_domains(db)
+    finally:
+        db.close()
+
+def _create_initial_data(db):
+    """创建初始测试数据"""
     try:
         # 检查是否已有用户
         user_count = db.query(User).count()
@@ -171,11 +235,16 @@ def _create_initial_data():
         
         admin_user = db.query(User).filter(User.username == "admin").first()
         
+        # 获取"通用领域"知识域
+        default_domain = db.query(KnowledgeDomain).filter(KnowledgeDomain.name == "通用领域").first()
+        domain_id = default_domain.id if default_domain else None
+        
         sample_projects = [
             Project(
                 name="工业本体示例",
                 description="这是一个工业领域的本体模型示例",
                 owner_id=admin_user.id,
+                domain_id=domain_id,
                 graph_data={
                     "nodes": [
                         {
@@ -225,6 +294,7 @@ def _create_initial_data():
                 name="已发布的公共本体",
                 description="这是一个已发布的公共本体示例，所有用户都可以在资产中心查看",
                 owner_id=admin_user.id,
+                domain_id=domain_id,
                 graph_data={
                     "nodes": [
                         {
@@ -266,6 +336,4 @@ def _create_initial_data():
     except Exception as e:
         print(f"⚠️ [Database] Failed to create initial data: {e}")
         db.rollback()
-    finally:
-        db.close()
 
