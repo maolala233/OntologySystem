@@ -1765,13 +1765,18 @@ const OntologyBuilderPage: React.FC = () => {
                             <Form.Item name="description" label="项目描述">
                                 <Input.TextArea rows={4} placeholder="简要描述这个项目的用途..." />
                             </Form.Item>
-                            <Form.Item label="知识域" tooltip="选择或创建本项目所属的知识领域">
+                            <Form.Item 
+                                name="domainId" 
+                                label="知识域" 
+                                rules={[{ required: true, message: '请选择或创建一个知识域' }]}
+                                tooltip="选择或创建本项目所属的知识领域"
+                            >
                                 <KnowledgeDomainSelector
                                     value={selectedDomainId}
                                     onChange={setSelectedDomainId}
                                     domainName={selectedDomainName}
                                     onDomainNameChange={setSelectedDomainName}
-                                    placeholder="选择知识域（可选）"
+                                    placeholder="选择知识域"
                                 />
                             </Form.Item>
                             <Form.Item>
