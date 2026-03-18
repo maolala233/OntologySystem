@@ -235,8 +235,8 @@ class VectorStoreManager:
                 self.milvus_host = config.value.get('milvus_host', settings.MILVUS_HOST)
                 self.milvus_port = config.value.get('milvus_port', settings.MILVUS_PORT)
                 self.milvus_collection_name = config.value.get('milvus_collection', settings.MILVUS_COLLECTION_NAME)
-                self.embedding_api_key = config.value.get('embedding_api_key', settings.embedding_api_key)
-                self.embedding_base_url = config.value.get('embedding_base_url', settings.embedding_base_url)
+                self.embedding_api_key = config.value.get('embedding_api_key', settings.EMBEDDING_API_KEY)
+                self.embedding_base_url = config.value.get('embedding_base_url', settings.EMBEDDING_BASE_URL)
                 self.embedding_model = config.value.get('embedding_model', settings.EMBEDDING_MODEL)
                 self.embedding_dim = config.value.get('embedding_dim', settings.EMBEDDING_DIM)
             else:
@@ -245,14 +245,14 @@ class VectorStoreManager:
                 self.milvus_host = settings.MILVUS_HOST
                 self.milvus_port = settings.MILVUS_PORT
                 self.milvus_collection_name = settings.MILVUS_COLLECTION_NAME
-                self.embedding_api_key = settings.embedding_api_key
-                self.embedding_base_url = settings.embedding_base_url
+                self.embedding_api_key = settings.EMBEDDING_API_KEY
+                self.embedding_base_url = settings.EMBEDDING_BASE_URL
                 self.embedding_model = settings.EMBEDDING_MODEL
                 self.embedding_dim = settings.EMBEDDING_DIM
             
             db.close()
         except Exception as e:
-            logger.warning(f"加载动态配置失败，使用默认配置: {e}")
+            logger.warning(f"加载动态配置失败，使用默认配置：{e}")
             # 回退到默认配置
             self.milvus_enabled = True
             self.milvus_host = settings.MILVUS_HOST
@@ -262,6 +262,23 @@ class VectorStoreManager:
             self.embedding_base_url = settings.EMBEDDING_BASE_URL
             self.embedding_model = settings.EMBEDDING_MODEL
             self.embedding_dim = settings.EMBEDDING_DIM
+    
+    # 添加属性别名，支持小写访问
+    @property
+    def EMBEDDING_BASE_URL(self):
+        return self.embedding_base_url if hasattr(self, 'embedding_base_url') else settings.EMBEDDING_BASE_URL
+    
+    @property
+    def EMBEDDING_API_KEY(self):
+        return self.embedding_api_key if hasattr(self, 'embedding_api_key') else settings.EMBEDDING_API_KEY
+    
+    @property
+    def EMBEDDING_MODEL(self):
+        return self.embedding_model if hasattr(self, 'embedding_model') else settings.EMBEDDING_MODEL
+    
+    @property
+    def EMBEDDING_DIM(self):
+        return self.embedding_dim if hasattr(self, 'embedding_dim') else settings.EMBEDDING_DIM
     
     def _connect_milvus(self):
         try:
@@ -289,21 +306,25 @@ class VectorStoreManager:
                 return col
 
             logger.info(f"创建新集合：{self.collection_name} (dim={self.embedding_dim})")
-            # ★ 多知识域逻辑隔离 Schema：
+            # ★ 双路溯源 Schema（支持知识域隔离和完整溯源信息）：
             # - project_id (INT64): 项目 ID，用于按项目隔离数据
             # - domain (VARCHAR): 知识域名称，用于按知识域过滤
             # - source_file (VARCHAR): 源文件名，用于溯源
-            # - source_quote (VARCHAR): 原文引用，用于溯源
+            # - source_quote (VARCHAR): 原文引用，用于前端高亮展示
+            # - chunk_text (VARCHAR): 完整段落文本，用于 QA 上下文
+            # - source_type (VARCHAR): 来源类型 (graph_node/graph_edge/vector_chunk)
             fields = [
                 FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=True),
                 FieldSchema(name="vector", dtype=DataType.FLOAT_VECTOR, dim=self.embedding_dim),
-                FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=65535),
-                FieldSchema(name="metadata", dtype=DataType.VARCHAR, max_length=65535),
+                FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=65535),  # 用于向量检索的核心文本
+                FieldSchema(name="metadata", dtype=DataType.VARCHAR, max_length=65535),  # 完整元数据 JSON
                 FieldSchema(name="content_hash", dtype=DataType.VARCHAR, max_length=64),  # 用于去重
                 FieldSchema(name="project_id", dtype=DataType.INT64),  # ★ 项目 ID，用于逻辑隔离
                 FieldSchema(name="domain", dtype=DataType.VARCHAR, max_length=255),  # ★ 知识域，用于过滤
                 FieldSchema(name="source_file", dtype=DataType.VARCHAR, max_length=255),  # ★ 源文件名
-                FieldSchema(name="source_quote", dtype=DataType.VARCHAR, max_length=65535),  # ★ 原文引用
+                FieldSchema(name="source_quote", dtype=DataType.VARCHAR, max_length=65535),  # ★ 原文引用（精准锚点）
+                FieldSchema(name="chunk_text", dtype=DataType.VARCHAR, max_length=65535),  # ★ 完整段落（充足上下文）
+                FieldSchema(name="source_type", dtype=DataType.VARCHAR, max_length=50),  # ★ 来源类型 (graph_node/graph_edge/vector_chunk)
             ]
             schema = CollectionSchema(fields, "Knowledge Graph RAG Collection with Domain Isolation")
             collection = Collection(self.collection_name, schema)
@@ -346,15 +367,19 @@ class VectorStoreManager:
         metadatas: List[Dict],
         project_id: Optional[int] = None,
         domain: Optional[str] = None,
+        chunk_texts: Optional[List[str]] = None,  # ★ 新增：完整 chunk 文本
+        source_types: Optional[List[str]] = None,  # ★ 新增：来源类型 (graph_node/graph_edge/vector_chunk)
     ):
         """
         插入数据到向量库，支持知识域隔离和溯源信息。
         
         参数:
-        - texts: 文本内容列表
-        - metadatas: 元数据列表（每个 Dict 可包含 source_file, source_quote 等）
+        - texts: 文本内容列表 (用于向量检索的核心文本)
+        - metadatas: 元数据列表（每个 Dict 可包含 source_file, source_quote, chunk_text 等）
         - project_id: 项目 ID（可选），用于逻辑隔离
         - domain: 知识域名称（可选），用于按知识域过滤
+        - chunk_texts: 完整 chunk 文本列表（可选，用于 QA 上下文）
+        - source_types: 来源类型列表（可选，用于标记数据来源）
         """
         # 强制重新检查 Milvus 配置状态
         self._force_check_milvus_config()
@@ -371,9 +396,11 @@ class VectorStoreManager:
         domains = []
         source_files = []
         source_quotes = []
+        chunk_text_list = []  # ★ 完整 chunk 文本
+        source_type_list = []  # ★ 来源类型
 
         # 1. 批量获取向量并检查重复
-        for t, m in zip(texts, metadatas):
+        for i, (t, m) in enumerate(zip(texts, metadatas)):
             try:
                 # 安全截断
                 safe_text = t[:65000] if len(t) > 65000 else t
@@ -408,10 +435,20 @@ class VectorStoreManager:
                     domains.append(domain if domain is not None else m.get("domain", ""))
                     source_files.append(m.get("source_file", ""))
                     source_quotes.append(m.get("source_quote", safe_text))  # 如果没有 source_quote，使用文本作为 fallback
+                    # ★ 完整 chunk 文本 (从 metadata 或单独参数获取)
+                    chunk_text = m.get("chunk_text", "")
+                    if chunk_texts and i < len(chunk_texts):
+                        chunk_text = chunk_texts[i]
+                    chunk_text_list.append(chunk_text[:65000] if chunk_text else "")
+                    # ★ 来源类型
+                    source_type = m.get("type", "")
+                    if source_types and i < len(source_types):
+                        source_type = source_types[i]
+                    source_type_list.append(source_type)
             except Exception as e:
                 logger.warning(f"数据处理失败：{e}")
 
-        # 2. 分批次存入 Milvus（包含标量字段）
+        # 2. 分批次存入 Milvus（包含标量字段和新增字段）
         if vectors:
             batch_size = 50
             for i in range(0, len(vectors), batch_size):
@@ -423,6 +460,8 @@ class VectorStoreManager:
                 b_domains = domains[i:i + batch_size]
                 b_source_files = source_files[i:i + batch_size]
                 b_source_quotes = source_quotes[i:i + batch_size]
+                b_chunk_texts = chunk_text_list[i:i + batch_size]
+                b_source_types = source_type_list[i:i + batch_size]
                 
                 try:
                     self.collection.insert([
@@ -434,6 +473,8 @@ class VectorStoreManager:
                         b_domains,
                         b_source_files,
                         b_source_quotes,
+                        b_chunk_texts,
+                        b_source_types,
                     ])
                     logger.info(f"Milvus 写入成功：{len(b_vectors)} 条记录 (project_id={project_id}, domain={domain})")
                 except Exception as e:
@@ -508,6 +549,61 @@ class VectorStoreManager:
             param=search_params,
             limit=top_k_int,
             expr=filter_expr if filter_expr else None,
+            output_fields=["text", "metadata", "project_id", "domain", "source_file", "source_quote"]
+        )
+        
+        hits = []
+        for hit in results[0]:
+            hits.append({
+                "text": hit.entity.get("text"),
+                "metadata": json.loads(hit.entity.get("metadata")),
+                "distance": hit.distance,
+                "project_id": hit.entity.get("project_id"),
+                "domain": hit.entity.get("domain"),
+                "source_file": hit.entity.get("source_file"),
+                "source_quote": hit.entity.get("source_quote"),
+            })
+        return hits
+
+    def search_with_expr(
+        self, 
+        query_text: str, 
+        expr: str,
+        top_k: int = 5,
+    ):
+        """
+        使用表达式搜索向量库，支持复杂的过滤条件。
+        
+        参数:
+        - query_text: 查询文本
+        - expr: 过滤表达式（Milvus 表达式语法）
+        - top_k: 返回结果数量
+        
+        返回:
+        - 搜索结果列表，每个结果包含 text, metadata, distance, source_file, source_quote
+        """
+        if not self.is_enabled or not self.collection:
+            return []
+        
+        # 确保 top_k 是整数类型
+        try:
+            top_k_int = int(top_k)
+        except (ValueError, TypeError):
+            logger.warning(f"top_k 参数 '{top_k}' 无法转换为整数，使用默认值 5")
+            top_k_int = 5
+        
+        logger.info(f"[search_with_expr] 使用表达式：{expr}")
+        
+        query_vec = self.get_embedding(query_text)
+        search_params = {"metric_type": "COSINE", "params": {"nprobe": 10}}
+        
+        # 使用 expr 参数进行过滤
+        results = self.collection.search(
+            data=[query_vec],
+            anns_field="vector",
+            param=search_params,
+            limit=top_k_int,
+            expr=expr if expr else None,
             output_fields=["text", "metadata", "project_id", "domain", "source_file", "source_quote"]
         )
         

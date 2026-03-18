@@ -11,6 +11,7 @@ import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Layout/Navbar';
 import { projectsApi } from '../api/projects';
 import { ProjectData } from '../types/ontology';
+import KnowledgeDomainSelector from '../components/KnowledgeDomainSelector';
 
 const MyProjectsPage: React.FC = () => {
     const navigate = useNavigate();
@@ -18,6 +19,8 @@ const MyProjectsPage: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [form] = Form.useForm();
+    const [selectedDomainId, setSelectedDomainId] = useState<number | undefined>(undefined);
+    const [selectedDomainName, setSelectedDomainName] = useState<string | undefined>(undefined);
 
     useEffect(() => {
         loadProjects();
@@ -36,11 +39,22 @@ const MyProjectsPage: React.FC = () => {
     };
 
     const handleCreateProject = async (values: any) => {
+        if (!selectedDomainId) {
+            message.warning('请选择知识域');
+            return;
+        }
         try {
-            const newProject = await projectsApi.createProject(values);
+            const newProject = await projectsApi.createProject({
+                name: values.name,
+                description: values.description,
+                domain_id: selectedDomainId,
+                domain_name: selectedDomainName,
+            });
             message.success('项目创建成功！');
             setIsModalOpen(false);
             form.resetFields();
+            setSelectedDomainId(undefined);
+            setSelectedDomainName(undefined);
 
             // 立即跳转到该项目的编辑页面
             navigate(`/ontology-builder/${newProject.id}`);
@@ -194,13 +208,27 @@ const MyProjectsPage: React.FC = () => {
                         label="项目名称"
                         rules={[{ required: true, message: '请输入项目名称' }]}
                     >
-                        <Input placeholder="例如: 工业本体" />
+                        <Input placeholder="例如：工业本体" />
                     </Form.Item>
 
                     <Form.Item name="description" label="项目描述">
                         <Input.TextArea
                             rows={4}
                             placeholder="简要描述这个项目的用途..."
+                        />
+                    </Form.Item>
+
+                    <Form.Item
+                        label="知识域"
+                        rules={[{ required: true, message: '请选择知识域' }]}
+                        tooltip="选择或创建本项目所属的知识领域"
+                    >
+                        <KnowledgeDomainSelector
+                            value={selectedDomainId}
+                            onChange={setSelectedDomainId}
+                            domainName={selectedDomainName}
+                            onDomainNameChange={setSelectedDomainName}
+                            placeholder="选择知识域"
                         />
                     </Form.Item>
 

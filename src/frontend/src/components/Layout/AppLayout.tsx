@@ -25,6 +25,7 @@ import { systemApi } from '../../api/system';
 import apiClient from '../../api/client';
 import { getDomains, KnowledgeDomain } from '../../api/domains';
 import { projectsApi } from '../../api/projects';
+import type { ProjectData } from '../../types/ontology';
 
 const { Sider, Content } = Layout;
 const { TextArea } = Input;
@@ -77,6 +78,10 @@ const AppLayout: React.FC = () => {
     const [selectedQADomains, setSelectedQADomains] = useState<number[]>([]);
     const [availableDomains, setAvailableDomains] = useState<KnowledgeDomain[]>([]);
     const [isDomainsLoading, setIsDomainsLoading] = useState(false);
+    const [qaProjectId, setQaProjectId] = useState<number | null>(null);
+    const [qaProjects, setQaProjects] = useState<ProjectData[]>([]);
+    const [isQaProjectsLoading, setIsQaProjectsLoading] = useState(false);
+    const [showProjectSelector, setShowProjectSelector] = useState(false);
 
     const openConfigModal = async () => {
         setConfigLoading(true);
@@ -191,10 +196,44 @@ const AppLayout: React.FC = () => {
         }
     };
 
+    // 加载用户项目列表
+    const loadQaProjects = async () => {
+        setIsQaProjectsLoading(true);
+        try {
+            const projects = await projectsApi.getMyProjects();
+            setQaProjects(projects);
+        } catch (error: any) {
+            message.error('加载项目列表失败');
+        } finally {
+            setIsQaProjectsLoading(false);
+        }
+    };
+
     // 打开问答 Modal
     const handleOpenQAModal = () => {
+        // 获取当前项目 ID（从 URL 路径）
+        const pathParts = location.pathname.split('/');
+        const lastPart = pathParts[pathParts.length - 1];
+        const projectIdFromUrl = lastPart && !isNaN(Number(lastPart)) ? Number(lastPart) : null;
+        
+        if (projectIdFromUrl) {
+            // 如果当前在项目页面，直接使用该项目
+            setQaProjectId(projectIdFromUrl);
+            setShowProjectSelector(false);
+        } else {
+            // 否则显示项目选择器
+            loadQaProjects();
+            setShowProjectSelector(true);
+        }
+        
         setIsQAModalOpen(true);
         loadAvailableDomains();
+    };
+
+    // 选择项目
+    const handleSelectProject = (projectId: number) => {
+        setQaProjectId(projectId);
+        setShowProjectSelector(false);
     };
 
     // 发送问题
@@ -204,12 +243,8 @@ const AppLayout: React.FC = () => {
             return;
         }
 
-        // 获取当前项目 ID（从 URL 路径）
-        const pathParts = location.pathname.split('/');
-        const projectId = pathParts[pathParts.length - 1];
-        
-        if (!projectId || isNaN(Number(projectId))) {
-            message.warning('请先选择或创建一个项目');
+        if (!qaProjectId) {
+            message.warning('请先选择项目');
             return;
         }
 
@@ -223,7 +258,7 @@ const AppLayout: React.FC = () => {
                 }).filter(Boolean).join(',')
                 : undefined;
 
-            const response = await projectsApi.qaQuery(Number(projectId), qaQuestion, {
+            const response = await projectsApi.qaQuery(qaProjectId, qaQuestion, {
                 selected_domains: selectedDomainsStr,
                 top_k: 5,
             });
@@ -638,11 +673,78 @@ const AppLayout: React.FC = () => {
                 onCancel={() => {
                     setIsQAModalOpen(false);
                     handleClearQA();
+                    setShowProjectSelector(false);
                 }}
                 footer={null}
                 width={700}
             >
                 <div className="py-2">
+                    {/* 项目选择区域 */}
+                    {showProjectSelector ? (
+                        <div className="mb-4">
+                            <div className="flex items-center gap-2 mb-2">
+                                <DatabaseOutlined className="text-blue-500" />
+                                <span className="font-medium text-gray-700">选择项目</span>
+                            </div>
+                            <div className="text-xs text-gray-500 mb-2">
+                                请选择要进行问答的项目
+                            </div>
+                            {isQaProjectsLoading ? (
+                                <div className="flex justify-center py-8">
+                                    <Spin size="large" />
+                                </div>
+                            ) : qaProjects.length === 0 ? (
+                                <div className="text-center py-8 text-gray-400">
+                                    <DatabaseOutlined className="text-4xl mb-2" />
+                                    <p>暂无可用项目</p>
+                                    <p className="text-sm mt-2">请先在"我的项目"中创建项目</p>
+                                </div>
+                            ) : (
+                                <div className="max-h-64 overflow-auto space-y-2">
+                                    {qaProjects.map((project) => (
+                                        <div
+                                            key={project.id}
+                                            className="p-3 border border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 cursor-pointer transition-all"
+                                            onClick={() => handleSelectProject(project.id)}
+                                        >
+                                            <div className="flex items-center justify-between">
+                                                <div>
+                                                    <div className="font-medium text-gray-800">{project.name}</div>
+                                                    <div className="text-xs text-gray-500 mt-1">
+                                                        {project.description || '暂无描述'}
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <Tag color={project.is_published ? 'green' : 'orange'}>
+                                                        {project.is_published ? '已发布' : '草稿'}
+                                                    </Tag>
+                                                    <Tag color="blue">{project.domain?.name || '未分类'}</Tag>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    ) : (
+                        <>
+                    {/* 当前项目显示 */}
+                    <div className="mb-3 p-2 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                            <DatabaseOutlined className="text-blue-500" />
+                            <span className="text-sm text-gray-600">当前项目 ID: {qaProjectId}</span>
+                        </div>
+                        <Button
+                            size="small"
+                            onClick={() => {
+                                loadQaProjects();
+                                setShowProjectSelector(true);
+                            }}
+                        >
+                            更换项目
+                        </Button>
+                    </div>
+
                     {/* 知识域多选区域 */}
                     <div className="mb-4">
                         <div className="flex items-center gap-2 mb-2">
@@ -756,12 +858,14 @@ const AppLayout: React.FC = () => {
                     )}
 
                     {/* 空状态提示 */}
-                    {!qaAnswer && !isQALoading && (
+                    {!qaAnswer && !isQALoading && !showProjectSelector && (
                         <div className="text-center py-8 text-gray-400">
                             <MessageOutlined className="text-4xl mb-2" />
                             <p>请输入问题开始问答</p>
                             <p className="text-sm mt-1">支持基于知识图谱的 RAG 检索和溯源</p>
                         </div>
+                    )}
+                    </>
                     )}
                 </div>
 

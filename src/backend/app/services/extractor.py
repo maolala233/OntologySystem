@@ -243,7 +243,7 @@ class OntologyExtractor:
             logger.warning(f"获取流式配置失败，使用默认值：{e}")
             return True
 
-    def _call_llm(self, system_prompt: str, user_prompt: str, task_id: Optional[str] = None, timeout: int = 300) -> Optional[dict]:
+    def _call_llm(self, system_prompt: str, user_prompt: str, task_id: Optional[str] = None, timeout: int = 300, json_schema: Optional[Dict[str, Any]] = None) -> Optional[dict]:
         """
         同步调用 LLM 并处理异常，返回解析后的 dict 或 None。
         使用线程池执行 LLM 调用，支持超时和取消检查。
@@ -251,6 +251,7 @@ class OntologyExtractor:
         参数:
         - task_id: 任务 ID，用于在调用间隙检查取消标志
         - timeout: LLM 调用超时时间（秒），默认 300 秒
+        - json_schema: JSON Schema 定义，用于约束输出格式（优先使用）
         """
         streaming = self._get_streaming_config()
         try:
@@ -261,8 +262,8 @@ class OntologyExtractor:
             # 使用线程池执行 LLM 调用，支持超时
             executor = ThreadPoolExecutor(max_workers=1)
             try:
-                # 注意：call_llm 的参数顺序是 (system_prompt, user_prompt, max_retries, stream, timeout, task_id)
-                # 必须使用关键字参数传入 stream、timeout 和 task_id，避免位置参数混淆
+                # 注意：call_llm 的参数顺序是 (system_prompt, user_prompt, max_retries, stream, timeout, task_id, json_schema)
+                # 必须使用关键字参数传入 stream、timeout、task_id 和 json_schema，避免位置参数混淆
                 future = executor.submit(
                     self.llm_client.call_llm,
                     system_prompt,
@@ -270,7 +271,8 @@ class OntologyExtractor:
                     3,  # max_retries
                     stream=streaming,
                     timeout=timeout,
-                    task_id=task_id  # 传递 task_id 以支持取消检查
+                    task_id=task_id,  # 传递 task_id 以支持取消检查
+                    json_schema=json_schema,  # 传递 json_schema 以约束输出格式
                 )
                 result = future.result(timeout=timeout + 10)  # 额外 10 秒缓冲
             except ConcurrentTimeoutError:
@@ -619,12 +621,13 @@ class OntologyExtractor:
         product_code: Optional[str] = None,
         task_id: Optional[str] = None,
         progress_callback: Optional[Callable[[float, str], None]] = None,
+        documents: Optional[List[Dict[str, Any]]] = None,  # ★ 新增：支持传入文档数组 [{"text": str, "filename": str}]
     ) -> Dict[str, Any]:
         """
         第二阶段：在 Schema 约束下提取实例 (NamedIndividual)。
         
         核心机制：
-        1. 将 schema_graph 转为 Prompt 约束规则注入；
+        1. 将 schema_graph 转为 Prompt 约束注入；
         2. 模型仅能实例化 schema_graph.classes 中已定义的类；
         3. 生成的 ObjectProperty 连线必须符合 domain/range 约束，否则后端丢弃。
         4. 实例 ID 同样使用确定性算法。
@@ -639,7 +642,13 @@ class OntologyExtractor:
         - task_id: 任务 ID，用于支持取消操作
         - progress_callback: 进度回调函数，签名：callback(progress: float, message: str)
         """
+        logger.info("=" * 80)
         logger.info("[API2-InstanceExtraction] 开始实例提取")
+        logger.info(f"[InstanceExtraction] 输入参数：product_code={product_code}, task_id={task_id}")
+        logger.info(f"[InstanceExtraction] Schema 包含 {len(schema_graph.get('classes', []))} 个类，{len(schema_graph.get('object_properties', []))} 个关系")
+        logger.info(f"[InstanceExtraction] Schema 详情：classes={schema_graph.get('classes', [])[:3]}... (仅显示前 3 个)")
+        logger.info(f"[InstanceExtraction] Schema 详情：object_properties={schema_graph.get('object_properties', [])[:3]}... (仅显示前 3 个)")
+        logger.info(f"[InstanceExtraction] 输入文本长度：{len(text)} 字符")
         
         # 进度回调辅助函数
         def report_progress(progress: float, message: str = ""):
@@ -777,7 +786,15 @@ class OntologyExtractor:
 - source_quote 是提取该实例的唯一依据，不能编造或改写。
 """
 
-        chunks = self._chunk_text(text, chunk_size=chunk_size, overlap=chunk_overlap)
+        # ★ 关键修复：如果传入了 documents 数组，使用它来保持文件名溯源信息
+        # 否则 fallback 到旧的 _chunk_text 方法
+        if documents and len(documents) > 0:
+            chunks = self._chunk_documents(documents, chunk_size=chunk_size, overlap=chunk_overlap)
+            logger.info(f"[InstanceExtraction] 使用 documents 数组进行切分：{len(documents)} 个文档")
+        else:
+            chunks = self._chunk_text(text, chunk_size=chunk_size, overlap=chunk_overlap)
+            logger.info(f"[InstanceExtraction] 使用 text 进行切分：{len(chunks)} 个切片")
+        
         total_chunks = len(chunks)
 
         # 构建防御性校验索引
@@ -970,6 +987,22 @@ class OntologyExtractor:
             f"[InstanceExtraction] 完成：{len(result['instances'])} 个实例，"
             f"{discarded_count} 条不合规连线已丢弃"
         )
+        
+        # ★ 详细日志：打印提取结果（前 5 个实例）
+        logger.info("=" * 80)
+        logger.info("[InstanceExtraction] ★ 提取结果详情（前 5 个实例）:")
+        for i, inst in enumerate(result["instances"][:5]):
+            logger.info(f"  [{i+1}] id={inst['id']}, type={inst['type']}, label={inst['label']}")
+            logger.info(f"      data_props={inst.get('data_props', {})}")
+            logger.info(f"      object_props={inst.get('object_props', {})}")
+            logger.info(f"      溯源：file={inst.get('_source_file')}, chunk={inst.get('_source_chunk_index')}, quote={inst.get('_source_quote', '')[:50]}...")
+        
+        if len(result["instances"]) > 5:
+            logger.info(f"  ... 还有 {len(result['instances']) - 5} 个实例")
+        
+        logger.info(f"[InstanceExtraction] 丢弃的边数：{discarded_count}")
+        logger.info("=" * 80)
+        
         return result
 
     def extract_instances_with_constraints(
@@ -982,10 +1015,13 @@ class OntologyExtractor:
         product_code: Optional[str] = None,
         task_id: Optional[str] = None,
         progress_callback: Optional[Callable[[float, str], None]] = None,
+        documents: Optional[List[Dict[str, Any]]] = None,  # ★ 新增：支持传入文档数组
     ) -> Dict[str, Any]:
         """
         对外暴露的「带 Schema 约束的实例提取」方法。
         语义等价于 extract_instances，但命名上强调强约束规则，便于路由层对齐 API 设计。
+        
+        ★ 关键修复：支持传入 documents 数组，保持原始文件名溯源信息
         """
         return self.extract_instances(
             text=text,
@@ -996,6 +1032,7 @@ class OntologyExtractor:
             product_code=product_code,
             task_id=task_id,
             progress_callback=progress_callback,
+            documents=documents,  # ★ 传递 documents 数组
         )
 
     # ──────────────────────────────────────────
@@ -1214,24 +1251,28 @@ class OntologyExtractor:
         delete_old: bool = True,
         project_id: Optional[int] = None,
         domain: Optional[str] = None,
+        collection_name: Optional[str] = None,
     ) -> str:
         """
         同步 TTL 文件到向量库，支持知识域隔离和溯源信息。
         
-        参数:
-        - ttl_file_path: TTL 文件路径
-        - progress: 进度回调函数
-        - delete_old: 是否删除旧数据
-        - project_id: 项目 ID，用于逻辑隔离
-        - domain: 知识域名称，用于按知识域过滤
+        ★ 优化版：实例级别聚合存储 + 完整溯源信息
+        - 将同一个实例的所有属性聚合为一条完整记录
+        - 透传原始文件名（如 xxx 说明书.pdf）而非 TTL 临时文件
+        - 添加 chunk_index 用于前端快速定位
+        - 使用 knowledge_graph_rag 通用 collection，通过 project_id 逻辑隔离
         """
+        # 始终使用 knowledge_graph_rag 通用 collection，通过 project_id 实现逻辑隔离
+        # 如果传入了 collection_name，忽略它（保持向后兼容）
+        vector_manager = self.vector_manager
+        
         filename = os.path.basename(ttl_file_path)
         if delete_old:
             # 使用 project_id 进行更精确的删除
             if project_id:
-                self.vector_manager.delete_by_expr(f'project_id == {project_id}')
+                vector_manager.delete_by_expr(f'project_id == {project_id}')
             else:
-                self.vector_manager.delete_by_expr(
+                vector_manager.delete_by_expr(
                     f'metadata like "%\\"source_file\\": \\"{filename}\\"%"'
                 )
 
@@ -1249,93 +1290,205 @@ class OntologyExtractor:
             u = str(uri)
             return u.split("#")[-1] if "#" in u else u.split("/")[-1]
 
-        knowledge_texts = []
-        knowledge_metas = []
-        triples = list(g)
-        total = len(triples)
-        count = 0
-
-        for i, (s, p, o) in enumerate(triples):
-            if p == RDF.type and o in [OWL.Ontology, OWL.Class, OWL.ObjectProperty, OWL.DatatypeProperty]:
-                continue
+        # ──────────────────────────────────────────
+        # ★ 第一步：按主语（Subject）分组，聚合实例的所有属性
+        # ──────────────────────────────────────────
+        
+        # 数据结构：{subject_uri: {"label": str, "type": str, "props": {prop_name: value}, "relations": {rel_name: target}}}
+        instances: Dict[str, Dict] = {}
+        schema_items = []  # 存储 Schema 相关的三元组（类定义、关系定义等）
+        
+        # 从 TTL 中提取溯源信息（隐藏属性）
+        ttl_source_info: Dict[str, Dict] = {}  # {subject_uri: {"_source_file": str, "_source_quote": str, "_domain": str, "_source_chunk_index": int}}
+        
+        for s, p, o in g.triples((None, None, None)):
             s_id = get_local(s)
             s_label = labels.get(s, s_id)
             p_id = get_local(p)
             p_label = labels.get(p, p_id)
             
-            # ★ 从 TTL 中提取溯源信息（如果存在）
-            # 检查节点是否有 _source_file, _source_quote 等隐藏属性
-            source_file = filename  # 默认使用 TTL 文件名
-            source_quote = ""  # 默认使用三元组拼接的文本作为 fallback
+            # 检查是否是隐藏属性（溯源信息）
+            if p_id.startswith("_"):
+                if s not in ttl_source_info:
+                    ttl_source_info[s] = {}
+                ttl_source_info[s][p_id] = str(o)
+                continue
             
-            # 尝试从 TTL 中提取隐藏属性（如果 TTL 中包含这些属性）
-            for pred, obj in g.predicate_objects(s):
-                pred_local = get_local(pred)
-                if pred_local == "_source_file":
-                    source_file = str(obj)
-                elif pred_local == "_source_quote":
-                    source_quote = str(obj)
-                elif pred_local == "_domain":
-                    domain = str(obj)  # 从 TTL 中覆盖 domain
+            # 跳过 Schema 定义相关的三元组
+            if p == RDF.type:
+                if o in [OWL.Ontology, OWL.Class, OWL.ObjectProperty, OWL.DatatypeProperty]:
+                    schema_items.append((s, p, o, s_label, p_label, "schema"))
+                    continue
+                # 实例的 rdf:type
+                if o in labels:
+                    type_label = labels[o]
+                else:
+                    type_label = get_local(o)
+                
+                if s not in instances:
+                    instances[s] = {"label": s_label, "type": type_label, "props": {}, "relations": {}}
+                else:
+                    instances[s]["type"] = type_label
+                continue
             
-            base_meta = {
-                "source": "ttl_sync",
-                "source_file": source_file,
-                "subject": s_label,
-                "subject_id": s_id,
-                "predicate": p_id,
-                "_source_file": source_file,  # 冗余存储到 meta 中
-                "_source_quote": source_quote,
-            }
+            # 处理属性（DataProperty）和关系（ObjectProperty）
+            if s not in instances:
+                instances[s] = {"label": s_label, "type": "", "props": {}, "relations": {}}
             
             if isinstance(o, URIRef):
+                # ObjectProperty（关系）
                 o_id = get_local(o)
                 o_label = labels.get(o, o_id)
-                text = f"{s_label} 的 {p_label} 是 {o_label}"
-                meta = {
-                    **base_meta, 
-                    "object": o_label, 
-                    "object_id": o_id,
-                }
+                instances[s]["relations"][p_label] = o_label
             else:
+                # DataProperty（属性）
                 o_val = str(o)
-                text = f"{s_label} 的 {p_label} 属性值为 {o_val}"
-                meta = {
-                    **base_meta, 
-                    "object": o_val,
-                }
-            
-            # 如果没有从 TTL 中提取到 source_quote，使用三元组拼接的文本作为 fallback
-            if not source_quote:
-                source_quote = text
+                # 聚合属性值（支持多值）
+                if p_label in instances[s]["props"]:
+                    existing = instances[s]["props"][p_label]
+                    if isinstance(existing, list):
+                        if o_val not in existing:
+                            existing.append(o_val)
+                    else:
+                        if o_val != existing:
+                            instances[s]["props"][p_label] = [existing, o_val]
+                else:
+                    instances[s]["props"][p_label] = o_val
 
-            knowledge_texts.append(text)
+        # ──────────────────────────────────────────
+        # ★ 第二步：生成向量库记录
+        # ──────────────────────────────────────────
+        
+        knowledge_texts = []
+        knowledge_metas = []
+        count = 0
+        
+        # 1. 为每个实例生成聚合记录（用于问答检索）
+        for s_uri, inst_data in instances.items():
+            s_label = inst_data["label"]
+            inst_type = inst_data["type"]
+            props = inst_data["props"]
+            relations = inst_data["relations"]
+            
+            # 获取溯源信息
+            source_info = ttl_source_info.get(s_uri, {})
+            
+            # ★ 关键优化：source_file 必须是原始业务文件名，而不是 TTL 临时文件
+            # 如果 TTL 中有 _source_file 属性，使用它
+            source_file = source_info.get("_source_file", "")
+            if not source_file:
+                # 如果没有溯源信息，使用传入的 domain 作为 fallback（但不要用"_data"后缀，避免混淆）
+                source_file = domain or "unknown"
+            
+            source_quote = source_info.get("_source_quote", "")
+            inst_domain = source_info.get("_domain", domain)
+            
+            # ★ 关键优化：chunk_index 必须透传，用于前端快速定位
+            chunk_index = source_info.get("_source_chunk_index")
+            if chunk_index is None:
+                # 尝试从字符串解析为整数
+                try:
+                    chunk_index_str = source_info.get("_source_chunk_index_str", "0")
+                    chunk_index = int(chunk_index_str)
+                except (ValueError, TypeError):
+                    chunk_index = 0
+            
+            # ★ 构建完整的实例描述文本（用于向量检索）
+            # 格式："[类型] 名称（属性 1: 值 1, 属性 2: 值 2, ...）与 X 有关系 Y"
+            prop_parts = []
+            for prop_name, prop_val in props.items():
+                if isinstance(prop_val, list):
+                    val_str = "、".join(str(v) for v in prop_val)
+                else:
+                    val_str = str(prop_val)
+                prop_parts.append(f"{prop_name}: {val_str}")
+            
+            # 构建主文本
+            if prop_parts:
+                main_text = f"{s_label}（{', '.join(prop_parts)}）"
+            else:
+                main_text = s_label
+            
+            if inst_type:
+                main_text = f"[{inst_type}] {main_text}"
+            
+            # 添加关系描述
+            relation_parts = []
+            for rel_name, target in relations.items():
+                relation_parts.append(f"{rel_name} → {target}")
+            
+            if relation_parts:
+                full_text = f"{main_text} | 关系：{', '.join(relation_parts)}"
+            else:
+                full_text = main_text
+            
+            # 如果没有溯源信息，使用完整文本作为 fallback
+            if not source_quote:
+                source_quote = full_text
+            
+            # ★ 构建优化的元数据（遵循用户指定的格式）
+            meta = {
+                "source": "ttl_instance",
+                # ★ 租户隔离标量
+                "project_id": project_id,
+                # ★ 统一叫 domain，用于知识域标量过滤
+                "domain": inst_domain or domain or "",
+                
+                # ★ 主体信息
+                "subject": s_label,
+                "subject_type": inst_type,
+                
+                # ★ 以实体为中心的图谱邻居聚合（保留）
+                "properties": json.dumps(props, ensure_ascii=False),
+                "relations": json.dumps(relations, ensure_ascii=False),
+                
+                # ★ 面向人类的终极溯源锚点
+                "source_file": source_file,  # 原始业务文件名
+                "chunk_index": chunk_index,   # 切片序号，用于快速定位
+                "source_quote": source_quote, # 原文引用
+            }
+            
+            knowledge_texts.append(full_text)
             knowledge_metas.append(meta)
             count += 1
+            
+            logger.debug(f"[TTL 同步] 实例聚合：{s_label} -> {full_text[:100]}...")
+            logger.debug(f"[TTL 同步] 溯源信息：source_file={source_file}, chunk_index={chunk_index}")
 
-            if len(knowledge_texts) >= 100:
-                # ★ 传入 project_id 和 domain 参数，支持知识域隔离
-                self.vector_manager.insert_data(
-                    knowledge_texts, 
-                    knowledge_metas,
-                    project_id=project_id,
-                    domain=domain,
-                )
-                knowledge_texts = []
-                knowledge_metas = []
-                if progress:
-                    progress(i / total, desc=f"同步中... {i}/{total}")
+        # 2. 同时保留 Schema 记录（用于结构检索）
+        for s, p, o, s_label, p_label, item_type in schema_items:
+            if p == RDF.type:
+                o_label = get_local(o)
+                text = f"{s_label} 是一个 {o_label}"
+                meta = {
+                    "source": "ttl_schema",
+                    "project_id": project_id,
+                    "domain": domain or "",
+                    "subject": s_label,
+                    "predicate": p_label,
+                    "object": o_label,
+                    "source_file": filename,
+                    "source_quote": text,
+                    "chunk_index": 0,
+                }
+                knowledge_texts.append(text)
+                knowledge_metas.append(meta)
+                count += 1
 
+        # 批量插入向量库
         if knowledge_texts:
-            # ★ 传入 project_id 和 domain 参数，支持知识域隔离
-            self.vector_manager.insert_data(
+            vector_manager.insert_data(
                 knowledge_texts, 
                 knowledge_metas,
                 project_id=project_id,
-                domain=domain,
+                domain=inst_domain if inst_domain else domain,
             )
+            if progress:
+                progress(1.0, desc=f"同步完成：{count} 条记录")
 
-        return f"✅ 同步完成：共处理 {count} 条三元组到库 {self.vector_manager.collection_name} (project_id={project_id}, domain={domain})"
+        logger.info(f"[TTL 同步] 完成：共处理 {len(instances)} 个实例，{count} 条记录 (project_id={project_id}, domain={domain})")
+        
+        return f"✅ 同步完成：共处理 {len(instances)} 个实例，{count} 条记录到库 {self.vector_manager.collection_name} (project_id={project_id}, domain={domain})"
 
     # ──────────────────────────────────────────
     # 兼容旧接口（内部转两阶段调用）
@@ -1466,6 +1619,31 @@ class OntologyExtractor:
                     inst_uri, dp_uri,
                     Literal(val, lang="zh") if isinstance(val, str) else Literal(val)
                 ))
+            
+            # ★ 关键修复：将溯源信息作为隐藏属性写入 TTL，确保向量入库时能透传原始文件名和 chunk_index
+            if "_source_file" in inst:
+                source_file_uri = self.EX["_source_file"]
+                master_g.add((source_file_uri, RDF.type, OWL.DatatypeProperty))
+                master_g.add((source_file_uri, RDFS.label, Literal("源文件", lang="zh")))
+                master_g.add((inst_uri, source_file_uri, Literal(inst["_source_file"], lang="zh")))
+            
+            if "_source_chunk_index" in inst:
+                chunk_index_uri = self.EX["_source_chunk_index"]
+                master_g.add((chunk_index_uri, RDF.type, OWL.DatatypeProperty))
+                master_g.add((chunk_index_uri, RDFS.label, Literal("切片索引", lang="zh")))
+                master_g.add((inst_uri, chunk_index_uri, Literal(str(inst["_source_chunk_index"]), datatype=XSD.integer)))
+            
+            if "_source_quote" in inst:
+                source_quote_uri = self.EX["_source_quote"]
+                master_g.add((source_quote_uri, RDF.type, OWL.DatatypeProperty))
+                master_g.add((source_quote_uri, RDFS.label, Literal("原文引用", lang="zh")))
+                master_g.add((inst_uri, source_quote_uri, Literal(inst["_source_quote"], lang="zh")))
+            
+            if "_domain" in inst:
+                domain_uri = self.EX["_domain"]
+                master_g.add((domain_uri, RDF.type, OWL.DatatypeProperty))
+                master_g.add((domain_uri, RDFS.label, Literal("知识域", lang="zh")))
+                master_g.add((inst_uri, domain_uri, Literal(inst["_domain"], lang="zh")))
 
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

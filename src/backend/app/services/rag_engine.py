@@ -1,143 +1,404 @@
-# app/services/rag_engine.py - RAG引擎服务
-# 功能：实现基于知识图谱的RAG查询，从TTL文件加载图谱并进行多跳检索
+# app/services/rag_engine.py - 双路 RAG 引擎
+# 功能：融合 Neo4j 图检索和 Milvus 向量检索，实现双路溯源问答
 
-import networkx as nx
-from rdflib import Graph, RDF, RDFS, OWL, URIRef
+import logging
 import json
-from typing import Tuple, List, Dict, Any
+from typing import List, Dict, Any, Optional, Tuple
+from app.infrastructure.neo4j_client import neo4j_client
 from app.infrastructure.vector_client import VectorStoreManager
 from app.infrastructure.llm_client import LLMClient
-from app.core.exceptions import RAGException
-from app.core.logging import logger
+
+logger = logging.getLogger(__name__)
 
 
-class GraphRAG:
-    def __init__(self, vector_manager: VectorStoreManager, llm_client: LLMClient, model: str):
-        self.vector_manager = vector_manager
-        self.llm_client = llm_client
-        self.model = model
-        self.graph = nx.MultiDiGraph()
-
-    def load_from_ttl(self, ttl_file: str, clear_graph: bool = True):
-        """从 TTL 文件加载知识图谱到 NetworkX"""
-        g = Graph()
-        g.parse(ttl_file, format="turtle")
+class DualPathRAGEngine:
+    """
+    双路 RAG 引擎：融合 Neo4j 图检索和 Milvus 向量检索
+    
+    工作流程：
+    1. 路径 A：Neo4j 结构化图检索 - 获取精确的关系图谱路径
+    2. 路径 B：Milvus 语义向量召回 - 获取丰富的文本切片
+    3. 智能上下文融合 - 拼接两路结果
+    4. 最终 LLM 生成 - 生成回答并标注引用
+    """
+    
+    def __init__(self, api_key: str = None, base_url: str = None, model: str = None):
+        self.neo4j_client = neo4j_client
+        self.vector_store = VectorStoreManager()
+        self.llm_client = LLMClient(api_key=api_key, base_url=base_url, model=model)
+        logger.info(f"[DualPathRAGEngine] 初始化：model={model}, base_url={base_url}")
+    
+    def query(
+        self,
+        question: str,
+        project_id: int,
+        domains: Optional[List[str]] = None,
+        top_k: int = 5,
+        use_text2cypher: bool = True,
+        schema: Optional[Dict] = None,
+    ) -> Dict[str, Any]:
+        """
+        执行双路 RAG 查询
         
-        if clear_graph:
-            self.graph.clear()
-        for s, p, o in g:
-            # 提取本地名称
-            s_id = str(s).split("#")[-1] if "#" in str(s) else str(s)
-            p_id = str(p).split("#")[-1] if "#" in str(p) else str(p)
-            
-            # 处理对象：如果是 URI 则提取 ID，如果是 Literal 则保留原样
-            if isinstance(o, URIRef):
-                o_id = str(o).split("#")[-1] if "#" in str(o) else str(o)
-            else:
-                o_id = str(o)
-            
-            # 添加节点
-            self.graph.add_node(s_id, label=s_id)
-            self.graph.add_node(o_id, label=o_id)
-            
-            # 添加边
-            self.graph.add_edge(s_id, o_id, key=p_id, relation=p_id)
-            
-            # 特殊处理：如果是 label 关系，额外建立一个从 label 到 ID 的双向联系（通过无向图扩散可达）
-            if p == RDFS.label:
-                self.graph.add_edge(o_id, s_id, key="isLabelOf", relation="isLabelOf")
+        参数:
+        - question: 用户问题
+        - project_id: 项目 ID
+        - domains: 知识域列表（可选），用于过滤
+        - top_k: 向量检索返回数量
+        - use_text2cypher: 是否使用 Text2Cypher 查询
+        - schema: 本体 Schema（用于 Text2Cypher）
         
-        logger.info(f"Graph loaded: {self.graph.number_of_nodes()} nodes, {self.graph.number_of_edges()} edges")
-
-    def query(self, question: str, k_hop: int = 2, top_k: int = 5) -> Tuple[str, str, List[Dict[str, Any]]]:
-        """多跳 GraphRAG 检索与生成，支持溯源"""
-        # 第一步：向量检索定位锚点实体
-        hits = self.vector_manager.search(question, top_k=top_k)
-        anchor_nodes = []
-        sources = []
+        返回:
+        {
+            "answer": "回答文本",
+            "references": [
+                {
+                    "id": 1,
+                    "domain": "理财业务",
+                    "file": "阳光橙说明书.pdf",
+                    "chunk_index": 12,
+                    "quote": "原文引用",
+                    "type": "vector_chunk"|"graph_edge"|"graph_node"
+                },
+                ...
+            ]
+        }
+        """
+        logger.info("=" * 80)
+        logger.info("[DualPathRAG] 开始双路 RAG 查询")
+        logger.info(f"[DualPathRAG] ★ 输入参数:")
+        logger.info(f"  - question: {question}")
+        logger.info(f"  - project_id: {project_id}")
+        logger.info(f"  - domains: {domains}")
+        logger.info(f"  - top_k: {top_k}")
+        logger.info(f"  - use_text2cypher: {use_text2cypher}")
+        logger.info("=" * 80)
         
-        for hit in hits:
-            # 记录来源信息
-            meta = hit.get('metadata', {})
-            source_info = {
-                "text": hit.get('text'),
-                "source": meta.get('source', 'unknown'),
-                "chunk_id": meta.get('chunk_id', 'unknown'),
-                "subject": meta.get('subject', 'unknown')
-            }
-            sources.append(source_info)
-            
-            # 尝试从元数据中提取主体和客体作为图锚点
-            subject_id = meta.get('subject_id')
-            subject_label = meta.get('subject')
-            obj_id = meta.get('object_id')
-            obj_label = meta.get('object')
-
-            # 优先使用 ID，其次使用 Label
-            for node_candidate in [subject_id, subject_label, obj_id, obj_label]:
-                if node_candidate and node_candidate in self.graph:
-                    anchor_nodes.append(node_candidate)
+        # ========== 路径 A：Neo4j 图检索 ==========
+        graph_facts = []
+        graph_references = []
         
-        # 去重
-        anchor_nodes = list(set(anchor_nodes))
-        
-        # 第二步：在 NetworkX 中进行 K-Hop 扩散
-        # 优化：如果同时找到了多个锚点，优先保留 ID 中包含问题关键字的，或者更核心的实体
-        refined_anchors = []
-        for node in anchor_nodes:
-            # 如果节点 ID 包含问题中的关键代码（如 AF222827），则该锚点权重极高
-            if any(word in str(node) for word in question.split() if len(word) > 3):
-                refined_anchors.insert(0, node)
-            else:
-                refined_anchors.append(node)
-        
-        if not refined_anchors:
-            # 如果没找到图锚点，退化为普通 RAG
-            context = "\n".join([h['text'] for h in hits])
-            answer = self._generate_answer(question, context)
-            return answer, context, sources
-
-        # 使用优化后的锚点进行扩散
-        subgraph_nodes = set(refined_anchors[:3]) # 最多取前 3 个核心锚点扩散
-        for node in refined_anchors[:3]:
-            # 获取 K-Hop 邻居
-            neighbors = nx.single_source_shortest_path_length(self.graph.to_undirected(), node, cutoff=k_hop)
-            subgraph_nodes.update(neighbors.keys())
-        
-        # 提取子图三元组
-        subgraph_triples = []
-        for u, v, data in self.graph.subgraph(subgraph_nodes).edges(data=True):
-            subgraph_triples.append(f"{u} --[{data['relation']}]--> {v}")
-        
-        context = "\n".join(subgraph_triples)
-        
-        # 第三步：喂给 LLM 生成答案
-        answer = self._generate_answer(question, context)
-        return answer, context, sources
-
-    def _generate_answer(self, question: str, context: str) -> str:
-        system_prompt = "你是一个基于知识图谱的问答助手。请根据提供的图谱上下文回答用户问题。如果上下文不足以回答，请说明。请在回答中尽量引用上下文中的实体和关系。"
-        user_prompt = f"【问题】: {question}\n\n【图谱上下文】:\n{context}\n\n请给出详细回答："
-        
-        max_retries = 3
-        for attempt in range(max_retries):
+        if self.neo4j_client.driver:
             try:
-                response = self.llm_client.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    temperature=0.1,
-                    timeout=60.0 # 增加 60 秒超时控制
-                )
-                return response.choices[0].message.content
-            except Exception as e:
-                import traceback
-                logger.warning(f"GraphRAG LLM 调用失败 (第 {attempt+1} 次):")
-                logger.warning(traceback.format_exc())
-                if attempt < max_retries - 1:
-                    import time
-                    time.sleep(2 * (attempt + 1))
+                if use_text2cypher and schema:
+                    # 使用 Text2Cypher 查询
+                    graph_results, graph_refs = self.neo4j_client.text2cypher_query(
+                        project_id=project_id,
+                        question=question,
+                        schema=schema,
+                        llm_client=self.llm_client,
+                    )
+                    # 从结果中提取事实
+                    for result in graph_results:
+                        graph_facts.append({
+                            "data": result,
+                            "type": "graph_result",
+                        })
                 else:
-                    raise RAGException(f"问答生成失败: {str(e)}。请检查模型服务连接或稍后重试。")
+                    # 使用通用查询
+                    graph_facts, graph_refs = self.neo4j_client.query_with_provenance(
+                        project_id=project_id,
+                        question=question,
+                        schema=schema,
+                    )
+                
+                graph_references = graph_refs
+                logger.info(f"Neo4j 检索结果：{len(graph_facts)} 条事实，{len(graph_references)} 条引用")
+                
+                # ★ 详细日志：打印 Neo4j 检索结果
+                logger.info("[DualPathRAG] ★ Neo4j 检索结果详情:")
+                for i, fact in enumerate(graph_facts[:5]):
+                    logger.info(f"  [事实{i+1}] type={fact.get('type')}, data={fact}")
+                if len(graph_facts) > 5:
+                    logger.info(f"  ... 还有 {len(graph_facts) - 5} 条事实")
+                
+                logger.info("[DualPathRAG] ★ Neo4j 引用详情:")
+                for i, ref in enumerate(graph_references[:5]):
+                    logger.info(f"  [引用{i+1}] type={ref.get('type')}, file={ref.get('file')}, chunk={ref.get('chunk_index')}, quote={ref.get('quote', '')[:50]}...")
+                if len(graph_references) > 5:
+                    logger.info(f"  ... 还有 {len(graph_references) - 5} 条引用")
+                
+            except Exception as e:
+                logger.error(f"Neo4j 检索失败：{e}")
+        
+        # ========== 路径 B：Milvus 向量检索 ==========
+        vector_results = []
+        vector_references = []
+        
+        if self.vector_store.is_enabled and self.vector_store.collection:
+            try:
+                # 构建过滤表达式
+                filter_expr = f"project_id == {project_id}"
+                if domains:
+                    domain_expr = " or ".join([f'domain == "{d}"' for d in domains])
+                    filter_expr = f"({filter_expr}) and ({domain_expr})"
+                
+                logger.info(f"Milvus 过滤表达式：{filter_expr}")
+                
+                # 向量召回
+                vector_results = self.vector_store.search_with_expr(
+                    query_text=question,
+                    expr=filter_expr,
+                    top_k=top_k,
+                )
+                
+                # 提取引用信息
+                for i, result in enumerate(vector_results):
+                    ref = {
+                        "type": "vector_chunk",
+                        "file": result.get("source_file", ""),
+                        "chunk_index": result.get("metadata", {}).get("chunk_index", i),
+                        "quote": result.get("source_quote", result.get("text", "")),
+                        "domain": result.get("domain", ""),
+                        "chunk_text": result.get("metadata", {}).get("chunk_text", result.get("text", "")),
+                    }
+                    vector_references.append(ref)
+                
+                logger.info(f"Milvus 检索结果：{len(vector_results)} 条结果，{len(vector_references)} 条引用")
+                
+                # ★ 详细日志：打印 Milvus 检索结果
+                logger.info("[DualPathRAG] ★ Milvus 检索结果详情:")
+                for i, result in enumerate(vector_results[:5]):
+                    logger.info(f"  [结果{i+1}] text={result.get('text', '')[:100]}..., distance={result.get('distance', 0):.4f}")
+                    logger.info(f"            file={result.get('source_file')}, domain={result.get('domain')}, quote={result.get('source_quote', '')[:50]}...")
+                if len(vector_results) > 5:
+                    logger.info(f"  ... 还有 {len(vector_results) - 5} 条结果")
+                
+                logger.info("[DualPathRAG] ★ Milvus 引用详情:")
+                for i, ref in enumerate(vector_references[:5]):
+                    logger.info(f"  [引用{i+1}] type={ref.get('type')}, file={ref.get('file')}, chunk={ref.get('chunk_index')}, quote={ref.get('quote', '')[:50]}...")
+                if len(vector_references) > 5:
+                    logger.info(f"  ... 还有 {len(vector_references) - 5} 条引用")
+                
+            except Exception as e:
+                logger.error(f"Milvus 检索失败：{e}")
+        
+        # ========== 智能上下文融合 ==========
+        # ★ 优化：限制图谱事实数量，最多保留 20 条
+        limited_graph_facts = graph_facts[:20]
+        
+        # 构建融合的上下文
+        context_parts = []
+        all_references = []
+        ref_id_counter = 1
+        
+        # 1. 添加 Neo4j 的确凿事实（包含节点属性）
+        if limited_graph_facts:
+            context_parts.append("【图谱事实】")
+            for fact in limited_graph_facts:
+                if fact.get("type") == "edge":
+                    context_parts.append(
+                        f"- {fact.get('subject', '')} -> {fact.get('predicate', '')} -> {fact.get('object', '')}"
+                    )
+                elif fact.get("type") == "node":
+                    node_info = fact.get("value", "")
+                    # ★ 优化：只保留关键属性
+                    properties = fact.get("properties", {})
+                    if properties:
+                        key_props = {k: v for k, v in properties.items() if k in ['产品编号', '产品类型', '投资周期', '募集方式', '风险等级', '业绩比较基准']}
+                        if key_props:
+                            prop_str = ", ".join([f"{k}: {v}" for k, v in key_props.items()])
+                            node_info = f"{node_info} ({prop_str})"
+                    context_parts.append(f"- {node_info}")
+                else:
+                    context_parts.append(f"- {str(fact.get('data', ''))}")
+        
+        # ★ 优化：限制向量结果数量，最多保留 5 条
+        limited_vector_results = vector_results[:5]
+        
+        # 2. 添加 Milvus 的丰富文本
+        if limited_vector_results:
+            context_parts.append("\n【相关文档】")
+            for i, result in enumerate(limited_vector_results):
+                # ★ 优化：从 metadata 中提取文本，截断到 300 字符
+                metadata = result.get("metadata", {})
+                chunk_text = metadata.get("chunk_text", result.get("text", ""))[:300]
+                
+                # ★ 优化：只保留关键属性
+                properties = metadata.get("properties", {})
+                if properties and isinstance(properties, str):
+                    try:
+                        properties = json.loads(properties)
+                    except:
+                        pass
+                
+                if properties and isinstance(properties, dict):
+                    key_props = {k: v for k, v in properties.items() if k in ['产品编号', '产品类型', '投资周期', '募集方式', '风险等级', '业绩比较基准']}
+                    if key_props:
+                        prop_str = ", ".join([f"{k}: {v}" for k, v in key_props.items()])
+                        chunk_text = f"{chunk_text} | 属性：{prop_str}"
+                
+                context_parts.append(f"[{i+1}] {chunk_text}...")
+        
+        fused_context = "\n".join(context_parts)
+        logger.info(f"融合上下文长度：{len(fused_context)} 字符 (优化后)")
+        
+        # ========== 最终 LLM 生成 ==========
+        answer, references = self._generate_answer_with_references(
+            question=question,
+            context=fused_context,
+            graph_references=graph_references,
+            vector_references=vector_references,
+        )
+        
+        logger.info(f"生成回答：{len(answer)} 字符，{len(references)} 条引用")
+        
+        # ★ 详细日志：打印最终返回结果
+        logger.info("[DualPathRAG] ★ 最终返回结果:")
+        logger.info(f"  answer: {answer[:200]}..." if len(answer) > 200 else f"  answer: {answer}")
+        logger.info("  references:")
+        for i, ref in enumerate(references[:5]):
+            logger.info(f"    [{i+1}] id={ref.get('id')}, type={ref.get('type')}, file={ref.get('file')}, quote={ref.get('quote', '')[:50]}...")
+        if len(references) > 5:
+            logger.info(f"    ... 还有 {len(references) - 5} 条引用")
+        logger.info("=" * 80)
+        
+        return {
+            "answer": answer,
+            "references": references,
+            "debug_info": {
+                "graph_facts_count": len(graph_facts),
+                "vector_results_count": len(vector_results),
+                "graph_references_count": len(graph_references),
+                "vector_references_count": len(vector_references),
+            }
+        }
+    
+    def _generate_answer_with_references(
+        self,
+        question: str,
+        context: str,
+        graph_references: List[Dict],
+        vector_references: List[Dict],
+    ) -> Tuple[str, List[Dict]]:
+        """
+        使用 LLM 生成回答，并标注引用
+        
+        返回:
+        - answer: 回答文本
+        - references: 引用列表（已去重和排序）
+        """
+        # ★ 优化：限制引用总数，最多 10 条
+        # 1. 合并所有引用，去重
+        all_refs = []
+        seen_quotes = set()
+        ref_id = 1
+        
+        # 先添加图谱引用（确凿事实）- 限制最多 5 条
+        graph_ref_count = 0
+        for ref in graph_references:
+            if graph_ref_count >= 5:
+                break
+            quote_key = ref.get("quote", "")[:50]  # 用前 50 个字符作为去重 key
+            if quote_key and quote_key not in seen_quotes:
+                seen_quotes.add(quote_key)
+                all_refs.append({
+                    "id": ref_id,
+                    "domain": ref.get("domain", ""),
+                    "file": ref.get("file", ""),
+                    "chunk_index": ref.get("chunk_index", 0),
+                    "quote": ref.get("quote", ""),
+                    "type": ref.get("type", "graph_edge"),
+                })
+                ref_id += 1
+                graph_ref_count += 1
+        
+        # 再添加向量引用（丰富文本）- 限制最多 5 条
+        vector_ref_count = 0
+        for ref in vector_references:
+            if vector_ref_count >= 5:
+                break
+            quote_key = ref.get("quote", "")[:50]
+            if quote_key and quote_key not in seen_quotes:
+                seen_quotes.add(quote_key)
+                all_refs.append({
+                    "id": ref_id,
+                    "domain": ref.get("domain", ""),
+                    "file": ref.get("file", ""),
+                    "chunk_index": ref.get("chunk_index", 0),
+                    "quote": ref.get("quote", ""),
+                    "type": ref.get("type", "vector_chunk"),
+                })
+                ref_id += 1
+                vector_ref_count += 1
+        
+        # 2. 构建引用映射（用于在回答中标注）
+        ref_mapping = {}
+        for i, ref in enumerate(all_refs):
+            ref_mapping[i + 1] = ref
+        
+        # 3. 调用 LLM 生成回答
+        system_prompt = """你是一位专业的知识问答助手，基于提供的上下文信息回答用户问题。
+
+【回答要求】：
+1. 只根据提供的上下文回答，不要编造信息。
+2. 在回答中使用 [1][2][3] 等标号标注引用来源。
+3. 引用标号放在相关语句的末尾。
+4. 如果上下文中没有相关信息，请如实告知用户。
+
+【引用格式说明】：
+- [1] 表示引用第 1 条参考信息
+- [2] 表示引用第 2 条参考信息
+- 以此类推
+"""
+        
+        user_prompt = f"""【用户问题】
+{question}
+
+【提供的上下文】
+{context}
+
+【参考信息列表】
+"""
+        for i, ref in enumerate(all_refs):
+            user_prompt += f"[{i+1}] 来源：{ref.get('file', '未知')}, 类型：{ref.get('type', 'unknown')}\n"
+            user_prompt += f"    引用：{ref.get('quote', '')}\n\n"
+        
+        user_prompt += "\n请根据以上信息回答问题，并在适当位置标注引用标号："
+        
+        try:
+            # ★ 使用 call_llm_text 方法，因为回答不需要 JSON 格式
+            response = self.llm_client.call_llm_text(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                max_retries=3,
+                stream=False,
+                timeout=300.0,  # 5 分钟超时
+            )
+            
+            answer = response.get("content", "") if isinstance(response, dict) else str(response)
+            
+            # 清理回答中的 markdown 标记
+            answer = answer.replace("```", "").strip()
+            
+            logger.info(f"LLM 生成回答成功：{len(answer)} 字符")
+            
+        except Exception as e:
+            logger.error(f"LLM 生成回答失败：{e}")
+            # Fallback: 直接返回上下文
+            answer = f"根据检索到的信息：\n{context}"
+        
+        return answer, all_refs
+    
+    def extract_references_from_answer(self, answer: str, all_references: List[Dict]) -> List[Dict]:
+        """
+        从回答中提取实际使用的引用
+        分析回答中的 [1][2] 等标号，返回实际被引用的参考信息
+        """
+        import re
+        
+        used_refs = []
+        # 匹配 [1][2] 等标号
+        ref_pattern = re.compile(r'\[(\d+)\]')
+        matches = ref_pattern.findall(answer)
+        
+        for match in matches:
+            ref_id = int(match)
+            if 1 <= ref_id <= len(all_references):
+                used_refs.append(all_references[ref_id - 1])
+        
+        return used_refs
+
+
+# 全局实例
+rag_engine = DualPathRAGEngine()

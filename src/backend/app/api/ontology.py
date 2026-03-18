@@ -703,20 +703,27 @@ async def extract_instances_from_documents(
     temp_paths = [doc.file_path for doc in documents if doc.file_path]
     logger.info(f"[extract-instances-from-documents] 共 {len(temp_paths)} 个文件")
 
-    # 解析文件文本（支持多文件合并）
+    # 解析文件文本（支持多文件合并，保持文件名元数据）
     from app.services.parser import FileParser
     parser = FileParser()
-    text_contents = []
+    documents_list = []  # [{"text": str, "filename": str}]
     for temp_path in temp_paths:
         if os.path.exists(temp_path):
             text_content = parser.parse_file(temp_path) or ""
-            text_contents.append(text_content)
-            logger.info(f"[extract-instances-from-documents] 文件解析完成 - file={temp_path}, text_length={len(text_content)}")
+            # 从路径中提取原始文件名（去除 project_id 前缀）
+            original_filename = os.path.basename(temp_path)
+            # 去除 UUID 前缀（格式：{uuid}_{original_filename}）
+            if '_' in original_filename:
+                parts = original_filename.split('_', 1)
+                if len(parts) == 2:
+                    original_filename = parts[1]
+            documents_list.append({"text": text_content, "filename": original_filename})
+            logger.info(f"[extract-instances-from-documents] 文件解析完成 - file={temp_path}, original_filename={original_filename}, text_length={len(text_content)}")
         else:
             logger.warning(f"[extract-instances-from-documents] 文件不存在 - {temp_path}")
     
     # 合并所有文件内容
-    combined_text = "\n\n".join(text_contents)
+    combined_text = "\n\n".join([doc["text"] for doc in documents_list])
     logger.info(f"[extract-instances-from-documents] 合并后总文本长度={len(combined_text)}")
 
     # 从项目 graph_data 中获取 schema（用户已审核的版本）
@@ -760,7 +767,7 @@ async def extract_instances_from_documents(
                 def progress_callback(progress: float, message: str):
                     task_manager.update_progress(task_id, progress=progress, message=message)
                 
-                # 在线程池中运行同步提取方法，传递知识域信息
+                # 在线程池中运行同步提取方法，传递知识域信息和 documents 数组
                 inst_result = await asyncio.get_event_loop().run_in_executor(
                     None,
                     lambda: extractor.extract_instances_with_constraints(
@@ -772,11 +779,38 @@ async def extract_instances_from_documents(
                         product_code=domains_str,  # 传递知识域作为 product_code
                         task_id=task_id,
                         progress_callback=progress_callback,
+                        documents=documents_list,  # ★ 关键修复：传递 documents 数组保持溯源信息
                     )
                 )
 
-                # 从 schema 构建基础图数据
-                schema_graph_data = OntologyExtractor.schema_to_graph_data(schema_dict)
+                # ★ 关键修复：直接使用数据库中已保存的骨架图（用户审核后的版本）
+                # 而不是重新从 schema_dict 生成，以保留用户手动调整的节点位置等信息
+                existing_nodes = (db_project.graph_data or {}).get("nodes", [])
+                existing_edges = (db_project.graph_data or {}).get("edges", [])
+                
+                # 从现有图中筛选出类节点（owl:Class）和类间关系边（subClassOf, ObjectProperty）
+                class_node_ids = set()
+                schema_nodes = []
+                schema_edges = []
+                
+                for node in existing_nodes:
+                    node_type = node.get('data', {}).get('type', '')
+                    if node_type == 'owl:Class':
+                        class_node_ids.add(node['id'])
+                        schema_nodes.append(node)
+                
+                for edge in existing_edges:
+                    edge_data = edge.get('data', {})
+                    relation = edge_data.get('relation', '')
+                    label = edge.get('label', '')
+                    # 保留类间关系边（subClassOf 或 ObjectProperty）
+                    if relation == 'subclass_of' or label in ('subClassOf', 'subclass_of'):
+                        schema_edges.append(edge)
+                    elif relation and relation not in ('rdf:type', 'type'):
+                        # ObjectProperty 关系边
+                        schema_edges.append(edge)
+                
+                schema_graph_data = {"nodes": schema_nodes, "edges": schema_edges}
                 
                 # 合并实例到完整图
                 full_graph_data = OntologyExtractor.merge_instances_to_graph_data(
@@ -790,6 +824,42 @@ async def extract_instances_from_documents(
                     **full_graph_data,
                 }
                 db.commit()
+
+                # ★ 向量入库：将提取的实例同步到向量库
+                try:
+                    # 获取知识域信息
+                    domain_name = ""
+                    if db_project.domain_id:
+                        domain = db.query(KnowledgeDomain).filter(KnowledgeDomain.id == db_project.domain_id).first()
+                        if domain:
+                            domain_name = domain.name
+                    
+                    # 构建 TTL 内容用于向量入库
+                    ttl_content = generate_ttl_from_graph_data(full_graph_data["nodes"], full_graph_data["edges"])
+                    
+                    # 保存临时 TTL 文件
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.ttl', delete=False, encoding='utf-8') as f:
+                        f.write(ttl_content)
+                        temp_ttl_path = f.name
+                    
+                    try:
+                        # 同步到向量库，传入正确的 collection_name
+                        collection_name = f"project_{project_id}"
+                        extractor.sync_ttl_to_vector_store(
+                            ttl_file_path=temp_ttl_path,
+                            project_id=project_id,
+                            domain=domain_name,
+                            collection_name=collection_name,
+                        )
+                        logger.info(f"[extract-instances-from-documents] 向量入库成功：project_id={project_id}, domain={domain_name}, collection={collection_name}")
+                    except Exception as e:
+                        logger.error(f"[extract-instances-from-documents] 向量入库失败：{e}")
+                    finally:
+                        # 清理临时文件
+                        if temp_ttl_path and os.path.exists(temp_ttl_path):
+                            os.remove(temp_ttl_path)
+                except Exception as e:
+                    logger.error(f"[extract-instances-from-documents] 向量入库异常：{e}")
 
                 task_manager.complete_task(
                     task_id,
@@ -819,7 +889,7 @@ async def extract_instances_from_documents(
             "message": "任务已启动，请使用 task_id 查询进度",
         }
     else:
-        # 同步模式，传递知识域信息
+        # 同步模式，传递知识域信息和 documents 数组
         inst_result = extractor.extract_instances_with_constraints(
             text=combined_text,
             schema_graph=schema_dict,
@@ -828,10 +898,39 @@ async def extract_instances_from_documents(
             request_interval=request_interval,
             product_code=domains_str,  # 传递知识域作为 product_code
             task_id=None,
+            documents=documents_list,  # ★ 关键修复：传递 documents 数组保持溯源信息
         )
 
-        # 从 schema 构建基础图数据
-        schema_graph_data = OntologyExtractor.schema_to_graph_data(schema_dict)
+        # ★ 关键修复：直接使用数据库中已保存的骨架图（用户审核后的版本）
+        # 而不是重新从 schema_dict 生成，以保留用户手动调整的节点位置、自定义属性等信息
+        # 这对于 TTL 导入场景尤为重要，因为用户可能已经手动调整了骨架结构
+        existing_nodes = (db_project.graph_data or {}).get("nodes", [])
+        existing_edges = (db_project.graph_data or {}).get("edges", [])
+        
+        # 从现有图中筛选出类节点（owl:Class）和类间关系边（subClassOf, ObjectProperty）
+        class_node_ids = set()
+        schema_nodes = []
+        schema_edges = []
+        
+        for node in existing_nodes:
+            node_type = node.get('data', {}).get('type', '')
+            if node_type == 'owl:Class':
+                class_node_ids.add(node['id'])
+                schema_nodes.append(node)  # 保留原始节点（包括位置、自定义属性等）
+        
+        for edge in existing_edges:
+            edge_data = edge.get('data', {})
+            relation = edge_data.get('relation', '')
+            label = edge.get('label', '')
+            # 保留类间关系边（subClassOf 或 ObjectProperty）
+            if relation == 'subclass_of' or label in ('subClassOf', 'subclass_of'):
+                schema_edges.append(edge)
+            elif relation and relation not in ('rdf:type', 'type'):
+                # ObjectProperty 关系边
+                schema_edges.append(edge)
+        
+        schema_graph_data = {"nodes": schema_nodes, "edges": schema_edges}
+        logger.info(f"[extract-instances-from-documents] 同步模式：使用现有骨架图 - {len(schema_nodes)} 个类节点，{len(schema_edges)} 条边")
         
         # 合并实例到完整图
         full_graph_data = OntologyExtractor.merge_instances_to_graph_data(
@@ -845,6 +944,41 @@ async def extract_instances_from_documents(
             **full_graph_data,
         }
         db.commit()
+
+        # ★ 向量入库：将提取的实例同步到向量库（同步模式）
+        try:
+            # 获取知识域信息
+            domain_name = ""
+            if db_project.domain_id:
+                domain = db.query(KnowledgeDomain).filter(KnowledgeDomain.id == db_project.domain_id).first()
+                if domain:
+                    domain_name = domain.name
+            
+            # 构建 TTL 内容用于向量入库
+            ttl_content = generate_ttl_from_graph_data(full_graph_data["nodes"], full_graph_data["edges"])
+            
+            # 保存临时 TTL 文件
+            temp_ttl_path = None
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.ttl', delete=False, encoding='utf-8') as f:
+                f.write(ttl_content)
+                temp_ttl_path = f.name
+            
+            try:
+                # 同步到向量库
+                extractor.sync_ttl_to_vector_store(
+                    ttl_file_path=temp_ttl_path,
+                    project_id=project_id,
+                    domain=domain_name,
+                )
+                logger.info(f"[extract-instances-from-documents] 向量入库成功（同步模式）：project_id={project_id}, domain={domain_name}")
+            except Exception as e:
+                logger.error(f"[extract-instances-from-documents] 向量入库失败（同步模式）：{e}")
+            finally:
+                # 清理临时文件
+                if temp_ttl_path and os.path.exists(temp_ttl_path):
+                    os.remove(temp_ttl_path)
+        except Exception as e:
+            logger.error(f"[extract-instances-from-documents] 向量入库异常（同步模式）：{e}")
 
         return {
             "instances": inst_result["instances"],
@@ -2492,7 +2626,7 @@ async def clear_all_documents(
 
 
 # ─────────────────────────────────────────────
-#  ★ GraphRAG 问答接口
+#  ★ GraphRAG 问答接口（双路召回）
 # ─────────────────────────────────────────────
 
 @router.post("/{project_id}/qa")
@@ -2501,23 +2635,33 @@ async def qa_endpoint(
     question: str = Form(..., description="用户问题"),
     selected_domains: Optional[str] = Form(None, description="选中的知识域列表，逗号分隔"),
     top_k: int = Form(5, description="召回的 Top-K 结果数量"),
+    use_dual_path: bool = Form(True, description="是否使用双路召回（向量 + 图）"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    【GraphRAG 问答接口】
-    基于向量召回 + LLM 生成回答，支持知识域过滤和溯源。
+    【GraphRAG 问答接口 - 双路召回】
+    基于 Neo4j 图检索 + Milvus 向量检索 + LLM 生成回答，支持知识域过滤和溯源。
+    
+    双路召回：
+    - 路径 A：Neo4j 图检索 - 获取精确的结构化关系（如产品编号→产品类型）
+    - 路径 B：Milvus 向量检索 - 获取丰富的文本切片
     
     返回格式：
     {
         "answer": "回答内容 [1][2]...",
         "references": [
-            {"id": 1, "file": "filename.pdf", "quote": "原文引用..."},
+            {"id": 1, "file": "filename.pdf", "quote": "原文引用...", "type": "graph_node"|"graph_edge"|"vector_chunk"},
             ...
-        ]
+        ],
+        "debug_info": {
+            "graph_facts_count": 3,
+            "vector_results_count": 5,
+        }
     }
     """
     from app.core.logging import logger
+    from app.services.rag_engine import DualPathRAGEngine
     from app.infrastructure.vector_client import VectorStoreManager
     from app.infrastructure.llm_client import LLMClient
     from app.infrastructure.database import SystemConfig
@@ -2532,25 +2676,65 @@ async def qa_endpoint(
     db_config = db.query(SystemConfig).filter(SystemConfig.key == "llm_config").first()
     llm_config = db_config.value if db_config else {}
     
+    logger.info(f"[QA] 数据库 LLM 配置：{llm_config}")
+    
     api_key = llm_config.get("api_key") or settings.VLLM_API_KEY
     base_url = llm_config.get("base_url") or settings.VLLM_BASE_URL
     model = llm_config.get("model") or settings.VLLM_MODEL
     
-    # 初始化向量管理器
-    vector_manager = VectorStoreManager(collection_name=f"project_{project_id}")
+    logger.info(f"[QA] 最终 LLM 配置：api_key={api_key[:10] if api_key else 'None'}..., base_url={base_url}, model={model}")
+    
+    # 解析知识域列表
+    domains = None
+    if selected_domains:
+        domains = [d.strip() for d in selected_domains.split(',') if d.strip()]
+    
+    # ★ 双路召回模式：使用 DualPathRAGEngine
+    if use_dual_path:
+        logger.info("=" * 80)
+        logger.info("[QA] 使用双路召回模式（Neo4j + Milvus）")
+        
+        # ★ 关键修复：传递 LLM 配置给引擎
+        engine = DualPathRAGEngine(api_key=api_key, base_url=base_url, model=model)
+        logger.info(f"[QA] DualPathRAGEngine 已初始化：model={model}, base_url={base_url}")
+        
+        # 从项目 graph_data 中提取 schema（用于 Text2Cypher）
+        schema = (db_project.graph_data or {}).get("schema", None)
+        
+        try:
+            result = engine.query(
+                question=question,
+                project_id=project_id,
+                domains=domains,
+                top_k=top_k,
+                use_text2cypher=True,
+                schema=schema,
+            )
+            
+            logger.info(f"[QA] 双路召回成功：{len(result.get('references', []))} 条引用")
+            return result
+            
+        except Exception as e:
+            logger.error(f"[QA] 双路召回失败：{e}", exc_info=True)
+            # Fallback 到单一向量检索
+    
+    # ★ 单一向量检索模式（Fallback 或 用户选择）
+    logger.info("=" * 80)
+    logger.info("[QA] 使用单一向量检索模式")
+    
+    # 初始化向量管理器，默认使用 knowledge_graph_rag collection
+    vector_manager = VectorStoreManager(collection_name="knowledge_graph_rag")
     
     if not vector_manager.is_enabled or not vector_manager.collection:
         raise HTTPException(status_code=503, detail="向量库未启用或不可用")
     
     # 构建 Milvus 过滤表达式
-    expr = f'project_id == {project_id}'
-    if selected_domains:
-        domains = [d.strip() for d in selected_domains.split(',') if d.strip()]
-        if domains:
-            domain_expr = ' or '.join([f'domain == "{d}"' for d in domains])
-            expr = f'{expr} and ({domain_expr})'
+    expr = ""
+    if domains:
+        domain_expr = ' or '.join([f'domain == "{d}"' for d in domains])
+        expr = domain_expr
     
-    logger.info(f"[QA] 使用过滤表达式：{expr}")
+    logger.info(f"[QA] 使用过滤表达式：{expr if expr else '无过滤'}")
     
     # 向量召回
     try:
@@ -2560,10 +2744,21 @@ async def qa_endpoint(
         raise HTTPException(status_code=500, detail=f"向量检索失败：{str(e)}")
     
     if not results:
+        logger.info("[QA] 未找到相关知识片段")
+        logger.info("=" * 80)
         return {
             "answer": "未找到相关知识片段，请尝试其他问题或上传更多文档。",
             "references": []
         }
+    
+    # ★ 详细日志：打印向量召回结果
+    logger.info(f"[QA] ★ 向量召回结果：{len(results)} 条")
+    for i, result in enumerate(results[:5]):
+        metadata = result.get("metadata", {})
+        logger.info(f"  [结果{i+1}] file={metadata.get('source_file')}, domain={metadata.get('domain')}, distance={result.get('distance', 0):.4f}")
+        logger.info(f"            quote={metadata.get('source_quote', '')[:100]}...")
+    if len(results) > 5:
+        logger.info(f"  ... 还有 {len(results) - 5} 条结果")
     
     # 构建参考上下文
     context_parts = []
@@ -2590,6 +2785,7 @@ async def qa_endpoint(
 1. 只根据参考片段中的信息回答，不要编造未知内容。
 2. 在回答句末标注引用标号，例如 [1]、[2]。
 3. 如果参考片段中没有相关信息，请如实告知用户。
+4. 请直接回答，不要返回 JSON 格式。
 """
     
     user_prompt = f"""【参考片段】：
@@ -2598,13 +2794,14 @@ async def qa_endpoint(
 【用户问题】：
 {question}
 
-请回答用户的问题，并在句末标注引用标号。
+请回答用户的问题，并在句末标注引用标号。请直接返回文本回答。
 """
     
-    # 调用 LLM 生成回答
+    # 调用 LLM 生成回答（不要求 JSON 格式）
     llm_client = LLMClient(api_key=api_key, base_url=base_url, model=model)
     try:
-        response = llm_client.call_llm(system_prompt, user_prompt, max_retries=3, stream=False)
+        # 使用 call_llm_text 方法，不要求 JSON 格式
+        response = llm_client.call_llm_text(system_prompt, user_prompt, max_retries=3, stream=False)
         answer = response.get("content", "") if isinstance(response, dict) else str(response)
     except Exception as e:
         logger.error(f"[QA] LLM 调用失败：{e}")
