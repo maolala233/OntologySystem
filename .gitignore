@@ -11,6 +11,7 @@ log/
 OWL2VOWL/
 WebVOWL/
 src/frontend/dist/
+test/
 
 # files
 *.pyc

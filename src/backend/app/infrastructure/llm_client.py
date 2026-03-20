@@ -101,7 +101,8 @@ class LLMClient:
             # 检查是否为 SOCKS 代理
             if 'socks' in proxy_to_use.lower():
                 try:
-                    from httpx_socks import SyncProxyTransport
+                    # type: ignore - httpx_socks 是可选依赖
+                    from httpx_socks import SyncProxyTransport  # type: ignore
                     parsed = urlparse(proxy_to_use)
                     if parsed.scheme.startswith('socks'):
                         return httpx.Client(transport=SyncProxyTransport.from_url(proxy_to_use))

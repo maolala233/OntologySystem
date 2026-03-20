@@ -35,7 +35,9 @@ class DualPathRAGEngine:
         domains: Optional[List[str]] = None,
         top_k: int = 5,
         use_text2cypher: bool = True,
+        use_advanced_text2cypher: bool = True,  # ★ 新增：是否使用 3 步大模型驱动的检索
         schema: Optional[Dict] = None,
+        db_session=None,  # ★ 新增：数据库会话，用于从 SQLite 获取 schema
     ) -> Dict[str, Any]:
         """
         执行双路 RAG 查询
@@ -46,6 +48,7 @@ class DualPathRAGEngine:
         - domains: 知识域列表（可选），用于过滤
         - top_k: 向量检索返回数量
         - use_text2cypher: 是否使用 Text2Cypher 查询
+        - use_advanced_text2cypher: 是否使用 3 步大模型驱动的检索（默认 True）
         - schema: 本体 Schema（用于 Text2Cypher）
         
         返回:
@@ -72,6 +75,7 @@ class DualPathRAGEngine:
         logger.info(f"  - domains: {domains}")
         logger.info(f"  - top_k: {top_k}")
         logger.info(f"  - use_text2cypher: {use_text2cypher}")
+        logger.info(f"  - use_advanced_text2cypher: {use_advanced_text2cypher}")
         logger.info("=" * 80)
         
         # ========== 路径 A：Neo4j 图检索 ==========
@@ -80,8 +84,28 @@ class DualPathRAGEngine:
         
         if self.neo4j_client.driver:
             try:
-                if use_text2cypher and schema:
-                    # 使用 Text2Cypher 查询
+                # ★ 使用 3 步大模型驱动的检索流程
+                if use_text2cypher and use_advanced_text2cypher:
+                    logger.info("[DualPathRAG] ★ 使用 3 步大模型驱动的 Text2Cypher 检索")
+                    graph_results, graph_refs = self.neo4j_client.advanced_text2cypher_query(
+                        project_id=project_id,
+                        question=question,
+                        schema=schema,
+                        llm_client=self.llm_client,
+                        vector_manager=self.vector_store,
+                        use_fallback=True,
+                        db_session=db_session,  # ★ 传递 db_session 用于从 SQLite 获取 schema
+                    )
+                    # 从结果中提取事实
+                    for result in graph_results:
+                        graph_facts.append({
+                            "data": result,
+                            "type": result.get("type", "graph_result"),
+                        })
+                    graph_references = graph_refs
+                    
+                elif use_text2cypher and schema:
+                    # 使用旧版 Text2Cypher 查询
                     graph_results, graph_refs = self.neo4j_client.text2cypher_query(
                         project_id=project_id,
                         question=question,
@@ -94,6 +118,7 @@ class DualPathRAGEngine:
                             "data": result,
                             "type": "graph_result",
                         })
+                    graph_references = graph_refs
                 else:
                     # 使用通用查询
                     graph_facts, graph_refs = self.neo4j_client.query_with_provenance(

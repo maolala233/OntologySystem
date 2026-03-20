@@ -29,6 +29,7 @@ class DualPathRAGRequest(BaseModel):
     domains: Optional[List[str]] = None  # 知识域过滤
     top_k: int = 5
     use_text2cypher: bool = True
+    use_advanced_text2cypher: bool = True  # ★ 新增：是否使用 3 步大模型驱动的检索
     api_key: Optional[str] = None
     base_url: Optional[str] = None
     model: Optional[str] = None
@@ -137,6 +138,7 @@ async def dual_path_query(request: DualPathRAGRequest):
             domains=request.domains,
             top_k=request.top_k,
             use_text2cypher=request.use_text2cypher,
+            use_advanced_text2cypher=request.use_advanced_text2cypher,  # ★ 使用 3 步大模型驱动的检索
             schema=None,  # 可以传入 Schema 以增强 Text2Cypher
         )
         

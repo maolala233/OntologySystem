@@ -707,16 +707,26 @@ async def extract_instances_from_documents(
     from app.services.parser import FileParser
     parser = FileParser()
     documents_list = []  # [{"text": str, "filename": str}]
-    for temp_path in temp_paths:
+    
+    # 同时从数据库记录中获取原始文件名
+    doc_id_to_filename = {doc.id: doc.filename for doc in documents}
+    logger.info(f"[extract-instances-from-documents] 数据库中的文件名映射：{doc_id_to_filename}")
+    
+    for doc_idx, temp_path in enumerate(temp_paths):
         if os.path.exists(temp_path):
             text_content = parser.parse_file(temp_path) or ""
-            # 从路径中提取原始文件名（去除 project_id 前缀）
-            original_filename = os.path.basename(temp_path)
-            # 去除 UUID 前缀（格式：{uuid}_{original_filename}）
-            if '_' in original_filename:
-                parts = original_filename.split('_', 1)
-                if len(parts) == 2:
-                    original_filename = parts[1]
+            # ★ 关键修复：优先使用数据库记录中的原始文件名
+            original_filename = doc_id_to_filename.get(documents[doc_idx].id, documents[doc_idx].filename)
+            
+            # 如果数据库记录中的文件名不可用，从路径中提取
+            if not original_filename or original_filename == temp_path:
+                original_filename = os.path.basename(temp_path)
+                # 去除 UUID 前缀（格式：{uuid}_{original_filename}）
+                if '_' in original_filename:
+                    parts = original_filename.split('_', 1)
+                    if len(parts) == 2:
+                        original_filename = parts[1]
+            
             documents_list.append({"text": text_content, "filename": original_filename})
             logger.info(f"[extract-instances-from-documents] 文件解析完成 - file={temp_path}, original_filename={original_filename}, text_length={len(text_content)}")
         else:
@@ -2709,6 +2719,7 @@ async def qa_endpoint(
                 top_k=top_k,
                 use_text2cypher=True,
                 schema=schema,
+                db_session=db,  # ★ 传递 db_session 用于从 SQLite 获取 schema
             )
             
             logger.info(f"[QA] 双路召回成功：{len(result.get('references', []))} 条引用")

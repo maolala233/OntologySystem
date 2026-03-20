@@ -40,10 +40,11 @@ class VectorStoreManager:
                 proxy_to_use = https_proxy or http_proxy
                 
                 if proxy_to_use:
-                    # 检查是否为SOCKS代理
+                    # 检查是否为 SOCKS 代理
                     if 'socks' in proxy_to_use.lower():
                         try:
-                            from httpx_socks import SyncProxyTransport
+                            # type: ignore - httpx_socks 是可选依赖
+                            from httpx_socks import SyncProxyTransport  # type: ignore
                             parsed = urlparse(proxy_to_use)
                             if parsed.scheme.startswith('socks'):
                                 proxy_transport = SyncProxyTransport.from_url(proxy_to_use)
