@@ -1110,10 +1110,17 @@ class Neo4jClient:
         schema_desc = self.format_schema_for_llm(schema)
         
         # ★ 修改点 1：将真实的图谱结构强制注入到 Prompt 中，约束 LLM 输出
-        # ★ 关键修复：让 LLM 自己完成属性名的模糊匹配，而不是依赖硬编码的同义词
+        # ★ 关键修复：预先从问题中提取产品编号，硬注入到 Prompt 告诉 LLM
+        import re as _re
+        _product_code_pattern = r'[A-Z]{1,3}\d{5,7}[A-Z]?'
+        _pre_codes = _re.findall(_product_code_pattern, question)
+        _pre_code_hint = ""
+        if _pre_codes:
+            _pre_code_hint = f"\n\n【⚠️ 预检测提示】：用户问题中已检测到产品编号 {_pre_codes}，target_entity 必须设为 '{_pre_codes[0]}'，绝不能设为其他词语！"
+        
         intent_prompt = f"""分析图谱问答意图，返回 JSON：
 
-【用户问题】: {question}
+【用户问题】: {question}{_pre_code_hint}
 
 【当前图谱可用数据字典】(你的 target_attribute 和 target_relation 必须从中选择):
 - 可用属性 (Attributes): {', '.join(available_props)}
@@ -1128,16 +1135,19 @@ class Neo4jClient:
 {{"query_type": "类型", "target_entity": "必须从用户问题中提取的具体名称 或 null", "target_attribute": "必须从【可用属性】中原样挑选 或 null", "target_relation": "必须从【可用关系】中原样挑选 或 null", "keyword": "问题中的核心动词/名词 或 null"}}
 
 【重要规则】(请严格遵守):
-1. 实体提取来源 (target_entity)：必须直接从【用户问题】中提取真实的专有名词、产品名称或产品编号（如 AF253322N）。绝不能凭空捏造图谱字典中的概念词（如"管理风险"、"信用风险"）作为目标实体！
-2. 属性名模糊匹配：如果问题询问"XX的YY"，且YY与【可用属性】部分匹配（比如问"比较基准"，可用属性里有"业绩比较基准"），请将 target_attribute 设为完整的可用属性名。
-3. 如果问题问的是"限制"、"要求"等，但在字典中找不到完全匹配的词，请将 query_type 设为 general_query，并在 keyword 中填入该词，target_attribute 和 target_relation 填 null。
-4. 如果无法确定 target_entity，请填 null，不要乱猜。
+1. target_entity 来源：必须直接从【用户问题】中提取真实名称或编号（如 AF253322）。绝对禁止将"管理风险"、"信用风险"、"封闭期"等图谱概念词设为 target_entity！
+2. 属性名模糊匹配：问题中询问的属性词可以与【可用属性】部分匹配。例如"期限"→"投资周期"，"比较基准"→"业绩比较基准"，"成立日"→"产品成立日"。请从【可用属性】中选择最匹配的完整名称。
+3. 如果问题包含"几天"、"几年"、"多长时间"、"多久"、"多少天"、"是多少"、"是什么"等疑问词，且可以匹配到某个属性，则 query_type 应为 attribute_query。
+4. 如果问题问的是"限制"、"要求"等，但在字典中找不到完全匹配的词，请将 query_type 设为 general_query，keyword 填入该词。
+5. 如果无法确定 target_entity，请填 null，不要乱猜。
 
 【正确示例】:
 - 问题："AF253322N 的比较基准是多少" -> {{"query_type": "attribute_query", "target_entity": "AF253322N", "target_attribute": "业绩比较基准", "target_relation": null, "keyword": null}}
+- 问题："AF253322 的产品期限是几天" -> {{"query_type": "attribute_query", "target_entity": "AF253322", "target_attribute": "投资周期", "target_relation": null, "keyword": null}}
 - 问题："这个产品的投资比例限制是多少" -> {{"query_type": "attribute_query", "target_entity": null, "target_attribute": "投资比例限制", "target_relation": null, "keyword": null}}
 - 问题："固定收益类资产有什么限制" -> {{"query_type": "general_query", "target_entity": "固定收益类资产", "target_attribute": null, "target_relation": null, "keyword": "限制"}}
 - 问题："有什么风险" -> {{"query_type": "general_query", "target_entity": null, "target_attribute": null, "target_relation": "涉及风险", "keyword": null}}
+- 问题："Z10172 的产品成立日是什么时候" -> {{"query_type": "attribute_query", "target_entity": "Z10172", "target_attribute": "产品成立日", "target_relation": null, "keyword": null}}
 
 请分析并只输出 JSON："""
 
@@ -1158,25 +1168,41 @@ class Neo4jClient:
                 intent_json = intent_json[3:]
             intent_json = intent_json.strip()
             
-            import json
-            intent = json.loads(intent_json)
+            import json as _json
+            intent = _json.loads(intent_json)
             logger.info(f"[Text2Cypher] ★ 意图分析结果：{intent}")
             
-            # ★ 关键修复：后处理校验和修正意图分析结果
-            # 问题：LLM 经常返回错误的 target_entity（如"管理风险"），即使问题明显是属性查询
-            # 解决：在代码中强制校验和修正
-            intent = self._postprocess_intent(intent, question, available_props, available_relations)
-            logger.info(f"[Text2Cypher] ★ 后处理后的意图：{intent}")
+            # ====== 产品编号硬覆盖（在调用后处理之前，先直接用正则强制修正）======
+            import re as _re2
+            _pc_pat = r'[A-Z]{1,3}\d{5,7}[A-Z]?'
+            _found_codes = _re2.findall(_pc_pat, question)
+            if _found_codes:
+                _correct = _found_codes[0]
+                _cur_entity = intent.get("target_entity")
+                if not _cur_entity or not _re2.match(_pc_pat, str(_cur_entity)):
+                    logger.warning(f"[Text2Cypher] ★ 立即修正 target_entity: '{_cur_entity}' -> '{_correct}'")
+                    intent["target_entity"] = _correct
+            # ====================================================================
+            
+            # ★ 后处理：进一步校验和修正意图分析结果
+            try:
+                intent = self._postprocess_intent(intent, question, available_props, available_relations)
+                logger.info(f"[Text2Cypher] ★ 后处理后的意图：{intent}")
+            except Exception as post_err:
+                logger.error(f"[Text2Cypher] 后处理失败（将使用已修正的原始意图）：{post_err}", exc_info=True)
             
         except Exception as e:
-            logger.warning(f"[Text2Cypher] 意图分析失败：{e}，使用默认策略")
+            logger.error(f"[Text2Cypher] 意图分析/JSON解析失败：{e}，使用默认策略", exc_info=True)
+            # 即使失败，也尝试从问题中提取产品编号作为兜底
+            import re as _re3
+            _fb_codes = _re3.findall(r'[A-Z]{1,3}\d{5,7}[A-Z]?', question)
             intent = {
-                "query_type": "general_query",
-                "target_entity": None,
+                "query_type": "attribute_query" if _fb_codes else "general_query",
+                "target_entity": _fb_codes[0] if _fb_codes else None,
                 "target_attribute": None,
                 "target_relation": None,
                 "entity_type": None,
-                "reasoning": "意图分析失败，使用默认策略"
+                "reasoning": f"意图分析失败（{e}），使用兜底策略"
             }
         
         # ========== 第三步：实体识别与对齐 ==========
@@ -1186,24 +1212,22 @@ class Neo4jClient:
         target_attribute = intent.get("target_attribute")
         target_relation = intent.get("target_relation")
         
-        # 如果识别出目标实体，进行实体对齐
+        # ========== 实体解析：只用 Neo4j 图谱匹配，不调用 Milvus ==========
+        # ★ 架构原则：图检索路径(路径A)只用Neo4j，向量检索(路径B)只用Milvus，两路完全独立
+        # entity_alignment(Milvus) 不应出现在图检索路径中，否则会导致实体错误对齐
         aligned_entity = None
         if target_entity:
-            logger.info(f"[Text2Cypher] 正在对实体 '{target_entity}' 进行对齐")
-            
-            # 使用向量检索进行实体对齐
-            if vector_manager and vector_manager.is_enabled:
-                aligned_entity = self.entity_alignment(target_entity, project_id, vector_manager, top_k=3)
-                logger.info(f"[Text2Cypher] 实体对齐结果：'{target_entity}' -> '{aligned_entity}'")
+            logger.info(f"[Text2Cypher] 正在从 Neo4j 中匹配实体 '{target_entity}'（不使用向量对齐）")
+            # 用 Neo4j 精确/模糊匹配
+            matched = self._match_entity_in_graph(target_entity, project_id)
+            if matched:
+                aligned_entity = matched
+                logger.info(f"[Text2Cypher] Neo4j 图谱匹配成功：'{target_entity}' -> '{aligned_entity}'")
             else:
-                # 没有向量库，使用原始实体
+                # 图谱里没有精确匹配，直接用原始实体名
+                # _build_attribute_query 会在 WHERE 子句里用 CONTAINS 做模糊匹配
                 aligned_entity = target_entity
-            
-            # 如果实体对齐失败，尝试从图谱中直接匹配
-            if not aligned_entity or aligned_entity == target_entity:
-                aligned_entity = self._match_entity_in_graph(target_entity, project_id)
-                if aligned_entity:
-                    logger.info(f"[Text2Cypher] 从图谱中匹配到实体：'{target_entity}' -> '{aligned_entity}'")
+                logger.info(f"[Text2Cypher] Neo4j 未精确匹配，使用原始实体名（Cypher CONTAINS 兜底）：'{aligned_entity}'")
         
         # ========== 第四步：根据意图生成 Cypher 查询 ==========
         cypher_query = self._generate_cypher_from_intent(
@@ -1315,45 +1339,97 @@ class Neo4jClient:
                     if shortened in prop or prop.startswith(shortened):
                         return prop
         
-        # 4. 尝试常见同义词映射
+        # 4. 尝试常见同义词映射（精确优先：越具体的映射放前面）
         synonyms = {
-            '比较基准': '业绩比较基准',
-            '基准': '业绩比较基准',
-            '起点': '起点金额',
-            '认购起点': '起点金额 (首次认购/申购金额)',
-            '申购起点': '起点金额 (首次认购/申购金额)',
-            '最低金额': '起点金额',
+            # 时间/期限类
+            '产品期限': '投资周期',
+            '投资期限': '投资周期',
+            '期限天数': '投资周期',
+            '产品存续期': '投资周期',
+            '存续期': '投资周期',
             '投资期': '投资周期',
             '期限': '投资周期',
-            '风险': '风险等级',
-            '类型': '产品类型',
-            '产品类别': '产品类型',
-            '募集': '产品募集方式',
-            '运作': '产品运作模式',
-            '开放日': '产品开放日',
+            '天数': '投资周期',
+            # 基准类
+            '业绩比较基准': '业绩比较基准',
+            '比较基准': '业绩比较基准',
+            '基准利率': '业绩比较基准',
+            '基准': '业绩比较基准',
+            '业绩': '业绩比较基准',
+            # 成立/开放日类
+            '产品成立日': '产品成立日',
+            '成立日期': '产品成立日',
             '成立日': '产品成立日',
-            '分红': '分红方式',
+            '开放日': '产品开放日',
+            # 金额类
+            '认购起点金额': '起点金额 (首次认购/申购金额)',
+            '申购起点金额': '起点金额 (首次认购/申购金额)',
+            '认购起点': '起点金额 (首次认购/申购金额)',
+            '申购起点': '起点金额 (首次认购/申购金额)',
+            '最低认购金额': '起点金额 (首次认购/申购金额)',
+            '最低申购金额': '起点金额 (首次认购/申购金额)',
+            '最低金额': '起点金额',
+            '起点金额': '起点金额',
+            '起点': '起点金额',
+            # 募集/运作类
+            '产品募集方式': '产品募集方式',
+            '募集方式': '产品募集方式',
+            '募集': '产品募集方式',
+            '产品运作模式': '产品运作模式',
+            '运作模式': '产品运作模式',
+            '运作': '产品运作模式',
+            # 类型/风险类
+            '产品类别': '产品类型',
+            '类型': '产品类型',
+            '风险等级': '风险等级',
+            '风险': '风险等级',
+            # 费用类
+            '费用计算': '费用计提/计算方法',
+            '费用方式': '费用计提/计算方法',
             '费率': '费率',
             '费用': '费用计提/计算方法',
+            # 披露类
+            '披露频率': '披露频率',
+            '披露渠道': '披露渠道',
             '披露': '披露频率',
             '频率': '披露频率',
             '渠道': '披露渠道',
-            '杠杆': '总资产上限比例（杠杆率）',
+            # 杠杆/集中度类
             '杠杆率': '总资产上限比例（杠杆率）',
+            '杠杆': '总资产上限比例（杠杆率）',
             '集中度': '投资者集中度上限比例',
+            # 赎回类
+            '最小赎回': '单笔最小赎回份额',
+            '赎回份额': '单笔最小赎回份额',
             '赎回': '单笔最小赎回份额',
+            '巨额赎回': '巨额赎回触发阈值比例',
             '巨额': '巨额赎回触发阈值比例',
+            # 清算/支付类
+            '清算期': '清算期天数',
             '清算': '清算期天数',
+            '支付频率': '支付频率',
             '支付': '支付频率',
-            '投资限制': '投资比例限制',
-            '比例': '投资比例限制',
-            '规模': '最低募集规模',
+            # 募集规模类
+            '最低募集规模': '最低募集规模',
+            '最低规模': '最低募集规模',
+            '募集规模上限': '募集规模上限',
             '募集规模': '最低募集规模',
+            '规模': '最低募集规模',
+            '规模上限': '募集规模上限',
             '上限': '募集规模上限',
+            # 投资限制类
+            '投资比例限制': '投资比例限制',
+            '投资限制': '投资比例限制',
+            '比例限制': '投资比例限制',
+            '比例': '投资比例限制',
+            # 其他
             '币种': '募集币种',
+            '募集币种': '募集币种',
+            '摆动定价': '是否启用摆动定价机制',
             '摆动': '是否启用摆动定价机制',
             '免收': '是否免收',
-            '业绩': '业绩比较基准',
+            '分红方式': '分红方式',
+            '分红': '分红方式',
         }
         
         # 检查用户输入是否匹配某个同义词
@@ -1421,8 +1497,19 @@ class Neo4jClient:
         target_attribute = intent.get("target_attribute")
         target_relation = intent.get("target_relation")
         
-        # ★ 规则 1：如果问题包含产品编号格式（如 AF253322N），但 target_entity 不是产品编号
-        # 说明 LLM 错误识别了实体，需要修正
+        # ★ 属性查询触发词：扩展为更全面的疑问表达
+        ATTR_QUERY_TRIGGERS = [
+            '多少', '是什么', '是多少', '几天', '几年', '几个月', '几个', '多久',
+            '多长时间', '多长', '是几', '为多少', '什么时候', '哪天', '哪种',
+            '是哪', '有多少', '的期限', '的天数', '的周期', '的日期',
+        ]
+        
+        def _is_attr_question(q: str) -> bool:
+            """判断问题是否在询问属性值"""
+            return any(trigger in q for trigger in ATTR_QUERY_TRIGGERS)
+        
+        # ★ 规则 0（最高优先级）：如果问题包含产品编号，target_entity 必须是产品编号
+        # 这是硬规则，无论 LLM 返回什么，都强制覆盖
         product_code_pattern = r'[A-Z]{1,3}\d{5,7}[A-Z]?'
         product_codes_in_question = re.findall(product_code_pattern, question)
         
@@ -1430,82 +1517,95 @@ class Neo4jClient:
         logger.info(f"[意图后处理] target_entity={target_entity}, query_type={query_type}")
         
         if product_codes_in_question:
-            # 问题中包含产品编号
             correct_entity = product_codes_in_question[0]
-            logger.info(f"[意图后处理] 检测到产品编号：'{correct_entity}'")
+            logger.info(f"[意图后处理] ★ 检测到产品编号：'{correct_entity}'，强制设置 target_entity")
             
-            # 如果 LLM 返回的 target_entity 不是产品编号，修正它
-            if target_entity and not re.match(product_code_pattern, target_entity):
-                logger.warning(f"[意图后处理] 修正 target_entity: '{target_entity}' -> '{correct_entity}'")
+            # ★ 硬覆盖：只要问题里有产品编号，target_entity 就必须是产品编号
+            if not target_entity or not re.match(product_code_pattern, str(target_entity)):
+                logger.warning(f"[意图后处理] 强制修正 target_entity: '{target_entity}' -> '{correct_entity}'")
                 intent["target_entity"] = correct_entity
-                
-                # 同时，如果问题明显是属性查询，也要修正 query_type 和 target_attribute
-                # 例如："AF253322N 产品比较基准是多少" 应该是 attribute_query
-                if "多少" in question or "是什么" in question or "是多少" in question:
-                    logger.info(f"[意图后处理] 问题是属性查询，检查属性关键词...")
-                    # 检查问题中是否包含属性相关的关键词
-                    attr_keywords = ['比较基准', '业绩', '基准', '起点', '金额', '类型', '周期', '期限', '比例', '限制', '费率', '频率', '渠道', '方式', '风险', '等级']
-                    for attr_kw in attr_keywords:
-                        if attr_kw in question:
-                            logger.info(f"[意图后处理] 检测到属性关键词：'{attr_kw}'")
-                            # 尝试模糊匹配属性名
-                            matched_attr = self._fuzzy_match_attribute(attr_kw, available_props)
-                            if matched_attr:
-                                logger.warning(f"[意图后处理] 修正 query_type: '{query_type}' -> 'attribute_query'")
-                                logger.warning(f"[意图后处理] 修正 target_attribute: '{target_attribute}' -> '{matched_attr}'")
+                target_entity = correct_entity
+            
+            # ★ 规则 1a：如果问题在询问属性值（多少/几天/是什么等），自动匹配属性
+            if _is_attr_question(question):
+                logger.info(f"[意图后处理] 检测到属性查询触发词，检查属性关键词...")
+                # 从问题中提取属性关键词（优先匹配更长的词）
+                attr_keywords = [
+                    '产品期限', '投资期限', '产品存续期', '存续期', '投资周期',
+                    '业绩比较基准', '比较基准', '起点金额', '募集方式', '产品成立日',
+                    '成立日期', '成立日', '产品开放日', '开放日', '运作模式',
+                    '产品类型', '产品类别', '风险等级', '投资比例限制', '清算期',
+                    '支付频率', '募集规模', '募集币种', '披露频率', '披露渠道',
+                    '分红方式', '费率', '费用', '期限', '周期', '天数',
+                    '比较基准', '业绩', '基准', '起点', '金额', '类型',
+                    '比例', '限制', '频率', '渠道', '方式', '风险', '等级',
+                ]
+                current_attr = intent.get("target_attribute")
+                for attr_kw in attr_keywords:
+                    if attr_kw in question:
+                        matched_attr = self._fuzzy_match_attribute(attr_kw, available_props)
+                        if matched_attr:
+                            if not current_attr or current_attr != matched_attr:
+                                logger.warning(f"[意图后处理] 检测到属性关键词 '{attr_kw}'，修正 target_attribute: '{current_attr}' -> '{matched_attr}'")
                                 intent["query_type"] = "attribute_query"
                                 intent["target_attribute"] = matched_attr
                                 intent["target_entity"] = correct_entity
-                                break
-            
-            # ★ 关键修复：即使 target_entity 已经是产品编号，也要检查是否需要修正 target_attribute
-            elif target_entity and re.match(product_code_pattern, target_entity):
-                logger.info(f"[意图后处理] target_entity 已经是产品编号，检查 target_attribute...")
-                if "多少" in question or "是什么" in question or "是多少" in question:
-                    attr_keywords = ['比较基准', '业绩', '基准', '起点', '金额', '类型', '周期', '期限', '比例', '限制', '费率', '频率', '渠道', '方式', '风险', '等级']
-                    for attr_kw in attr_keywords:
-                        if attr_kw in question:
-                            matched_attr = self._fuzzy_match_attribute(attr_kw, available_props)
-                            if matched_attr and (not target_attribute or target_attribute != matched_attr):
-                                logger.warning(f"[意图后处理] 修正 target_attribute: '{target_attribute}' -> '{matched_attr}'")
-                                intent["target_attribute"] = matched_attr
-                                break
+                                current_attr = matched_attr
+                            break  # 找到第一个匹配就停止
         
-        # ★ 规则 2：如果 target_entity 是图谱中的实体（如"管理风险"），但问题明显是询问产品属性
-        # 说明 LLM 错误地将属性查询识别为实体查询
-        # 判断标准：问题包含"多少"、"是什么"等询问属性值的词汇
-        bad_entities = ['管理风险', '市场风险', '操作风险', '信用风险', '风险', '税收', '费用', '风险类型']
-        if target_entity and target_entity in bad_entities:
-            if "多少" in question or "是什么" in question or "是多少" in question:
-                # 这明显是属性查询，不是实体查询
-                logger.warning(f"[意图后处理] 检测到 LLM 错误识别：target_entity='{target_entity}' 但问题是属性查询，正在修正...")
-                
-                # 尝试从问题中提取属性名
-                # 移除产品编号和常见停用词
-                clean_question = question
-                for code in product_codes_in_question:
-                    clean_question = clean_question.replace(code, "")
-                
-                logger.info(f"[意图后处理] 清理后的问题：{clean_question}")
-                
-                # 提取属性关键词
-                attr_keywords = ['比较基准', '业绩', '基准', '起点', '金额', '类型', '周期', '期限', '比例', '限制', '费率', '频率', '渠道', '方式', '风险', '等级', '产品', '投资', '募集', '运作']
-                for attr_kw in attr_keywords:
-                    if attr_kw in clean_question:
-                        matched_attr = self._fuzzy_match_attribute(attr_kw, available_props)
-                        if matched_attr:
-                            logger.warning(f"[意图后处理] 从问题中提取到属性关键词 '{attr_kw}'，修正为 '{matched_attr}'")
-                            intent["query_type"] = "attribute_query"
-                            intent["target_attribute"] = matched_attr
-                            intent["target_entity"] = product_codes_in_question[0] if product_codes_in_question else None
-                            break
+        # ★ 规则 2：target_entity 是图谱中的概念词（非真实产品名），属于 LLM 幻觉
+        # 扩展 bad_entities 为更通用的判断：不匹配产品编号格式 + 存在于常见概念词列表
+        CONCEPT_WORDS = {
+            '管理风险', '市场风险', '操作风险', '信用风险', '流动性风险', '合规风险',
+            '风险', '税收', '增值税', '费用', '风险类型', '封闭期', '开放期',
+            '申购费', '赎回费', '管理费', '托管费', '销售服务费', '业绩报酬',
+        }
+        # 重新读取可能已被修正的 target_entity
+        target_entity = intent.get("target_entity")
+        if target_entity and target_entity in CONCEPT_WORDS:
+            logger.warning(f"[意图后处理] ★ 检测到 LLM 幻觉实体：target_entity='{target_entity}'，正在修正...")
+            # 如果问题有产品编号，直接用产品编号作为实体
+            if product_codes_in_question:
+                intent["target_entity"] = product_codes_in_question[0]
+                target_entity = product_codes_in_question[0]
+            else:
+                intent["target_entity"] = None
+                target_entity = None
+            
+            # 尝试匹配属性
+            clean_question = question
+            for code in product_codes_in_question:
+                clean_question = clean_question.replace(code, "")
+            logger.info(f"[意图后处理] 清理后的问题：{clean_question}")
+            
+            attr_keywords = [
+                '产品期限', '投资期限', '存续期', '投资周期', '业绩比较基准', '比较基准',
+                '起点金额', '募集方式', '成立日', '开放日', '运作模式', '产品类型',
+                '风险等级', '投资比例限制', '清算期', '支付频率', '募集规模',
+                '披露频率', '分红方式', '费率', '费用', '期限', '周期', '天数',
+                '基准', '起点', '金额', '类型', '比例', '限制', '频率', '渠道', '方式',
+            ]
+            for attr_kw in attr_keywords:
+                if attr_kw in clean_question:
+                    matched_attr = self._fuzzy_match_attribute(attr_kw, available_props)
+                    if matched_attr:
+                        logger.warning(f"[意图后处理] 修正为属性查询：'{attr_kw}' -> '{matched_attr}'")
+                        intent["query_type"] = "attribute_query"
+                        intent["target_attribute"] = matched_attr
+                        break
         
         # ★ 规则 3：如果 target_attribute 不在可用属性中，尝试模糊匹配
+        target_attribute = intent.get("target_attribute")
         if target_attribute and target_attribute not in available_props:
             matched_attr = self._fuzzy_match_attribute(target_attribute, available_props)
             if matched_attr:
                 logger.warning(f"[意图后处理] 属性名 '{target_attribute}' 不在可用属性中，模糊匹配为 '{matched_attr}'")
                 intent["target_attribute"] = matched_attr
+        
+        # ★ 规则 4：最终兜底 - 如果 query_type=attribute_query 但 target_entity=None 且问题有产品编号
+        if intent.get("query_type") == "attribute_query" and not intent.get("target_entity") and product_codes_in_question:
+            intent["target_entity"] = product_codes_in_question[0]
+            logger.info(f"[意图后处理] 兜底修正 target_entity -> '{product_codes_in_question[0]}'")
         
         logger.info(f"[意图后处理] ★ 修正后的意图：{intent}")
         return intent
