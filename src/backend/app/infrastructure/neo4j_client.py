@@ -517,6 +517,9 @@ class Neo4jClient:
                                 })
                 
                 # ★ 5. 如果还是没有结果，返回所有实例节点（作为 fallback）
+                # ★ 关键修复：确保 fallback 查询总是执行并打印日志
+                logger.info(f"[Neo4j 检索] ★ 准备执行 Fallback 查询（当前 facts={len(facts)}）")
+                
                 if not facts:
                     fallback_query = """
                     MATCH (n:NamedIndividual)
@@ -528,8 +531,12 @@ class Neo4jClient:
                            n.domain as domain
                     LIMIT 20
                     """
+                    logger.info("=" * 80)
                     logger.info(f"[Neo4j 检索] ★ 执行 Fallback 查询 Cypher:")
-                    logger.info(f"  {fallback_query.strip()}")
+                    logger.info("-" * 80)
+                    logger.info(fallback_query.strip())
+                    logger.info("-" * 80)
+                    logger.info("=" * 80)
                     
                     node_result = session.run(fallback_query, project_id=project_id)
                     nodes = [record.data() for record in node_result]
@@ -840,7 +847,7 @@ class Neo4jClient:
                 user_prompt=entity_extraction_prompt,
                 max_retries=1,
                 stream=False,
-                timeout=30.0,
+                timeout=300.0,
             )
             
             extracted_entity = llm_response.get("content", "").strip() if isinstance(llm_response, dict) else str(llm_response)
@@ -1057,13 +1064,14 @@ class Neo4jClient:
         db_session=None,
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """
-        ★ 简化版：LLM 直接根据 Schema 生成 Cypher 查询
+        ★ 增强版：LLM 驱动的多步推理 Text2Cypher 查询
         
         核心流程：
         1. 获取 Schema（类、关系、属性）
-        2. 将 Schema + 用户问题一起给 LLM
-        3. LLM 生成正确的 Cypher 查询
-        4. 执行查询，返回结果
+        2. LLM 分析问题意图，识别查询类型
+        3. 提取并对齐实体（使用向量检索辅助）
+        4. 根据意图生成 Cypher 查询
+        5. 执行查询，返回结果
         
         参数:
         - project_id: 项目 ID
@@ -1087,115 +1095,843 @@ class Neo4jClient:
             logger.info("[Text2Cypher] 正在获取项目 Schema")
             schema = self.get_project_schema(project_id, db_session=db_session)
         
-        # ========== 第二步：构建提示词，让 LLM 生成 Cypher ==========
-        # 从 Schema 中提取所有真实存在的属性名
+        # ========== 第二步：LLM 分析问题意图 ==========
+        logger.info("[Text2Cypher] ★ 开始多步推理流程")
+        
+        # 从 Schema 中提取信息
         available_props = []
         for cls in schema.get("classes", []):
             available_props.extend(cls.get("data_properties", []))
         available_props = list(set(available_props))
         
-        # 从 Schema 中提取所有关系类型
         available_relations = [op.get("label", "") for op in schema.get("object_properties", [])]
+        class_names = [cls.get("label", "") for cls in schema.get("classes", [])]
         
-        # 构建 Schema 描述
         schema_desc = self.format_schema_for_llm(schema)
         
-        # 构建提示词
-        text2cypher_prompt = f"""你是一位 Neo4j Cypher 查询专家。请根据提供的 Schema 和用户问题，生成正确的 Cypher 查询语句。
-
-【图谱 Schema】:
-{schema_desc}
-
-【可用属性列表】:
-{', '.join(available_props) if available_props else 'label, id'}
-
-【可用关系类型】:
-{', '.join(available_relations) if available_relations else 'RELATED_TO'}
+        # ★ 修改点 1：将真实的图谱结构强制注入到 Prompt 中，约束 LLM 输出
+        # ★ 关键修复：让 LLM 自己完成属性名的模糊匹配，而不是依赖硬编码的同义词
+        intent_prompt = f"""分析图谱问答意图，返回 JSON：
 
 【用户问题】: {question}
 
-【生成要求】:
-1. 只生成 Cypher 查询，不要输出其他内容
-2. 查询必须包含 project_id 过滤：WHERE n.project_id = {project_id}
-3. 查询结果应包含 source_quote 等溯源信息（如果存在）
-4. 绝不能捏造 Schema 中不存在的属性名或关系名
-5. 必须使用英文逗号 (,) 分隔字段，不能用中文逗号 (，)
-6. 节点 Label 使用 NamedIndividual
-7. 支持多字段 OR 匹配（如产品编号、份额名称等）
+【当前图谱可用数据字典】(你的 target_attribute 和 target_relation 必须从中选择):
+- 可用属性 (Attributes): {', '.join(available_props)}
+- 可用关系 (Relations): {', '.join(available_relations)}
 
-请生成 Cypher 查询："""
+【查询类型】(选其一):
+- attribute_query: 查询特定实体的属性值（如"XX 的业绩比较基准是多少"）
+- relation_query: 查询实体间的关系（如"XX 的投资范围是什么"）
+- general_query: 通用模糊问题（如"有什么风险"、"有什么限制"）
 
-        system_prompt = "你是一位 Neo4j Cypher 查询专家，擅长根据 Schema 生成正确的 Cypher 查询。"
-        
+【输出 JSON 格式】:
+{{"query_type": "类型", "target_entity": "必须从用户问题中提取的具体名称 或 null", "target_attribute": "必须从【可用属性】中原样挑选 或 null", "target_relation": "必须从【可用关系】中原样挑选 或 null", "keyword": "问题中的核心动词/名词 或 null"}}
+
+【重要规则】(请严格遵守):
+1. 实体提取来源 (target_entity)：必须直接从【用户问题】中提取真实的专有名词、产品名称或产品编号（如 AF253322N）。绝不能凭空捏造图谱字典中的概念词（如"管理风险"、"信用风险"）作为目标实体！
+2. 属性名模糊匹配：如果问题询问"XX的YY"，且YY与【可用属性】部分匹配（比如问"比较基准"，可用属性里有"业绩比较基准"），请将 target_attribute 设为完整的可用属性名。
+3. 如果问题问的是"限制"、"要求"等，但在字典中找不到完全匹配的词，请将 query_type 设为 general_query，并在 keyword 中填入该词，target_attribute 和 target_relation 填 null。
+4. 如果无法确定 target_entity，请填 null，不要乱猜。
+
+【正确示例】:
+- 问题："AF253322N 的比较基准是多少" -> {{"query_type": "attribute_query", "target_entity": "AF253322N", "target_attribute": "业绩比较基准", "target_relation": null, "keyword": null}}
+- 问题："这个产品的投资比例限制是多少" -> {{"query_type": "attribute_query", "target_entity": null, "target_attribute": "投资比例限制", "target_relation": null, "keyword": null}}
+- 问题："固定收益类资产有什么限制" -> {{"query_type": "general_query", "target_entity": "固定收益类资产", "target_attribute": null, "target_relation": null, "keyword": "限制"}}
+- 问题："有什么风险" -> {{"query_type": "general_query", "target_entity": null, "target_attribute": null, "target_relation": "涉及风险", "keyword": null}}
+
+请分析并只输出 JSON："""
+
         try:
-            # 调用 LLM 生成 Cypher
-            llm_response = llm_client.call_llm_text(
-                system_prompt=system_prompt,
-                user_prompt=text2cypher_prompt,
+            # ★ 简化 prompt 后使用 30 秒超时
+            intent_response = llm_client.call_llm_text(
+                system_prompt="只返回 JSON，不要解释。",
+                user_prompt=intent_prompt,
                 max_retries=1,
                 stream=False,
-                timeout=300.0,  # 增加到 5 分钟
+                timeout=300.0,
             )
-            cypher_query = llm_response.get("content", "") if isinstance(llm_response, dict) else str(llm_response)
+            intent_json = intent_response.get("content", "") if isinstance(intent_response, dict) else str(intent_response)
             
-            # 清理 Cypher 查询
-            cypher_query = cypher_query.replace("```cypher", "").replace("```", "").strip()
-            cypher_query = cypher_query.split(";")[0].strip()
+            # 清理并解析 JSON
+            intent_json = intent_json.replace("```json", "").replace("```", "").strip()
+            if intent_json.startswith("```"):
+                intent_json = intent_json[3:]
+            intent_json = intent_json.strip()
             
-            # 自动修复中文逗号
-            if "，" in cypher_query:
-                logger.warning("[Text2Cypher] 检测到中文逗号，正在自动修复...")
-                cypher_query = cypher_query.replace("，", ",")
+            import json
+            intent = json.loads(intent_json)
+            logger.info(f"[Text2Cypher] ★ 意图分析结果：{intent}")
             
-            logger.info(f"[Text2Cypher] 生成的 Cypher:\n{cypher_query}")
+            # ★ 关键修复：后处理校验和修正意图分析结果
+            # 问题：LLM 经常返回错误的 target_entity（如"管理风险"），即使问题明显是属性查询
+            # 解决：在代码中强制校验和修正
+            intent = self._postprocess_intent(intent, question, available_props, available_relations)
+            logger.info(f"[Text2Cypher] ★ 后处理后的意图：{intent}")
             
-            # ========== 第三步：执行查询 ==========
-            results = []
-            references = []
-            
-            with self.driver.session() as session:
-                try:
-                    result = session.run(cypher_query, project_id=project_id)
-                    records = [record.data() for record in result]
-                    
-                    if not records:
-                        raise ValueError("查询无结果")
-                    
-                    # 转换结果为标准格式
-                    for record in records:
-                        self._convert_record_to_result(record, results, references, project_id)
-                    
-                    logger.info(f"[Text2Cypher] 查询成功，返回 {len(results)} 条结果")
-                    return results, references
-                    
-                except Exception as e:
-                    if not use_fallback:
-                        raise e
-                    
-                    logger.warning(f"[Text2Cypher] 查询失败，使用兜底策略：{e}")
-                    
-                    # 兜底：查询所有 NamedIndividual 节点及其属性
-                    fallback_cypher = f"""
-                    MATCH (n:NamedIndividual)
-                    WHERE n.project_id = {project_id}
-                    RETURN n.label, n.id, n.产品编号，n.产品类型，n.份额名称，n.销售代码，n.起点金额，n.业绩比较基准，properties(n) as props
-                    LIMIT 30
-                    """
-                    
-                    logger.info(f"[Text2Cypher] 执行兜底查询：{fallback_cypher}")
-                    result = session.run(fallback_cypher, project_id=project_id)
-                    records = [record.data() for record in result]
-                    
-                    for record in records:
-                        self._convert_record_to_result(record, results, references, project_id)
-                    
-                    logger.info(f"[Text2Cypher] 兜底查询返回 {len(results)} 条结果")
-                    return results, references
-                
         except Exception as e:
-            logger.error(f"[Text2Cypher] 失败：{e}")
-            # 最后的 fallback：使用通用查询
-            return self.query_with_provenance(project_id, question, schema)
+            logger.warning(f"[Text2Cypher] 意图分析失败：{e}，使用默认策略")
+            intent = {
+                "query_type": "general_query",
+                "target_entity": None,
+                "target_attribute": None,
+                "target_relation": None,
+                "entity_type": None,
+                "reasoning": "意图分析失败，使用默认策略"
+            }
+        
+        # ========== 第三步：实体识别与对齐 ==========
+        target_entity = intent.get("target_entity")
+        entity_type = intent.get("entity_type")
+        query_type = intent.get("query_type")
+        target_attribute = intent.get("target_attribute")
+        target_relation = intent.get("target_relation")
+        
+        # 如果识别出目标实体，进行实体对齐
+        aligned_entity = None
+        if target_entity:
+            logger.info(f"[Text2Cypher] 正在对实体 '{target_entity}' 进行对齐")
+            
+            # 使用向量检索进行实体对齐
+            if vector_manager and vector_manager.is_enabled:
+                aligned_entity = self.entity_alignment(target_entity, project_id, vector_manager, top_k=3)
+                logger.info(f"[Text2Cypher] 实体对齐结果：'{target_entity}' -> '{aligned_entity}'")
+            else:
+                # 没有向量库，使用原始实体
+                aligned_entity = target_entity
+            
+            # 如果实体对齐失败，尝试从图谱中直接匹配
+            if not aligned_entity or aligned_entity == target_entity:
+                aligned_entity = self._match_entity_in_graph(target_entity, project_id)
+                if aligned_entity:
+                    logger.info(f"[Text2Cypher] 从图谱中匹配到实体：'{target_entity}' -> '{aligned_entity}'")
+        
+        # ========== 第四步：根据意图生成 Cypher 查询 ==========
+        cypher_query = self._generate_cypher_from_intent(
+            intent=intent,
+            aligned_entity=aligned_entity,
+            project_id=project_id,
+            schema=schema,
+            available_props=available_props,
+            available_relations=available_relations,
+        )
+        
+        # ★ 详细日志：打印 LLM 生成的完整 Cypher 查询
+        logger.info("=" * 80)
+        logger.info("[Text2Cypher] ★ LLM 生成的 Cypher 查询:")
+        logger.info("-" * 80)
+        logger.info(cypher_query)
+        logger.info("-" * 80)
+        logger.info(f"[Text2Cypher] 意图分析详情:")
+        logger.info(f"  - query_type: {intent.get('query_type')}")
+        logger.info(f"  - target_entity: {intent.get('target_entity')}")
+        logger.info(f"  - target_attribute: {intent.get('target_attribute')}")
+        logger.info(f"  - target_relation: {intent.get('target_relation')}")
+        logger.info(f"  - keyword: {intent.get('keyword')}")
+        logger.info(f"  - aligned_entity: {aligned_entity}")
+        logger.info("=" * 80)
+        
+        # ========== 第五步：执行查询 ==========
+        results = []
+        references = []
+        
+        with self.driver.session() as session:
+            try:
+                result = session.run(cypher_query, project_id=project_id)
+                records = [record.data() for record in result]
+                
+                if not records:
+                    raise ValueError("查询无结果")
+                
+                # 转换结果为标准格式
+                for record in records:
+                    self._convert_record_to_result(record, results, references, project_id)
+                
+                logger.info(f"[Text2Cypher] 查询成功，返回 {len(results)} 条结果")
+                return results, references
+                
+            except Exception as e:
+                if not use_fallback:
+                    raise e
+                
+                # ★ 关键修复：在查询失败时打印导致失败的 Cypher
+                logger.error("=" * 80)
+                logger.error(f"[Text2Cypher] 查询失败，使用兜底策略：{e}")
+                logger.error(f"[Text2Cypher] ★ 导致失败的 Cypher 查询:")
+                logger.error("-" * 80)
+                logger.error(cypher_query)
+                logger.error("-" * 80)
+                logger.error(f"[Text2Cypher] 意图分析详情:")
+                logger.error(f"  - query_type: {intent.get('query_type')}")
+                logger.error(f"  - target_entity: {intent.get('target_entity')}")
+                logger.error(f"  - target_attribute: {intent.get('target_attribute')}")
+                logger.error(f"  - target_relation: {intent.get('target_relation')}")
+                logger.error(f"  - keyword: {intent.get('keyword')}")
+                logger.error(f"  - aligned_entity: {aligned_entity}")
+                logger.error("=" * 80)
+                
+                # 兜底：使用 query_with_provenance 方法的智能检索
+                # ★ 打印兜底策略的查询日志
+                logger.info("[Text2Cypher] 使用兜底策略 query_with_provenance 进行智能检索")
+                result = self.query_with_provenance(project_id, question, schema)
+                logger.info(f"[Text2Cypher] 兜底策略返回 {len(result[0])} 条结果")
+                return result
+    
+    def _fuzzy_match_attribute(self, user_input: str, available_props: List[str]) -> Optional[str]:
+        """
+        ★ 属性名模糊匹配：支持缩写/同义词匹配
+        
+        示例：
+        - "比较基准" -> "业绩比较基准"
+        - "起点" -> "起点金额"
+        - "投资周期" -> "投资周期" (精确匹配)
+        
+        参数:
+        - user_input: 用户输入的属性名（可能是缩写）
+        - available_props: 可用属性列表
+        
+        返回:
+        - matched_prop: 匹配到的属性名，如果没有匹配到则返回 None
+        """
+        if not user_input or not available_props:
+            return None
+        
+        # 1. 首先尝试精确匹配
+        if user_input in available_props:
+            return user_input
+        
+        # 2. 尝试子串匹配：用户输入是某个属性的子串
+        for prop in available_props:
+            if user_input in prop:
+                return prop
+        
+        # 3. 尝试去除常见后缀/前缀后匹配
+        # 常见后缀
+        suffixes = ['比例', '上限', '下限', '金额', '费率', '日期', '时间', '方式', '等级', '基准', '周期']
+        for suffix in suffixes:
+            if user_input.endswith(suffix):
+                # 去掉后缀后再匹配
+                shortened = user_input[:-len(suffix)]
+                for prop in available_props:
+                    if shortened in prop or prop.startswith(shortened):
+                        return prop
+        
+        # 4. 尝试常见同义词映射
+        synonyms = {
+            '比较基准': '业绩比较基准',
+            '基准': '业绩比较基准',
+            '起点': '起点金额',
+            '认购起点': '起点金额 (首次认购/申购金额)',
+            '申购起点': '起点金额 (首次认购/申购金额)',
+            '最低金额': '起点金额',
+            '投资期': '投资周期',
+            '期限': '投资周期',
+            '风险': '风险等级',
+            '类型': '产品类型',
+            '产品类别': '产品类型',
+            '募集': '产品募集方式',
+            '运作': '产品运作模式',
+            '开放日': '产品开放日',
+            '成立日': '产品成立日',
+            '分红': '分红方式',
+            '费率': '费率',
+            '费用': '费用计提/计算方法',
+            '披露': '披露频率',
+            '频率': '披露频率',
+            '渠道': '披露渠道',
+            '杠杆': '总资产上限比例（杠杆率）',
+            '杠杆率': '总资产上限比例（杠杆率）',
+            '集中度': '投资者集中度上限比例',
+            '赎回': '单笔最小赎回份额',
+            '巨额': '巨额赎回触发阈值比例',
+            '清算': '清算期天数',
+            '支付': '支付频率',
+            '投资限制': '投资比例限制',
+            '比例': '投资比例限制',
+            '规模': '最低募集规模',
+            '募集规模': '最低募集规模',
+            '上限': '募集规模上限',
+            '币种': '募集币种',
+            '摆动': '是否启用摆动定价机制',
+            '免收': '是否免收',
+            '业绩': '业绩比较基准',
+        }
+        
+        # 检查用户输入是否匹配某个同义词
+        if user_input in synonyms:
+            mapped = synonyms[user_input]
+            if mapped in available_props:
+                return mapped
+            # 尝试部分匹配
+            for prop in available_props:
+                if mapped in prop:
+                    return prop
+        
+        # 5. 尝试从用户输入中提取关键词，在可用属性中搜索
+        # 移除常见停用词
+        stopwords = ['的', '是', '多少', '什么', '有', '吗', '呢']
+        keywords = [c for c in user_input if c not in stopwords]
+        
+        if keywords:
+            # 计算每个属性与关键词的匹配度
+            best_match = None
+            best_score = 0
+            
+            for prop in available_props:
+                # 计算匹配的字符数
+                match_count = sum(1 for kw in keywords if kw in prop)
+                if match_count > best_score:
+                    best_score = match_count
+                    best_match = prop
+            
+            # 如果匹配度足够高（至少 50% 的关键词匹配），返回最佳匹配
+            if best_score >= len(keywords) * 0.5 and best_match:
+                return best_match
+        
+        return None
+    
+    def _postprocess_intent(
+        self, 
+        intent: Dict[str, Any], 
+        question: str, 
+        available_props: List[str], 
+        available_relations: List[str]
+    ) -> Dict[str, Any]:
+        """
+        ★ 后处理校验和修正意图分析结果
+        
+        问题：LLM 经常返回错误的 target_entity（如"管理风险"），即使问题明显是属性查询
+        解决：在代码中强制校验和修正
+        
+        参数:
+        - intent: LLM 返回的意图分析结果
+        - question: 用户问题
+        - available_props: 可用属性列表
+        - available_relations: 可用关系列表
+        
+        返回:
+        - corrected_intent: 修正后的意图分析结果
+        """
+        import re
+        
+        logger.info(f"[意图后处理] ★ 开始处理 - 原始意图：{intent}")
+        logger.info(f"[意图后处理] 用户问题：{question}")
+        
+        query_type = intent.get("query_type", "general_query")
+        target_entity = intent.get("target_entity")
+        target_attribute = intent.get("target_attribute")
+        target_relation = intent.get("target_relation")
+        
+        # ★ 规则 1：如果问题包含产品编号格式（如 AF253322N），但 target_entity 不是产品编号
+        # 说明 LLM 错误识别了实体，需要修正
+        product_code_pattern = r'[A-Z]{1,3}\d{5,7}[A-Z]?'
+        product_codes_in_question = re.findall(product_code_pattern, question)
+        
+        logger.info(f"[意图后处理] 从问题中提取的产品编号：{product_codes_in_question}")
+        logger.info(f"[意图后处理] target_entity={target_entity}, query_type={query_type}")
+        
+        if product_codes_in_question:
+            # 问题中包含产品编号
+            correct_entity = product_codes_in_question[0]
+            logger.info(f"[意图后处理] 检测到产品编号：'{correct_entity}'")
+            
+            # 如果 LLM 返回的 target_entity 不是产品编号，修正它
+            if target_entity and not re.match(product_code_pattern, target_entity):
+                logger.warning(f"[意图后处理] 修正 target_entity: '{target_entity}' -> '{correct_entity}'")
+                intent["target_entity"] = correct_entity
+                
+                # 同时，如果问题明显是属性查询，也要修正 query_type 和 target_attribute
+                # 例如："AF253322N 产品比较基准是多少" 应该是 attribute_query
+                if "多少" in question or "是什么" in question or "是多少" in question:
+                    logger.info(f"[意图后处理] 问题是属性查询，检查属性关键词...")
+                    # 检查问题中是否包含属性相关的关键词
+                    attr_keywords = ['比较基准', '业绩', '基准', '起点', '金额', '类型', '周期', '期限', '比例', '限制', '费率', '频率', '渠道', '方式', '风险', '等级']
+                    for attr_kw in attr_keywords:
+                        if attr_kw in question:
+                            logger.info(f"[意图后处理] 检测到属性关键词：'{attr_kw}'")
+                            # 尝试模糊匹配属性名
+                            matched_attr = self._fuzzy_match_attribute(attr_kw, available_props)
+                            if matched_attr:
+                                logger.warning(f"[意图后处理] 修正 query_type: '{query_type}' -> 'attribute_query'")
+                                logger.warning(f"[意图后处理] 修正 target_attribute: '{target_attribute}' -> '{matched_attr}'")
+                                intent["query_type"] = "attribute_query"
+                                intent["target_attribute"] = matched_attr
+                                intent["target_entity"] = correct_entity
+                                break
+            
+            # ★ 关键修复：即使 target_entity 已经是产品编号，也要检查是否需要修正 target_attribute
+            elif target_entity and re.match(product_code_pattern, target_entity):
+                logger.info(f"[意图后处理] target_entity 已经是产品编号，检查 target_attribute...")
+                if "多少" in question or "是什么" in question or "是多少" in question:
+                    attr_keywords = ['比较基准', '业绩', '基准', '起点', '金额', '类型', '周期', '期限', '比例', '限制', '费率', '频率', '渠道', '方式', '风险', '等级']
+                    for attr_kw in attr_keywords:
+                        if attr_kw in question:
+                            matched_attr = self._fuzzy_match_attribute(attr_kw, available_props)
+                            if matched_attr and (not target_attribute or target_attribute != matched_attr):
+                                logger.warning(f"[意图后处理] 修正 target_attribute: '{target_attribute}' -> '{matched_attr}'")
+                                intent["target_attribute"] = matched_attr
+                                break
+        
+        # ★ 规则 2：如果 target_entity 是图谱中的实体（如"管理风险"），但问题明显是询问产品属性
+        # 说明 LLM 错误地将属性查询识别为实体查询
+        # 判断标准：问题包含"多少"、"是什么"等询问属性值的词汇
+        bad_entities = ['管理风险', '市场风险', '操作风险', '信用风险', '风险', '税收', '费用', '风险类型']
+        if target_entity and target_entity in bad_entities:
+            if "多少" in question or "是什么" in question or "是多少" in question:
+                # 这明显是属性查询，不是实体查询
+                logger.warning(f"[意图后处理] 检测到 LLM 错误识别：target_entity='{target_entity}' 但问题是属性查询，正在修正...")
+                
+                # 尝试从问题中提取属性名
+                # 移除产品编号和常见停用词
+                clean_question = question
+                for code in product_codes_in_question:
+                    clean_question = clean_question.replace(code, "")
+                
+                logger.info(f"[意图后处理] 清理后的问题：{clean_question}")
+                
+                # 提取属性关键词
+                attr_keywords = ['比较基准', '业绩', '基准', '起点', '金额', '类型', '周期', '期限', '比例', '限制', '费率', '频率', '渠道', '方式', '风险', '等级', '产品', '投资', '募集', '运作']
+                for attr_kw in attr_keywords:
+                    if attr_kw in clean_question:
+                        matched_attr = self._fuzzy_match_attribute(attr_kw, available_props)
+                        if matched_attr:
+                            logger.warning(f"[意图后处理] 从问题中提取到属性关键词 '{attr_kw}'，修正为 '{matched_attr}'")
+                            intent["query_type"] = "attribute_query"
+                            intent["target_attribute"] = matched_attr
+                            intent["target_entity"] = product_codes_in_question[0] if product_codes_in_question else None
+                            break
+        
+        # ★ 规则 3：如果 target_attribute 不在可用属性中，尝试模糊匹配
+        if target_attribute and target_attribute not in available_props:
+            matched_attr = self._fuzzy_match_attribute(target_attribute, available_props)
+            if matched_attr:
+                logger.warning(f"[意图后处理] 属性名 '{target_attribute}' 不在可用属性中，模糊匹配为 '{matched_attr}'")
+                intent["target_attribute"] = matched_attr
+        
+        logger.info(f"[意图后处理] ★ 修正后的意图：{intent}")
+        return intent
+    
+    def _match_entity_in_graph(self, entity: str, project_id: int) -> Optional[str]:
+        """
+        从图谱中匹配实体名称
+        
+        参数:
+        - entity: 用户输入的实体名称
+        - project_id: 项目 ID
+        
+        返回:
+        - matched_entity: 匹配到的实体名称，如果没有匹配到则返回 None
+        """
+        if not self.driver:
+            return None
+        
+        with self.driver.session() as session:
+            try:
+                # 尝试多种匹配方式
+                match_query = """
+                MATCH (n:NamedIndividual)
+                WHERE n.project_id = $project_id
+                AND (
+                    n.label CONTAINS $entity OR
+                    n.产品编号 CONTAINS $entity OR
+                    n.份额名称 CONTAINS $entity OR
+                    n.销售代码 CONTAINS $entity OR
+                    n.产品名称 CONTAINS $entity OR
+                    toString(n.产品编号) CONTAINS $entity OR
+                    toString(n.销售代码) CONTAINS $entity
+                )
+                RETURN n.label as label, n.产品编号 as 产品编号，n.份额名称 as 份额名称，n.销售代码 as 销售代码，n.产品名称 as 产品名称
+                LIMIT 5
+                """
+                result = session.run(match_query, project_id=project_id, entity=entity)
+                records = [record.data() for record in result]
+                
+                if records:
+                    # 返回第一个匹配结果的 label
+                    return records[0].get('label')
+                
+                return None
+                
+            except Exception as e:
+                logger.warning(f"[实体匹配] 失败：{e}")
+                return None
+    
+    def _generate_cypher_from_intent(
+        self,
+        intent: Dict[str, Any],
+        aligned_entity: Optional[str],
+        project_id: int,
+        schema: Dict[str, Any],
+        available_props: List[str],
+        available_relations: List[str],
+    ) -> str:
+        """
+        根据意图分析生成 Cypher 查询
+        
+        参数:
+        - intent: 意图分析结果
+        - aligned_entity: 对齐后的实体名称
+        - project_id: 项目 ID
+        - schema: Schema 数据
+        - available_props: 可用属性列表
+        - available_relations: 可用关系列表
+        
+        返回:
+        - cypher_query: Cypher 查询语句
+        """
+        query_type = intent.get("query_type", "general_query")
+        target_attribute = intent.get("target_attribute")
+        target_relation = intent.get("target_relation")
+        entity_type = intent.get("entity_type")
+        keyword = intent.get("keyword")  # ★ 新增：提取 keyword
+        
+        # ★ 修改点 2：校验 - 清洗掉 LLM 瞎编的属性和关系
+        # ★ 关键修复：只有当 query_type 是 attribute_query 时才进行严格校验
+        # 如果 LLM 返回的是 general_query，说明它已经判断无法精确匹配属性
+        if query_type == "attribute_query" and target_attribute:
+            if target_attribute not in available_props:
+                # ★ 新增：尝试模糊匹配属性名（支持缩写/同义词）
+                matched_attr = self._fuzzy_match_attribute(target_attribute, available_props)
+                if matched_attr:
+                    logger.info(f"[Text2Cypher] 属性模糊匹配：'{target_attribute}' -> '{matched_attr}'")
+                    target_attribute = matched_attr
+                else:
+                    logger.warning(f"[Text2Cypher] 属性 '{target_attribute}' 不在可用属性中，降级为关键字模糊搜索")
+                    keyword = keyword or target_attribute  # 降级为关键字模糊搜索
+                    target_attribute = None
+                    query_type = "general_query"
+            
+        if query_type == "relation_query" and target_relation:
+            if target_relation not in available_relations:
+                logger.warning(f"[Text2Cypher] 关系 '{target_relation}' 不在可用关系中，降级为关键字模糊搜索")
+                keyword = keyword or target_relation
+                target_relation = None
+                query_type = "general_query"
+        
+        # 根据查询类型生成不同的 Cypher
+        if query_type == "attribute_query" and aligned_entity:
+            # 属性查询：查询特定实体的某个属性
+            # 支持多字段 OR 匹配
+            return self._build_attribute_query(aligned_entity, target_attribute, project_id, entity_type)
+        
+        elif query_type == "relation_query" and aligned_entity:
+            # 关系查询：查询实体间的关系
+            return self._build_relation_query(aligned_entity, target_relation, project_id)
+        
+        elif query_type == "general_query":
+            # ★ 修改点 2：增强 general_query 的泛化处理
+            # 将原始的 target_entity 传给查询构造器，防止 aligned_entity 翻车
+            target_entity_original = intent.get("target_entity")
+            if aligned_entity and keyword:
+                return self._build_entity_keyword_query(aligned_entity, keyword, project_id, target_entity_original)
+            elif target_relation:
+                return self._build_general_relation_query(target_relation, project_id)
+            elif target_attribute:
+                return self._build_general_attribute_query(target_attribute, project_id)
+            elif keyword:
+                # 连实体都没有，只有 keyword（如"有什么限制"）
+                return self._build_global_keyword_query(keyword, project_id)
+            else:
+                # 没有明确目标，查询所有相关节点
+                return self._build_fallback_query(project_id)
+        
+        elif query_type == "existence_query":
+            # 存在性查询：询问是否存在某种情况
+            return self._build_existence_query(target_relation, project_id)
+        
+        else:
+            # 默认兜底查询
+            return self._build_fallback_query(project_id)
+    
+    def _build_attribute_query(
+        self,
+        entity: str,
+        attribute: Optional[str],
+        project_id: int,
+        entity_type: Optional[str] = None,
+    ) -> str:
+        """
+        构建属性查询 Cypher
+        
+        示例：
+        - "AF253322G 的业绩比较基准是多少" -> 查询份额节点的业绩比较基准属性
+        - "AF253322 的产品类型是什么" -> 查询产品节点的产品类型属性
+        """
+        # 确定要返回的属性
+        return_props = []
+        if attribute:
+            return_props.append(f"n.`{attribute}` as target_attr")
+        
+        # 添加常用属性作为备选
+        common_props = ['产品编号', '产品类型', '份额名称', '销售代码', '业绩比较基准', 
+                       '起点金额', '投资周期', '募集方式', '风险等级']
+        for prop in common_props:
+            if prop != attribute and prop not in return_props:
+                return_props.append(f"n.`{prop}` as {prop}")
+        
+        return_props.append("n.label as label")
+        return_props.append("n.source_quote as source_quote")
+        
+        # 构建匹配条件：支持多字段 OR 匹配
+        match_conditions = [
+            f"n.label = '{entity}'",
+            f"n.label CONTAINS '{entity}'",
+            f"n.产品编号 = '{entity}'",
+            f"n.产品编号 CONTAINS '{entity}'",
+            f"n.份额名称 = '{entity}'",
+            f"n.份额名称 CONTAINS '{entity}'",
+            f"n.销售代码 = '{entity}'",
+            f"n.销售代码 CONTAINS '{entity}'",
+            f"n.产品名称 = '{entity}'",
+            f"n.产品名称 CONTAINS '{entity}'",
+        ]
+        
+        # 如果实体看起来像产品编号（字母 + 数字），也匹配产品编号字段
+        import re
+        if re.match(r'^[A-Z]{1,3}\d{5,7}[A-Z]?$', entity):
+            match_conditions.append(f"toString(n.产品编号) CONTAINS '{entity}'")
+            match_conditions.append(f"toString(n.销售代码) CONTAINS '{entity}'")
+        
+        match_expr = " OR ".join(match_conditions)
+        
+        cypher = f"""
+        MATCH (n:NamedIndividual)
+        WHERE n.project_id = {project_id}
+        AND ({match_expr})
+        RETURN {', '.join(return_props)}
+        LIMIT 10
+        """
+        
+        return cypher.strip()
+    
+    def _build_relation_query(
+        self,
+        entity: str,
+        relation: Optional[str],
+        project_id: int,
+    ) -> str:
+        """
+        构建关系查询 Cypher
+        
+        示例：
+        - "AF253322 的投资范围是什么" -> 查询产品->投资于->资产
+        """
+        if relation and relation in ['涉及风险', '产生费用', '支持交易行为', '具有信息披露', '包含份额分类']:
+            # 明确的关系查询
+            cypher = f"""
+            MATCH (n:NamedIndividual)-[r:`{relation}`]->(m:NamedIndividual)
+            WHERE n.project_id = {project_id} AND m.project_id = {project_id}
+            AND (n.label = '{entity}' OR n.label CONTAINS '{entity}' OR
+                 n.产品编号 = '{entity}' OR n.产品编号 CONTAINS '{entity}' OR
+                 n.份额名称 = '{entity}' OR n.份额名称 CONTAINS '{entity}')
+            RETURN n.label as source, type(r) as relation, m.label as target, 
+                   properties(m) as target_props, n.source_quote as source_quote
+            LIMIT 20
+            """
+        else:
+            # 查询所有关系
+            cypher = f"""
+            MATCH (n:NamedIndividual)-[r]->(m:NamedIndividual)
+            WHERE n.project_id = {project_id} AND m.project_id = {project_id}
+            AND (n.label = '{entity}' OR n.label CONTAINS '{entity}' OR
+                 n.产品编号 = '{entity}' OR n.产品编号 CONTAINS '{entity}' OR
+                 n.份额名称 = '{entity}' OR n.份额名称 CONTAINS '{entity}')
+            RETURN n.label as source, type(r) as relation, m.label as target,
+                   properties(m) as target_props, n.source_quote as source_quote
+            LIMIT 20
+            """
+        
+        return cypher.strip()
+    
+    def _build_general_relation_query(
+        self,
+        relation: str,
+        project_id: int,
+    ) -> str:
+        """
+        构建通用关系查询 Cypher
+        
+        示例：
+        - "有什么风险" -> 查询所有涉及风险的关系
+        - "有哪些费用" -> 查询所有产生费用的关系
+        """
+        cypher = f"""
+        MATCH (n:NamedIndividual)-[r:`{relation}`]->(m:NamedIndividual)
+        WHERE n.project_id = {project_id} AND m.project_id = {project_id}
+        RETURN n.label as source, type(r) as relation, m.label as target,
+               properties(m) as target_props, n.source_quote as source_quote
+        LIMIT 30
+        """
+        
+        return cypher.strip()
+    
+    def _build_general_attribute_query(
+        self,
+        attribute: str,
+        project_id: int,
+    ) -> str:
+        """
+        构建通用属性查询 Cypher
+        
+        示例：
+        - "投资比例限制是多少" -> 查询所有节点的投资比例限制属性
+        """
+        cypher = f"""
+        MATCH (n:NamedIndividual)
+        WHERE n.project_id = {project_id}
+        AND n.`{attribute}` IS NOT NULL
+        RETURN n.label as label, n.`{attribute}` as target_attr, 
+               properties(n) as props, n.source_quote as source_quote
+        LIMIT 30
+        """
+        
+        return cypher.strip()
+    
+    def _build_existence_query(
+        self,
+        relation: Optional[str],
+        project_id: int,
+    ) -> str:
+        """
+        构建存在性查询 Cypher
+        
+        示例：
+        - "有没有风险" -> 查询是否存在涉及风险的关系
+        """
+        if relation:
+            cypher = f"""
+            MATCH (n:NamedIndividual)-[r:`{relation}`]->(m:NamedIndividual)
+            WHERE n.project_id = {project_id} AND m.project_id = {project_id}
+            RETURN n.label as source, type(r) as relation, m.label as target
+            LIMIT 10
+            """
+        else:
+            # 查询所有关系，判断是否存在
+            cypher = f"""
+            MATCH (n:NamedIndividual)-[r]->(m:NamedIndividual)
+            WHERE n.project_id = {project_id} AND m.project_id = {project_id}
+            RETURN n.label as source, type(r) as relation, m.label as target
+            LIMIT 10
+            """
+        
+        return cypher.strip()
+    
+    def _build_entity_keyword_query(self, entity: str, keyword: str, project_id: int, original_entity: str = None) -> str:
+        """
+        ★ 第三步：新增强大的图谱模糊检索方法（优化版）
+        
+        针对特定实体 + 模糊意图的查询（例如："固定收益类资产" + "限制"）
+        不仅查关联节点，还查这个实体的所有属性值中是否包含该关键字。
+        
+        优化点：
+        1. 使用列表推导式提取匹配属性，避免 UNWIND 导致的结果截断。
+        2. 扩大实体匹配范围，防范实体对齐失败。
+        
+        参数:
+        - entity: 对齐后的实体名称
+        - keyword: 关键词
+        - project_id: 项目 ID
+        - original_entity: 原始实体名称（用于双重保险）
+        
+        返回:
+        - cypher_query: Cypher 查询语句
+        """
+        # 构建搜索词列表（将对齐后的实体和原始实体都加进去，双重保险）
+        search_entities = [entity]
+        if original_entity and original_entity != entity:
+            search_entities.append(original_entity)
+            
+        entity_conditions = []
+        for e in set(search_entities):
+            # 不仅查 Label，还要查节点的各种属性里有没有提到这个实体（比如：投资范围="固定收益类资产"）
+            entity_conditions.append(f"n.label CONTAINS '{e}'")
+            entity_conditions.append(f"n.产品名称 CONTAINS '{e}'")
+            entity_conditions.append(f"n.份额名称 CONTAINS '{e}'")
+            entity_conditions.append(f"any(k IN keys(n) WHERE toString(n[k]) CONTAINS '{e}')")
+            
+        entity_match_clause = " OR ".join(entity_conditions)
+
+        # 移除强制的 :NamedIndividual 标签，因为目标可能是一个 Class 或者其他类型的节点
+        cypher = f"""
+        MATCH (n)
+        WHERE (n.project_id = {project_id} OR n.project_id = toString({project_id}))
+        AND ({entity_match_clause})
+        
+        // 1. 查找包含关键字的属性（使用列表推导式，如果没找到返回空列表，不会过滤掉 n）
+        WITH n,[k IN keys(n) WHERE toString(n[k]) CONTAINS '{keyword}' OR k CONTAINS '{keyword}' | {{key: k, value: n[k]}}] AS matched_props
+        
+        // 2. 查找包含关键字的关联节点或关系
+        OPTIONAL MATCH (n)-[r]-(m)
+        WHERE type(r) CONTAINS '{keyword}' 
+           OR m.label CONTAINS '{keyword}' 
+           OR any(k IN keys(m) WHERE toString(m[k]) CONTAINS '{keyword}')
+        
+        // 3. 最终过滤：只有当属性匹配成功，或者关系匹配成功时，才返回结果
+        WITH n, matched_props, r, m
+        WHERE size(matched_props) > 0 OR r IS NOT NULL
+        
+        RETURN n.label as source_entity, 
+               matched_props,
+               type(r) as relation, 
+               m.label as target_entity,
+               properties(m) as target_props,
+               n.source_quote as source_quote
+        LIMIT 20
+        """
+        return cypher.strip()
+    
+    def _build_global_keyword_query(self, keyword: str, project_id: int) -> str:
+        """
+        ★ 第三步：新增全局关键词模糊检索方法（优化版）
+        
+        针对无明确实体，纯粹问概念的查询（例如："有什么限制"）
+        在整个图谱中搜索关系名、节点名包含该关键词的子图。
+        
+        优化点：
+        1. 去掉 :NamedIndividual 标签限制，增加包容度
+        2. 同时搜索两端节点的属性
+        
+        参数:
+        - keyword: 关键词
+        - project_id: 项目 ID
+        
+        返回:
+        - cypher_query: Cypher 查询语句
+        """
+        cypher = f"""
+        MATCH (n)-[r]->(m)
+        WHERE (n.project_id = {project_id} OR n.project_id = toString({project_id}))
+          AND (m.project_id = {project_id} OR m.project_id = toString({project_id}))
+        AND (
+            type(r) CONTAINS '{keyword}' OR 
+            m.label CONTAINS '{keyword}' OR 
+            n.label CONTAINS '{keyword}' OR
+            any(k in keys(n) WHERE toString(n[k]) CONTAINS '{keyword}') OR
+            any(k in keys(m) WHERE toString(m[k]) CONTAINS '{keyword}')
+        )
+        RETURN n.label as source, type(r) as relation, m.label as target,
+               properties(n) as source_props, properties(m) as target_props
+        LIMIT 30
+        """
+        return cypher.strip()
+    
+    def _build_fallback_query(self, project_id: int) -> str:
+        """
+        构建兜底查询 Cypher
+        
+        当无法确定意图时，返回所有 NamedIndividual 节点的基本信息
+        """
+        cypher = f"""
+        MATCH (n:NamedIndividual)
+        WHERE n.project_id = {project_id}
+        RETURN n.label as label, n.id as id,
+               n.产品编号 as 产品编号，n.产品类型 as 产品类型，
+               n.份额名称 as 份额名称，n.销售代码 as 销售代码，
+               n.业绩比较基准 as 业绩比较基准，n.起点金额 as 起点金额，
+               n.source_quote as source_quote, properties(n) as props
+        LIMIT 30
+        """
+        
+        return cypher.strip()
     
     def _convert_record_to_result(
         self, 
@@ -1206,7 +1942,75 @@ class Neo4jClient:
     ):
         """
         将 Neo4j 查询记录转换为标准结果格式
+        
+        ★ 关键修复：处理 _build_entity_keyword_query 返回的特殊字段：
+        - source_entity: 源实体名称
+        - matched_props: 匹配的属性列表 [{'key': '...', 'value': '...'}]
+        - target_entity: 目标实体名称
+        - relation: 关系类型
+        - target_props: 目标属性
         """
+        # ★ 特殊处理：检查是否是 _build_entity_keyword_query 返回的结果
+        source_entity = record.get("source_entity")
+        matched_props = record.get("matched_props", [])
+        target_entity = record.get("target_entity")
+        relation = record.get("relation")
+        target_props = record.get("target_props", {})
+        source_quote = record.get("source_quote", "")
+        
+        # ★ 情况 1：如果是 _build_entity_keyword_query 的结果格式
+        if source_entity is not None:
+            # 使用 source_entity 作为 subject，而不是 "Unknown"
+            subject = source_entity if source_entity else "Unknown"
+            
+            # 构建 properties 字典
+            properties = {}
+            if matched_props and isinstance(matched_props, list):
+                for prop in matched_props:
+                    if isinstance(prop, dict):
+                        key = prop.get("key", "")
+                        val = prop.get("value", "")
+                        if key and val:
+                            properties[key] = val
+            
+            # 添加 target_entity 和 relation 信息
+            if target_entity:
+                properties["target_entity"] = target_entity
+            if relation:
+                properties["relation"] = relation
+            if target_props and isinstance(target_props, dict):
+                for k, v in target_props.items():
+                    if v is not None:
+                        properties[k] = v
+            
+            # ★ 关键修复：使用 source_entity 作为 value，而不是 "Unknown"
+            value = source_entity if source_entity else "Unknown"
+            
+            results.append({
+                "type": "node",
+                "subject": subject,
+                "value": value,
+                "properties": properties,
+                "matched_props": matched_props,  # ★ 保留原始 matched_props 供 rag_engine.py 使用
+            })
+            
+            # 构建 quote
+            if properties:
+                prop_desc = ", ".join([f"{k}: {v}" for k, v in properties.items() if k not in ['target_entity', 'relation']])
+                quote_text = f"{subject} 的 {prop_desc}"
+            else:
+                quote_text = subject
+            
+            references.append({
+                "type": "graph_node",
+                "file": record.get("source_file", "unknown"),
+                "chunk_index": record.get("source_chunk_index", 0),
+                "quote": quote_text,
+                "domain": record.get("domain", ""),
+            })
+            return
+        
+        # ★ 情况 2：标准格式处理
         # 提取所有非元数据字段作为 properties
         properties = {}
         subject = ""
@@ -1306,7 +2110,7 @@ class Neo4jClient:
                             user_prompt=intent_prompt,
                             max_retries=1,
                             stream=False,
-                            timeout=30.0,
+                            timeout=300.0,
                         )
                         intent_relation = llm_response.get("content", "").strip() if isinstance(llm_response, dict) else str(llm_response)
                         intent_relation = intent_relation.replace("```", "").strip()

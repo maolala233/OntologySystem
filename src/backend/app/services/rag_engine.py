@@ -50,23 +50,44 @@ class DualPathRAGEngine:
         - use_text2cypher: 是否使用 Text2Cypher 查询
         - use_advanced_text2cypher: 是否使用 3 步大模型驱动的检索（默认 True）
         - schema: 本体 Schema（用于 Text2Cypher）
+        - db_session: 数据库会话（可选，用于从 SQLite 获取 schema）
         
         返回:
         {
             "answer": "回答文本",
-            "references": [
-                {
-                    "id": 1,
-                    "domain": "理财业务",
-                    "file": "阳光橙说明书.pdf",
-                    "chunk_index": 12,
-                    "quote": "原文引用",
-                    "type": "vector_chunk"|"graph_edge"|"graph_node"
-                },
-                ...
-            ]
+            "references": [...],
+            "debug_info": {...}
         }
         """
+        # ★ 关键修复：如果 schema 为 None，则从 SQLite 或 Neo4j 获取
+        if schema is None:
+            logger.info(f"[DualPathRAG] 正在获取项目 {project_id} 的 Schema")
+            schema = neo4j_client.get_project_schema(project_id, db_session=db_session)
+            logger.info(f"[DualPathRAG] Schema 获取完成：{len(schema.get('classes', []))} 类，{len(schema.get('object_properties', []))} 关系")
+            
+            # ★ 详细日志：打印 Schema 内容
+            if schema.get('classes'):
+                logger.info(f"[DualPathRAG] ★ Schema 类详情:")
+                for cls in schema.get('classes', [])[:5]:
+                    logger.info(f"  - {cls.get('label')}: {cls.get('data_properties', [])[:10]}")
+            if schema.get('object_properties'):
+                logger.info(f"[DualPathRAG] ★ Schema 关系详情:")
+                for op in schema.get('object_properties', [])[:5]:
+                    logger.info(f"  - {op.get('domain')} -[{op.get('label')}]-> {op.get('range')}")
+            
+            # ★ 修复：如果 Schema 为空，强制重新从 Neo4j 获取
+            if not schema.get('classes') and not schema.get('object_properties'):
+                logger.warning(f"[DualPathRAG] Schema 为空，尝试直接从 Neo4j 获取（不使用 db_session）")
+                schema = neo4j_client.get_project_schema(project_id, db_session=None)
+                logger.info(f"[DualPathRAG] 重新获取 Schema：{len(schema.get('classes', []))} 类，{len(schema.get('object_properties', []))} 关系")
+                
+                if schema.get('classes'):
+                    logger.info(f"[DualPathRAG] ★ Schema 类详情:")
+                    for cls in schema.get('classes', [])[:5]:
+                        logger.info(f"  - {cls.get('label')}: {cls.get('data_properties', [])[:10]}")
+        else:
+            logger.info(f"[DualPathRAG] 使用传入的 Schema：{len(schema.get('classes', []))} 类，{len(schema.get('object_properties', []))} 关系")
+        
         logger.info("=" * 80)
         logger.info("[DualPathRAG] 开始双路 RAG 查询")
         logger.info(f"[DualPathRAG] ★ 输入参数:")
@@ -211,22 +232,49 @@ class DualPathRAGEngine:
         if limited_graph_facts:
             context_parts.append("【图谱事实】")
             for fact in limited_graph_facts:
-                if fact.get("type") == "edge":
-                    context_parts.append(
-                        f"- {fact.get('subject', '')} -> {fact.get('predicate', '')} -> {fact.get('object', '')}"
-                    )
-                elif fact.get("type") == "node":
-                    node_info = fact.get("value", "")
-                    # ★ 优化：只保留关键属性
-                    properties = fact.get("properties", {})
+                # ★ 关键修复：advanced_text2cypher_query 返回的结果格式是 {"data": {...}, "type": "..."}
+                # 需要从 data 中提取 properties
+                fact_data = fact.get("data", {})
+                fact_type = fact.get("type", "")
+                
+                # 如果 fact 本身就是结果（没有嵌套 data），直接使用
+                if not fact_data and fact_type:
+                    fact_data = fact
+                
+                if fact_type == "edge" or fact_data.get("type") == "edge":
+                    subject = fact_data.get("subject", fact.get("subject", ""))
+                    predicate = fact_data.get("predicate", fact.get("predicate", ""))
+                    object_val = fact_data.get("object", fact.get("object", ""))
+                    context_parts.append(f"- {subject} -> {predicate} -> {object_val}")
+                    
+                elif fact_type == "node" or fact_data.get("type") == "node":
+                    # ★ 修复：从 data 中提取 properties
+                    value = fact_data.get("value", fact.get("value", ""))
+                    properties = fact_data.get("properties", fact.get("properties", {}))
+                    
+                    # ★ 修复：也检查 matched_props（来自 _build_entity_keyword_query 的特殊字段）
+                    matched_props = fact_data.get("matched_props", [])
+                    
+                    node_info = value
                     if properties:
                         key_props = {k: v for k, v in properties.items() if k in ['产品编号', '产品类型', '投资周期', '募集方式', '风险等级', '业绩比较基准']}
                         if key_props:
                             prop_str = ", ".join([f"{k}: {v}" for k, v in key_props.items()])
-                            node_info = f"{node_info} ({prop_str})"
+                            node_info = f"{value} ({prop_str})"
+                    
+                    # ★ 修复：如果有 matched_props，添加到输出
+                    if matched_props:
+                        for prop in matched_props:
+                            if isinstance(prop, dict):
+                                key = prop.get("key", "")
+                                val = prop.get("value", "")
+                                if key and val:
+                                    node_info = f"{node_info}, {key}: {val}"
+                    
                     context_parts.append(f"- {node_info}")
                 else:
-                    context_parts.append(f"- {str(fact.get('data', ''))}")
+                    # 其他类型，直接输出 data
+                    context_parts.append(f"- {str(fact_data if fact_data else fact)}")
         
         # ★ 优化：限制向量结果数量，最多保留 5 条
         limited_vector_results = vector_results[:5]

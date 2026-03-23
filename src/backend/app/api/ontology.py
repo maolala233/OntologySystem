@@ -2645,7 +2645,7 @@ async def qa_endpoint(
     question: str = Form(..., description="用户问题"),
     selected_domains: Optional[str] = Form(None, description="选中的知识域列表，逗号分隔"),
     top_k: int = Form(5, description="召回的 Top-K 结果数量"),
-    use_dual_path: bool = Form(True, description="是否使用双路召回（向量 + 图）"),
+    use_dual_path: str = Form("true", description="是否使用双路召回（向量 + 图）"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -2696,11 +2696,17 @@ async def qa_endpoint(
     
     # 解析知识域列表
     domains = None
-    if selected_domains:
+    if selected_domains and selected_domains.strip():
         domains = [d.strip() for d in selected_domains.split(',') if d.strip()]
     
+    # ★ 关键修复：正确解析布尔值参数
+    # FastAPI 的 Form 参数无法正确将字符串 "true" 转换为布尔值 True
+    use_dual_path_bool = use_dual_path.lower() == "true" if isinstance(use_dual_path, str) else bool(use_dual_path)
+    
+    logger.info(f"[QA] use_dual_path 参数原始值={use_dual_path}, 解析后={use_dual_path_bool}")
+    
     # ★ 双路召回模式：使用 DualPathRAGEngine
-    if use_dual_path:
+    if use_dual_path_bool:
         logger.info("=" * 80)
         logger.info("[QA] 使用双路召回模式（Neo4j + Milvus）")
         
@@ -2708,8 +2714,10 @@ async def qa_endpoint(
         engine = DualPathRAGEngine(api_key=api_key, base_url=base_url, model=model)
         logger.info(f"[QA] DualPathRAGEngine 已初始化：model={model}, base_url={base_url}")
         
-        # 从项目 graph_data 中提取 schema（用于 Text2Cypher）
-        schema = (db_project.graph_data or {}).get("schema", None)
+        # ★ 关键修复：不传入 schema，让 RAG 引擎从 Neo4j 实时获取
+        # 原因：SQLite 中的 graph_data.schema 可能为空或过期，而 Neo4j 中存储的是最新数据
+        # RAG 引擎的 query 方法会在 schema=None 时自动调用 neo4j_client.get_project_schema()
+        schema = None
         
         try:
             result = engine.query(
@@ -2718,8 +2726,8 @@ async def qa_endpoint(
                 domains=domains,
                 top_k=top_k,
                 use_text2cypher=True,
-                schema=schema,
-                db_session=db,  # ★ 传递 db_session 用于从 SQLite 获取 schema
+                schema=schema,  # ★ 设置为 None，让 RAG 引擎从 Neo4j 获取
+                db_session=db,  # ★ 传递 db_session 用于从 SQLite 获取 schema（作为 fallback）
             )
             
             logger.info(f"[QA] 双路召回成功：{len(result.get('references', []))} 条引用")

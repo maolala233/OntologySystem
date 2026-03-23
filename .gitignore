@@ -18,6 +18,7 @@ test/
 .env
 *.ttl
 *.log
+*.log.*
 *.docx
 *.txt
 *.pdf

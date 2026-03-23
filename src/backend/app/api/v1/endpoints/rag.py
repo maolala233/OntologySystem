@@ -131,6 +131,17 @@ async def dual_path_query(request: DualPathRAGRequest):
                 create_if_missing=False
             )
         
+        # ★ 关键修复：创建数据库会话，用于从 SQLite 获取 schema
+        db_session = None
+        try:
+            from sqlalchemy.orm import sessionmaker
+            from app.infrastructure.database import engine
+            SessionLocal = sessionmaker(bind=engine)
+            db_session = SessionLocal()
+            logger.info("[API] 数据库会话已创建")
+        except Exception as e:
+            logger.warning(f"[API] 数据库会话创建失败：{e}")
+        
         # 执行双路 RAG 查询
         result = dual_path_rag_engine.query(
             question=request.question,
@@ -140,6 +151,7 @@ async def dual_path_query(request: DualPathRAGRequest):
             use_text2cypher=request.use_text2cypher,
             use_advanced_text2cypher=request.use_advanced_text2cypher,  # ★ 使用 3 步大模型驱动的检索
             schema=None,  # 可以传入 Schema 以增强 Text2Cypher
+            db_session=db_session,  # ★ 传递数据库会话
         )
         
         # 格式化引用为 Pydantic 模型
@@ -179,6 +191,11 @@ async def dual_path_query(request: DualPathRAGRequest):
     except Exception as e:
         logger.error(f"双路 RAG 查询错误：{str(e)}")
         raise HTTPException(status_code=500, detail=f"双路 RAG 查询失败：{str(e)}")
+    finally:
+        # 清理数据库会话
+        if db_session:
+            db_session.close()
+            logger.info("[API] 数据库会话已关闭")
 
 
 @router.post("/query", response_model=DualPathRAGResponse)
