@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Card, Button, Empty, Spin, Modal, Form, Input, message, Tag, Space } from 'antd';
 import {
     PlusOutlined,
@@ -18,24 +18,30 @@ const MyProjectsPage: React.FC = () => {
     const [projects, setProjects] = useState<ProjectData[]>([]);
     const [loading, setLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [editingProject, setEditingProject] = useState<ProjectData | null>(null);
     const [form] = Form.useForm();
+    const [editForm] = Form.useForm();
     const [selectedDomainId, setSelectedDomainId] = useState<number | undefined>(undefined);
     const [selectedDomainName, setSelectedDomainName] = useState<string | undefined>(undefined);
+    const scrollPositionRef = useRef<number>(0);
 
     useEffect(() => {
         loadProjects();
     }, []);
 
-    const loadProjects = async () => {
+    const loadProjects = () => {
         setLoading(true);
-        try {
-            const data = await projectsApi.getMyProjects();
-            setProjects(data);
-        } catch (error: any) {
-            message.error('加载项目失败');
-        } finally {
-            setLoading(false);
-        }
+        projectsApi.getMyProjects()
+            .then((data) => {
+                setProjects(data);
+            })
+            .catch((error: any) => {
+                message.error('加载项目失败');
+            })
+            .finally(() => {
+                setLoading(false);
+            });
     };
 
     const handleCreateProject = async (values: any) => {
@@ -60,6 +66,44 @@ const MyProjectsPage: React.FC = () => {
             navigate(`/ontology-builder/${newProject.id}`);
         } catch (error: any) {
             message.error('创建失败，请稍后重试');
+        }
+    };
+
+    const handleEditProject = (project: ProjectData) => {
+        setEditingProject(project);
+        editForm.setFieldsValue({
+            name: project.name,
+            description: project.description,
+        });
+        setIsEditModalOpen(true);
+    };
+
+    const handleUpdateProject = async (values: any) => {
+        if (!editingProject) return;
+        // 保存当前滚动位置到 ref
+        scrollPositionRef.current = window.scrollY;
+        try {
+            await projectsApi.updateProject(editingProject.id, {
+                name: values.name,
+                description: values.description,
+            });
+            message.success('项目信息更新成功！');
+            setIsEditModalOpen(false);
+            setEditingProject(null);
+            // 直接更新本地状态而不是重新加载整个列表
+            setProjects((prevProjects) =>
+                prevProjects.map((project) =>
+                    project.id === editingProject.id
+                        ? { ...project, name: values.name, description: values.description }
+                        : project
+                )
+            );
+            // 恢复滚动位置
+            setTimeout(() => {
+                window.scrollTo(0, scrollPositionRef.current);
+            }, 50);
+        } catch (error: any) {
+            message.error('更新失败，请稍后重试');
         }
     };
 
@@ -138,6 +182,14 @@ const MyProjectsPage: React.FC = () => {
                                         className="text-xs sm:text-sm"
                                     >
                                         <span className="hidden sm:inline">查看</span>
+                                    </Button>,
+                                    <Button
+                                        type="text"
+                                        icon={<EditOutlined />}
+                                        onClick={() => handleEditProject(project)}
+                                        className="text-xs sm:text-sm"
+                                    >
+                                        <span className="hidden sm:inline">信息</span>
                                     </Button>,
                                     <Button
                                         type="text"
@@ -237,6 +289,49 @@ const MyProjectsPage: React.FC = () => {
                             <Button onClick={() => setIsModalOpen(false)}>取消</Button>
                             <Button type="primary" htmlType="submit" className="bg-blue-600">
                                 创建
+                            </Button>
+                        </Space>
+                    </Form.Item>
+                </Form>
+            </Modal>
+
+            {/* 编辑项目信息弹窗 */}
+            <Modal
+                title="编辑项目信息"
+                open={isEditModalOpen}
+                onCancel={() => {
+                    setIsEditModalOpen(false);
+                    setEditingProject(null);
+                    editForm.resetFields();
+                }}
+                footer={null}
+                width={500}
+            >
+                <Form form={editForm} layout="vertical" onFinish={handleUpdateProject}>
+                    <Form.Item
+                        name="name"
+                        label="项目名称"
+                        rules={[{ required: true, message: '请输入项目名称' }]}
+                    >
+                        <Input placeholder="例如：工业本体" />
+                    </Form.Item>
+
+                    <Form.Item name="description" label="项目描述">
+                        <Input.TextArea
+                            rows={4}
+                            placeholder="简要描述这个项目的用途..."
+                        />
+                    </Form.Item>
+
+                    <Form.Item>
+                        <Space className="w-full justify-end">
+                            <Button onClick={() => {
+                                setIsEditModalOpen(false);
+                                setEditingProject(null);
+                                editForm.resetFields();
+                            }}>取消</Button>
+                            <Button type="primary" htmlType="submit" className="bg-blue-600">
+                                保存
                             </Button>
                         </Space>
                     </Form.Item>
