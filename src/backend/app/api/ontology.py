@@ -1777,42 +1777,52 @@ def generate_ttl_from_graph_data(nodes: List[dict], edges: List[dict]) -> str:
 
     import re
     def make_uri(node_id: str) -> URIRef:
-        if '#' in node_id or (node_id.startswith('http')):
+        """
+        将节点 ID 转换为安全的 URI。
+        
+        ★ 修复：确保即使 ID 包含特殊字符也不会生成多余下划线
+        """
+        if '#' in node_id or node_id.startswith('http'):
             return URIRef(node_id)
-        clean = re.sub(r'[^a-zA-Z0-9_\-]', '_', node_id)
-        return ex[clean]
+        
+        # 首先去除首尾空白
+        node_id = node_id.strip()
+        
+        # 检查是否是有效的 ID 格式（如 C_xxx, I_xxx, OP_xxx）
+        if re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', node_id):
+            return ex[node_id]
+        
+        # 对于包含特殊字符的 ID，使用 MD5 哈希生成安全 URI
+        md5_hash = hashlib.md5(node_id.encode('utf-8')).hexdigest()[:8]
+        # 根据 ID 前缀确定类型
+        prefix = "Node"
+        if node_id.startswith('C_'):
+            prefix = "C"
+        elif node_id.startswith('I_'):
+            prefix = "I"
+        elif node_id.startswith('OP_'):
+            prefix = "OP"
+        elif node_id.startswith('DP_'):
+            prefix = "DP"
+        
+        return ex[f"{prefix}_{md5_hash}"]
 
     def generate_safe_prop_id(original_name: str) -> str:
         """
-        生成一个安全的属性ID，优先使用拼音，如果包含非ASCII字符则使用MD5哈希。
+        生成一个安全的属性 ID，使用 MD5 哈希保证唯一性（可区分同音词如"使用"和"实用"）。
+        
+        参数:
+        - original_name: 原始名称（可能是中文）
+        
+        返回:
+        - 安全的 ASCII ID，格式：prop_{8 位 MD5 哈希}
         """
         if not original_name:
-            return ""
+            return "prop_empty"
         
-        # 检查是否包含非ASCII字符
-        if not original_name.isascii():
-            try:
-                from pypinyin import lazy_pinyin
-                # 尝试使用拼音
-                pinyin_id = '_'.join(lazy_pinyin(original_name))
-                # 确保拼音结果是有效的URI片段
-                pinyin_id = re.sub(r'[^a-zA-Z0-9_]', '_', pinyin_id)
-                if pinyin_id and pinyin_id.strip('_') != '':
-                    return pinyin_id
-            except ImportError:
-                pass # Fallback to MD5 if pypinyin is not available
-
-            # 如果拼音失败或不可用，使用MD5哈希
-            md5_hash = hashlib.md5(original_name.encode('utf-8')).hexdigest()
-            return f"prop_{md5_hash}"
-        else:
-            # 如果是纯ASCII，直接清理
-            clean_id = re.sub(r'[^a-zA-Z0-9_]', '_', original_name)
-            if not clean_id or clean_id.strip('_') == '':
-                # Fallback for empty or all-underscore results from cleaning
-                md5_hash = hashlib.md5(original_name.encode('utf-8')).hexdigest()
-                return f"prop_{md5_hash}"
-            return clean_id
+        # 始终使用 MD5 哈希保证唯一性（区分同音词如"使用"和"实用"）
+        md5_hash = hashlib.md5(original_name.encode('utf-8')).hexdigest()
+        return f"prop_{md5_hash[:8]}"
 
     node_uris: Dict[str, URIRef] = {}
     for node in nodes:

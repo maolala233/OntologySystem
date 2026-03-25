@@ -37,8 +37,15 @@ def make_deterministic_id(label: str, category: str) -> str:
     
     格式：{category_prefix}_{8 位哈希}
     例如：C_a1b2c3d4, I_f5e6d7c8, OP_12345678
+    
+    ★ 修复：确保即使 label 为空或包含空白也能生成有效的 ID，不会产生多余下划线
     """
-    raw = f"{label.strip()}::{category.strip()}"
+    # 清理 label：去除首尾空白，如果为空则使用特殊标记
+    cleaned_label = label.strip() if label else ""
+    if not cleaned_label:
+        cleaned_label = "_empty_label_"
+    
+    raw = f"{cleaned_label}::{category.strip()}"
     hex_hash = hashlib.md5(raw.encode("utf-8")).hexdigest()[:8]
     
     # 类别前缀映射
@@ -50,6 +57,7 @@ def make_deterministic_id(label: str, category: str) -> str:
     }
     prefix = prefix_map.get(category, "Node")
     
+    # 确保返回的 ID 格式正确，不包含多余下划线
     return f"{prefix}_{hex_hash}"
 
 
@@ -1499,6 +1507,25 @@ class OntologyExtractor:
         master_g.add((onto_uri, RDF.type, OWL.Ontology))
         master_g.add((onto_uri, OWL.versionInfo, Literal("2.0")))
 
+        def generate_safe_uri_id(original_name: str, prefix: str = "prop") -> str:
+            """
+            生成一个安全的 URI ID，使用 MD5 哈希保证唯一性。
+            
+            参数:
+            - original_name: 原始名称（可能是中文）
+            - prefix: 前缀，用于区分类型
+            
+            返回:
+            - 安全的 ASCII ID，格式：{prefix}_{8 位 MD5 哈希}
+            """
+            import re
+            if not original_name:
+                return f"{prefix}_empty"
+            
+            # 始终使用 MD5 哈希保证唯一性（区分同音词如"使用"和"实用"）
+            md5_hash = hashlib.md5(original_name.encode('utf-8')).hexdigest()
+            return f"{prefix}_{md5_hash[:8]}"
+
         def get_uri(id_str: str) -> URIRef:
             """将 ID 字符串转换为安全 URI。
             
@@ -1510,18 +1537,18 @@ class OntologyExtractor:
             if re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', id_str):
                 return self.EX[id_str]
             # 否则用 MD5 生成安全 URI
-            md5_id = 'DP_' + hashlib.md5(id_str.encode('utf-8')).hexdigest()[:8]
-            return self.EX[md5_id]
+            safe_id = generate_safe_uri_id(id_str, prefix="DP")
+            return self.EX[safe_id]
 
         def get_dp_uri(prop_name: str) -> URIRef:
-            """DataProperty 初定 URI：中文属性名特殊处理。"""
+            """DataProperty URI 生成：中文属性名使用 MD5 哈希。"""
             import re
             # 纯 ASCII 合法 ID（如 OP_xxx, DP_xxx）直接使用
             if re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', prop_name):
                 return self.EX[prop_name]
-            # 含中文的属性名：用 MD5 生成确定性 ID
-            md5_id = 'DP_' + hashlib.md5(prop_name.encode('utf-8')).hexdigest()[:8]
-            return self.EX[md5_id]
+            # 含中文的属性名：用 MD5 哈希生成唯一 ID
+            safe_id = generate_safe_uri_id(prop_name, prefix="DP")
+            return self.EX[safe_id]
 
         # 写入类相关内容（包括 DataProperty 声明）
         for cls in schema.get("classes", []):
