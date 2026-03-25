@@ -9,9 +9,6 @@ SQLAlchemy>=2.0.0
 alembic
 passlib[bcrypt]>=1.7.4
 
-# 前端界面
-gradio>=4.0.0
-
 # 大模型与 AI 相关
 openai>=1.0.0
 rdflib>=7.0.0

@@ -9,7 +9,7 @@ echo "🚀 开始构建后端服务..."
 
 # 构建后端Docker镜像
 echo "📦 构建后端Docker镜像..."
-docker build -f dockerfile/backend.Dockerfile -t ontology-backend:latest .
+
 
 echo "✅ 后端镜像构建完成！"
 echo "🐳 镜像名称: ontology-backend:latest"

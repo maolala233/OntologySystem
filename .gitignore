@@ -12,6 +12,7 @@ OWL2VOWL/
 WebVOWL/
 src/frontend/dist/
 test/
+offline_packages/
 
 # files
 *.pyc
