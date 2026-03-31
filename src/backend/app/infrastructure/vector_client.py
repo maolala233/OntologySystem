@@ -4,6 +4,7 @@
 import json
 import hashlib
 import os
+import httpx
 from typing import List, Dict, Optional
 from openai import OpenAI
 from pymilvus import connections, Collection, FieldSchema, CollectionSchema, DataType, utility
@@ -349,13 +350,158 @@ class VectorStoreManager:
             return None
 
     def get_embedding(self, text: str) -> List[float]:
+        """
+        获取文本的 Embedding 向量，支持 OpenAI 标准格式和自定义格式。
+        
+        兼容的响应格式：
+        1. OpenAI 标准格式：{"data": [{"embedding": [...]}]}
+        2. 其他响应格式
+        """
         try:
             text = text.replace("\n", " ")
-            resp = self.client.embeddings.create(input=[text], model=self.emb_model)
-            return resp.data[0].embedding
+            
+            # 首先尝试使用 OpenAI SDK
+            try:
+                resp = self.client.embeddings.create(input=[text], model=self.emb_model)
+                
+                # 尝试标准 OpenAI 格式
+                if hasattr(resp, 'data') and resp.data and len(resp.data) > 0:
+                    embedding = resp.data[0].embedding
+                    if embedding and len(embedding) > 0:
+                        logger.debug(f"Embedding 获取成功 (OpenAI 格式): 维度={len(embedding)}")
+                        return embedding
+                
+                # 如果 SDK 返回的是其他格式，尝试从响应对象中提取
+                resp_dict = self._extract_response_dict(resp)
+                embedding = self._parse_embedding_response(resp_dict)
+                if embedding and len(embedding) > 0:
+                    logger.debug(f"Embedding 获取成功 (自定义格式): 维度={len(embedding)}")
+                    return embedding
+                    
+            except Exception as sdk_error:
+                # OpenAI SDK 调用失败，使用 requests 直接调用
+                logger.debug(f"OpenAI SDK 调用失败，尝试使用 requests: {sdk_error}")
+                embedding = self._get_embedding_by_requests(text)
+                if embedding and len(embedding) > 0:
+                    return embedding
+            
+            logger.warning(f"Embedding 响应解析失败，返回空向量")
+            return [0.0] * self.embedding_dim
+            
         except Exception as e:
             logger.warning(f"Embedding error: {e}")
             return [0.0] * self.embedding_dim
+    
+    def _extract_response_dict(self, resp) -> dict:
+        """从响应对象中提取字典数据"""
+        if resp is None:
+            return {}
+        
+        # 如果已经是字典，直接返回
+        if isinstance(resp, dict):
+            return resp
+        
+        # 尝试 __dict__ 属性
+        if hasattr(resp, '__dict__'):
+            return resp.__dict__
+        
+        # 尝试 _attributes 属性（某些 SDK 响应对象）
+        if hasattr(resp, '_attributes'):
+            return resp._attributes
+        
+        # 尝试 data 属性
+        if hasattr(resp, 'data'):
+            return {'data': resp.data}
+        
+        return {}
+    
+    def _parse_embedding_response(self, result: dict) -> List[float]:
+        """
+        解析 Embedding API 响应，支持多种格式。
+        
+        支持的格式：
+        1. OpenAI 标准：{"data": [{"embedding": [...]}]}
+        2. 自定义格式 1：{"embeddings": [[...]]}
+        3. 自定义格式 2：{"embedding": [...]}
+        4. 自定义格式 3：{"status_code": 200, "embeddings": [[...]]}
+        """
+        if not result:
+            return []
+        
+        # 格式 1: OpenAI 标准格式
+        if 'data' in result and result['data'] and len(result['data']) > 0:
+            first_item = result['data'][0]
+            if isinstance(first_item, dict) and 'embedding' in first_item:
+                return first_item['embedding']
+            elif hasattr(first_item, 'embedding'):
+                return first_item.embedding
+        
+        # 格式 2: {"embeddings": [[...]]}
+        if 'embeddings' in result and result['embeddings']:
+            emb_list = result['embeddings']
+            # 如果是嵌套列表，取第一个
+            if isinstance(emb_list, list) and len(emb_list) > 0:
+                if isinstance(emb_list[0], list):
+                    return emb_list[0]
+                return emb_list
+        
+        # 格式 3: {"embedding": [...]}
+        if 'embedding' in result and result['embedding']:
+            emb = result['embedding']
+            if isinstance(emb, list):
+                return emb
+        
+        # 格式 4: 某些 API 返回的嵌套格式
+        if 'result' in result and result['result']:
+            return self._parse_embedding_response(result['result'])
+        
+        return []
+    
+    def _get_embedding_by_requests(self, text: str) -> List[float]:
+        """
+        使用 requests 直接调用 Embedding API，绕过 OpenAI SDK。
+        用于兼容非标准 OpenAI API 格式的服务。
+        """
+        headers = {
+            "Content-Type": "application/json"
+        }
+        
+        # 如果有 API Key，添加 Authorization 头
+        if self.embedding_api_key:
+            headers["Authorization"] = f"Bearer {self.embedding_api_key}"
+        
+        # 构建请求体
+        payload = {
+            "model": self.embedding_model,
+            "input": [text]
+        }
+        
+        # ★ 打印请求参数日志（用于调试）
+        logger.info(f"[Embedding 请求] URL: {self.embedding_base_url}/embeddings")
+        logger.info(f"[Embedding 请求] Headers: {headers}")
+        logger.info(f"[Embedding 请求] Payload: {json.dumps(payload, ensure_ascii=False)}")
+        
+        # 发送请求
+        response = httpx.post(
+            f"{self.embedding_base_url}/embeddings",
+            headers=headers,
+            json=payload,
+            timeout=30.0
+        )
+        response.raise_for_status()
+        result = response.json()
+        
+        logger.info(f"[Embedding 响应] Status: {response.status_code}")
+        logger.info(f"[Embedding 响应] Body: {json.dumps(result, ensure_ascii=False)[:500]}...")
+        
+        # 解析响应
+        embedding = self._parse_embedding_response(result)
+        
+        if not embedding or len(embedding) == 0:
+            logger.warning(f"Embedding 响应中未找到有效数据：{result}")
+            return [0.0] * self.embedding_dim
+        
+        return embedding
 
     def _get_content_hash(self, text: str, metadata: Dict) -> str:
         """生成内容哈希，用于去重"""

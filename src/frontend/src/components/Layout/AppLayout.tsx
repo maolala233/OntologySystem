@@ -593,6 +593,14 @@ const AppLayout: React.FC = () => {
                         </Form.Item>
 
                         <Form.Item
+                            name="embedding_api_key"
+                            label="Embedding API Key"
+                            className="col-span-2"
+                        >
+                            <Input.Password placeholder="留空则无需认证" />
+                        </Form.Item>
+
+                        <Form.Item
                             name="embedding_model"
                             label="Embedding 模型"
                             className="col-span-2"

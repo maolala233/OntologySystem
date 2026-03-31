@@ -2987,7 +2987,8 @@ const OntologyBuilderPage: React.FC = () => {
                                     <Form.Item name="milvus_enabled" valuePropName="checked" className="col-span-2">
                                         <Switch checkedChildren="Milvus 启用" unCheckedChildren="Milvus 禁用" />
                                     </Form.Item>
-                                    <Form.Item name="embedding_base_url" label="Embedding 地址" className="col-span-2"><Input placeholder="http://localhost:11434/v1" /></Form.Item>
+                                    <Form.Item name="embedding_base_url" label="Embedding API 地址" className="col-span-2"><Input placeholder="http://localhost:11434/v1" /></Form.Item>
+                                    <Form.Item name="embedding_api_key" label="Embedding API Key" className="col-span-2"><Input.Password placeholder="留空则无需认证" /></Form.Item>
                                     <Form.Item name="embedding_model" label="Embedding 模型" className="col-span-2"><Input placeholder="nomic-embed-text:latest" /></Form.Item>
                                     <Form.Item name="milvus_host" label="Milvus 主机"><Input placeholder="127.0.0.1" /></Form.Item>
                                     <Form.Item name="milvus_port" label="Milvus 端口"><Input placeholder="19530" /></Form.Item>

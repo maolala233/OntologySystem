@@ -140,11 +140,16 @@ def test_embedding_connectivity(
         # 提取配置
         base_url = config.get("embedding_base_url", "")
         model = config.get("embedding_model", "")
+        api_key = config.get("embedding_api_key", "")  # 获取 API Key
         
-        # 简单测试：发送一个简单的请求到Embedding API
+        # 构建请求头
         headers = {
             "Content-Type": "application/json"
         }
+        
+        # 如果有 API Key，添加 Authorization 头
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
         
         # 根据不同的base_url判断API类型
         if "ollama" in base_url.lower():
