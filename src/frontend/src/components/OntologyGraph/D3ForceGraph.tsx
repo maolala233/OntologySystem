@@ -752,6 +752,17 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
     useEffect(() => {
         if (nodes.length > 0) {
             renderGraph();
+        } else {
+            // 当节点为空时，清空 SVG 内容
+            if (svgRef.current) {
+                const svg = select(svgRef.current);
+                svg.selectAll("*").remove();
+                // 停止力模拟
+                if (simulationRef.current) {
+                    simulationRef.current.stop();
+                    simulationRef.current = null;
+                }
+            }
         }
     }, [nodes, edges, renderGraph, highlightNodeId]);
 

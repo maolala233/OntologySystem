@@ -4,7 +4,7 @@
 import os
 import re
 import time
-import pypdf
+import pymupdf4llm
 import docx
 from pptx import Presentation
 import pandas as pd
@@ -82,22 +82,31 @@ def process_files(file_list: Union[List, str]) -> str:
 
             # 优先根据 MIME 类型处理，如果检测失败则根据后缀处理
             if mime_type == "application/pdf" or fname_lower.endswith(".pdf"):
-                logger.info(f"[文件解析] [{idx+1}/{len(files)}] 识别为 PDF 文件，开始提取文本...")
+                logger.info(f"[文件解析] [{idx+1}/{len(files)}] 识别为 PDF 文件，使用 pymupdf4llm 提取文本...")
                 pdf_start_time = time.time()
-                reader = pypdf.PdfReader(fname)
-                total_pages = len(reader.pages)
-                logger.info(f"[文件解析] [{idx+1}/{len(files)}] PDF 文件共 {total_pages} 页，开始逐页提取...")
                 
-                page_texts = []
-                for page_idx, page in enumerate(reader.pages):
-                    page_start = time.time()
-                    page_text = page.extract_text() or ""
-                    page_texts.append(page_text)
-                    if (page_idx + 1) % 5 == 0 or page_idx == total_pages - 1:
-                        logger.info(f"[文件解析] [{idx+1}/{len(files)}] 已提取 {page_idx+1}/{total_pages} 页，当前页耗时={time.time()-page_start:.2f}s")
-                
-                file_content = "\n".join(page_texts)
-                logger.info(f"[文件解析] [{idx+1}/{len(files)}] PDF 文本提取完成，总耗时={time.time()-pdf_start_time:.2f}s, 内容长度={len(file_content)} 字符")
+                # 使用 pymupdf4llm 提取 PDF 内容为 Markdown 格式
+                # 这种格式更适合 LLM 处理，能保留表格、标题等结构信息
+                try:
+                    md_text = pymupdf4llm.to_markdown(fname)
+                    file_content = md_text
+                    logger.info(f"[文件解析] [{idx+1}/{len(files)}] PDF 文本提取完成（pymupdf4llm），总耗时={time.time()-pdf_start_time:.2f}s, 内容长度={len(file_content)} 字符")
+                except Exception as pdf_error:
+                    logger.warning(f"[文件解析] [{idx+1}/{len(files)}] pymupdf4llm 提取失败：{pdf_error}，尝试使用基础提取...")
+                    # Fallback: 使用 pymupdf 基础提取
+                    try:
+                        import pymupdf
+                        doc = pymupdf.open(fname)
+                        page_texts = []
+                        for page_idx, page in enumerate(doc):
+                            page_text = page.get_text() or ""
+                            page_texts.append(page_text)
+                        file_content = "\n".join(page_texts)
+                        doc.close()
+                        logger.info(f"[文件解析] [{idx+1}/{len(files)}] PDF 基础提取完成，总耗时={time.time()-pdf_start_time:.2f}s, 内容长度={len(file_content)} 字符")
+                    except Exception as fallback_error:
+                        logger.error(f"[文件解析] [{idx+1}/{len(files)}] PDF 提取完全失败：{fallback_error}")
+                        file_content = ""
             
             elif mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" or fname_lower.endswith(".docx"):
                 logger.info(f"[文件解析] [{idx+1}/{len(files)}] 识别为 DOCX 文件，开始提取文本...")

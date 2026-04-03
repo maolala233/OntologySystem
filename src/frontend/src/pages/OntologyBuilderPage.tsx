@@ -2122,6 +2122,60 @@ const OntologyBuilderPage: React.FC = () => {
                                     </Tooltip>
                                 </div>
 
+                                {/* 清空操作 */}
+                                <div className="flex items-center gap-1 px-2 border-r border-gray-200">
+                                    <Tooltip title="清空所有节点和关系（需手动保存才能同步到数据库）">
+                                        <Button 
+                                            size="small" 
+                                            danger
+                                            icon={<ClearOutlined />} 
+                                            onClick={() => {
+                                                Modal.confirm({
+                                                    title: '确认清空',
+                                                    content: '确定要清空所有节点和关系吗？清空后需点击"保存"按钮才能同步到数据库。',
+                                                    okText: '确定清空',
+                                                    cancelText: '取消',
+                                                    okButtonProps: { danger: true },
+                                                    onOk: () => {
+                                                        // 只清空前端状态，不自动同步到数据库
+                                                        setNodes([]);
+                                                        setEdges([]);
+                                                        setExpandedNodeIds(new Set());
+                                                        setSelectedElement(null);
+                                                        setIsDrawerOpen(false);
+                                                        setIsNewNode(false);
+                                                        setHighlightNodeId(null);
+                                                        form.resetFields();
+                                                        setManualExpandedKeys(new Set());
+                                                        setTreeSearchValue('');
+                                                        setPendingFiles([]);
+                                                        setUploadedDocuments([]);
+                                                        setQaQuestion('');
+                                                        setQaAnswer('');
+                                                        setQaReferences([]);
+                                                        setSelectedQADomains([]);
+                                                        setTaskProgress(0);
+                                                        setTaskMessage('');
+                                                        setTaskDetail('');
+                                                        setTaskStatus('pending');
+                                                        setCurrentTaskId(null);
+                                                        if (eventSourceRef.current) {
+                                                            eventSourceRef.current.close();
+                                                            eventSourceRef.current = null;
+                                                        }
+                                                        // 清除 localStorage 中的 schema 数据
+                                                        localStorage.removeItem(`project_${projectId}_schema_graph`);
+                                                        localStorage.removeItem(`project_${projectId}_text_content`);
+                                                        message.success('已清空画布，请点击"保存"按钮同步到数据库');
+                                                    },
+                                                });
+                                            }}
+                                        >
+                                            清空
+                                        </Button>
+                                    </Tooltip>
+                                </div>
+
                                 {/* 全局保存组 */}
                                 <div className="flex items-center gap-1 pl-2">
                                     <Tooltip title="展开/收起所有实例">
