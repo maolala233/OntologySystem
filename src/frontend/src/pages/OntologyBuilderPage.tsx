@@ -165,6 +165,9 @@ const OntologyBuilderPage: React.FC = () => {
     
     // 画布缩放控制
     const [canvasZoom, setCanvasZoom] = useState(1);
+    
+    // 继承属性状态（用于显示）
+    const [inheritedProperties, setInheritedProperties] = useState<{ name: string; value: string; from: string }[]>([]);
 
     // 测试连通性状态
     const [testingLLM, setTestingLLM] = useState(false);
@@ -248,16 +251,46 @@ const OntologyBuilderPage: React.FC = () => {
         setSelectedElement(node);
         setIsDrawerOpen(true);
 
-        const propsObj = node.data?.properties || {};
-        const propsArray = Object.entries(propsObj).map(([key, value]) => ({
-            name: key,
-            value: String(value)
-        }));
+        // 处理属性：区分直接属性和继承属性
+        // properties_with_source 是后端返回的带来源标记的属性列表
+        const propertiesWithSource = node.data?.properties_with_source || [];
+        
+        // 如果有 properties_with_source，使用它；否则回退到旧的 properties 字段
+        let directPropsArray: { name: string; value: string }[] = [];
+        let inheritedPropsArray: { name: string; value: string; from: string }[] = [];
+        
+        if (propertiesWithSource.length > 0) {
+            // 使用 properties_with_source 区分直接属性和继承属性
+            propertiesWithSource.forEach((p: any) => {
+                if (p.source === 'direct') {
+                    directPropsArray.push({
+                        name: p.name,
+                        value: String(p.value || '')
+                    });
+                } else if (p.source === 'inherited') {
+                    inheritedPropsArray.push({
+                        name: p.name,
+                        value: String(p.value || ''),
+                        from: p.from || '父类'
+                    });
+                }
+            });
+        } else {
+            // 回退到旧的 properties 字段（兼容旧数据）
+            const propsObj = node.data?.properties || {};
+            directPropsArray = Object.entries(propsObj).map(([key, value]) => ({
+                name: key,
+                value: String(value)
+            }));
+        }
+
+        // 保存继承属性到状态，用于显示
+        setInheritedProperties(inheritedPropsArray);
 
         form.setFieldsValue({
             label: node.data?.label || '',
             type: node.data?.type || 'owl:Class',
-            properties: propsArray
+            properties: directPropsArray
         });
     };
 
@@ -282,7 +315,8 @@ const OntologyBuilderPage: React.FC = () => {
             if (Array.isArray(properties)) {
                 properties.forEach((p: any) => {
                     if (p && p.name) {
-                        propsObj[p.name] = p.value;
+                        // 如果值为 undefined 或 null，使用空字符串代替
+                        propsObj[p.name] = p.value ?? '';
                     }
                 });
             }
@@ -2333,6 +2367,52 @@ const OntologyBuilderPage: React.FC = () => {
                                                 <span className="font-medium text-gray-700">自定义属性</span>
                                             </div>
                                             
+                                            {/* 继承属性显示区域（只读） */}
+                                            {inheritedProperties.length > 0 && (
+                                                <div className="mb-4">
+                                                    <div className="flex items-center gap-2 mb-2 pb-2 border-b border-gray-100">
+                                                        <TagsOutlined className="text-gray-400" />
+                                                        <span className="font-medium text-gray-500">继承属性（只读）</span>
+                                                        <Tooltip title="这些属性从父类继承，不可直接编辑。如需修改，请编辑父类节点。">
+                                                            <InfoCircleOutlined className="text-gray-400 text-sm" />
+                                                        </Tooltip>
+                                                    </div>
+                                                    {inheritedProperties.map((prop, index) => (
+                                                        <div key={`inherited-${index}`} className="flex gap-2 mb-2 items-start bg-gray-50 p-2 rounded border border-gray-200">
+                                                            <div className="flex-shrink-0 w-[100px]">
+                                                                <Input 
+                                                                    value={prop.name} 
+                                                                    size="small" 
+                                                                    disabled 
+                                                                    className="text-gray-500 bg-gray-100"
+                                                                />
+                                                            </div>
+                                                            <div className="flex-1">
+                                                                <Input.TextArea 
+                                                                    value={prop.value} 
+                                                                    size="small" 
+                                                                    disabled 
+                                                                    autoSize={{ minRows: 1, maxRows: 4 }}
+                                                                    className="text-gray-500 bg-gray-100"
+                                                                />
+                                                            </div>
+                                                            <Tag color="default" className="text-xs flex-shrink-0 mt-1">
+                                                                来自: {prop.from}
+                                                            </Tag>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                            
+                                            {/* 直接属性编辑区域 */}
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <TagsOutlined className="text-purple-500" />
+                                                <span className="font-medium text-gray-700">直接属性</span>
+                                                <Tooltip title="这些是当前节点直接定义的属性，可以编辑和删除。">
+                                                    <InfoCircleOutlined className="text-gray-400 text-sm" />
+                                                </Tooltip>
+                                            </div>
+                                            
                                             <Form.List name="properties">
                                                 {(fields, { add, remove }) => (
                                                     <>
@@ -2350,7 +2430,6 @@ const OntologyBuilderPage: React.FC = () => {
                                                                 <Form.Item
                                                                     {...restField}
                                                                     name={[name, 'value']}
-                                                                    rules={[{ required: true, message: '属性值不能为空' }]}
                                                                     className="flex-1 mb-0"
                                                                 >
                                                                     <Input.TextArea placeholder="属性值" autoSize={{ minRows: 1, maxRows: 4 }} size="small" />

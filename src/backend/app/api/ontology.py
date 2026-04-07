@@ -1662,6 +1662,8 @@ def build_schema_from_graph_data(nodes: List[dict], edges: List[dict]) -> dict:
     从 nodes 和 edges 动态构建 schema（兼容 TTL 导入场景）。
     当 TTL 文件导入骨架时，graph_data 中可能没有 schema 字段，
     但有 nodes 和 edges，本函数从这些数据中提取 schema。
+    
+    ★ 属性继承：子类自动继承父类的所有属性，无需重复定义。
     """
     from app.core.logging import logger
     
@@ -1670,7 +1672,9 @@ def build_schema_from_graph_data(nodes: List[dict], edges: List[dict]) -> dict:
     
     logger.info(f"[build_schema_from_graph_data] 开始从 {len(nodes)} 个节点和 {len(edges)} 个边构建 schema")
     
-    # 从节点中提取类
+    # ★ 第一步：先收集所有类的直接属性和父类关系
+    class_info = {}  # node_id -> {'label': str, 'parent_classes': list, 'direct_properties': list}
+    
     for node in nodes:
         node_type = node.get('data', {}).get('type', '')
         if node_type == 'owl:Class':
@@ -1689,20 +1693,91 @@ def build_schema_from_graph_data(nodes: List[dict], edges: List[dict]) -> dict:
                         parent_classes.append(edge.get('target'))
             
             # 获取数据属性（从 properties 中提取键名）
-            data_properties = []
+            direct_properties = []
             node_data = node.get('data', {})
             properties = node_data.get('properties', {})
             if isinstance(properties, dict):
-                data_properties = list(properties.keys())
+                direct_properties = list(properties.keys())
             
-            logger.info(f"[build_schema_from_graph_data] 添加类：{node_id}, label={node_label}, parent_classes={parent_classes}, data_properties={data_properties}")
-            
-            classes.append({
-                "id": node_id,
-                "label": node_label,
-                "parent_classes": parent_classes,
-                "data_properties": data_properties,
-            })
+            class_info[node_id] = {
+                'label': node_label,
+                'parent_classes': parent_classes,
+                'direct_properties': direct_properties,
+            }
+    
+    # ★ 第二步：递归计算每个类的继承属性
+    def get_inherited_properties(class_id: str, visited: set = None) -> list:
+        """
+        递归获取类的所有继承属性（从父类链向上追溯）。
+        
+        参数:
+        - class_id: 类 ID
+        - visited: 已访问的类（防止循环继承）
+        
+        返回:
+        - 该类继承的所有属性列表（不含直接属性）
+        """
+        if visited is None:
+            visited = set()
+        
+        if class_id in visited or class_id not in class_info:
+            return []
+        
+        visited.add(class_id)
+        
+        inherited_props = []
+        info = class_info[class_id]
+        
+        # 遍历所有父类
+        for parent_id in info['parent_classes']:
+            if parent_id in class_info:
+                # 获取父类的直接属性
+                parent_direct_props = class_info[parent_id]['direct_properties']
+                inherited_props.extend(parent_direct_props)
+                
+                # 递归获取父类的继承属性
+                parent_inherited_props = get_inherited_properties(parent_id, visited)
+                inherited_props.extend(parent_inherited_props)
+        
+        return inherited_props
+    
+    # ★ 第三步：构建最终的类列表（合并直接属性和继承属性）
+    for node_id, info in class_info.items():
+        direct_props = info['direct_properties']
+        inherited_props = get_inherited_properties(node_id)
+        
+        # 合并属性（去重），继承属性标记来源
+        all_properties = list(set(direct_props + inherited_props))
+        
+        # 区分直接属性和继承属性
+        inherited_props_set = set(inherited_props)
+        direct_props_set = set(direct_props)
+        
+        # 标记属性来源
+        properties_with_source = []
+        for prop in all_properties:
+            if prop in direct_props_set:
+                properties_with_source.append({'name': prop, 'source': 'direct'})
+            else:
+                # 找出继承来源（哪个父类）
+                source_class = None
+                for parent_id in info['parent_classes']:
+                    if parent_id in class_info and prop in class_info[parent_id]['direct_properties']:
+                        source_class = class_info[parent_id]['label']
+                        break
+                properties_with_source.append({'name': prop, 'source': 'inherited', 'from': source_class})
+        
+        logger.info(f"[build_schema_from_graph_data] 添加类：{node_id}, label={info['label']}, parent_classes={info['parent_classes']}, direct_properties={direct_props}, inherited_properties={inherited_props}")
+        
+        classes.append({
+            "id": node_id,
+            "label": info['label'],
+            "parent_classes": info['parent_classes'],
+            "data_properties": all_properties,  # 所有属性（用于实例提取）
+            "direct_properties": direct_props,  # 直接定义的属性
+            "inherited_properties": inherited_props,  # 继承的属性
+            "properties_with_source": properties_with_source,  # 带来源标记的属性
+        })
     
     # 从边中提取 ObjectProperty
     for edge in edges:
@@ -1939,8 +2014,11 @@ def extract_schema_from_ttl(ttl_content: str) -> dict:
     
     重要：TTL 文件中子类可能没有显式声明 a owl:Class，而是通过 rdfs:subClassOf 关系隐式成为类。
     本函数会同时处理显式和隐式声明的类。
+    
+    ★ 属性继承：子类自动继承父类的所有属性，无需重复定义。
     """
     from rdflib import Graph, RDF, RDFS, OWL, Namespace, URIRef
+    from app.core.logging import logger
     
     g = Graph()
     g.parse(data=ttl_content, format="turtle")
@@ -1971,6 +2049,55 @@ def extract_schema_from_ttl(ttl_content: str) -> dict:
             'domains': domains,
         }
     
+    # ★ 新增：收集 rdf:Property（根据 rdfs:range 判断是数据属性还是对象属性）
+    xsd_namespace = "http://www.w3.org/2001/XMLSchema#"
+    xsd_datatypes = ['string', 'integer', 'decimal', 'float', 'double', 'boolean', 
+                     'date', 'dateTime', 'time', 'duration', 'anyURI', 'byte', 
+                     'short', 'long', 'unsignedByte', 'unsignedShort', 'unsignedLong']
+    
+    for prop in g.subjects(RDF.type, RDF.Property):
+        prop_uri = str(prop)
+        # 跳过已经作为 owl:DatatypeProperty 处理的属性
+        if prop_uri in datatype_prop_domains:
+            continue
+        
+        prop_id = str(prop).split('#')[-1] if '#' in str(prop) else str(prop).split('/')[-1]
+        label = prop_id
+        for obj in g.objects(prop, RDFS.label):
+            label = str(obj)
+            if hasattr(obj, 'language') and obj.language == 'zh':
+                break
+        
+        # 获取 domain
+        domains = []
+        for domain in g.objects(prop, RDFS.domain):
+            domain_id = str(domain).split('#')[-1] if '#' in str(domain) else str(domain).split('/')[-1]
+            domains.append(domain_id)
+        
+        # 获取 range
+        ranges = list(g.objects(prop, RDFS.range))
+        range_uri = str(ranges[0]) if ranges else None
+        
+        # 判断是否是数据属性：range 是 XSD 数据类型
+        is_datatype = False
+        if range_uri:
+            if range_uri.startswith(xsd_namespace):
+                range_type = range_uri.split('#')[-1] if '#' in range_uri else range_uri.split('/')[-1]
+                if range_type in xsd_datatypes:
+                    is_datatype = True
+            if range_uri == str(RDFS.Literal):
+                is_datatype = True
+        
+        if is_datatype:
+            datatype_prop_domains[prop_uri] = {
+                'id': prop_id,
+                'label': label,
+                'domains': domains,
+            }
+            logger.info(f"[extract_schema_from_ttl] rdf:Property '{prop_id}' 被识别为数据属性（range={range_uri}）")
+    
+    logger.info(f"[extract_schema_from_ttl] 找到 {len(datatype_prop_domains)} 个数据属性")
+    
     # 收集所有类 URI（包括显式和隐式声明的类）
     class_uris = set()
     
@@ -1990,7 +2117,9 @@ def extract_schema_from_ttl(ttl_content: str) -> dict:
         for range_ in g.objects(prop, RDFS.range):
             class_uris.add(range_)
     
-    # 提取所有类
+    # ★ 第一步：先收集所有类的直接属性和父类关系
+    class_info = {}  # cls_id -> {'label': str, 'parent_classes': list, 'direct_properties': list}
+    
     for cls in class_uris:
         cls_uri = str(cls)
         cls_id = str(cls).split('#')[-1] if '#' in str(cls) else str(cls).split('/')[-1]
@@ -2007,16 +2136,82 @@ def extract_schema_from_ttl(ttl_content: str) -> dict:
             parent_classes.append(parent_id)
         
         # 获取数据属性 - 通过 rdfs:domain 关联
-        data_properties = []
+        direct_properties = []
         for prop_uri, prop_info in datatype_prop_domains.items():
             if cls_id in prop_info['domains']:
-                data_properties.append(prop_info['label'])
+                direct_properties.append(prop_info['label'])
+        
+        class_info[cls_id] = {
+            'label': label,
+            'parent_classes': parent_classes,
+            'direct_properties': list(set(direct_properties)),
+        }
+    
+    # ★ 第二步：递归计算每个类的继承属性
+    def get_inherited_properties(class_id: str, visited: set = None) -> list:
+        """
+        递归获取类的所有继承属性（从父类链向上追溯）。
+        """
+        if visited is None:
+            visited = set()
+        
+        if class_id in visited or class_id not in class_info:
+            return []
+        
+        visited.add(class_id)
+        
+        inherited_props = []
+        info = class_info[class_id]
+        
+        # 遍历所有父类
+        for parent_id in info['parent_classes']:
+            if parent_id in class_info:
+                # 获取父类的直接属性
+                parent_direct_props = class_info[parent_id]['direct_properties']
+                inherited_props.extend(parent_direct_props)
+                
+                # 递归获取父类的继承属性
+                parent_inherited_props = get_inherited_properties(parent_id, visited)
+                inherited_props.extend(parent_inherited_props)
+        
+        return inherited_props
+    
+    # ★ 第三步：构建最终的类列表（合并直接属性和继承属性）
+    for cls_id, info in class_info.items():
+        direct_props = info['direct_properties']
+        inherited_props = get_inherited_properties(cls_id)
+        
+        # 合并属性（去重）
+        all_properties = list(set(direct_props + inherited_props))
+        
+        # 区分直接属性和继承属性
+        inherited_props_set = set(inherited_props)
+        direct_props_set = set(direct_props)
+        
+        # 标记属性来源
+        properties_with_source = []
+        for prop in all_properties:
+            if prop in direct_props_set:
+                properties_with_source.append({'name': prop, 'source': 'direct'})
+            else:
+                # 找出继承来源（哪个父类）
+                source_class = None
+                for parent_id in info['parent_classes']:
+                    if parent_id in class_info and prop in class_info[parent_id]['direct_properties']:
+                        source_class = class_info[parent_id]['label']
+                        break
+                properties_with_source.append({'name': prop, 'source': 'inherited', 'from': source_class})
+        
+        logger.info(f"[extract_schema_from_ttl] 添加类：{cls_id}, label={info['label']}, parent_classes={info['parent_classes']}, direct_properties={direct_props}, inherited_properties={inherited_props}")
         
         classes.append({
             "id": cls_id,
-            "label": label,
-            "parent_classes": parent_classes,
-            "data_properties": list(set(data_properties)),
+            "label": info['label'],
+            "parent_classes": info['parent_classes'],
+            "data_properties": all_properties,  # 所有属性（用于实例提取）
+            "direct_properties": direct_props,  # 直接定义的属性
+            "inherited_properties": inherited_props,  # 继承的属性
+            "properties_with_source": properties_with_source,  # 带来源标记的属性
         })
     
     # 提取所有 ObjectProperty
@@ -2055,20 +2250,26 @@ def extract_schema_from_ttl(ttl_content: str) -> dict:
 def convert_ttl_to_graph_data(ttl_content: str):
     """
     将 TTL 转换为前端可渲染的 (nodes, edges) 二元组。
-    支持解析 DatatypeProperty 作为节点的自定义属性。
+    支持解析多种属性类型作为节点的自定义属性。
     
-    注意：TTL 中的 DatatypeProperty 定义（如 ex:documentTitle a owl:DatatypeProperty）
-    只是声明了属性的存在，而不是具体的属性值。
-    只有当 TTL 中有实际的属性值（如 ex:SomeDocument ex:documentTitle "报告标题"）时，
-    才会被解析为节点的 properties。
+    支持的属性类型：
+    - owl:DatatypeProperty - OWL 数据属性
+    - owl:ObjectProperty - OWL 对象属性
+    - rdf:Property - 基础 RDF 属性（根据 rdfs:range 判断是数据属性还是对象属性）
+    
+    支持的类类型：
+    - owl:Class - OWL 类
+    - rdfs:Class - RDFS 类
+    - 通过 rdfs:subClassOf 隐式声明的类
+    
+    注意：TTL 中的属性定义只是声明了属性的存在，而不是具体的属性值。
+    只有当 TTL 中有实际的属性值时，才会被解析为节点的 properties。
     
     本函数会将 schema 中定义的 data_properties 添加到对应类节点的 properties 中，
     以便前端在编辑节点时显示这些预定义的属性。
-    
-    重要：TTL 文件中子类可能没有显式声明 a owl:Class，而是通过 rdfs:subClassOf 关系隐式成为类。
-    本函数会同时处理显式和隐式声明的类。
     """
     from rdflib import Graph, RDF, RDFS, OWL, Namespace, URIRef, Literal
+    from app.core.logging import logger
     
     g = Graph()
     g.parse(data=ttl_content, format="turtle")
@@ -2077,8 +2278,10 @@ def convert_ttl_to_graph_data(ttl_content: str):
     edges = []
     processed_nodes: set = set()
 
-    # 首先收集所有 DatatypeProperty 及其 domain 信息
+    # ★ 改进：收集所有数据属性（支持 owl:DatatypeProperty 和 rdf:Property）
     datatype_props = {}  # prop_uri -> {'id': str, 'label': str, 'domain': str}
+    
+    # 1. 收集 owl:DatatypeProperty
     for prop in g.subjects(RDF.type, OWL.DatatypeProperty):
         prop_uri = str(prop)
         prop_id = str(prop).split('#')[-1] if '#' in str(prop) else str(prop).split('/')[-1]
@@ -2098,9 +2301,56 @@ def convert_ttl_to_graph_data(ttl_content: str):
             'domain': domain_id,
         }
     
-    # 调试日志：打印收集到的 DatatypeProperty
-    from app.core.logging import logger
-    logger.info(f"[convert_ttl_to_graph_data] 找到 {len(datatype_props)} 个 DatatypeProperty: {list(datatype_props.values())}")
+    # ★ 新增：2. 收集 rdf:Property（根据 rdfs:range 判断是数据属性还是对象属性）
+    # XSD 数据类型范围（如 xsd:string, xsd:integer, xsd:decimal, xsd:date 等）
+    xsd_namespace = "http://www.w3.org/2001/XMLSchema#"
+    xsd_datatypes = ['string', 'integer', 'decimal', 'float', 'double', 'boolean', 
+                     'date', 'dateTime', 'time', 'duration', 'anyURI', 'byte', 
+                     'short', 'long', 'unsignedByte', 'unsignedShort', 'unsignedLong']
+    
+    for prop in g.subjects(RDF.type, RDF.Property):
+        prop_uri = str(prop)
+        # 跳过已经作为 owl:DatatypeProperty 或 owl:ObjectProperty 处理的属性
+        if prop_uri in datatype_props:
+            continue
+        
+        prop_id = str(prop).split('#')[-1] if '#' in str(prop) else str(prop).split('/')[-1]
+        label = prop_id
+        for obj in g.objects(prop, RDFS.label):
+            label = str(obj)
+            if hasattr(obj, 'language') and obj.language == 'zh':
+                break
+        
+        # 获取 domain
+        domains = list(g.objects(prop, RDFS.domain))
+        domain_id = str(domains[0]).split('#')[-1] if domains else None
+        
+        # 获取 range
+        ranges = list(g.objects(prop, RDFS.range))
+        range_uri = str(ranges[0]) if ranges else None
+        
+        # 判断是否是数据属性：range 是 XSD 数据类型
+        is_datatype = False
+        if range_uri:
+            # 检查是否是 XSD 数据类型
+            if range_uri.startswith(xsd_namespace):
+                range_type = range_uri.split('#')[-1] if '#' in range_uri else range_uri.split('/')[-1]
+                if range_type in xsd_datatypes:
+                    is_datatype = True
+            # rdfs:Literal 也是数据类型
+            if range_uri == str(RDFS.Literal):
+                is_datatype = True
+        
+        if is_datatype:
+            datatype_props[prop_uri] = {
+                'id': prop_id,
+                'label': label,
+                'domain': domain_id,
+            }
+            logger.info(f"[convert_ttl_to_graph_data] rdf:Property '{prop_id}' 被识别为数据属性（range={range_uri}）")
+    
+    # 调试日志：打印收集到的数据属性
+    logger.info(f"[convert_ttl_to_graph_data] 找到 {len(datatype_props)} 个数据属性（含 owl:DatatypeProperty 和 rdf:Property）: {list(datatype_props.values())}")
 
     def add_node(uri, node_type_category: str) -> str:
         node_uri = str(uri)
@@ -2161,26 +2411,44 @@ def convert_ttl_to_graph_data(ttl_content: str):
         processed_nodes.add(node_id)
         return node_id
 
-    # 收集所有类 URI（包括显式和隐式声明的类）
+    # ★ 改进：收集所有类 URI（支持 owl:Class, rdfs:Class 和隐式声明的类）
     class_uris = set()
     
     # 1. 显式声明为 owl:Class 的节点
     for subj in g.subjects(RDF.type, OWL.Class):
         class_uris.add(subj)
     
-    # 2. 通过 rdfs:subClassOf 关系隐式成为类的节点（作为子类或父类）
+    # 2. 显式声明为 rdfs:Class 的节点（新增支持）
+    for subj in g.subjects(RDF.type, RDFS.Class):
+        class_uris.add(subj)
+    
+    # 3. 通过 rdfs:subClassOf 关系隐式成为类的节点（作为子类或父类）
     for subj, obj in g.subject_objects(RDFS.subClassOf):
         class_uris.add(subj)  # 子类
         class_uris.add(obj)   # 父类
     
-    # 3. 作为 ObjectProperty 的 domain 或 range 的节点（也是类）
+    # 4. 作为 ObjectProperty 的 domain 或 range 的节点（也是类）
     for prop in g.subjects(RDF.type, OWL.ObjectProperty):
         for domain in g.objects(prop, RDFS.domain):
             class_uris.add(domain)
         for range_ in g.objects(prop, RDFS.range):
             class_uris.add(range_)
     
-    logger.info(f"[convert_ttl_to_graph_data] 收集到 {len(class_uris)} 个类")
+    # 5. 作为 rdf:Property（对象属性）的 domain 或 range 的节点（新增支持）
+    for prop in g.subjects(RDF.type, RDF.Property):
+        prop_uri = str(prop)
+        # 跳过已作为数据属性处理的
+        if prop_uri in datatype_props:
+            continue
+        for domain in g.objects(prop, RDFS.domain):
+            class_uris.add(domain)
+        for range_ in g.objects(prop, RDFS.range):
+            # 只有当 range 不是 XSD 数据类型时，才作为类
+            range_uri = str(range_)
+            if not range_uri.startswith(xsd_namespace) and range_uri != str(RDFS.Literal):
+                class_uris.add(range_)
+    
+    logger.info(f"[convert_ttl_to_graph_data] 收集到 {len(class_uris)} 个类（含 owl:Class, rdfs:Class 和隐式类）")
 
     # 添加所有类节点
     for uri in class_uris:
@@ -2231,6 +2499,46 @@ def convert_ttl_to_graph_data(ttl_content: str):
                     "prop_id": prop_id,  # 添加 prop_id 以便导出时使用
                 },
             })
+            logger.info(f"[convert_ttl_to_graph_data] 添加 ObjectProperty 边：{source_id} -> {target_id} ({prop_label})")
+
+    # ★ 新增：rdf:Property（对象属性）domain → range 边
+    for prop in g.subjects(RDF.type, RDF.Property):
+        prop_uri = str(prop)
+        # 跳过已作为数据属性处理的
+        if prop_uri in datatype_props:
+            continue
+        
+        # 获取 domain 和 range
+        domain = list(g.objects(prop, RDFS.domain))
+        range_ = list(g.objects(prop, RDFS.range))
+        label_objs = list(g.objects(prop, RDFS.label))
+        prop_label = str(label_objs[0]) if label_objs else str(prop).split('#')[-1]
+        
+        # 获取 prop_id（从 URI 中提取）
+        prop_id = prop_uri.split('#')[-1] if '#' in prop_uri else prop_uri.split('/')[-1]
+        
+        # 检查 range 是否是 XSD 数据类型（如果是，则跳过，因为已作为数据属性处理）
+        if range_:
+            range_uri = str(range_[0])
+            if range_uri.startswith(xsd_namespace) or range_uri == str(RDFS.Literal):
+                continue  # 这是数据属性，已处理
+        
+        if domain and range_:
+            source_id = add_node(domain[0], "owl:Class")
+            target_id = add_node(range_[0], "owl:Class")
+            edges.append({
+                "id": f"e_{source_id}_{target_id}_{prop_label}",
+                "source": source_id,
+                "target": target_id,
+                "label": prop_label,
+                "type": "custom",
+                "data": {
+                    "label": prop_label,
+                    "relation": prop_label,
+                    "prop_id": prop_id,
+                },
+            })
+            logger.info(f"[convert_ttl_to_graph_data] 添加 rdf:Property 对象属性边：{source_id} -> {target_id} ({prop_label})")
 
     # rdf:type 虚线边
     for subj, obj in g.subject_objects(RDF.type):

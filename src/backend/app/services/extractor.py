@@ -915,13 +915,20 @@ class OntologyExtractor:
                 # ── 防御性校验 object_props 连线 ──
                 valid_obj_props: Dict[str, List[str]] = {}
                 
-                # 获取该类允许的数据属性列表 (用于纠错)
+                # ★ 获取该类允许的数据属性列表（包含继承属性）
                 valid_data_props_keys = set()
                 if resolved_type:
                     # 找到 schema 中该类的定义
                     target_cls = next((c for c in classes if c["id"] == resolved_type), None)
                     if target_cls:
-                        valid_data_props_keys = set(target_cls.get("data_properties", []))
+                        # 直接属性
+                        direct_props = set(target_cls.get("data_properties", []) or [])
+                        # 继承属性（如果 schema 中有 inherited_properties 字段）
+                        inherited_props = set(target_cls.get("inherited_properties", []) or [])
+                        # 合并所有属性
+                        valid_data_props_keys = direct_props | inherited_props
+                        
+                        logger.debug(f"[InstanceExtraction] 类 '{resolved_type}' 的有效属性：直接={list(direct_props)}, 继承={list(inherited_props)}")
 
                 raw_obj_props = inst.get("object_props", {})
                 
