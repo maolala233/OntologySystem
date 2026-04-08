@@ -175,6 +175,14 @@ const OntologyBuilderPage: React.FC = () => {
     const [testingEmbedding, setTestingEmbedding] = useState(false);
     const [testingMilvus, setTestingMilvus] = useState(false);
 
+    // 提取配置参数（从系统配置中读取）
+    const [extractConfig, setExtractConfig] = useState({
+        chunk_size: 15000,
+        chunk_overlap: 500,
+        request_interval: 2,
+        llm_timeout: 300,  // LLM调用超时时间（秒）
+    });
+
     useEffect(() => {
         const hasValidProjectId = projectId && typeof projectId === 'string' && projectId.trim() !== '';
 
@@ -185,6 +193,27 @@ const OntologyBuilderPage: React.FC = () => {
             setIsCreatingProject(true);
         }
     }, [projectId]);
+
+    // 加载提取配置参数（从系统配置中读取）
+    useEffect(() => {
+        const loadExtractConfig = async () => {
+            try {
+                const config = await systemApi.getConfig('llm_config');
+                if (config?.value) {
+                    setExtractConfig({
+                        chunk_size: config.value.chunk_size || 15000,
+                        chunk_overlap: config.value.chunk_overlap || 500,
+                        request_interval: config.value.request_interval || 2,
+                        llm_timeout: config.value.llm_timeout || 300,  // LLM调用超时时间（秒）
+                    });
+                }
+            } catch (error) {
+                // 如果获取配置失败，使用默认值
+                console.log('获取提取配置失败，使用默认值');
+            }
+        };
+        loadExtractConfig();
+    }, []);
 
     // 监听节点和边的变化
     useEffect(() => {
@@ -259,19 +288,79 @@ const OntologyBuilderPage: React.FC = () => {
         let directPropsArray: { name: string; value: string }[] = [];
         let inheritedPropsArray: { name: string; value: string; from: string }[] = [];
         
+        // ★ 辅助函数：从父类节点中查找属性值
+        const findInheritedPropertyValue = (propName: string, parentClassId: string): string => {
+            const parentNode = nodes.find(n => n.id === parentClassId);
+            if (parentNode) {
+                const parentProps = parentNode.data?.properties || {};
+                if (parentProps[propName] !== undefined) {
+                    return String(parentProps[propName]);
+                }
+                // 如果父类也没有该属性值，递归查找父类的父类
+                const parentEdges = edges.filter(e => 
+                    e.source === parentClassId && 
+                    (e.data?.relation === 'subclass_of' || e.data?.label === 'subClassOf')
+                );
+                for (const edge of parentEdges) {
+                    const grandParentId = edge.target;
+                    const value = findInheritedPropertyValue(propName, grandParentId);
+                    if (value !== '') {
+                        return value;
+                    }
+                }
+            }
+            return '';
+        };
+        
+        // ★ 辅助函数：查找父类 ID（通过 subclassOf 边）
+        const findParentClassIds = (nodeId: string): string[] => {
+            const parentIds: string[] = [];
+            edges.forEach(edge => {
+                if (edge.source === nodeId) {
+                    const relation = edge.data?.relation || '';
+                    const label = edge.data?.label || '';
+                    if (relation === 'subclass_of' || label === 'subClassOf' || label === 'subclass_of') {
+                        parentIds.push(String(edge.target));
+                    }
+                }
+            });
+            return parentIds;
+        };
+        
         if (propertiesWithSource.length > 0) {
             // 使用 properties_with_source 区分直接属性和继承属性
             propertiesWithSource.forEach((p: any) => {
                 if (p.source === 'direct') {
+                    // 直接属性：从当前节点的 properties 中获取值
+                    const currentProps = node.data?.properties || {};
                     directPropsArray.push({
                         name: p.name,
-                        value: String(p.value || '')
+                        value: String(currentProps[p.name] || '')
                     });
                 } else if (p.source === 'inherited') {
+                    // 继承属性：从父类节点中查找属性值
+                    const parentClassIds = findParentClassIds(node.id);
+                    let inheritedValue = '';
+                    let sourceClass = p.from || '父类';
+                    
+                    // 遍历所有父类，查找属性值
+                    for (const parentId of parentClassIds) {
+                        const value = findInheritedPropertyValue(p.name, parentId);
+                        if (value !== '') {
+                            inheritedValue = value;
+                            // 更新来源类名
+                            const parentNode = nodes.find(n => n.id === parentId);
+                            if (parentNode) {
+                                sourceClass = parentNode.data?.label || '父类';
+                            }
+                            break;
+                        }
+                    }
+                    
                     inheritedPropsArray.push({
                         name: p.name,
-                        value: String(p.value || ''),
-                        from: p.from || '父类'
+                        value: inheritedValue,
+                        from: sourceClass
                     });
                 }
             });
@@ -282,6 +371,26 @@ const OntologyBuilderPage: React.FC = () => {
                 name: key,
                 value: String(value)
             }));
+            
+            // ★ 对于没有 properties_with_source 的旧数据，尝试从父类获取继承属性
+            const parentClassIds = findParentClassIds(node.id);
+            for (const parentId of parentClassIds) {
+                const parentNode = nodes.find(n => n.id === parentId);
+                if (parentNode) {
+                    const parentProps = parentNode.data?.properties || {};
+                    const parentLabel = parentNode.data?.label || '父类';
+                    Object.entries(parentProps).forEach(([key, value]) => {
+                        // 只添加当前节点没有的属性（真正的继承属性）
+                        if (!propsObj.hasOwnProperty(key)) {
+                            inheritedPropsArray.push({
+                                name: key,
+                                value: String(value),
+                                from: parentLabel
+                            });
+                        }
+                    });
+                }
+            }
         }
 
         // 保存继承属性到状态，用于显示
@@ -701,9 +810,9 @@ const OntologyBuilderPage: React.FC = () => {
             // save_documents: true 确保上传的文件保存到数据库
             const response = await projectsApi.extractSchema(Number(projectId), pendingFiles, {
                 user_intent: values.scenario,
-                chunk_size: 15000,
-                chunk_overlap: 500,
-                request_interval: 2,
+                chunk_size: extractConfig.chunk_size,
+                chunk_overlap: extractConfig.chunk_overlap,
+                request_interval: extractConfig.request_interval,
                 async_mode: true,
                 save_documents: true,
             });
@@ -796,9 +905,9 @@ const OntologyBuilderPage: React.FC = () => {
             const response = await projectsApi.extractInstances(Number(projectId), {
                 text_content: textContent,
                 schema_graph: schemaGraph,
-                chunk_size: 15000,
-                chunk_overlap: 500,
-                request_interval: 2,
+                chunk_size: extractConfig.chunk_size,
+                chunk_overlap: extractConfig.chunk_overlap,
+                request_interval: extractConfig.request_interval,
                 async_mode: true,
             });
 
@@ -910,9 +1019,9 @@ const OntologyBuilderPage: React.FC = () => {
             const instanceResponse = await projectsApi.extractInstances(Number(projectId), {
                 text_content: textContent,
                 schema_graph: schemaGraph,  // 使用 TTL 的 schema，不是新提取的
-                chunk_size: 15000,
-                chunk_overlap: 500,
-                request_interval: 2,
+                chunk_size: extractConfig.chunk_size,
+                chunk_overlap: extractConfig.chunk_overlap,
+                request_interval: extractConfig.request_interval,
                 async_mode: true,
             });
 
@@ -1506,9 +1615,9 @@ const OntologyBuilderPage: React.FC = () => {
             // 使用异步模式，支持取消
             const response = await projectsApi.extractSchemaFromDocuments(Number(projectId), docIds, {
                 user_intent: values.scenario,
-                chunk_size: 15000,
-                chunk_overlap: 500,
-                request_interval: 2,
+                chunk_size: extractConfig.chunk_size,
+                chunk_overlap: extractConfig.chunk_overlap,
+                request_interval: extractConfig.request_interval,
                 async_mode: true,
             });
 
@@ -1577,9 +1686,9 @@ const OntologyBuilderPage: React.FC = () => {
 
             // 使用新的 API 基于已上传文档 ID 进行实例提取
             const response = await projectsApi.extractInstancesFromDocuments(Number(projectId), docIds, {
-                chunk_size: 15000,
-                chunk_overlap: 500,
-                request_interval: 2,
+                chunk_size: extractConfig.chunk_size,
+                chunk_overlap: extractConfig.chunk_overlap,
+                request_interval: extractConfig.request_interval,
                 async_mode: true,
             });
 
@@ -3109,6 +3218,7 @@ const OntologyBuilderPage: React.FC = () => {
                                     <Form.Item name="chunk_size" label="分块大小"><Input type="number" suffix="字符" /></Form.Item>
                                     <Form.Item name="chunk_overlap" label="重叠"><Input type="number" suffix="字符" /></Form.Item>
                                     <Form.Item name="request_interval" label="请求间隔"><Input type="number" suffix="秒" /></Form.Item>
+                                    <Form.Item name="llm_timeout" label="LLM超时时间" tooltip="大模型调用超时时间，单位：秒"><Input type="number" suffix="秒" placeholder="300" /></Form.Item>
                                     <Form.Item name="streaming_enabled" valuePropName="checked" className="col-span-2">
                                         <Switch checkedChildren="流式启用" unCheckedChildren="流式禁用" />
                                     </Form.Item>

@@ -480,6 +480,7 @@ const AppLayout: React.FC = () => {
                         chunk_size: 15000,
                         chunk_overlap: 500,
                         request_interval: 2,
+                        llm_timeout: 300,
                         streaming_enabled: false,
                         milvus_enabled: false,
                         neo4j_uri: 'bolt://localhost:7687',
@@ -538,6 +539,14 @@ const AppLayout: React.FC = () => {
                             label="请求间隔 (Interval)"
                         >
                             <Input type="number" suffix="秒" />
+                        </Form.Item>
+
+                        <Form.Item
+                            name="llm_timeout"
+                            label="LLM 调用超时 (Timeout)"
+                            tooltip="设置 LLM API 调用的超时时间，超过该时间将自动终止请求"
+                        >
+                            <Input type="number" suffix="秒" placeholder="300" />
                         </Form.Item>
 
                         <Form.Item

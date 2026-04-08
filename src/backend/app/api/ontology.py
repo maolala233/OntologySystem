@@ -2214,7 +2214,8 @@ def extract_schema_from_ttl(ttl_content: str) -> dict:
             "properties_with_source": properties_with_source,  # 带来源标记的属性
         })
     
-    # 提取所有 ObjectProperty
+    # 提取所有 ObjectProperty 定义
+    object_property_defs = {}  # prop_id -> {'id': str, 'label': str, 'domain': str, 'range': str}
     for prop in g.subjects(RDF.type, OWL.ObjectProperty):
         prop_id = str(prop).split('#')[-1] if '#' in str(prop) else str(prop).split('/')[-1]
         label = prop_id
@@ -2233,17 +2234,68 @@ def extract_schema_from_ttl(ttl_content: str) -> dict:
             range_id = str(range_).split('#')[-1] if '#' in str(range_) else str(range_).split('/')[-1]
             ranges.append(range_id)
         
-        object_properties.append({
+        prop_def = {
             "id": prop_id,
             "label": label,
             "domain": domains[0] if domains else "",
             "range": ranges[0] if ranges else "",
-        })
+        }
+        object_properties.append(prop_def)
+        object_property_defs[prop_id] = prop_def
+        
+        # 同时通过 label 建立索引，方便后续查找
+        object_property_defs[label] = prop_def
+    
+    # ★ 新增：提取类之间的实际关系边（类节点通过 ObjectProperty 连接到其他类节点）
+    # 这些关系边在 TTL 中表现为：类节点以某个 ObjectProperty 作为谓词，指向另一个类节点
+    class_relations = []  # 存储类之间的关系边
+    
+    # 收集所有已知的 ObjectProperty URI
+    object_property_uris = set()
+    for prop in g.subjects(RDF.type, OWL.ObjectProperty):
+        object_property_uris.add(str(prop))
+    
+    # 遍历所有类节点，查找它们通过 ObjectProperty 连接到其他类节点的关系
+    for cls_uri in class_uris:
+        cls_id = str(cls_uri).split('#')[-1] if '#' in str(cls_uri) else str(cls_uri).split('/')[-1]
+        
+        # 遍历该类的所有谓词-对象对
+        for pred, obj in g.predicate_objects(cls_uri):
+            pred_uri = str(pred)
+            pred_id = pred_uri.split('#')[-1] if '#' in pred_uri else pred_uri.split('/')[-1]
+            
+            # 跳过元属性
+            if pred_uri in [str(RDF.type), str(RDFS.label), str(RDFS.subClassOf),
+                            str(RDFS.domain), str(RDFS.range)]:
+                continue
+            
+            # 检查谓词是否是 ObjectProperty（通过 URI 或定义检查）
+            if pred_uri in object_property_uris or pred_id in object_property_defs:
+                # 检查对象是否是一个类（URI 形式，且在 class_uris 中）
+                if isinstance(obj, URIRef) and obj in class_uris:
+                    obj_id = str(obj).split('#')[-1] if '#' in str(obj) else str(obj).split('/')[-1]
+                    
+                    # 获取关系的 label
+                    prop_def = object_property_defs.get(pred_id) or object_property_defs.get(pred_uri)
+                    rel_label = prop_def['label'] if prop_def else pred_id
+                    
+                    # 添加类关系边
+                    class_relations.append({
+                        "source_class": cls_id,
+                        "target_class": obj_id,
+                        "property_id": pred_id,
+                        "property_label": rel_label,
+                    })
+                    
+                    logger.info(f"[extract_schema_from_ttl] 发现类关系边：{cls_id} -> {obj_id} (通过 {rel_label})")
+    
+    logger.info(f"[extract_schema_from_ttl] 共提取 {len(class_relations)} 条类关系边")
     
     return {
         "classes": classes,
         "object_properties": object_properties,
         "datatype_properties": list(datatype_prop_domains.values()),
+        "class_relations": class_relations,  # ★ 新增：类之间的实际关系边
     }
 
 
@@ -2557,6 +2609,65 @@ def convert_ttl_to_graph_data(ttl_content: str):
                 "data": {"label": "type"},
             })
 
+    # ★ 新增：类节点之间的 ObjectProperty 关系边
+    # 处理 TTL 中类节点直接使用 ObjectProperty 作为谓词连接到其他类节点的情况
+    # 例如：ex:Node_051bc9b3 ex:投资产生费用 ex:Node_a50b211b .
+    # 收集所有 ObjectProperty URI 和 label
+    objprop_uri_to_label = {}  # prop_uri -> prop_label
+    for prop in g.subjects(RDF.type, OWL.ObjectProperty):
+        prop_uri = str(prop)
+        prop_id = prop_uri.split('#')[-1] if '#' in prop_uri else prop_uri.split('/')[-1]
+        label_objs = list(g.objects(prop, RDFS.label))
+        prop_label = str(label_objs[0]) if label_objs else prop_id
+        objprop_uri_to_label[prop_uri] = prop_label
+    
+    # 遍历所有类节点，查找它们通过 ObjectProperty 连接到其他类节点的关系
+    for cls_uri in class_uris:
+        cls_id = str(cls_uri).split('#')[-1] if '#' in str(cls_uri) else str(cls_uri).split('/')[-1]
+        
+        # 遍历该类的所有谓词-对象对
+        for pred, obj in g.predicate_objects(cls_uri):
+            pred_uri = str(pred)
+            pred_id = pred_uri.split('#')[-1] if '#' in pred_uri else pred_uri.split('/')[-1]
+            
+            # 跳过元属性
+            if pred_uri in [str(RDF.type), str(RDFS.label), str(RDFS.subClassOf),
+                            str(RDFS.domain), str(RDFS.range)]:
+                continue
+            
+            # 跳过 DatatypeProperty（已作为属性处理）
+            if pred_uri in datatype_props:
+                continue
+            
+            # 检查谓词是否是 ObjectProperty（通过 URI 检查）
+            if pred_uri in objprop_uri_to_label:
+                # 检查对象是否是一个类（URI 形式，且在 class_uris 中）
+                if isinstance(obj, URIRef) and obj in class_uris:
+                    obj_id = str(obj).split('#')[-1] if '#' in str(obj) else str(obj).split('/')[-1]
+                    
+                    # 获取关系的 label
+                    rel_label = objprop_uri_to_label.get(pred_uri, pred_id)
+                    
+                    # 添加类关系边（如果节点已处理）
+                    if cls_id in processed_nodes and obj_id in processed_nodes:
+                        edge_id = f"e_{cls_id}_{obj_id}_{pred_id}"
+                        # 检查是否已存在相同的边（避免重复）
+                        existing_edge_ids = {e['id'] for e in edges}
+                        if edge_id not in existing_edge_ids:
+                            edges.append({
+                                "id": edge_id,
+                                "source": cls_id,
+                                "target": obj_id,
+                                "label": rel_label,
+                                "type": "custom",
+                                "data": {
+                                    "label": rel_label,
+                                    "relation": rel_label,
+                                    "prop_id": pred_id,
+                                },
+                            })
+                            logger.info(f"[convert_ttl_to_graph_data] 添加类间 ObjectProperty 边：{cls_id} -> {obj_id} ({rel_label})")
+
     # 实例间普通关系边（ObjectProperty 或其他关系）
     for subj, pred, obj in g.triples((None, None, None)):
         if str(pred) in [str(RDF.type), str(RDFS.label), str(RDFS.subClassOf),
@@ -2570,14 +2681,18 @@ def convert_ttl_to_graph_data(ttl_content: str):
             obj_str = str(obj).split('#')[-1]
             if obj_str in processed_nodes:
                 pred_label = str(pred).split('#')[-1]
-                edges.append({
-                    "id": f"e_{subj_str}_{obj_str}_{pred_label}",
-                    "source": subj_str,
-                    "target": obj_str,
-                    "label": pred_label,
-                    "type": "custom",
-                    "data": {"label": pred_label},
-                })
+                # 检查是否已存在相同的边（避免重复添加类间关系边）
+                edge_id = f"e_{subj_str}_{obj_str}_{pred_label}"
+                existing_edge_ids = {e['id'] for e in edges}
+                if edge_id not in existing_edge_ids:
+                    edges.append({
+                        "id": edge_id,
+                        "source": subj_str,
+                        "target": obj_str,
+                        "label": pred_label,
+                        "type": "custom",
+                        "data": {"label": pred_label},
+                    })
 
     logger.info(f"[convert_ttl_to_graph_data] 返回 {len(nodes)} 个节点，{len(edges)} 个边")
     return nodes, edges

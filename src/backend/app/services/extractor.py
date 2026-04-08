@@ -263,17 +263,45 @@ class OntologyExtractor:
             logger.warning(f"获取流式配置失败，使用默认值：{e}")
             return True
 
-    def _call_llm(self, system_prompt: str, user_prompt: str, task_id: Optional[str] = None, timeout: int = 300, json_schema: Optional[Dict[str, Any]] = None) -> Optional[dict]:
+    def _get_timeout_config(self) -> int:
+        """
+        从数据库获取 LLM 调用超时配置（秒）。
+        如果未配置或获取失败，返回默认值 300 秒。
+        """
+        try:
+            from app.infrastructure.database import get_db, SystemConfig
+            db = next(get_db())
+            config = db.query(SystemConfig).filter(SystemConfig.key == "llm_config").first()
+            if config and config.value:
+                db.expire(config)
+                db.refresh(config)
+                timeout_val = config.value.get("llm_timeout", 300)
+                db.close()
+                # 确保返回有效的整数
+                try:
+                    return int(timeout_val) if timeout_val else 300
+                except (ValueError, TypeError):
+                    return 300
+            db.close()
+            return 300
+        except Exception as e:
+            logger.warning(f"获取超时配置失败，使用默认值 300 秒：{e}")
+            return 300
+
+    def _call_llm(self, system_prompt: str, user_prompt: str, task_id: Optional[str] = None, timeout: Optional[int] = None, json_schema: Optional[Dict[str, Any]] = None) -> Optional[dict]:
         """
         同步调用 LLM 并处理异常，返回解析后的 dict 或 None。
         使用线程池执行 LLM 调用，支持超时和取消检查。
         
         参数:
         - task_id: 任务 ID，用于在调用间隙检查取消标志
-        - timeout: LLM 调用超时时间（秒），默认 300 秒
+        - timeout: LLM 调用超时时间（秒），如果未提供则从数据库配置读取
         - json_schema: JSON Schema 定义，用于约束输出格式（优先使用）
         """
         streaming = self._get_streaming_config()
+        # 如果未提供 timeout，从数据库配置读取
+        if timeout is None:
+            timeout = self._get_timeout_config()
         try:
             # 如果提供了 task_id，在调用前快速检查是否已取消
             if task_id and task_manager.is_cancelled(task_id):
@@ -454,7 +482,7 @@ class OntologyExtractor:
             
             logger.info(f"[SchemaExtraction] 处理分块 {i+1}/{total_chunks}")
             user_prompt = user_prompt_template.format(chunk=chunk)
-            data = self._call_llm(system_prompt, user_prompt, task_id=task_id, timeout=300)
+            data = self._call_llm(system_prompt, user_prompt, task_id=task_id)
 
             if not data:
                 logger.warning(f"分块 {i+1}/{total_chunks} LLM 返回空，跳过")
@@ -848,7 +876,7 @@ class OntologyExtractor:
             
             logger.info(f"[InstanceExtraction] 处理分块 {i+1}/{total_chunks} (file={chunk_filename}, index={chunk_index})")
             user_prompt = user_prompt_template.format(chunk=chunk_text)
-            data = self._call_llm(system_prompt, user_prompt, task_id=task_id, timeout=300)
+            data = self._call_llm(system_prompt, user_prompt, task_id=task_id)
 
             if not data:
                 logger.warning(f"分块 {i+1}/{total_chunks} LLM 返回空，跳过")

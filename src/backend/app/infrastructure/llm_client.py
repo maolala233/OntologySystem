@@ -186,7 +186,7 @@ class LLMClient:
                     ],
                     "temperature": 0.1,
                     "stream": stream,
-                    "max_tokens": 50000,  # 限制 vllm 输出长度，防止无限生成
+                    "max_tokens": 30000,  # 限制 vllm 输出长度，防止无限生成
                     "stop": ["</s>", "\n\n\n"]  # 添加停止 token
                 }
                 
@@ -597,7 +597,7 @@ class LLMClient:
             "messages": messages,
             "temperature": 0.1,
             "stream": False,  # 续写时使用非流式模式，简化处理
-            "max_tokens": 50000,
+            "max_tokens": 30000,
             "stop": ["</s>", "\n\n\n"]
         }
         
@@ -743,7 +743,7 @@ class LLMClient:
                     ],
                     "temperature": 0.1,
                     "stream": stream,
-                    "max_tokens": 50000,  # 限制 vllm 输出长度，防止无限生成
+                    "max_tokens": 30000,  # 限制 vllm 输出长度，防止无限生成
                     "stop": ["</s>", "\n\n\n"]  # 添加停止 token
                 }
                 
