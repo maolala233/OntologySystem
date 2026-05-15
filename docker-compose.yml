@@ -99,8 +99,6 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: password
       MYSQL_DATABASE: ontology_db
-      MYSQL_USER: root
-      MYSQL_PASSWORD: password
     volumes:
       - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/mysql:/var/lib/mysql
     restart: always
