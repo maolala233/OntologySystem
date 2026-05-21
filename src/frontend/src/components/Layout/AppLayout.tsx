@@ -103,6 +103,8 @@ const AppLayout: React.FC = () => {
                 ...values,
                 streaming_enabled: values.streaming_enabled === true,
                 milvus_enabled: values.milvus_enabled === true,
+                disable_think: values.disable_think === true,
+                chunk_overlap: Number(values.chunk_overlap) || 10,
             };
             await systemApi.updateConfig('llm_config', configValues);
             message.success('系统配置已保存');
@@ -478,11 +480,12 @@ const AppLayout: React.FC = () => {
                         base_url: '',
                         model: '',
                         chunk_size: 15000,
-                        chunk_overlap: 500,
+                        chunk_overlap: 10,
                         request_interval: 2,
                         llm_timeout: 300,
                         streaming_enabled: false,
                         milvus_enabled: false,
+                        disable_think: true,
                         neo4j_uri: 'bolt://localhost:7687',
                         neo4j_username: 'neo4j',
                         neo4j_password: 'password',
@@ -530,8 +533,9 @@ const AppLayout: React.FC = () => {
                         <Form.Item
                             name="chunk_overlap"
                             label="分块重叠 (Overlap)"
+                            tooltip="相邻分块间的重叠百分比，0-50%"
                         >
-                            <Input type="number" suffix="字符" />
+                            <Input type="number" suffix="%" min={0} max={50} />
                         </Form.Item>
 
                         <Form.Item
@@ -555,6 +559,15 @@ const AppLayout: React.FC = () => {
                             className="col-span-2"
                         >
                             <Switch checkedChildren="流式启用" unCheckedChildren="流式禁用" />
+                        </Form.Item>
+                        <Form.Item
+                            name="disable_think"
+                            valuePropName="checked"
+                            className="col-span-2"
+                            label="思考模式"
+                            tooltip="关闭可提升响应速度（Qwen3/Gemma等思考模型生效，仅Ollama）"
+                        >
+                            <Switch checkedChildren="关闭" unCheckedChildren="开启" />
                         </Form.Item>
 
                         <Form.Item

@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     LLM_API_KEY: str = ""
     LLM_MODEL_NAME: str = "z-ai/glm-4.5-air:free"
     LLM_BASE_URL: str = "https://openrouter.ai/api/v1"
+    LLM_THINK_MODE: str = "auto"
 
     # Legacy / specific model configs (kept for compatibility)
     VLLM_API_KEY: str = "EMPTY"

@@ -17,7 +17,7 @@ class ExtractionRequest(BaseModel):
     scenario: str = Field("", description="场景描述")
     rules: List[Dict[str, str]] = Field([], description="提取规则列表")
     chunk_size: int = Field(15000, ge=1000, le=30000, description="LLM分块大小")
-    chunk_overlap: int = Field(500, ge=0, le=2000, description="分块重叠大小")
+    chunk_overlap: int = Field(10, ge=0, le=50, description="分块重叠百分比(0-50)")
     request_interval: int = Field(2, ge=0, le=60, description="请求间隔（秒）")
     product_code: Optional[str] = Field(None, description="知识域代码")
     api_key: Optional[str] = Field(None, description="API密钥")

@@ -69,18 +69,23 @@ class LLMClient:
         except Exception as e:
             logger.error(f"LLMClient 创建失败：{e}")
             raise
-            # 对于外部 API，使用代理
-            try:
-                client_kwargs["http_client"] = self._create_proxy_http_client()
-            except Exception as e:
-                from app.core.logging import logger
-                logger.warning(f"代理配置失败，使用默认连接：{e}")
-                # 移除 http_client 参数以使用默认客户端
-                if "http_client" in client_kwargs:
-                    del client_kwargs["http_client"]
-        # 如果不是外部 API，不设置 http_client，让 OpenAI 使用默认客户端
-        
-        self.client = OpenAI(**client_kwargs)
+
+        self.think_mode = settings.LLM_THINK_MODE
+        self._is_ollama = self._detect_ollama()
+
+    def _detect_ollama(self) -> bool:
+        if not self.base_url:
+            return False
+        return ":11434" in self.base_url or "ollama" in self.base_url.lower()
+
+    def _should_disable_think(self) -> bool:
+        if self.think_mode == "disabled":
+            return True
+        if self.think_mode == "enabled":
+            return False
+        model_lower = self.model.lower()
+        thinking_keywords = ["qwen3", "gemma", "granite4", "deepseek-r1", "think"]
+        return any(kw in model_lower for kw in thinking_keywords)
 
     def _create_proxy_http_client(self):
         """创建支持代理的 HTTP 客户端"""
@@ -186,9 +191,16 @@ class LLMClient:
                     ],
                     "temperature": 0.1,
                     "stream": stream,
-                    "max_tokens": 30000,  # 限制 vllm 输出长度，防止无限生成
-                    "stop": ["</s>", "\n\n\n"]  # 添加停止 token
+                    "max_tokens": 30000,
+                    "stop": ["</s>", "\n\n\n"]
                 }
+                if self._should_disable_think():
+                    if self._is_ollama:
+                        # Ollama v1 API 使用 reasoning_effort: "none" 禁用思考
+                        api_kwargs["extra_body"] = {"reasoning_effort": "none"}
+                    else:
+                        # 其他兼容 OpenAI 格式的推理模型使用 think: false
+                        api_kwargs["extra_body"] = {"think": False}
                 
                 # 如果指定了 timeout，添加到参数中
                 if timeout is not None:
@@ -266,8 +278,13 @@ class LLMClient:
                                 
                                 # 只要有 delta 就计数，有内容就追加
                                 chunk_count += 1
+                                # 收集 content
                                 if chunk.choices[0].delta.content:
                                     full_content += chunk.choices[0].delta.content
+                                # 收集 reasoning_content（思考模型的思考过程）
+                                delta = chunk.choices[0].delta
+                                if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
+                                    full_content += delta.reasoning_content
                                 
                                 # 每 50 个 chunk 输出一次进度
                                 if chunk_count % 50 == 0:

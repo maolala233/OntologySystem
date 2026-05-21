@@ -27,6 +27,7 @@ export interface SchemaExtractionRequest {
     chunk_size?: number;
     chunk_overlap?: number;
     request_interval?: number;
+    disable_think?: boolean;
 }
 
 // 阶段 2: 实例提取请求参数
@@ -40,6 +41,7 @@ export interface InstanceExtractionRequest {
     chunk_overlap?: number;
     request_interval?: number;
     product_code?: string;
+    disable_think?: boolean;
 }
 
 export const projectsApi = {
@@ -219,6 +221,7 @@ export const projectsApi = {
             request_interval?: number;
             async_mode?: boolean;
             save_documents?: boolean;
+            disable_think?: boolean;
         }
     ): Promise<any> => {
         const formData = new FormData();
@@ -247,6 +250,9 @@ export const projectsApi = {
         if (options?.save_documents !== undefined) {
             formData.append('save_documents', String(options.save_documents));
         }
+        if (options?.disable_think !== undefined) {
+            formData.append('disable_think', String(options.disable_think));
+        }
 
         const response = await apiClient.post(
             `/api/projects/${projectId}/extract-schema`,
@@ -272,6 +278,7 @@ export const projectsApi = {
             request_interval?: number;
             product_code?: string;
             async_mode?: boolean;
+            disable_think?: boolean;
         }
     ): Promise<any> => {
         const formData = new FormData();
@@ -283,6 +290,7 @@ export const projectsApi = {
             chunk_overlap: data.chunk_overlap,
             request_interval: data.request_interval,
             product_code: data.product_code,
+            disable_think: data.disable_think,
         }));
 
         const response = await apiClient.post(
@@ -359,6 +367,7 @@ export const projectsApi = {
             chunk_overlap?: number;
             request_interval?: number;
             async_mode?: boolean;
+            disable_think?: boolean;
         }
     ): Promise<any> => {
         const formData = new FormData();
@@ -381,6 +390,9 @@ export const projectsApi = {
         if (options?.async_mode !== undefined) {
             formData.append('async_mode', String(options.async_mode));
         }
+        if (options?.disable_think !== undefined) {
+            formData.append('disable_think', String(options.disable_think));
+        }
 
         const response = await apiClient.post(
             `/api/projects/${projectId}/extract-schema-from-documents`,
@@ -401,6 +413,7 @@ export const projectsApi = {
             chunk_overlap?: number;
             request_interval?: number;
             async_mode?: boolean;
+            disable_think?: boolean;
         }
     ): Promise<any> => {
         const formData = new FormData();
@@ -419,6 +432,9 @@ export const projectsApi = {
         }
         if (options?.async_mode !== undefined) {
             formData.append('async_mode', String(options.async_mode));
+        }
+        if (options?.disable_think !== undefined) {
+            formData.append('disable_think', String(options.disable_think));
         }
 
         const response = await apiClient.post(

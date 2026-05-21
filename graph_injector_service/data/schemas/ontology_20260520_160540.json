@@ -1,0 +1,1077 @@
+{
+  "object_types": [
+    {
+      "name": "FinancialProduct",
+      "description": "理财产品，指金融机构接受投资者委托，按照约定条件和实际投资收益情况向投资者支付收益、不保证本金支付和收益水平的非保本理财产品。",
+      "primary_key": "product_registration_code",
+      "properties": [
+        {
+          "name": "product_name",
+          "description": "理财产品的正式名称。",
+          "data_type": "string"
+        },
+        {
+          "name": "product_code",
+          "description": "理财产品的内部代码。",
+          "data_type": "string"
+        },
+        {
+          "name": "registration_code",
+          "description": "在全国银行业理财信息登记系统取得的理财产品登记编码，具有唯一性。",
+          "data_type": "string"
+        },
+        {
+          "name": "risk_rating",
+          "description": "产品的风险评级（如PR2），表示风险程度。",
+          "data_type": "string"
+        },
+        {
+          "name": "product_type",
+          "description": "产品类型，如公募、固定收益类、封闭式等。",
+          "data_type": "string"
+        },
+        {
+          "name": "maturity_days",
+          "description": "理财产品的期限，以天为单位。",
+          "data_type": "number"
+        },
+        {
+          "name": "maturity_date",
+          "description": "理财产品的到期日。",
+          "data_type": "date"
+        },
+        {
+          "name": "target_investor_types",
+          "description": "适合投资的投资者类型列表，如稳健型、平衡型等。",
+          "data_type": "array"
+        },
+        {
+          "name": "investment_scope",
+          "description": "产品允许投资的投资对象范围描述。",
+          "data_type": "string"
+        },
+        {
+          "name": "investment_limits",
+          "description": "产品投资比例限制和禁止投资的描述。",
+          "data_type": "string"
+        },
+        {
+          "name": "risk_disclosure",
+          "description": "产品涉及的风险揭示描述，包括信用风险、市场风险等。",
+          "data_type": "string"
+        },
+        {
+          "name": "target_investor_type",
+          "description": "发行对象，如个人/机构客户，适合稳健型、平衡型、进取型、激进型投资者。",
+          "data_type": "string"
+        },
+        {
+          "name": "face_value",
+          "description": "理财产品份额面值，通常为人民币1元。",
+          "data_type": "number"
+        },
+        {
+          "name": "share_type",
+          "description": "理财产品份额类型，如A类、B类等。",
+          "data_type": "string"
+        },
+        {
+          "name": "holding_period",
+          "description": "最短持有期，如180自然日。",
+          "data_type": "number"
+        },
+        {
+          "name": "asset_allocation_ratio",
+          "description": "各投资对象投资比例，如债权类资产80%-100%。",
+          "data_type": "object"
+        },
+        {
+          "name": "non_standardized_asset_info",
+          "description": "非标准化债权类资产信息，包括融资客户、项目名称、剩余融资期限、到期收益分配、交易结构、风险状况等。",
+          "data_type": "object"
+        },
+        {
+          "name": "product_id",
+          "description": "理财产品的唯一标识符。",
+          "data_type": "string"
+        },
+        {
+          "name": "risk_level",
+          "description": "产品的风险程度描述，如低、中低、中等等。",
+          "data_type": "string"
+        },
+        {
+          "name": "investment_prohibitions",
+          "description": "产品的投资禁止项描述，包括不得投资的金融工具。",
+          "data_type": "string"
+        },
+        {
+          "name": "contract_documents",
+          "description": "理财产品合同相关文档列表，包括说明书、风险揭示书等。",
+          "data_type": "array"
+        },
+        {
+          "name": "sales_documents",
+          "description": "产品销售文件列表，包括销售总协议等。",
+          "data_type": "array"
+        }
+      ]
+    },
+    {
+      "name": "Investor",
+      "description": "购买理财产品的自然人、法人或非法人组织，包括个人投资者和机构投资者。",
+      "primary_key": "investor_id",
+      "properties": [
+        {
+          "name": "investor_type",
+          "description": "投资者类型，如个人投资者或机构投资者。",
+          "data_type": "string"
+        },
+        {
+          "name": "risk_tolerance",
+          "description": "投资者的风险承受能力类型，如谨慎型、稳健型等。",
+          "data_type": "string"
+        },
+        {
+          "name": "contact_info",
+          "description": "投资者的联系方式信息。",
+          "data_type": "object"
+        },
+        {
+          "name": "investor_id",
+          "description": "投资者唯一标识。",
+          "data_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "InvestmentAsset",
+      "description": "理财产品项下的投资对象，包括债权类、权益类、商品及金融衍生品类资产。",
+      "primary_key": "asset_id",
+      "properties": [
+        {
+          "name": "asset_category",
+          "description": "资产类别，如债权类、权益类、商品及金融衍生品类。",
+          "data_type": "string"
+        },
+        {
+          "name": "asset_name",
+          "description": "具体投资标的名称。",
+          "data_type": "string"
+        },
+        {
+          "name": "asset_value",
+          "description": "投资标的的市值或价值。",
+          "data_type": "number"
+        },
+        {
+          "name": "asset_proportion",
+          "description": "该资产占产品净资产的比例。",
+          "data_type": "number"
+        },
+        {
+          "name": "asset_details",
+          "description": "资产的详细信息描述。",
+          "data_type": "string"
+        },
+        {
+          "name": "asset_id",
+          "description": "投资资产的唯一标识符。",
+          "data_type": "string"
+        },
+        {
+          "name": "asset_type",
+          "description": "资产类型，如现金、债券、银行存款等。",
+          "data_type": "string"
+        },
+        {
+          "name": "maturity_date",
+          "description": "资产的到期日。",
+          "data_type": "date"
+        },
+        {
+          "name": "issuer",
+          "description": "资产的发行机构。",
+          "data_type": "string"
+        },
+        {
+          "name": "credit_rating",
+          "description": "资产的信用评级。",
+          "data_type": "string"
+        },
+        {
+          "name": "is_liquidity_restricted",
+          "description": "是否为流动性受限资产。",
+          "data_type": "boolean"
+        }
+      ]
+    },
+    {
+      "name": "SalesChannel",
+      "description": "销售机构，指接受信银理财委托在其销售渠道代理销售理财产品的机构。",
+      "primary_key": "channel_id",
+      "properties": [
+        {
+          "name": "channel_name",
+          "description": "销售机构的名称。",
+          "data_type": "string"
+        },
+        {
+          "name": "channel_type",
+          "description": "销售渠道类型，如直销渠道或代销渠道。",
+          "data_type": "string"
+        },
+        {
+          "name": "contact_details",
+          "description": "销售机构的联系方式。",
+          "data_type": "object"
+        },
+        {
+          "name": "channel_id",
+          "description": "销售渠道的唯一标识符。",
+          "data_type": "string"
+        },
+        {
+          "name": "channel_url",
+          "description": "电子渠道的网址。",
+          "data_type": "string"
+        },
+        {
+          "name": "is_online",
+          "description": "是否为线上渠道。",
+          "data_type": "boolean"
+        }
+      ]
+    },
+    {
+      "name": "RiskFactor",
+      "description": "理财产品面临的风险因素，如信用风险、市场风险、流动性风险等。",
+      "primary_key": "risk_id",
+      "properties": [
+        {
+          "name": "risk_name",
+          "description": "风险因素名称。",
+          "data_type": "string"
+        },
+        {
+          "name": "risk_description",
+          "description": "风险因素的详细描述。",
+          "data_type": "string"
+        },
+        {
+          "name": "risk_level",
+          "description": "风险等级或严重程度。",
+          "data_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "RegulatoryBody",
+      "description": "对理财产品管理人实施监督管理的机构，如中国人民银行、国家金融监督管理总局等。",
+      "primary_key": "regulator_id",
+      "properties": [
+        {
+          "name": "regulator_name",
+          "description": "监管机构名称。",
+          "data_type": "string"
+        },
+        {
+          "name": "regulator_type",
+          "description": "监管机构类型，如金融管理部门、行业协会等。",
+          "data_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "SalesAgent",
+      "description": "合作销售机构（代销机构），指接受信银理财委托在其销售渠道代理销售信银理财依法发行的理财产品的机构。",
+      "primary_key": "agent_id",
+      "properties": [
+        {
+          "name": "agent_name",
+          "description": "销售机构名称。",
+          "data_type": "string"
+        },
+        {
+          "name": "agent_type",
+          "description": "销售机构类型，如银行、证券公司、第三方理财公司等。",
+          "data_type": "string"
+        },
+        {
+          "name": "risk_rating_result",
+          "description": "代销机构对产品的风险评级结果。",
+          "data_type": "string"
+        },
+        {
+          "name": "agent_code",
+          "description": "销售机构代码。",
+          "data_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "AssetClass",
+      "description": "资产类别，指理财产品可投资的各类资产类型。",
+      "primary_key": "asset_class_name",
+      "properties": [
+        {
+          "name": "asset_class_name",
+          "description": "资产类别名称，如债权类资产、权益类资产、商品及金融衍生品类资产。",
+          "data_type": "string"
+        },
+        {
+          "name": "asset_subtypes",
+          "description": "资产子类型列表，如现金、存款、股票、债券等。",
+          "data_type": "array"
+        },
+        {
+          "name": "investment_ratio",
+          "description": "该资产类别的投资比例范围。",
+          "data_type": "object"
+        },
+        {
+          "name": "asset_class_code",
+          "description": "资产类别代码。",
+          "data_type": "string"
+        },
+        {
+          "name": "investment_ratio_min",
+          "description": "投资比例下限。",
+          "data_type": "number"
+        },
+        {
+          "name": "investment_ratio_max",
+          "description": "投资比例上限。",
+          "data_type": "number"
+        }
+      ]
+    },
+    {
+      "name": "InvestmentTarget",
+      "description": "投资标的，指理财产品具体投资的资产，如国债、地方政府债券、上市交易的股票等。",
+      "primary_key": "target_id",
+      "properties": [
+        {
+          "name": "target_name",
+          "description": "投资标的名称。",
+          "data_type": "string"
+        },
+        {
+          "name": "target_type",
+          "description": "投资标的类型，如国债、公司信用类债券、股票等。",
+          "data_type": "string"
+        },
+        {
+          "name": "market_status",
+          "description": "市场状态，如上市交易、未上市等。",
+          "data_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "NonStandardizedAsset",
+      "description": "非标准化债权类资产，指理财产品投资的非标准化债权资产。",
+      "primary_key": "asset_id",
+      "properties": [
+        {
+          "name": "financing_customer",
+          "description": "融资客户名称。",
+          "data_type": "string"
+        },
+        {
+          "name": "project_name",
+          "description": "项目名称。",
+          "data_type": "string"
+        },
+        {
+          "name": "remaining_maturity",
+          "description": "剩余融资期限。",
+          "data_type": "number"
+        },
+        {
+          "name": "expected_return",
+          "description": "到期收益分配。",
+          "data_type": "number"
+        },
+        {
+          "name": "transaction_structure",
+          "description": "交易结构。",
+          "data_type": "string"
+        },
+        {
+          "name": "risk_status",
+          "description": "风险状况。",
+          "data_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "RiskEvent",
+      "description": "风险事件，指理财产品可能面临的各种风险，如信用风险、市场风险、流动性风险等。",
+      "primary_key": "risk_event_id",
+      "properties": [
+        {
+          "name": "risk_type",
+          "description": "风险类型，如信用风险、市场风险、流动性风险、提前终止风险等。",
+          "data_type": "string"
+        },
+        {
+          "name": "risk_description",
+          "description": "风险描述，详细说明该风险的具体内容和影响。",
+          "data_type": "string"
+        },
+        {
+          "name": "mitigation_measures",
+          "description": "风险应对措施，如设定单一投资者认购金额上限、摆动定价机制等。",
+          "data_type": "array"
+        },
+        {
+          "name": "event_id",
+          "description": "风险事件ID。",
+          "data_type": "string"
+        },
+        {
+          "name": "event_type",
+          "description": "风险事件类型，如信用风险、市场风险、流动性风险、政策风险等。",
+          "data_type": "string"
+        },
+        {
+          "name": "event_description",
+          "description": "风险事件描述。",
+          "data_type": "string"
+        },
+        {
+          "name": "severity",
+          "description": "风险严重程度。",
+          "data_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "Contract",
+      "description": "合同文件，指理财产品相关的法律文件，如理财产品合同、销售总协议等。",
+      "primary_key": "contract_id",
+      "properties": [
+        {
+          "name": "contract_name",
+          "description": "合同名称，如信银理财理财产品合同。",
+          "data_type": "string"
+        },
+        {
+          "name": "contract_type",
+          "description": "合同类型，如理财产品合同、销售总协议、风险揭示书等。",
+          "data_type": "string"
+        },
+        {
+          "name": "contract_content",
+          "description": "合同内容摘要或链接。",
+          "data_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "Product",
+      "description": "理财产品，指信银理财按照约定条件和实际投资收益情况向投资者支付收益、不保证本金支付和收益水平的非保本理财产品。",
+      "primary_key": "product_code",
+      "properties": [
+        {
+          "name": "product_code",
+          "description": "产品代码，为本产品在全国银行业理财信息登记系统取得的唯一标识码。",
+          "data_type": "string"
+        },
+        {
+          "name": "product_name",
+          "description": "产品名称，如信银理财日盈象天天利55号现金管理型理财产品。",
+          "data_type": "string"
+        },
+        {
+          "name": "risk_rating",
+          "description": "产品风险评级，如PR1级、PR2级等。",
+          "data_type": "string"
+        },
+        {
+          "name": "risk_level",
+          "description": "风险程度，如低、中低、中等、中高、高。",
+          "data_type": "string"
+        },
+        {
+          "name": "suitable_investor_types",
+          "description": "适合投资者类型，如谨慎型、稳健型、平衡型、进取型、激进型。",
+          "data_type": "array"
+        },
+        {
+          "name": "first_redemption_date",
+          "description": "首个赎回开放日。",
+          "data_type": "date"
+        },
+        {
+          "name": "redemption_cycle",
+          "description": "赎回开放周期，如日、周、月。",
+          "data_type": "string"
+        },
+        {
+          "name": "investment_scope",
+          "description": "产品投资范围，包括债权类、权益类、商品及金融衍生品类资产等。",
+          "data_type": "object"
+        },
+        {
+          "name": "investment_limits",
+          "description": "投资限制，如总资产不得超过净资产的140%、单只证券市值限制等。",
+          "data_type": "object"
+        },
+        {
+          "name": "asset_allocation",
+          "description": "各投资对象投资比例，如债权类资产80%-100%。",
+          "data_type": "object"
+        },
+        {
+          "name": "risk_disclosures",
+          "description": "风险提示列表，包括信用风险、市场风险、流动性风险等。",
+          "data_type": "array"
+        }
+      ]
+    },
+    {
+      "name": "InvestableInstrument",
+      "description": "可投资标的，指具体的投资品种，如现金、存款、国债、股票等。",
+      "primary_key": "instrument_code",
+      "properties": [
+        {
+          "name": "instrument_code",
+          "description": "标的代码。",
+          "data_type": "string"
+        },
+        {
+          "name": "instrument_name",
+          "description": "标的名称，如现金、存款、大额存单、同业存单、货币基金、国债、地方政府债券等。",
+          "data_type": "string"
+        },
+        {
+          "name": "asset_class",
+          "description": "所属资产类别，如货币市场类、固定收益类、权益类、商品及金融衍生品类。",
+          "data_type": "string"
+        },
+        {
+          "name": "is_standardized",
+          "description": "是否为标准化债权资产。",
+          "data_type": "boolean"
+        },
+        {
+          "name": "liquidity_status",
+          "description": "流动性状态，如正常交易、流动性受限。",
+          "data_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "AssetManager",
+      "description": "资产管理人，指接受投资者委托，按照与投资者约定的投资策略、风险承担和收益分配方式，对受托的投资者财产进行投资和管理的金融机构。",
+      "primary_key": "manager_code",
+      "properties": [
+        {
+          "name": "manager_code",
+          "description": "管理人代码。",
+          "data_type": "string"
+        },
+        {
+          "name": "manager_name",
+          "description": "管理人名称，如信银理财有限责任公司。",
+          "data_type": "string"
+        },
+        {
+          "name": "manager_type",
+          "description": "管理人类型，如银行理财子公司。",
+          "data_type": "string"
+        },
+        {
+          "name": "manager_id",
+          "description": "资产管理人的唯一标识符。",
+          "data_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "Regulator",
+      "description": "监管机构，指对管理人实施监督管理的机构。",
+      "primary_key": "regulator_code",
+      "properties": [
+        {
+          "name": "regulator_code",
+          "description": "监管机构代码。",
+          "data_type": "string"
+        },
+        {
+          "name": "regulator_name",
+          "description": "监管机构名称，如中国人民银行、国家金融监督管理总局等。",
+          "data_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "LegalDocument",
+      "description": "法律文件，指与理财产品相关的合同、协议、说明书等文件。",
+      "primary_key": "document_id",
+      "properties": [
+        {
+          "name": "document_id",
+          "description": "文件ID。",
+          "data_type": "string"
+        },
+        {
+          "name": "document_name",
+          "description": "文件名称，如产品说明书、风险揭示书、投资协议书等。",
+          "data_type": "string"
+        },
+        {
+          "name": "document_type",
+          "description": "文件类型。",
+          "data_type": "string"
+        },
+        {
+          "name": "effective_date",
+          "description": "生效日期。",
+          "data_type": "date"
+        }
+      ]
+    },
+    {
+      "name": "SalesInstitution",
+      "description": "销售机构，指销售理财产品的机构，包括信银理财及代销机构。",
+      "primary_key": "institution_id",
+      "properties": [
+        {
+          "name": "institution_id",
+          "description": "销售机构的唯一标识符。",
+          "data_type": "string"
+        },
+        {
+          "name": "institution_name",
+          "description": "销售机构的名称。",
+          "data_type": "string"
+        },
+        {
+          "name": "is_cooperative",
+          "description": "是否为合作销售机构。",
+          "data_type": "boolean"
+        }
+      ]
+    },
+    {
+      "name": "RegulatoryPolicy",
+      "description": "监管政策，指影响理财产品投资范围和投资比例的法律法规及监管政策。",
+      "primary_key": "policy_id",
+      "properties": [
+        {
+          "name": "policy_id",
+          "description": "监管政策的唯一标识符。",
+          "data_type": "string"
+        },
+        {
+          "name": "policy_name",
+          "description": "监管政策的名称。",
+          "data_type": "string"
+        },
+        {
+          "name": "policy_content",
+          "description": "监管政策的内容描述。",
+          "data_type": "string"
+        },
+        {
+          "name": "effective_date",
+          "description": "政策生效日期。",
+          "data_type": "date"
+        }
+      ]
+    }
+  ],
+  "link_types": [
+    {
+      "name": "InvestedBy",
+      "description": "投资者投资于理财产品。",
+      "source_object_type": "Investor",
+      "target_object_type": "FinancialProduct",
+      "cardinality": "many-to-one"
+    },
+    {
+      "name": "SoldBy",
+      "description": "销售机构销售理财产品。",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "SalesChannel",
+      "cardinality": "many-to-one"
+    },
+    {
+      "name": "InvestsIn",
+      "description": "理财产品投资于特定资产。",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "InvestmentAsset",
+      "cardinality": "many-to-many"
+    },
+    {
+      "name": "AffectedBy",
+      "description": "理财产品受到特定风险因素的影响。",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "RiskFactor",
+      "cardinality": "many-to-one"
+    },
+    {
+      "name": "RegulatedBy",
+      "description": "理财产品受到特定监管机构的监管。",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "RegulatoryBody",
+      "cardinality": "many-to-one"
+    },
+    {
+      "name": "SuitableFor",
+      "description": "理财产品适合特定类型的投资者。",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "Investor",
+      "cardinality": "one-to-many"
+    },
+    {
+      "name": "ManagedBy",
+      "description": "理财产品由管理人管理。",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "AssetManager",
+      "cardinality": "one-to-one"
+    },
+    {
+      "name": "GovernedBy",
+      "description": "理财产品受特定合同文件约束。",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "Contract",
+      "cardinality": "one-to-many"
+    },
+    {
+      "name": "ExposesTo",
+      "description": "理财产品面临特定风险事件。",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "RiskEvent",
+      "cardinality": "one-to-many"
+    },
+    {
+      "name": "HasRelatedParty",
+      "description": "理财产品与管理人及其控股股东、实际控制人等发生关联交易。",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "RelatedParty",
+      "cardinality": "one-to-many"
+    },
+    {
+      "name": "Manages",
+      "description": "资产管理人管理理财产品。",
+      "source_object_type": "AssetManager",
+      "target_object_type": "Product",
+      "cardinality": "one-to-many"
+    },
+    {
+      "name": "Sells",
+      "description": "销售机构销售理财产品。",
+      "source_object_type": "SalesAgent",
+      "target_object_type": "Product",
+      "cardinality": "one-to-many"
+    },
+    {
+      "name": "InvestsInAssetClass",
+      "description": "理财产品投资于特定资产类别。",
+      "source_object_type": "Product",
+      "target_object_type": "AssetClass",
+      "cardinality": "many-to-many"
+    },
+    {
+      "name": "BoundedBy",
+      "description": "理财产品受法律文件约束。",
+      "source_object_type": "Product",
+      "target_object_type": "LegalDocument",
+      "cardinality": "many-to-one"
+    },
+    {
+      "name": "PurchasedBy",
+      "description": "投资者购买理财产品。",
+      "source_object_type": "Investor",
+      "target_object_type": "Product",
+      "cardinality": "many-to-many"
+    },
+    {
+      "name": "SoldThrough",
+      "description": "理财产品通过销售渠道销售的关系。",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "SalesChannel",
+      "cardinality": "one-to-many"
+    }
+  ],
+  "action_types": [
+    {
+      "name": "PurchaseProduct",
+      "description": "投资者购买理财产品。",
+      "target_object_type": "FinancialProduct",
+      "parameters": [
+        {
+          "name": "investment_amount",
+          "data_type": "number"
+        },
+        {
+          "name": "investor_id",
+          "data_type": "string"
+        },
+        {
+          "name": "purchase_amount",
+          "data_type": "number"
+        }
+      ]
+    },
+    {
+      "name": "RedeemProduct",
+      "description": "投资者赎回理财产品（如适用）。",
+      "target_object_type": "FinancialProduct",
+      "parameters": [
+        {
+          "name": "redemption_amount",
+          "data_type": "number"
+        },
+        {
+          "name": "investor_id",
+          "data_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "UpdateInvestmentRatio",
+      "description": "调整理财产品投资比例（需符合监管要求）。",
+      "target_object_type": "FinancialProduct",
+      "parameters": [
+        {
+          "name": "asset_id",
+          "data_type": "string"
+        },
+        {
+          "name": "new_proportion",
+          "data_type": "number"
+        }
+      ]
+    },
+    {
+      "name": "ReportRiskEvent",
+      "description": "报告理财产品相关风险事件。",
+      "target_object_type": "RiskFactor",
+      "parameters": [
+        {
+          "name": "event_description",
+          "data_type": "string"
+        },
+        {
+          "name": "event_severity",
+          "data_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "UpdateInvestmentTarget",
+      "description": "更新理财产品投资标的信息。",
+      "target_object_type": "InvestmentTarget",
+      "parameters": [
+        {
+          "name": "target_name",
+          "data_type": "string"
+        },
+        {
+          "name": "target_type",
+          "data_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "RegisterNonStandardizedAsset",
+      "description": "登记非标准化债权类资产信息。",
+      "target_object_type": "NonStandardizedAsset",
+      "parameters": [
+        {
+          "name": "financing_customer",
+          "data_type": "string"
+        },
+        {
+          "name": "project_name",
+          "data_type": "string"
+        },
+        {
+          "name": "remaining_maturity",
+          "data_type": "number"
+        }
+      ]
+    },
+    {
+      "name": "Subscribe",
+      "description": "投资者认购/申购理财产品。",
+      "target_object_type": "Product",
+      "parameters": [
+        {
+          "name": "amount",
+          "data_type": "number"
+        },
+        {
+          "name": "investor_id",
+          "data_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "Redeem",
+      "description": "投资者赎回理财产品份额。",
+      "target_object_type": "Product",
+      "parameters": [
+        {
+          "name": "amount",
+          "data_type": "number"
+        },
+        {
+          "name": "investor_id",
+          "data_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "AdjustInvestmentScope",
+      "description": "管理人调整理财产品投资范围或投资比例。",
+      "target_object_type": "Product",
+      "parameters": [
+        {
+          "name": "new_scope",
+          "data_type": "object"
+        },
+        {
+          "name": "notification_date",
+          "data_type": "date"
+        }
+      ]
+    },
+    {
+      "name": "UpdateRiskDisclosure",
+      "description": "更新理财产品风险揭示信息。",
+      "target_object_type": "Product",
+      "parameters": [
+        {
+          "name": "risk_event_id",
+          "data_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "CreateProduct",
+      "description": "创建新的理财产品。",
+      "target_object_type": "FinancialProduct",
+      "parameters": [
+        {
+          "name": "product_name",
+          "data_type": "string"
+        },
+        {
+          "name": "risk_rating",
+          "data_type": "string"
+        },
+        {
+          "name": "investment_scope",
+          "data_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "UpdateInvestmentLimits",
+      "description": "更新理财产品的投资限制。",
+      "target_object_type": "FinancialProduct",
+      "parameters": [
+        {
+          "name": "limit_type",
+          "data_type": "string"
+        },
+        {
+          "name": "limit_value",
+          "data_type": "number"
+        }
+      ]
+    },
+    {
+      "name": "AddInvestmentAsset",
+      "description": "向理财产品添加投资资产。",
+      "target_object_type": "FinancialProduct",
+      "parameters": [
+        {
+          "name": "asset_id",
+          "data_type": "string"
+        },
+        {
+          "name": "allocation_percentage",
+          "data_type": "number"
+        }
+      ]
+    },
+    {
+      "name": "RegisterInvestor",
+      "description": "注册新的投资者。",
+      "target_object_type": "Investor",
+      "parameters": [
+        {
+          "name": "investor_type",
+          "data_type": "string"
+        },
+        {
+          "name": "risk_tolerance",
+          "data_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "ConfigureSalesChannel",
+      "description": "配置销售渠道信息。",
+      "target_object_type": "SalesChannel",
+      "parameters": [
+        {
+          "name": "channel_url",
+          "data_type": "string"
+        },
+        {
+          "name": "is_online",
+          "data_type": "boolean"
+        }
+      ]
+    },
+    {
+      "name": "RegisterSalesInstitution",
+      "description": "注册新的销售机构。",
+      "target_object_type": "SalesInstitution",
+      "parameters": [
+        {
+          "name": "institution_name",
+          "data_type": "string"
+        },
+        {
+          "name": "is_cooperative",
+          "data_type": "boolean"
+        }
+      ]
+    },
+    {
+      "name": "RegisterAssetManager",
+      "description": "注册新的资产管理人。",
+      "target_object_type": "AssetManager",
+      "parameters": [
+        {
+          "name": "manager_name",
+          "data_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "UpdateRegulatoryPolicy",
+      "description": "更新监管政策。",
+      "target_object_type": "RegulatoryPolicy",
+      "parameters": [
+        {
+          "name": "policy_content",
+          "data_type": "string"
+        },
+        {
+          "name": "effective_date",
+          "data_type": "date"
+        }
+      ]
+    }
+  ]
+}

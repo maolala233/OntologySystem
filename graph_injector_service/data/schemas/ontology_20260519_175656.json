@@ -1,0 +1,448 @@
+{
+  "object_types": [
+    {
+      "name": "FinancialProduct",
+      "description": "A non-deposit financial product issued by a bank or its subsidiary, with associated risks and potential returns.",
+      "primary_key": "product_code",
+      "properties": [
+        {
+          "name": "product_name",
+          "description": "The name of the financial product.",
+          "data_type": "string"
+        },
+        {
+          "name": "product_code",
+          "description": "The unique code assigned to the financial product by the issuing institution.",
+          "data_type": "string"
+        },
+        {
+          "name": "registration_code",
+          "description": "The registration code of the financial product in the national banking financial information registration system.",
+          "data_type": "string"
+        },
+        {
+          "name": "risk_rating",
+          "description": "The risk rating assigned to the financial product, indicating its level of risk.",
+          "data_type": "string"
+        },
+        {
+          "name": "term_in_days",
+          "description": "The term of the financial product in days.",
+          "data_type": "number"
+        },
+        {
+          "name": "maturity_date",
+          "description": "The maturity date of the financial product.",
+          "data_type": "date"
+        },
+        {
+          "name": "productName",
+          "description": "产品名称",
+          "data_type": "string"
+        },
+        {
+          "name": "registrationCode",
+          "description": "理财产品登记编码",
+          "data_type": "string"
+        },
+        {
+          "name": "productCode",
+          "description": "产品代码",
+          "data_type": "string"
+        },
+        {
+          "name": "productType",
+          "description": "产品类型（公募、固定收益类、封闭式）",
+          "data_type": "string"
+        },
+        {
+          "name": "riskLevel",
+          "description": "信银理财产品风险分级（如PR2级）",
+          "data_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "RiskType",
+      "description": "A type of risk associated with a financial product.",
+      "primary_key": "risk_name",
+      "properties": [
+        {
+          "name": "risk_name",
+          "description": "The name or description of the risk type.",
+          "data_type": "string"
+        },
+        {
+          "name": "risk_description",
+          "description": "A detailed description of the risk type and its potential impact on the financial product.",
+          "data_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "Investor",
+      "description": "An individual or entity that invests in a financial product.",
+      "primary_key": "investor_id",
+      "properties": [
+        {
+          "name": "investor_id",
+          "description": "A unique identifier for the investor.",
+          "data_type": "string"
+        },
+        {
+          "name": "investor_type",
+          "description": "The type of investor, either 'individual' or 'institution'.",
+          "data_type": "string"
+        },
+        {
+          "name": "risk_tolerance",
+          "description": "An assessment of the investor's ability to bear investment risks.",
+          "data_type": "string"
+        },
+        {
+          "name": "investorId",
+          "description": "投资者唯一标识",
+          "data_type": "string"
+        },
+        {
+          "name": "investorType",
+          "description": "投资者类型（个人/机构）",
+          "data_type": "string"
+        },
+        {
+          "name": "riskProfile",
+          "description": "投资风险承受能力评估结果",
+          "data_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "SalesChannel",
+      "description": "销售渠道：包括信银理财电子渠道、直销渠道以及合作销售机构。",
+      "primary_key": "channelId",
+      "properties": [
+        {
+          "name": "channelId",
+          "description": "渠道唯一标识",
+          "data_type": "string"
+        },
+        {
+          "name": "channelType",
+          "description": "渠道类型（电子/直销/代销）",
+          "data_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "InvestmentAsset",
+      "description": "投资标的：包括债权类、权益类、商品及金融衍生品类等。",
+      "primary_key": "assetId",
+      "properties": [
+        {
+          "name": "assetId",
+          "description": "投资标的唯一标识",
+          "data_type": "string"
+        },
+        {
+          "name": "assetType",
+          "description": "资产类型（债权/权益/商品衍生品）",
+          "data_type": "string"
+        },
+        {
+          "name": "valuation",
+          "description": "当前估值",
+          "data_type": "number"
+        }
+      ]
+    },
+    {
+      "name": "InvestmentContract",
+      "description": "理财产品合同：包括说明书、风险揭示书和投资协议等。",
+      "primary_key": "contractId",
+      "properties": [
+        {
+          "name": "contractId",
+          "description": "合同唯一标识",
+          "data_type": "string"
+        },
+        {
+          "name": "productName",
+          "description": "关联产品名称",
+          "data_type": "string"
+        },
+        {
+          "name": "version",
+          "description": "合同版本号",
+          "data_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "FundProduct",
+      "description": "信银理财产品基本信息及属性",
+      "primary_key": "productCode",
+      "properties": [
+        {
+          "name": "productName",
+          "description": "产品名称",
+          "data_type": "string"
+        },
+        {
+          "name": "registrationCode",
+          "description": "理财产品登记编码",
+          "data_type": "string"
+        },
+        {
+          "name": "productCode",
+          "description": "产品代码",
+          "data_type": "string"
+        },
+        {
+          "name": "productType",
+          "description": "产品类型（公募、固定收益类、封闭式）",
+          "data_type": "string"
+        },
+        {
+          "name": "riskLevel",
+          "description": "信银理财产品风险分级（PR2，稳健型）",
+          "data_type": "string"
+        },
+        {
+          "name": "targetInvestors",
+          "description": "发行对象及适合投资者类型",
+          "data_type": "array"
+        },
+        {
+          "name": "shareTypes",
+          "description": "理财产品份额类型列表",
+          "data_type": "array"
+        },
+        {
+          "name": "fundraisingPeriodStart",
+          "description": "募集期开始日期",
+          "data_type": "date"
+        },
+        {
+          "name": "fundraisingPeriodEnd",
+          "description": "募集期结束日期",
+          "data_type": "date"
+        },
+        {
+          "name": "operationStartDate",
+          "description": "运作起始日",
+          "data_type": "date"
+        },
+        {
+          "name": "buildupPeriodStart",
+          "description": "产品建仓期开始日期",
+          "data_type": "date"
+        },
+        {
+          "name": "buildupPeriodEnd",
+          "description": "产品建仓期结束日期",
+          "data_type": "date"
+        },
+        {
+          "name": "maturityDate",
+          "description": "到期日",
+          "data_type": "date"
+        },
+        {
+          "name": "clearingPeriodStart",
+          "description": "清算期开始日期（等同于到期日）",
+          "data_type": "date"
+        },
+        {
+          "name": "minimumFundraisingAmount",
+          "description": "计划募集金额下限（人民币500万元）",
+          "data_type": "number"
+        },
+        {
+          "name": "currency",
+          "description": "投资与收益币种（人民币）",
+          "data_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "ShareType",
+      "description": "理财产品份额类型及其属性",
+      "primary_key": "shareCode",
+      "properties": [
+        {
+          "name": "shareTypeName",
+          "description": "份额类型名称（如A、D等）",
+          "data_type": "string"
+        },
+        {
+          "name": "shareCode",
+          "description": "份额代码",
+          "data_type": "string"
+        },
+        {
+          "name": "performanceBenchmarkRange",
+          "description": "业绩比较基准范围（如2.30%-3.00%）",
+          "data_type": "string"
+        }
+      ]
+    }
+  ],
+  "link_types": [
+    {
+      "name": "hasRisk",
+      "description": "Links a financial product to its associated risk types.",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "RiskType",
+      "cardinality": "many-to-many"
+    },
+    {
+      "name": "investsIn",
+      "description": "Links an investor to the financial products they have invested in.",
+      "source_object_type": "Investor",
+      "target_object_type": "FinancialProduct",
+      "cardinality": "many-to-many"
+    },
+    {
+      "name": "InvestsIn",
+      "description": "投资关系：表示投资者购买了某个理财产品。",
+      "source_object_type": "Investor",
+      "target_object_type": "FinancialProduct",
+      "cardinality": "one-to-many"
+    },
+    {
+      "name": "SellsThrough",
+      "description": "销售渠道关联：表示某个理财产品通过哪些销售渠道进行销售。",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "SalesChannel",
+      "cardinality": "many-to-many"
+    },
+    {
+      "name": "HoldsAsset",
+      "description": "持仓关系：表示某个理财产品持有的投资标的。",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "InvestmentAsset",
+      "cardinality": "one-to-many"
+    },
+    {
+      "name": "GovernedByContract",
+      "description": "合同约束：表示理财产品受哪些合同约束。",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "InvestmentContract",
+      "cardinality": "one-to-many"
+    },
+    {
+      "name": "ProductShareTypeLink",
+      "description": "FundProduct与ShareType之间的关联，表示产品包含哪些份额类型",
+      "source_object_type": "FundProduct",
+      "target_object_type": "ShareType",
+      "cardinality": "many-to-many"
+    }
+  ],
+  "action_types": [
+    {
+      "name": "purchase",
+      "description": "An action where an investor purchases a financial product.",
+      "target_object_type": "FinancialProduct",
+      "parameters": [
+        {
+          "name": "investor_id",
+          "data_type": "string"
+        },
+        {
+          "name": "purchase_amount",
+          "data_type": "number"
+        }
+      ]
+    },
+    {
+      "name": "redeem",
+      "description": "An action where an investor redeems their investment in a financial product.",
+      "target_object_type": "FinancialProduct",
+      "parameters": [
+        {
+          "name": "investor_id",
+          "data_type": "string"
+        },
+        {
+          "name": "redemption_amount",
+          "data_type": "number"
+        }
+      ]
+    },
+    {
+      "name": "PurchaseProduct",
+      "description": "购买理财产品：投资者通过某个渠道购买指定的理财产品。",
+      "target_object_type": "Investor",
+      "parameters": [
+        {
+          "name": "productId",
+          "data_type": "string"
+        },
+        {
+          "name": "channelId",
+          "data_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "RedeemProduct",
+      "description": "赎回理财产品：投资者提前赎回已购买的理财产品。",
+      "target_object_type": "Investor",
+      "parameters": [
+        {
+          "name": "productId",
+          "data_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "AdjustAssetAllocation",
+      "description": "调整资产配置：理财产品管理人根据市场情况调整投资标的比例。",
+      "target_object_type": "FinancialProduct",
+      "parameters": [
+        {
+          "name": "assetId",
+          "data_type": "string"
+        },
+        {
+          "name": "newWeight",
+          "data_type": "number"
+        }
+      ]
+    },
+    {
+      "name": "UpdateFundraisingPeriod",
+      "description": "更新募集期起始和结束日期的操作",
+      "target_object_type": "FundProduct",
+      "parameters": [
+        {
+          "name": "newStart",
+          "data_type": "date"
+        },
+        {
+          "name": "newEnd",
+          "data_type": "date"
+        }
+      ]
+    },
+    {
+      "name": "AddShareType",
+      "description": "为FundProduct添加新的ShareType",
+      "target_object_type": "FundProduct",
+      "parameters": [
+        {
+          "name": "shareTypeName",
+          "data_type": "string"
+        },
+        {
+          "name": "shareCode",
+          "data_type": "string"
+        },
+        {
+          "name": "performanceBenchmarkRange",
+          "data_type": "string"
+        }
+      ]
+    }
+  ]
+}

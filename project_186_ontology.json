@@ -1,0 +1,6810 @@
+{
+  "edges": [
+    {
+      "id": "e_subclass_C_75a2e647_C_f33f82aa",
+      "data": {
+        "label": "subClassOf",
+        "relation": "subclass_of"
+      },
+      "type": "custom",
+      "label": "subClassOf",
+      "source": "C_75a2e647",
+      "target": "C_f33f82aa"
+    },
+    {
+      "id": "e_subclass_C_c4a81b5c_C_110b48ac",
+      "data": {
+        "label": "subClassOf",
+        "relation": "subclass_of"
+      },
+      "type": "custom",
+      "label": "subClassOf",
+      "source": "C_c4a81b5c",
+      "target": "C_110b48ac"
+    },
+    {
+      "id": "e_subclass_C_d5ad86f1_C_f33f82aa",
+      "data": {
+        "label": "subClassOf",
+        "relation": "subclass_of"
+      },
+      "type": "custom",
+      "label": "subClassOf",
+      "source": "C_d5ad86f1",
+      "target": "C_f33f82aa"
+    },
+    {
+      "id": "e_C_110b48ac_C_812b9fc4_OP_6072779e",
+      "data": {
+        "label": "具有风险等级",
+        "prop_id": "OP_6072779e",
+        "cardinality": "one-to-one",
+        "description": "产品与其风险等级之间的关系"
+      },
+      "type": "custom",
+      "label": "具有风险等级",
+      "source": "C_110b48ac",
+      "target": "C_812b9fc4"
+    },
+    {
+      "id": "e_C_110b48ac_C_8ab923ba_OP_1e37696d",
+      "data": {
+        "label": "适合",
+        "prop_id": "OP_1e37696d",
+        "cardinality": "many-to-many",
+        "description": "产品适合某类投资者"
+      },
+      "type": "custom",
+      "label": "适合",
+      "source": "C_110b48ac",
+      "target": "C_8ab923ba"
+    },
+    {
+      "id": "e_C_110b48ac_C_d5ad86f1_OP_8e945fca",
+      "data": {
+        "label": "投资于",
+        "prop_id": "OP_8e945fca",
+        "cardinality": "many-to-many",
+        "description": "产品投资于特定的资产类别或对象"
+      },
+      "type": "custom",
+      "label": "投资于",
+      "source": "C_110b48ac",
+      "target": "C_d5ad86f1"
+    },
+    {
+      "id": "e_C_110b48ac_C_2626911f_OP_6c598db7",
+      "data": {
+        "label": "由...销售",
+        "prop_id": "OP_6c598db7",
+        "cardinality": "many-to-many",
+        "description": "产品由合作销售机构销售"
+      },
+      "type": "custom",
+      "label": "由...销售",
+      "source": "C_110b48ac",
+      "target": "C_2626911f"
+    },
+    {
+      "id": "e_C_110b48ac_C_9c2ae5cc_OP_a06379e0",
+      "data": {
+        "label": "面临",
+        "prop_id": "OP_a06379e0",
+        "cardinality": "many-to-many",
+        "description": "产品面临某种风险"
+      },
+      "type": "custom",
+      "label": "面临",
+      "source": "C_110b48ac",
+      "target": "C_9c2ae5cc"
+    },
+    {
+      "id": "e_C_d5ad86f1_C_f33f82aa_OP_6c7102ff",
+      "data": {
+        "label": "是...的子类",
+        "prop_id": "OP_6c7102ff",
+        "cardinality": "many-to-one",
+        "description": "表示类的层级继承关系"
+      },
+      "type": "custom",
+      "label": "是...的子类",
+      "source": "C_d5ad86f1",
+      "target": "C_f33f82aa"
+    },
+    {
+      "id": "e_C_1791024e_C_110b48ac_OP_3b8890d9",
+      "data": {
+        "label": "持有",
+        "prop_id": "OP_3b8890d9",
+        "cardinality": "many-to-many",
+        "description": "投资者持有理财产品份额"
+      },
+      "type": "custom",
+      "label": "持有",
+      "source": "C_1791024e",
+      "target": "C_110b48ac"
+    },
+    {
+      "id": "e_C_110b48ac_C_4fe91964_OP_c727c10c",
+      "data": {
+        "label": "委托于",
+        "prop_id": "OP_c727c10c",
+        "cardinality": "many-to-many",
+        "description": "理财产品委托投资合作机构进行管理"
+      },
+      "type": "custom",
+      "label": "委托于",
+      "source": "C_110b48ac",
+      "target": "C_4fe91964"
+    },
+    {
+      "id": "e_C_110b48ac_C_262c82d6_OP_c6e2a5ae",
+      "data": {
+        "label": "属于",
+        "prop_id": "OP_c6e2a5ae",
+        "cardinality": "many-to-one",
+        "description": "理财产品属于某种类型"
+      },
+      "type": "custom",
+      "label": "属于",
+      "source": "C_110b48ac",
+      "target": "C_262c82d6"
+    },
+    {
+      "id": "e_C_110b48ac_C_87129eb6_OP_b34c01c9",
+      "data": {
+        "label": "受限于",
+        "prop_id": "OP_b34c01c9",
+        "cardinality": "many-to-one",
+        "description": "理财产品受募集限制条款约束"
+      },
+      "type": "custom",
+      "label": "受限于",
+      "source": "C_110b48ac",
+      "target": "C_87129eb6"
+    },
+    {
+      "id": "e_C_110b48ac_C_1a4bc2d3_OP_2b01afbc",
+      "data": {
+        "label": "合作销售机构",
+        "prop_id": "OP_2b01afbc",
+        "cardinality": "many-to-many",
+        "description": "理财产品与其合作的销售机构之间的关系"
+      },
+      "type": "custom",
+      "label": "合作销售机构",
+      "source": "C_110b48ac",
+      "target": "C_1a4bc2d3"
+    },
+    {
+      "id": "e_C_110b48ac_C_f4a8d915_OP_916d0df4",
+      "data": {
+        "label": "由...管理",
+        "prop_id": "OP_916d0df4",
+        "cardinality": "many-to-one",
+        "description": "理财产品由其管理人进行管理"
+      },
+      "type": "custom",
+      "label": "由...管理",
+      "source": "C_110b48ac",
+      "target": "C_f4a8d915"
+    },
+    {
+      "id": "e_C_110b48ac_C_c4a81b5c_OP_cbe287ff",
+      "data": {
+        "label": "包含份额类别",
+        "prop_id": "OP_cbe287ff",
+        "cardinality": "one-to-many",
+        "description": "一个理财产品包含多个份额类别"
+      },
+      "type": "custom",
+      "label": "包含份额类别",
+      "source": "C_110b48ac",
+      "target": "C_c4a81b5c"
+    },
+    {
+      "id": "e_C_110b48ac_C_b69f5f73_OP_1bf84958",
+      "data": {
+        "label": "由...托管",
+        "prop_id": "OP_1bf84958",
+        "cardinality": "one-to-one",
+        "description": "理财产品由托管人进行托管"
+      },
+      "type": "custom",
+      "label": "由...托管",
+      "source": "C_110b48ac",
+      "target": "C_b69f5f73"
+    },
+    {
+      "id": "e_C_110b48ac_C_ca9a21d5_OP_37761c15",
+      "data": {
+        "label": "包含费用",
+        "prop_id": "OP_37761c15",
+        "cardinality": "one-to-many",
+        "description": "理财产品包含多种费用项目"
+      },
+      "type": "custom",
+      "label": "包含费用",
+      "source": "C_110b48ac",
+      "target": "C_ca9a21d5"
+    },
+    {
+      "id": "e_C_110b48ac_C_c30b1db2_OP_1990ef70",
+      "data": {
+        "label": "通过...披露",
+        "prop_id": "OP_1990ef70",
+        "cardinality": "one-to-many",
+        "description": "理财产品通过特定的渠道进行信息披露"
+      },
+      "type": "custom",
+      "label": "通过...披露",
+      "source": "C_110b48ac",
+      "target": "C_c30b1db2"
+    },
+    {
+      "id": "e_C_110b48ac_C_52d37b6a_OP_03017f84",
+      "data": {
+        "label": "面临风险",
+        "prop_id": "OP_03017f84",
+        "cardinality": "many-to-many",
+        "description": "理财产品面临某种风险类别"
+      },
+      "type": "custom",
+      "label": "面临风险",
+      "source": "C_110b48ac",
+      "target": "C_52d37b6a"
+    },
+    {
+      "id": "e_C_110b48ac_C_57cc40eb_OP_ebf9bebe",
+      "data": {
+        "label": "处于状态",
+        "prop_id": "OP_ebf9bebe",
+        "cardinality": "one-to-one",
+        "description": "理财产品处于某种状态"
+      },
+      "type": "custom",
+      "label": "处于状态",
+      "source": "C_110b48ac",
+      "target": "C_57cc40eb"
+    },
+    {
+      "id": "e_C_110b48ac_C_52d37b6a_OP_83ea6fb9",
+      "data": {
+        "label": "设有业绩基准",
+        "prop_id": "OP_83ea6fb9",
+        "cardinality": "many-to-many",
+        "description": "理财产品份额设立业绩比较基准"
+      },
+      "type": "custom",
+      "label": "设有业绩基准",
+      "source": "C_110b48ac",
+      "target": "C_52d37b6a"
+    },
+    {
+      "id": "e_C_110b48ac_C_1a4bc2d3_OP_277a951b",
+      "data": {
+        "label": "由...代销",
+        "prop_id": "OP_277a951b",
+        "cardinality": "many-to-many",
+        "description": "产品通过代销机构进行销售"
+      },
+      "type": "custom",
+      "label": "由...代销",
+      "source": "C_110b48ac",
+      "target": "C_1a4bc2d3"
+    },
+    {
+      "id": "e_C_110b48ac_C_5e660315_OP_56a57e83",
+      "data": {
+        "label": "受...监管",
+        "prop_id": "OP_56a57e83",
+        "cardinality": "many-to-one",
+        "description": "产品受监管机构监督管理"
+      },
+      "type": "custom",
+      "label": "受...监管",
+      "source": "C_110b48ac",
+      "target": "C_5e660315"
+    },
+    {
+      "id": "e_C_110b48ac_C_110b48ac_OP_61a9d281",
+      "data": {
+        "label": "是...的一种",
+        "prop_id": "OP_61a9d281",
+        "cardinality": "many-to-one",
+        "description": "产品属于某种类型（如固收类、权益类）"
+      },
+      "type": "custom",
+      "label": "是...的一种",
+      "source": "C_110b48ac",
+      "target": "C_110b48ac"
+    },
+    {
+      "id": "e_C_110b48ac_C_8ab923ba_OP_b7b1b274",
+      "data": {
+        "label": "具有风险评级",
+        "prop_id": "OP_b7b1b274",
+        "cardinality": "many-to-one",
+        "description": "产品与其风险评级之间的关系"
+      },
+      "type": "custom",
+      "label": "具有风险评级",
+      "source": "C_110b48ac",
+      "target": "C_8ab923ba"
+    },
+    {
+      "id": "e_C_110b48ac_C_7f61018a_OP_8ba9f842",
+      "data": {
+        "label": "受...约束",
+        "prop_id": "OP_8ba9f842",
+        "cardinality": "many-to-one",
+        "description": "产品受法律文件约束"
+      },
+      "type": "custom",
+      "label": "受...约束",
+      "source": "C_110b48ac",
+      "target": "C_7f61018a"
+    },
+    {
+      "id": "e_C_110b48ac_C_66a8d294_OP_b8ba42b9",
+      "data": {
+        "label": "涉及税费",
+        "prop_id": "OP_b8ba42b9",
+        "cardinality": "many-to-many",
+        "description": "产品与其税费之间的关系"
+      },
+      "type": "custom",
+      "label": "涉及税费",
+      "source": "C_110b48ac",
+      "target": "C_66a8d294"
+    },
+    {
+      "id": "e_C_110b48ac_C_c30b1db2_OP_7aebdce2",
+      "data": {
+        "label": "进行信息披露",
+        "prop_id": "OP_7aebdce2",
+        "cardinality": "many-to-many",
+        "description": "产品与其信息披露之间的关系"
+      },
+      "type": "custom",
+      "label": "进行信息披露",
+      "source": "C_110b48ac",
+      "target": "C_c30b1db2"
+    },
+    {
+      "id": "e_C_110b48ac_C_8bda406e_OP_cb2ca73b",
+      "data": {
+        "label": "拥有账户",
+        "prop_id": "OP_cb2ca73b",
+        "cardinality": "many-to-many",
+        "description": "产品与其账户之间的关系"
+      },
+      "type": "custom",
+      "label": "拥有账户",
+      "source": "C_110b48ac",
+      "target": "C_8bda406e"
+    },
+    {
+      "id": "e_C_110b48ac_C_812b9fc4_OP_51101ab5",
+      "data": {
+        "label": "风险等级",
+        "prop_id": "OP_51101ab5",
+        "cardinality": "one-to-one",
+        "description": "产品与其风险等级之间的关系"
+      },
+      "type": "custom",
+      "label": "风险等级",
+      "source": "C_110b48ac",
+      "target": "C_812b9fc4"
+    },
+    {
+      "id": "e_C_110b48ac_C_23cd58bd_OP_08be09b9",
+      "data": {
+        "label": "包含投资范围",
+        "prop_id": "OP_08be09b9",
+        "cardinality": "one-to-many",
+        "description": "理财产品包含特定的投资范围"
+      },
+      "type": "custom",
+      "label": "包含投资范围",
+      "source": "C_110b48ac",
+      "target": "C_23cd58bd"
+    },
+    {
+      "id": "e_C_110b48ac_C_ca9a21d5_OP_a30e9ab8",
+      "data": {
+        "label": "产生费用",
+        "prop_id": "OP_a30e9ab8",
+        "cardinality": "many-to-many",
+        "description": "理财产品涉及的费用项目"
+      },
+      "type": "custom",
+      "label": "产生费用",
+      "source": "C_110b48ac",
+      "target": "C_ca9a21d5"
+    },
+    {
+      "id": "e_C_110b48ac_C_dbc3c5b6_OP_4a21e3ef",
+      "data": {
+        "label": "通过...销售",
+        "prop_id": "OP_4a21e3ef",
+        "cardinality": "many-to-many",
+        "description": "产品通过销售渠道进行销售"
+      },
+      "type": "custom",
+      "label": "通过...销售",
+      "source": "C_110b48ac",
+      "target": "C_dbc3c5b6"
+    },
+    {
+      "id": "e_C_110b48ac_C_9c2ae5cc_OP_3bbb40a2",
+      "data": {
+        "label": "因...终止",
+        "prop_id": "OP_3bbb40a2",
+        "cardinality": "many-to-many",
+        "description": "产品因特定原因（如不可抗力、政策调整）提前终止"
+      },
+      "type": "custom",
+      "label": "因...终止",
+      "source": "C_110b48ac",
+      "target": "C_9c2ae5cc"
+    },
+    {
+      "id": "e_C_110b48ac_C_9c2ae5cc_OP_e8907f7b",
+      "data": {
+        "label": "因...延期清算",
+        "prop_id": "OP_e8907f7b",
+        "cardinality": "many-to-many",
+        "description": "产品因市场波动或流动性不足导致延期清算"
+      },
+      "type": "custom",
+      "label": "因...延期清算",
+      "source": "C_110b48ac",
+      "target": "C_9c2ae5cc"
+    },
+    {
+      "id": "e_C_3923643e_C_110b48ac_OP_9485ade1",
+      "data": {
+        "label": "由...解决",
+        "prop_id": "OP_9485ade1",
+        "cardinality": "many-to-one",
+        "description": "争议通过特定的争议解决方式（如仲裁）解决"
+      },
+      "type": "custom",
+      "label": "由...解决",
+      "source": "C_3923643e",
+      "target": "C_110b48ac"
+    },
+    {
+      "id": "e_I_49c5f088_type_C_110b48ac",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_49c5f088",
+      "target": "C_110b48ac"
+    },
+    {
+      "id": "e_I_82f425d2_type_C_812b9fc4",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_82f425d2",
+      "target": "C_812b9fc4"
+    },
+    {
+      "id": "e_I_d4898531_type_C_8ab923ba",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_d4898531",
+      "target": "C_8ab923ba"
+    },
+    {
+      "id": "e_I_040a0029_type_C_8ab923ba",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_040a0029",
+      "target": "C_8ab923ba"
+    },
+    {
+      "id": "e_I_2b6fb334_type_C_8ab923ba",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_2b6fb334",
+      "target": "C_8ab923ba"
+    },
+    {
+      "id": "e_I_3a8d16dc_type_C_8ab923ba",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_3a8d16dc",
+      "target": "C_8ab923ba"
+    },
+    {
+      "id": "e_I_eee33577_type_C_23cd58bd",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_eee33577",
+      "target": "C_23cd58bd"
+    },
+    {
+      "id": "e_I_5040c697_type_C_23cd58bd",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_5040c697",
+      "target": "C_23cd58bd"
+    },
+    {
+      "id": "e_I_65782e69_type_C_23cd58bd",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_65782e69",
+      "target": "C_23cd58bd"
+    },
+    {
+      "id": "e_I_d3ef4845_type_C_23cd58bd",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_d3ef4845",
+      "target": "C_23cd58bd"
+    },
+    {
+      "id": "e_I_25fc8c38_type_C_9c2ae5cc",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_25fc8c38",
+      "target": "C_9c2ae5cc"
+    },
+    {
+      "id": "e_I_c4f988ec_type_C_9c2ae5cc",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_c4f988ec",
+      "target": "C_9c2ae5cc"
+    },
+    {
+      "id": "e_I_5491b56a_type_C_9c2ae5cc",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_5491b56a",
+      "target": "C_9c2ae5cc"
+    },
+    {
+      "id": "e_I_ec09836f_type_C_9c2ae5cc",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_ec09836f",
+      "target": "C_9c2ae5cc"
+    },
+    {
+      "id": "e_I_315a9268_type_C_9c2ae5cc",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_315a9268",
+      "target": "C_9c2ae5cc"
+    },
+    {
+      "id": "e_I_7c64b483_type_C_9c2ae5cc",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_7c64b483",
+      "target": "C_9c2ae5cc"
+    },
+    {
+      "id": "e_I_0b5f42c1_type_C_9c2ae5cc",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_0b5f42c1",
+      "target": "C_9c2ae5cc"
+    },
+    {
+      "id": "e_I_2157202b_type_C_9c2ae5cc",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_2157202b",
+      "target": "C_9c2ae5cc"
+    },
+    {
+      "id": "e_I_2e6f2e37_type_C_9c2ae5cc",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_2e6f2e37",
+      "target": "C_9c2ae5cc"
+    },
+    {
+      "id": "e_I_0c676251_type_C_9c2ae5cc",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_0c676251",
+      "target": "C_9c2ae5cc"
+    },
+    {
+      "id": "e_I_37731870_type_C_9c2ae5cc",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_37731870",
+      "target": "C_9c2ae5cc"
+    },
+    {
+      "id": "e_I_0f9d085d_type_C_9c2ae5cc",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_0f9d085d",
+      "target": "C_9c2ae5cc"
+    },
+    {
+      "id": "e_I_7edf6c4f_type_C_9c2ae5cc",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_7edf6c4f",
+      "target": "C_9c2ae5cc"
+    },
+    {
+      "id": "e_I_42a52968_type_C_9c2ae5cc",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_42a52968",
+      "target": "C_9c2ae5cc"
+    },
+    {
+      "id": "e_I_66ec930b_type_C_5e660315",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_66ec930b",
+      "target": "C_5e660315"
+    },
+    {
+      "id": "e_I_375492a5_type_C_5e660315",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_375492a5",
+      "target": "C_5e660315"
+    },
+    {
+      "id": "e_I_950f328b_type_C_5e660315",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_950f328b",
+      "target": "C_5e660315"
+    },
+    {
+      "id": "e_I_2758910e_type_C_5e660315",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_2758910e",
+      "target": "C_5e660315"
+    },
+    {
+      "id": "e_I_e2738a16_type_C_5e660315",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_e2738a16",
+      "target": "C_5e660315"
+    },
+    {
+      "id": "e_I_5ed2d6a8_type_C_5e660315",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_5ed2d6a8",
+      "target": "C_5e660315"
+    },
+    {
+      "id": "e_I_8948c874_type_C_1791024e",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_8948c874",
+      "target": "C_1791024e"
+    },
+    {
+      "id": "e_I_1f8df416_type_C_262c82d6",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_1f8df416",
+      "target": "C_262c82d6"
+    },
+    {
+      "id": "e_I_8fc6b75d_type_C_262c82d6",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_8fc6b75d",
+      "target": "C_262c82d6"
+    },
+    {
+      "id": "e_I_c69f6e32_type_C_262c82d6",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_c69f6e32",
+      "target": "C_262c82d6"
+    },
+    {
+      "id": "e_I_da9b8ea5_type_C_110b48ac",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_da9b8ea5",
+      "target": "C_110b48ac"
+    },
+    {
+      "id": "e_I_921ccc86_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_921ccc86",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_002119de_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_002119de",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_35983653_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_35983653",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_38f95c6f_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_38f95c6f",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_692e89ea_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_692e89ea",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_c6a091ef_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_c6a091ef",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_ace741a9_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_ace741a9",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_4be29e6c_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_4be29e6c",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_9cfa7305_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_9cfa7305",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_b65995e9_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_b65995e9",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_1f48e99f_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_1f48e99f",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_16498dd1_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_16498dd1",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_05753aa7_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_05753aa7",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_813c7a75_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_813c7a75",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_7c0756df_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_7c0756df",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_f743feac_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_f743feac",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_03e19d4b_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_03e19d4b",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_507386cf_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_507386cf",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_58a5b30e_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_58a5b30e",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_4a67cdfe_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_4a67cdfe",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_935fe1aa_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_935fe1aa",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_2d7dff6a_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_2d7dff6a",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_26b9cef6_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_26b9cef6",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_c5384784_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_c5384784",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_c920e081_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_c920e081",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_04e0875c_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_04e0875c",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_b974ca45_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_b974ca45",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_31cf8f7e_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_31cf8f7e",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_efe7e8a0_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_efe7e8a0",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_20f52ab1_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_20f52ab1",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_d90dcdb1_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_d90dcdb1",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_a963c0ad_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_a963c0ad",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_c8e6d1d6_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_c8e6d1d6",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_617e706b_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_617e706b",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_b841c43a_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_b841c43a",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_eb26aaa6_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_eb26aaa6",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_af602a0d_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_af602a0d",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_8568933c_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_8568933c",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_68268a85_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_68268a85",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_fe9b4432_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_fe9b4432",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_d4541c8f_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_d4541c8f",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_a71ff3ba_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_a71ff3ba",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_452ba4c2_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_452ba4c2",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_a0e1103c_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_a0e1103c",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_2ca3191b_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_2ca3191b",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_87a27671_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_87a27671",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_47f62568_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_47f62568",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_d37f4b90_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_d37f4b90",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_4af4d7b1_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_4af4d7b1",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_f7183abb_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_f7183abb",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_cd1fad6a_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_cd1fad6a",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_735797ae_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_735797ae",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_6613fc59_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_6613fc59",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_97be6e11_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_97be6e11",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_e38082be_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_e38082be",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_2d5070b5_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_2d5070b5",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_6617b297_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_6617b297",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_9759f53a_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_9759f53a",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_47caeffd_type_C_a4977a12",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_47caeffd",
+      "target": "C_a4977a12"
+    },
+    {
+      "id": "e_I_7bc3b313_type_C_f4a8d915",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_7bc3b313",
+      "target": "C_f4a8d915"
+    },
+    {
+      "id": "e_I_e88f569a_type_C_c30b1db2",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_e88f569a",
+      "target": "C_c30b1db2"
+    },
+    {
+      "id": "e_I_079fa077_type_C_8bda406e",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_079fa077",
+      "target": "C_8bda406e"
+    },
+    {
+      "id": "e_I_403e007c_type_C_8bda406e",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_403e007c",
+      "target": "C_8bda406e"
+    },
+    {
+      "id": "e_I_effd6098_type_C_ca9a21d5",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_effd6098",
+      "target": "C_ca9a21d5"
+    },
+    {
+      "id": "e_I_cdc26ba3_type_C_ca9a21d5",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_cdc26ba3",
+      "target": "C_ca9a21d5"
+    },
+    {
+      "id": "e_I_36cd3212_type_C_ca9a21d5",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_36cd3212",
+      "target": "C_ca9a21d5"
+    },
+    {
+      "id": "e_I_1ccea9a2_type_C_ca9a21d5",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_1ccea9a2",
+      "target": "C_ca9a21d5"
+    },
+    {
+      "id": "e_I_cd66fb68_type_C_110b48ac",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_cd66fb68",
+      "target": "C_110b48ac"
+    },
+    {
+      "id": "e_I_69eb6abc_type_C_57cc40eb",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_69eb6abc",
+      "target": "C_57cc40eb"
+    },
+    {
+      "id": "e_I_3a2329eb_type_C_ca9a21d5",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_3a2329eb",
+      "target": "C_ca9a21d5"
+    },
+    {
+      "id": "e_I_11d724c8_type_C_ca9a21d5",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_11d724c8",
+      "target": "C_ca9a21d5"
+    },
+    {
+      "id": "e_I_43bfa51e_type_C_ca9a21d5",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_43bfa51e",
+      "target": "C_ca9a21d5"
+    },
+    {
+      "id": "e_I_ba5e6cdb_type_C_ca9a21d5",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_ba5e6cdb",
+      "target": "C_ca9a21d5"
+    },
+    {
+      "id": "e_I_81435a07_type_C_ca9a21d5",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_81435a07",
+      "target": "C_ca9a21d5"
+    },
+    {
+      "id": "e_I_7a9ca001_type_C_ca9a21d5",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_7a9ca001",
+      "target": "C_ca9a21d5"
+    },
+    {
+      "id": "e_I_58e66dbd_type_C_ca9a21d5",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_58e66dbd",
+      "target": "C_ca9a21d5"
+    },
+    {
+      "id": "e_I_dfd9a88f_type_C_ca9a21d5",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_dfd9a88f",
+      "target": "C_ca9a21d5"
+    },
+    {
+      "id": "e_I_fed17867_type_C_ca9a21d5",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_fed17867",
+      "target": "C_ca9a21d5"
+    },
+    {
+      "id": "e_I_e938f0cf_type_C_b69f5f73",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_e938f0cf",
+      "target": "C_b69f5f73"
+    },
+    {
+      "id": "e_I_5d796030_type_C_7f61018a",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_5d796030",
+      "target": "C_7f61018a"
+    },
+    {
+      "id": "e_I_b1b9281b_type_C_23cd58bd",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_b1b9281b",
+      "target": "C_23cd58bd"
+    },
+    {
+      "id": "e_I_301240b3_type_C_52d37b6a",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_301240b3",
+      "target": "C_52d37b6a"
+    },
+    {
+      "id": "e_I_39f38703_type_C_110b48ac",
+      "data": {
+        "label": "type"
+      },
+      "type": "custom",
+      "label": "type",
+      "style": {
+        "strokeDasharray": "5,5"
+      },
+      "source": "I_39f38703",
+      "target": "C_110b48ac"
+    },
+    {
+      "id": "e_I_82f425d2_I_82f425d2_OP_51101ab5",
+      "data": {
+        "label": "OP_51101ab5"
+      },
+      "type": "custom",
+      "label": "OP_51101ab5",
+      "source": "I_82f425d2",
+      "target": "I_82f425d2"
+    },
+    {
+      "id": "e_I_da9b8ea5_I_da9b8ea5_OP_916d0df4",
+      "data": {
+        "label": "OP_916d0df4"
+      },
+      "type": "custom",
+      "label": "OP_916d0df4",
+      "source": "I_da9b8ea5",
+      "target": "I_da9b8ea5"
+    },
+    {
+      "id": "e_I_cd66fb68_I_82f425d2_OP_6072779e",
+      "data": {
+        "label": "OP_6072779e"
+      },
+      "type": "custom",
+      "label": "OP_6072779e",
+      "source": "I_cd66fb68",
+      "target": "I_82f425d2"
+    },
+    {
+      "id": "e_I_cd66fb68_I_301240b3_OP_03017f84",
+      "data": {
+        "label": "OP_03017f84"
+      },
+      "type": "custom",
+      "label": "OP_03017f84",
+      "source": "I_cd66fb68",
+      "target": "I_301240b3"
+    },
+    {
+      "id": "e_I_cd66fb68_I_5d796030_OP_8ba9f842",
+      "data": {
+        "label": "OP_8ba9f842"
+      },
+      "type": "custom",
+      "label": "OP_8ba9f842",
+      "source": "I_cd66fb68",
+      "target": "I_5d796030"
+    },
+    {
+      "id": "e_I_cd66fb68_I_b1b9281b_OP_08be09b9",
+      "data": {
+        "label": "OP_08be09b9"
+      },
+      "type": "custom",
+      "label": "OP_08be09b9",
+      "source": "I_cd66fb68",
+      "target": "I_b1b9281b"
+    },
+    {
+      "id": "e_I_cd66fb68_I_cdc26ba3_OP_37761c15",
+      "data": {
+        "label": "OP_37761c15"
+      },
+      "type": "custom",
+      "label": "OP_37761c15",
+      "source": "I_cd66fb68",
+      "target": "I_cdc26ba3"
+    },
+    {
+      "id": "e_I_cd66fb68_I_36cd3212_OP_37761c15",
+      "data": {
+        "label": "OP_37761c15"
+      },
+      "type": "custom",
+      "label": "OP_37761c15",
+      "source": "I_cd66fb68",
+      "target": "I_36cd3212"
+    },
+    {
+      "id": "e_I_cd66fb68_I_1ccea9a2_OP_37761c15",
+      "data": {
+        "label": "OP_37761c15"
+      },
+      "type": "custom",
+      "label": "OP_37761c15",
+      "source": "I_cd66fb68",
+      "target": "I_1ccea9a2"
+    },
+    {
+      "id": "e_I_cd66fb68_I_3a2329eb_OP_37761c15",
+      "data": {
+        "label": "OP_37761c15"
+      },
+      "type": "custom",
+      "label": "OP_37761c15",
+      "source": "I_cd66fb68",
+      "target": "I_3a2329eb"
+    },
+    {
+      "id": "e_I_cd66fb68_I_11d724c8_OP_37761c15",
+      "data": {
+        "label": "OP_37761c15"
+      },
+      "type": "custom",
+      "label": "OP_37761c15",
+      "source": "I_cd66fb68",
+      "target": "I_11d724c8"
+    },
+    {
+      "id": "e_I_cd66fb68_I_43bfa51e_OP_37761c15",
+      "data": {
+        "label": "OP_37761c15"
+      },
+      "type": "custom",
+      "label": "OP_37761c15",
+      "source": "I_cd66fb68",
+      "target": "I_43bfa51e"
+    },
+    {
+      "id": "e_I_cd66fb68_I_ba5e6cdb_OP_37761c15",
+      "data": {
+        "label": "OP_37761c15"
+      },
+      "type": "custom",
+      "label": "OP_37761c15",
+      "source": "I_cd66fb68",
+      "target": "I_ba5e6cdb"
+    },
+    {
+      "id": "e_I_cd66fb68_I_81435a07_OP_37761c15",
+      "data": {
+        "label": "OP_37761c15"
+      },
+      "type": "custom",
+      "label": "OP_37761c15",
+      "source": "I_cd66fb68",
+      "target": "I_81435a07"
+    },
+    {
+      "id": "e_I_cd66fb68_I_7a9ca001_OP_37761c15",
+      "data": {
+        "label": "OP_37761c15"
+      },
+      "type": "custom",
+      "label": "OP_37761c15",
+      "source": "I_cd66fb68",
+      "target": "I_7a9ca001"
+    },
+    {
+      "id": "e_I_cd66fb68_I_58e66dbd_OP_37761c15",
+      "data": {
+        "label": "OP_37761c15"
+      },
+      "type": "custom",
+      "label": "OP_37761c15",
+      "source": "I_cd66fb68",
+      "target": "I_58e66dbd"
+    },
+    {
+      "id": "e_I_cd66fb68_I_dfd9a88f_OP_37761c15",
+      "data": {
+        "label": "OP_37761c15"
+      },
+      "type": "custom",
+      "label": "OP_37761c15",
+      "source": "I_cd66fb68",
+      "target": "I_dfd9a88f"
+    },
+    {
+      "id": "e_I_cd66fb68_I_fed17867_OP_37761c15",
+      "data": {
+        "label": "OP_37761c15"
+      },
+      "type": "custom",
+      "label": "OP_37761c15",
+      "source": "I_cd66fb68",
+      "target": "I_fed17867"
+    },
+    {
+      "id": "e_I_cd66fb68_I_e938f0cf_OP_1bf84958",
+      "data": {
+        "label": "OP_1bf84958"
+      },
+      "type": "custom",
+      "label": "OP_1bf84958",
+      "source": "I_cd66fb68",
+      "target": "I_e938f0cf"
+    },
+    {
+      "id": "e_I_cd66fb68_I_7bc3b313_OP_916d0df4",
+      "data": {
+        "label": "OP_916d0df4"
+      },
+      "type": "custom",
+      "label": "OP_916d0df4",
+      "source": "I_cd66fb68",
+      "target": "I_7bc3b313"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "C_110b48ac",
+      "data": {
+        "type": "owl:Class",
+        "label": "理财产品",
+        "properties": {
+          "份额": "",
+          "名称": "",
+          "币种": "",
+          "收益": "",
+          "本金": "",
+          "估值日": "",
+          "到期日": "",
+          "募集期": "",
+          "成立日": "",
+          "托管费": "",
+          "持有期": "",
+          "收益率": "",
+          "清算日": "",
+          "交易时间": "",
+          "产品代码": "",
+          "产品名称": "",
+          "产品期限": "",
+          "产品类型": "",
+          "份额代码": "",
+          "份额单位": "",
+          "份额类别": "",
+          "份额类型": "",
+          "份额面值": "",
+          "估值方法": "",
+          "单位净值": "",
+          "托管费率": "",
+          "投资本金": "",
+          "投资范围": "",
+          "持有期限": "",
+          "收费标准": "",
+          "生效时间": "",
+          "申购金额": "",
+          "登记编码": "",
+          "终止时间": "",
+          "认购起点": "",
+          "认购金额": "",
+          "赎回金额": "",
+          "风险等级": "",
+          "风险评级": "",
+          "固定管理费": "",
+          "年化收益率": "",
+          "提前终止日": "",
+          "最短持有期": "",
+          "浮动管理费": "",
+          "认申购起点": "",
+          "运作起始日": "",
+          "销售服务费": "",
+          "预期收益率": "",
+          "认/申购起点": "",
+          "业绩比较基准": "",
+          "募集金额上限": "",
+          "募集金额下限": "",
+          "固定管理费率": "",
+          "持仓份额下限": "",
+          "浮动管理费比例": "",
+          "浮动管理费阈值": "",
+          "持仓份额比例限制": "",
+          "浮动管理费触发收益率": ""
+        },
+        "property_definitions": [
+          {
+            "name": "产品名称",
+            "data_type": "string",
+            "description": "理财产品的具体名称"
+          },
+          {
+            "name": "产品代码",
+            "data_type": "string",
+            "description": "理财产品的唯一识别代码"
+          },
+          {
+            "name": "风险评级",
+            "data_type": "string",
+            "description": "产品的风险等级（如 PR1, PR2 等）"
+          },
+          {
+            "name": "产品期限",
+            "data_type": "number",
+            "description": "产品的存续天数"
+          },
+          {
+            "name": "到期日",
+            "data_type": "date",
+            "description": "产品的到期日期"
+          },
+          {
+            "name": "登记编码",
+            "data_type": "string",
+            "description": "全国银行业理财信息登记系统赋予的编码"
+          },
+          {
+            "name": "单位净值",
+            "data_type": "number",
+            "description": "每份产品的净值"
+          },
+          {
+            "name": "投资本金",
+            "data_type": "number",
+            "description": "投资者交付的货币资金"
+          },
+          {
+            "name": "预期收益率",
+            "data_type": "number",
+            "description": "产品说明书中明确规定的收益"
+          },
+          {
+            "name": "产品类型",
+            "data_type": "string",
+            "description": "产品的分类，如固定收益类、权益类等"
+          },
+          {
+            "name": "风险等级",
+            "data_type": "string",
+            "description": "产品的风险评级，如稳健型、平衡型等"
+          },
+          {
+            "name": "业绩比较基准",
+            "data_type": "string",
+            "description": "产品设定的预期收益率范围"
+          },
+          {
+            "name": "币种",
+            "data_type": "string",
+            "description": "产品投资与收益的货币种类"
+          },
+          {
+            "name": "募集期",
+            "data_type": "date",
+            "description": "产品接受认购的时间段"
+          },
+          {
+            "name": "运作起始日",
+            "data_type": "date",
+            "description": "产品正式开始运作的时间"
+          },
+          {
+            "name": "认购起点",
+            "data_type": "number",
+            "description": "投资者首次购买产品的最低金额"
+          },
+          {
+            "name": "份额面值",
+            "data_type": "number",
+            "description": "每一份理财产品份额的基准价值"
+          },
+          {
+            "name": "销售服务费",
+            "data_type": "number",
+            "description": "因销售渠道不同而产生的费用费率"
+          },
+          {
+            "name": "固定管理费",
+            "data_type": "number",
+            "description": "管理人收取的固定比例管理费用"
+          },
+          {
+            "name": "托管费",
+            "data_type": "number",
+            "description": "托管人收取的费用"
+          },
+          {
+            "name": "浮动管理费",
+            "data_type": "number",
+            "description": "基于超额收益提取的管理费用"
+          },
+          {
+            "name": "浮动管理费比例",
+            "data_type": "number",
+            "description": "超过基准后收取的管理费比例"
+          },
+          {
+            "name": "份额类型",
+            "data_type": "string",
+            "description": "产品的份额类别，如 L 类、M 类等"
+          },
+          {
+            "name": "份额代码",
+            "data_type": "string",
+            "description": "特定份额的唯一标识代码"
+          },
+          {
+            "name": "份额类别",
+            "data_type": "string",
+            "description": "产品的份额类型，如 S 类、T 类、V 类"
+          },
+          {
+            "name": "收益率",
+            "data_type": "number",
+            "description": "产品的年化收益率或业绩比较基准"
+          },
+          {
+            "name": "年化收益率",
+            "data_type": "number",
+            "description": "产品的预期或实际年化收益率"
+          },
+          {
+            "name": "固定管理费率",
+            "data_type": "number",
+            "description": "按年收取的固定管理费比例"
+          },
+          {
+            "name": "浮动管理费阈值",
+            "data_type": "number",
+            "description": "触发浮动管理费收取的收益率基准"
+          },
+          {
+            "name": "估值方法",
+            "data_type": "string",
+            "description": "资产估值采用的方法，如摊余成本法、公允价值等"
+          },
+          {
+            "name": "投资范围",
+            "data_type": "array",
+            "description": "产品可投资的资产类别列表"
+          },
+          {
+            "name": "本金",
+            "data_type": "number",
+            "description": "投资者的投资本金"
+          },
+          {
+            "name": "持有期",
+            "data_type": "number",
+            "description": "产品的最短持有期限（自然日）"
+          },
+          {
+            "name": "名称",
+            "data_type": "string",
+            "description": "理财产品名称"
+          },
+          {
+            "name": "最短持有期",
+            "data_type": "number",
+            "description": "投资者必须持有的最短天数"
+          },
+          {
+            "name": "认/申购起点",
+            "data_type": "number",
+            "description": "首次认购或申购的金额下限"
+          },
+          {
+            "name": "收益",
+            "data_type": "number",
+            "description": "投资者获得的收益"
+          },
+          {
+            "name": "募集金额上限",
+            "data_type": "number",
+            "description": "计划募集金额的上限"
+          },
+          {
+            "name": "募集金额下限",
+            "data_type": "number",
+            "description": "计划募集金额的下限"
+          },
+          {
+            "name": "认申购起点",
+            "data_type": "number",
+            "description": "初始认购或首次申购的金额要求"
+          },
+          {
+            "name": "份额单位",
+            "data_type": "string",
+            "description": "产品份额的单位"
+          },
+          {
+            "name": "交易时间",
+            "data_type": "string",
+            "description": "申购和赎回的交易时间段"
+          },
+          {
+            "name": "持仓份额比例限制",
+            "data_type": "number",
+            "description": "单个投资者持有份额不得超过产品总份额的比例"
+          },
+          {
+            "name": "持仓份额下限",
+            "data_type": "number",
+            "description": "单个投资者持仓份额的下限"
+          },
+          {
+            "name": "份额",
+            "data_type": "number",
+            "description": "投资者持有的产品份额数量"
+          },
+          {
+            "name": "认购金额",
+            "data_type": "number",
+            "description": "投资者认购产品的金额"
+          },
+          {
+            "name": "申购金额",
+            "data_type": "number",
+            "description": "投资者申购产品的金额"
+          },
+          {
+            "name": "赎回金额",
+            "data_type": "number",
+            "description": "投资者赎回产品获得的金额"
+          },
+          {
+            "name": "持有期限",
+            "data_type": "number",
+            "description": "投资者持有产品的天数"
+          },
+          {
+            "name": "托管费率",
+            "data_type": "number",
+            "description": "每日托管费率的百分比数值"
+          },
+          {
+            "name": "浮动管理费触发收益率",
+            "data_type": "number",
+            "description": "收取浮动管理费时的年化收益率阈值"
+          },
+          {
+            "name": "估值日",
+            "data_type": "date",
+            "description": "产品进行资产估值的日期"
+          },
+          {
+            "name": "成立日",
+            "data_type": "date",
+            "description": "产品成立的日期"
+          },
+          {
+            "name": "提前终止日",
+            "data_type": "date",
+            "description": "产品被提前终止的日期"
+          },
+          {
+            "name": "清算日",
+            "data_type": "date",
+            "description": "产品进行清算的日期"
+          },
+          {
+            "name": "收费标准",
+            "data_type": "object",
+            "description": "产品相关的费用标准"
+          },
+          {
+            "name": "生效时间",
+            "data_type": "datetime",
+            "description": "产品说明书生效的具体时间"
+          },
+          {
+            "name": "终止时间",
+            "data_type": "datetime",
+            "description": "产品说明书终止的具体时间"
+          }
+        ]
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_812b9fc4",
+      "data": {
+        "type": "owl:Class",
+        "label": "风险等级",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_8ab923ba",
+      "data": {
+        "type": "owl:Class",
+        "label": "投资者类型",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_f33f82aa",
+      "data": {
+        "type": "owl:Class",
+        "label": "资产类别",
+        "properties": {
+          "投资比例": ""
+        },
+        "property_definitions": [
+          {
+            "name": "投资比例",
+            "data_type": "number",
+            "description": "该类资产在投资组合中的占比"
+          }
+        ]
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_75a2e647",
+      "data": {
+        "type": "owl:Class",
+        "label": "投资对象",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_2626911f",
+      "data": {
+        "type": "owl:Class",
+        "label": "合作销售机构",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_7502d89a",
+      "data": {
+        "type": "owl:Class",
+        "label": "风险类型",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_1791024e",
+      "data": {
+        "type": "owl:Class",
+        "label": "投资者",
+        "properties": {
+          "客户类型": "",
+          "持有份额": "",
+          "联系方式": "",
+          "身份信息": "",
+          "身份类型": "",
+          "风险承受能力": ""
+        },
+        "property_definitions": [
+          {
+            "name": "风险承受能力",
+            "data_type": "string",
+            "description": "投资者适合投资的风险等级"
+          },
+          {
+            "name": "身份信息",
+            "data_type": "object",
+            "description": "投资者的身份信息（如姓名、证件号等）"
+          },
+          {
+            "name": "联系方式",
+            "data_type": "string",
+            "description": "投资者的预留联系方式"
+          },
+          {
+            "name": "持有份额",
+            "data_type": "number",
+            "description": "投资者持有的产品总份额"
+          },
+          {
+            "name": "身份类型",
+            "data_type": "string",
+            "description": "个人投资者或机构投资者"
+          },
+          {
+            "name": "客户类型",
+            "data_type": "string",
+            "description": "个人客户或机构客户"
+          }
+        ]
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_50310768",
+      "data": {
+        "type": "owl:Class",
+        "label": "投资资产",
+        "properties": {
+          "估值价格": "",
+          "估值机构": "",
+          "公允价值": "",
+          "剩余期限": "",
+          "资产名称": "",
+          "资产比例": "",
+          "资产类型": "",
+          "风险状况": ""
+        },
+        "property_definitions": [
+          {
+            "name": "资产类型",
+            "data_type": "string",
+            "description": "资产的类别，如国债、公司债、非标债权等"
+          },
+          {
+            "name": "剩余期限",
+            "data_type": "string",
+            "description": "资产的剩余融资期限"
+          },
+          {
+            "name": "风险状况",
+            "data_type": "string",
+            "description": "资产的风险评估情况"
+          },
+          {
+            "name": "资产名称",
+            "data_type": "string",
+            "description": "被投资资产的具体名称"
+          },
+          {
+            "name": "估值价格",
+            "data_type": "number",
+            "description": "资产的当前估值价格或净值"
+          },
+          {
+            "name": "估值机构",
+            "data_type": "string",
+            "description": "提供估值数据的第三方机构"
+          },
+          {
+            "name": "资产比例",
+            "data_type": "number",
+            "description": "该资产在投资组合中的比例"
+          },
+          {
+            "name": "公允价值",
+            "data_type": "number",
+            "description": "资产的当前市场价值"
+          }
+        ]
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_4fe91964",
+      "data": {
+        "type": "owl:Class",
+        "label": "投资合作机构",
+        "properties": {
+          "机构类型": ""
+        },
+        "property_definitions": [
+          {
+            "name": "机构类型",
+            "data_type": "string",
+            "description": "机构的角色，如发行机构、受托机构、投资顾问"
+          }
+        ]
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_262c82d6",
+      "data": {
+        "type": "owl:Class",
+        "label": "份额类型",
+        "properties": {
+          "份额代码": ""
+        },
+        "property_definitions": [
+          {
+            "name": "份额代码",
+            "data_type": "string",
+            "description": "特定份额类型的唯一标识代码"
+          }
+        ]
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_87129eb6",
+      "data": {
+        "type": "owl:Class",
+        "label": "募集限制",
+        "properties": {
+          "金额上限": "",
+          "金额下限": ""
+        },
+        "property_definitions": [
+          {
+            "name": "金额上限",
+            "data_type": "number",
+            "description": "计划募集金额的上限"
+          },
+          {
+            "name": "金额下限",
+            "data_type": "number",
+            "description": "计划募集金额的下限"
+          }
+        ]
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_a4977a12",
+      "data": {
+        "type": "owl:Class",
+        "label": "销售机构",
+        "properties": {
+          "住所": "",
+          "名称": "",
+          "企业名称": "",
+          "客户服务热线": "",
+          "统一社会信用代码": ""
+        },
+        "property_definitions": [
+          {
+            "name": "企业名称",
+            "data_type": "string",
+            "description": "销售机构的名称"
+          },
+          {
+            "name": "统一社会信用代码",
+            "data_type": "string",
+            "description": "销售机构的信用代码"
+          },
+          {
+            "name": "住所",
+            "data_type": "string",
+            "description": "销售机构的注册地址"
+          },
+          {
+            "name": "客户服务热线",
+            "data_type": "string",
+            "description": "销售机构的联系电话"
+          },
+          {
+            "name": "名称",
+            "data_type": "string",
+            "description": "销售机构的名称"
+          }
+        ]
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_f4a8d915",
+      "data": {
+        "type": "owl:Class",
+        "label": "管理人",
+        "properties": {
+          "住所": "",
+          "名称": "",
+          "企业名称": "",
+          "机构名称": "",
+          "客户服务热线": "",
+          "统一社会信用代码": ""
+        },
+        "property_definitions": [
+          {
+            "name": "企业名称",
+            "data_type": "string",
+            "description": "理财产品的管理公司名称"
+          },
+          {
+            "name": "住所",
+            "data_type": "string",
+            "description": "管理公司的注册地址"
+          },
+          {
+            "name": "客户服务热线",
+            "data_type": "string",
+            "description": "管理公司的联系电话"
+          },
+          {
+            "name": "名称",
+            "data_type": "string",
+            "description": "管理机构的名称"
+          },
+          {
+            "name": "统一社会信用代码",
+            "data_type": "string",
+            "description": "管理机构的信用代码"
+          },
+          {
+            "name": "机构名称",
+            "data_type": "string",
+            "description": "管理人的名称"
+          }
+        ]
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_dbc3c5b6",
+      "data": {
+        "type": "owl:Class",
+        "label": "销售渠道",
+        "properties": {
+          "住所": "",
+          "企业名称": "",
+          "渠道名称": "",
+          "渠道类型": "",
+          "客户服务热线": "",
+          "统一社会信用代码": ""
+        },
+        "property_definitions": [
+          {
+            "name": "企业名称",
+            "data_type": "string",
+            "description": "销售机构或合作银行的企业名称"
+          },
+          {
+            "name": "统一社会信用代码",
+            "data_type": "string",
+            "description": "销售机构的信用代码"
+          },
+          {
+            "name": "住所",
+            "data_type": "string",
+            "description": "销售机构的注册地址"
+          },
+          {
+            "name": "客户服务热线",
+            "data_type": "string",
+            "description": "销售机构的联系电话"
+          },
+          {
+            "name": "渠道名称",
+            "data_type": "string",
+            "description": "直销渠道或代销机构名称"
+          },
+          {
+            "name": "渠道类型",
+            "data_type": "string",
+            "description": "渠道类型，如直销或代销"
+          }
+        ]
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_c4a81b5c",
+      "data": {
+        "type": "owl:Class",
+        "label": "份额类别",
+        "properties": {
+          "托管费": "",
+          "申购费": "",
+          "认购费": "",
+          "赎回费": "",
+          "销售费率": "",
+          "固定管理费": "",
+          "销售服务费": "",
+          "最低赎回份额": "",
+          "浮动管理费阈值": ""
+        },
+        "property_definitions": [
+          {
+            "name": "销售费率",
+            "data_type": "number",
+            "description": "该份额类别的销售服务费或认购费率"
+          },
+          {
+            "name": "浮动管理费阈值",
+            "data_type": "number",
+            "description": "触发浮动管理费收取的年化收益率阈值"
+          },
+          {
+            "name": "最低赎回份额",
+            "data_type": "number",
+            "description": "单次赎回允许的最小份额"
+          },
+          {
+            "name": "认购费",
+            "data_type": "number",
+            "description": "该类别份额的认购费率"
+          },
+          {
+            "name": "申购费",
+            "data_type": "number",
+            "description": "该类别份额的申购费率"
+          },
+          {
+            "name": "赎回费",
+            "data_type": "number",
+            "description": "该类别份额的赎回费率"
+          },
+          {
+            "name": "销售服务费",
+            "data_type": "number",
+            "description": "该类别份额的销售服务费率"
+          },
+          {
+            "name": "托管费",
+            "data_type": "number",
+            "description": "该类别份额的托管费率"
+          },
+          {
+            "name": "固定管理费",
+            "data_type": "number",
+            "description": "该类别份额的固定管理费率"
+          }
+        ]
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_b69f5f73",
+      "data": {
+        "type": "owl:Class",
+        "label": "托管人",
+        "properties": {
+          "名称": "",
+          "企业名称": "",
+          "机构名称": "",
+          "法定代表人": "",
+          "统一社会信用代码": ""
+        },
+        "property_definitions": [
+          {
+            "name": "名称",
+            "data_type": "string",
+            "description": "托管机构的名称"
+          },
+          {
+            "name": "统一社会信用代码",
+            "data_type": "string",
+            "description": "托管机构的信用代码"
+          },
+          {
+            "name": "企业名称",
+            "data_type": "string",
+            "description": "托管人的企业名称"
+          },
+          {
+            "name": "法定代表人",
+            "data_type": "string",
+            "description": "托管人的法定代表人"
+          },
+          {
+            "name": "机构名称",
+            "data_type": "string",
+            "description": "托管人的机构全称"
+          }
+        ]
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_23cd58bd",
+      "data": {
+        "type": "owl:Class",
+        "label": "投资范围",
+        "properties": {
+          "投资比例": "",
+          "资产类别": "",
+          "资产类型": ""
+        },
+        "property_definitions": [
+          {
+            "name": "资产类型",
+            "data_type": "string",
+            "description": "投资的具体资产类别，如债券、股票、信托计划等"
+          },
+          {
+            "name": "资产类别",
+            "data_type": "array",
+            "description": "投资的资产类型（如债券、股票、衍生品等）"
+          },
+          {
+            "name": "投资比例",
+            "data_type": "number",
+            "description": "各类资产在投资组合中的占比"
+          }
+        ]
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_ca9a21d5",
+      "data": {
+        "type": "owl:Class",
+        "label": "费用",
+        "properties": {
+          "费率": "",
+          "支付周期": "",
+          "支付金额": "",
+          "支付频率": "",
+          "收取条件": "",
+          "收费标准": "",
+          "费用名称": "",
+          "费用类型": ""
+        },
+        "property_definitions": [
+          {
+            "name": "费用类型",
+            "data_type": "string",
+            "description": "费用的具体名称，如认购费、托管费、固定管理费等"
+          },
+          {
+            "name": "费率",
+            "data_type": "number",
+            "description": "费用的收取比例"
+          },
+          {
+            "name": "收费标准",
+            "data_type": "object",
+            "description": "产品说明书约定的收费项目及标准"
+          },
+          {
+            "name": "费用名称",
+            "data_type": "string",
+            "description": "费用的具体名称，如认购费、赎回费等"
+          },
+          {
+            "name": "收取条件",
+            "data_type": "string",
+            "description": "费用收取的条件或触发情形"
+          },
+          {
+            "name": "支付周期",
+            "data_type": "string",
+            "description": "费用的支付频率，如每日、每月、每季、每年"
+          },
+          {
+            "name": "支付频率",
+            "data_type": "string",
+            "description": "费用的支付周期，如每日、按月"
+          },
+          {
+            "name": "支付金额",
+            "data_type": "number",
+            "description": "实际支付的费用金额"
+          }
+        ]
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_c30b1db2",
+      "data": {
+        "type": "owl:Class",
+        "label": "信息披露",
+        "properties": {
+          "披露内容": "",
+          "披露时间": "",
+          "披露渠道": "",
+          "披露频率": ""
+        },
+        "property_definitions": [
+          {
+            "name": "披露渠道",
+            "data_type": "string",
+            "description": "信息发布的平台或方式，如官网、公告"
+          },
+          {
+            "name": "披露频率",
+            "data_type": "string",
+            "description": "定期报告或净值披露的频率"
+          },
+          {
+            "name": "披露内容",
+            "data_type": "string",
+            "description": "披露的具体信息内容"
+          },
+          {
+            "name": "披露时间",
+            "data_type": "datetime",
+            "description": "信息披露的时间"
+          }
+        ]
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_781614e0",
+      "data": {
+        "type": "owl:Class",
+        "label": "费用类型",
+        "properties": {
+          "费率": "",
+          "支付周期": "",
+          "计提方式": ""
+        },
+        "property_definitions": [
+          {
+            "name": "费率",
+            "data_type": "number",
+            "description": "该费用类型的收取比例"
+          },
+          {
+            "name": "支付周期",
+            "data_type": "string",
+            "description": "费用的支付频率，如每日、每月、每年"
+          },
+          {
+            "name": "计提方式",
+            "data_type": "string",
+            "description": "费用的计算和计提逻辑"
+          }
+        ]
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_52d37b6a",
+      "data": {
+        "type": "owl:Class",
+        "label": "风险类别",
+        "properties": {
+          "风险描述": ""
+        },
+        "property_definitions": [
+          {
+            "name": "风险描述",
+            "data_type": "string",
+            "description": "该风险类别的具体定义和说明"
+          }
+        ]
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_57cc40eb",
+      "data": {
+        "type": "owl:Class",
+        "label": "产品状态",
+        "properties": {
+          "状态描述": ""
+        },
+        "property_definitions": [
+          {
+            "name": "状态描述",
+            "data_type": "string",
+            "description": "产品的当前状态，如存续、提前终止、不成立等"
+          }
+        ]
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_9c2ae5cc",
+      "data": {
+        "type": "owl:Class",
+        "label": "风险",
+        "properties": {
+          "风险描述": "",
+          "风险类型": ""
+        },
+        "property_definitions": [
+          {
+            "name": "风险描述",
+            "data_type": "string",
+            "description": "对具体风险的详细说明"
+          },
+          {
+            "name": "风险类型",
+            "data_type": "string",
+            "description": "风险的具体分类，如信用风险、市场风险"
+          }
+        ]
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_1a4bc2d3",
+      "data": {
+        "type": "owl:Class",
+        "label": "代销机构",
+        "properties": {
+          "名称": "",
+          "机构名称": "",
+          "联系方式": ""
+        },
+        "property_definitions": [
+          {
+            "name": "机构名称",
+            "data_type": "string",
+            "description": "合作销售机构的名称"
+          },
+          {
+            "name": "名称",
+            "data_type": "string",
+            "description": "代销机构的名称"
+          },
+          {
+            "name": "联系方式",
+            "data_type": "string",
+            "description": "代销机构提供的咨询或投诉联系方式"
+          }
+        ]
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_5e660315",
+      "data": {
+        "type": "owl:Class",
+        "label": "监管机构",
+        "properties": {
+          "机构名称": ""
+        },
+        "property_definitions": [
+          {
+            "name": "机构名称",
+            "data_type": "string",
+            "description": "监管机构名称（如金融监管总局、证监会等）"
+          }
+        ]
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_d5ad86f1",
+      "data": {
+        "type": "owl:Class",
+        "label": "投资标",
+        "properties": {
+          "名称": ""
+        },
+        "property_definitions": [
+          {
+            "name": "名称",
+            "data_type": "string",
+            "description": "具体投资标的名称"
+          }
+        ]
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_7f61018a",
+      "data": {
+        "type": "owl:Class",
+        "label": "法律文件",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_66a8d294",
+      "data": {
+        "type": "owl:Class",
+        "label": "税费",
+        "properties": {
+          "税率": "",
+          "税种": ""
+        },
+        "property_definitions": [
+          {
+            "name": "税种",
+            "data_type": "string",
+            "description": "税费的种类，如增值税、所得税等"
+          },
+          {
+            "name": "税率",
+            "data_type": "number",
+            "description": "税费的税率"
+          }
+        ]
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_8bda406e",
+      "data": {
+        "type": "owl:Class",
+        "label": "账户",
+        "properties": {
+          "账户余额": "",
+          "账户类型": ""
+        },
+        "property_definitions": [
+          {
+            "name": "账户类型",
+            "data_type": "string",
+            "description": "账户的类型，如托管账户、投资者账户等"
+          },
+          {
+            "name": "账户余额",
+            "data_type": "number",
+            "description": "账户的余额"
+          }
+        ]
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "C_3923643e",
+      "data": {
+        "type": "owl:Class",
+        "label": "争议解决方式",
+        "properties": {
+          "仲裁地点": "",
+          "仲裁机构": "",
+          "适用法律": ""
+        },
+        "property_definitions": [
+          {
+            "name": "适用法律",
+            "data_type": "string",
+            "description": "解决争议适用的法律体系"
+          },
+          {
+            "name": "仲裁机构",
+            "data_type": "string",
+            "description": "负责仲裁的委员会名称"
+          },
+          {
+            "name": "仲裁地点",
+            "data_type": "string",
+            "description": "仲裁进行的地理位置"
+          }
+        ]
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_49c5f088",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "信银理财安盈象固收稳利十四个月封闭式242号理财产品",
+        "properties": {
+          "到期日": "2027年4月22日",
+          "产品代码": "AF253322",
+          "产品期限": "421",
+          "投资比例": "债权类资产80%-100%,非标准化债权类资产0%-49%,权益类资产0%,商品及金融衍生品类资产0%-20%",
+          "投资范围": "债权类资产、权益类资产、商品及金融衍生品类资产",
+          "登记编码": "Z7002626000092",
+          "风险等级": "中低",
+          "风险评级": "PR2",
+          "适合投资者类型": "稳健型、平衡型、进取型、激进型"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_82f425d2",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "PR2",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_d4898531",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "稳健型",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_040a0029",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "平衡型",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_2b6fb334",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "进取型",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_3a8d16dc",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "激进型",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_eee33577",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "债权类资产",
+        "properties": {
+          "投资比例": "80%-100%"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_5040c697",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "非标准化债权类资产",
+        "properties": {
+          "投资比例": "0%-49%"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_65782e69",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "权益类资产",
+        "properties": {
+          "投资比例": "0%"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_d3ef4845",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "商品及金融衍生品类资产",
+        "properties": {
+          "投资比例": "0%-20%"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_25fc8c38",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "信用风险",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_c4f988ec",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "市场风险",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_5491b56a",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "流动性风险",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_ec09836f",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "提前终止风险",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_315a9268",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "政策风险",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_7c64b483",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "信息传递风险",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_0b5f42c1",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "管理风险",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_2157202b",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "延期清算风险",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_2e6f2e37",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "理财产品不成立风险",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_0c676251",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "不可抗力及意外事件风险",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_37731870",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "理财本金全部损失风险",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_0f9d085d",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "合作销售机构（代销机构）风险",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_7edf6c4f",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "操作风险",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_42a52968",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "关联交易风险",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_66ec930b",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "国务院银行业监督管理机构",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_375492a5",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "中国人民银行",
+        "properties": {
+          "机构名称": "中国人民银行"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_950f328b",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "国家金融监督管理总局",
+        "properties": {
+          "机构名称": "国家金融监督管理总局"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_2758910e",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "中国证券监督管理委员会",
+        "properties": {
+          "机构名称": "中国证券监督管理委员会"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_e2738a16",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "外汇管理局",
+        "properties": {
+          "机构名称": "外汇管理局"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_5ed2d6a8",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "银行业理财登记托管中心",
+        "properties": {
+          "机构名称": "银行业理财登记托管中心"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_8948c874",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "谨慎型",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_1f8df416",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "封闭式",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_8fc6b75d",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "十四个月",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_c69f6e32",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "242号",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_da9b8ea5",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "信银理财有限责任公司",
+        "properties": {
+          "住所": "上海市黄浦区中山东二路600 号1 幢35 层、36 层",
+          "名称": "信银理财有限责任公司",
+          "风险评级": "PR2",
+          "客户服务热线": "950950",
+          "浮动管理费阈值": "2.75%",
+          "统一社会信用代码": "91310000MA1FL7AC87"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_921ccc86",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江浦江农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省浦江县人民东路90 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "913307261476928819"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_002119de",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江衢州柯城农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省上街92 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "913308001477477826"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_35983653",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江衢州衢江农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省衢州市衢江区樟潭街道信安东路37 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91330800147752813B"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_38f95c6f",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江龙游农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省衢州市龙游县龙洲街道荣昌大道683、685、687 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91330825769632509M"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_692e89ea",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江江山农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省江山市双塔街道江滨路188 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "913308001478831865"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_c6a091ef",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江常山农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省衢州市常山县天马街道人民路125 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91330822147845315H"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_ace741a9",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江开化农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省衢州市开化县华埠镇永吉二路8 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "913308241479259480"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_4be29e6c",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江丽水莲都农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江丽水市解放街438 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91331100148440061D"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_9cfa7305",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江青田农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省青田县鹤城街道鹤城东路180 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "913311007757320399"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_b65995e9",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江云和农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省丽水市云和县浮云街道新建路72 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "9133112514848825XE"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_1f48e99f",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江龙泉农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省丽水市龙泉市中山东路101 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91331181148543853J"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_16498dd1",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江庆元农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省丽水市庆元县濛洲街道云鹤路3 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91331126609962015U"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_05753aa7",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江缙云农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省丽水市缙云县五云镇新区仙都路68 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "913311227047843259"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_813c7a75",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江遂昌农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省丽水市遂昌县妙高街道溪边路100 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91331123148661817E"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_7c0756df",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江松阳农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省丽水市松阳县水南街道要津南路71 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91331124148632856X"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_f743feac",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江景宁农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省丽水市景宁畲族自治县红星街道人民中路201 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91331127704796094T"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_03e19d4b",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江台州椒江农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省台州市椒江区工人东路322 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "913310021482768636"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_507386cf",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江台州黄岩农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省台州市黄岩区洞天路88 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91331003770736460B"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_58a5b30e",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江台州路桥农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省台州市路桥区西路桥大道328 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91331004771942717H"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_4a67cdfe",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江温岭农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省台州市温岭市城东街道下保路100 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "913310001489096329"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_935fe1aa",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江玉环农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省玉环市玉城街道珠港大道26 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91331021704702414T"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_2d7dff6a",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江天台农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省天台县赤城街道飞鹤路358 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91331000148073695C"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_26b9cef6",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江仙居农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省仙居县南峰街道穿城中路21 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91331024148032965W"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_c5384784",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江三门农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省三门县海游街道上洋路68 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91331022774367359X"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_c920e081",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江舟山定海海洋农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省舟山市定海区环城东路81 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91330900148740320U"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_04e0875c",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江舟山普陀农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省舟山市普陀区东港街道麒麟街225 号（自贸试验区 内）",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "913309006831072360"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_b974ca45",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江岱山农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省舟山市岱山县高亭镇衢山大道1009 号(自主申报)",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91330921778250107N"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_31cf8f7e",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "湖州吴兴农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省湖州市东街55 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "913305007782713708"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_efe7e8a0",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江临安农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省杭州市临安区锦城街道城中街442 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "913301851437582064"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_20f52ab1",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江桐庐农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省杭州市桐庐县城迎春南路278 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "913301228436000474"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_d90dcdb1",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江建德农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省建德市新安江街道江滨中路176 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "9133018270429246XA"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_a963c0ad",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江淳安农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省杭州市淳安县千岛湖镇环湖北路369 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "9133012714400940XB"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_c8e6d1d6",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "宁波余姚农村商业银行股份有限公司",
+        "properties": {
+          "住所": "余姚市新建路69 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91330281768530578N"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_617e706b",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "宁波北仑农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省宁波市北仑区新碶宝山路69 号（凤凰国际商务广 场）1 幢69 号、63 号（凤凰国际商务广场）1 幢（2-26 层）",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91330206144292356K"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_b841c43a",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "宁波奉化农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省宁波市奉化区锦屏街道中山路27 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "913302001448601066"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_eb26aaa6",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "宁波镇海农村商业银行股份有限公司",
+        "properties": {
+          "住所": "宁波市镇海区骆驼街道镇海大道中段788 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91330200717212676J"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_af602a0d",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "宁波宁海农村商业银行股份有限公司",
+        "properties": {
+          "住所": "宁海县跃龙街道学勉路1 号（金融中心）",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91330200144938786M"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_8568933c",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "宁波甬城农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省宁波市江北区育才路15、17 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91330205704848042N"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_68268a85",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江永嘉农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省温州市永嘉县瓯北街道阳光大道3918 号101 室、201 室、301 室、401 室、501 室、1101 室、1801 室、2201 室",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91330300693852088P"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_fe9b4432",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江平阳农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省平阳县鳌江镇车站大道999 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91330300778260532C"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_d4541c8f",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江苍南农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省苍南县灵溪镇人民大道425 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "913303007043722167"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_a71ff3ba",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江文成农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省温州市文成县大峃镇伯温路6 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91330328145827746X"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_452ba4c2",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江泰顺农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省温州市泰顺县罗阳镇新城区文祥大道181 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "913303297043793629"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_a0e1103c",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江禾城农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省嘉兴市经济技术开发区文昌路1229 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91330400146466356E"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_2ca3191b",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江嘉善农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省嘉兴市嘉善县罗星街道车站南路999 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91330400146600914H"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_87a27671",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江平湖农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省平湖市当湖街道胜利路518 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "913304821466775403"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_47f62568",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江海宁农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省海宁市海洲街道钱江西路278 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91330400146707324M"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_d37f4b90",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江海盐农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省海盐县武原街道枣园西路176 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91330424254846268L"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_4af4d7b1",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江桐乡农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省嘉兴市桐乡市梧桐街道校场东路59 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91330483146852863F"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_f7183abb",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江长兴农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省湖州市长兴县太湖街道明珠路1298 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91330522147148640A"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_cd1fad6a",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江安吉农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省湖州市安吉县昌硕街道昌硕东路1 号(自主申报)",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91330500680700499G"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_735797ae",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江嵊泗农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省嵊泗县菜园镇沙河路110 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "9133092270466354XL"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_6613fc59",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江南浔农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省湖州市南浔区南浔镇人瑞路1188 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "913305001470196549"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_97be6e11",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江上虞农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省百官街道德盛路55 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91330600146116161G"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_e38082be",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江嵊州农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省嵊州市剡湖街道官河路398 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91330683146384641Y"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_2d5070b5",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江诸暨农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省诸暨市暨阳街道大桥东路2 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "91330600146217704F"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_6617b297",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浙江绍兴恒信农村商业银行股份有限公司",
+        "properties": {
+          "住所": "浙江省绍兴市中兴中路159 号",
+          "客户服务热线": "0571-96596",
+          "统一社会信用代码": "9133060271252980XJ"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_9759f53a",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "中信银行股份有限公司",
+        "properties": {
+          "住所": "北京市朝阳区光华路10号中信大厦",
+          "法定代表人": "方合英",
+          "客户服务热线": "95558",
+          "纳税人识别号": "91110000101690725E",
+          "统一社会信用代码": "91110000101690725E"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_47caeffd",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "上海浦东发展银行股份有限公司",
+        "properties": {
+          "住所": "上海市黄浦区中山东一路12 号",
+          "客户服务热线": "95528",
+          "统一社会信用代码": "9131000013221158XC"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_7bc3b313",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "信银理财",
+        "properties": {
+          "名称": "信银理财",
+          "机构名称": "信银理财有限责任公司"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_e88f569a",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "http://www.citic-wealth.com",
+        "properties": {
+          "披露渠道": "http://www.citic-wealth.com"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_079fa077",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "投资者理财账户",
+        "properties": {
+          "账户类型": "投资者理财账户"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_403e007c",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "投资者理财交易账户",
+        "properties": {
+          "账户类型": "投资者理财交易账户"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_effd6098",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "销售服务费",
+        "properties": {
+          "费率": "0.05%/年",
+          "支付周期": "季",
+          "费用名称": "销售服务费"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_cdc26ba3",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "托管费",
+        "properties": {
+          "费率": "0.05%/年",
+          "支付周期": "年",
+          "费用名称": "托管费"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_36cd3212",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "固定管理费",
+        "properties": {
+          "费率": "0.15%",
+          "支付周期": "月",
+          "费用名称": "固定管理费"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_1ccea9a2",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "浮动管理费",
+        "properties": {
+          "费率": "50%",
+          "触发条件": "年化收益率超过【2.65%】",
+          "费用名称": "浮动管理费",
+          "浮动管理费比例": "50%",
+          "浮动管理费阈值": "2.60%"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_cd66fb68",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "本产品",
+        "properties": {
+          "风险评级": "PR2"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_69eb6abc",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "存续",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_3a2329eb",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "资金汇划费",
+        "properties": {
+          "费用名称": "资金汇划费"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_11d724c8",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "结算费",
+        "properties": {
+          "费用名称": "结算费"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_43bfa51e",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "交易手续费",
+        "properties": {
+          "费用名称": "交易手续费"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_ba5e6cdb",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "注册登记费",
+        "properties": {
+          "费用名称": "注册登记费"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_81435a07",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "信息披露费",
+        "properties": {
+          "费用名称": "信息披露费"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_7a9ca001",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "账户服务费",
+        "properties": {
+          "费用名称": "账户服务费"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_58e66dbd",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "审计费",
+        "properties": {
+          "费用名称": "审计费"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_dfd9a88f",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "律师费",
+        "properties": {
+          "费用名称": "律师费"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_fed17867",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "资产推荐服务费",
+        "properties": {
+          "费用名称": "资产推荐服务费"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_e938f0cf",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "托管人",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_5d796030",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "本理财产品合同",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_b1b9281b",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "各类资产",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_301240b3",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "估值错误风险",
+        "properties": {}
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "I_39f38703",
+      "data": {
+        "type": "owl:NamedIndividual",
+        "label": "信银理财慧盈象固收增利六个月持有期108号理财产品",
+        "properties": {
+          "产品代码": "AF263647",
+          "登记编码": "Z7002626000317",
+          "风险等级": "PR2",
+          "风险评级": "PR2",
+          "最短持有期": "180"
+        }
+      },
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    }
+  ],
+  "schema": {
+    "classes": [
+      {
+        "id": "C_110b48ac",
+        "label": "理财产品",
+        "sub_class_of": null,
+        "data_properties": [
+          "成立日",
+          "投资范围",
+          "持有期",
+          "固定管理费",
+          "份额面值",
+          "风险等级",
+          "份额类别",
+          "产品类型",
+          "份额单位",
+          "托管费率",
+          "运作起始日",
+          "认/申购起点",
+          "币种",
+          "持仓份额比例限制",
+          "业绩比较基准",
+          "募集期",
+          "认申购起点",
+          "浮动管理费触发收益率",
+          "浮动管理费",
+          "风险评级",
+          "募集金额上限",
+          "交易时间",
+          "生效时间",
+          "认购起点",
+          "产品名称",
+          "募集金额下限",
+          "持有期限",
+          "名称",
+          "到期日",
+          "收益",
+          "收费标准",
+          "预期收益率",
+          "产品期限",
+          "产品代码",
+          "登记编码",
+          "提前终止日",
+          "本金",
+          "份额代码",
+          "份额",
+          "单位净值",
+          "收益率",
+          "浮动管理费阈值",
+          "固定管理费率",
+          "清算日",
+          "投资本金",
+          "年化收益率",
+          "终止时间",
+          "认购金额",
+          "估值日",
+          "持仓份额下限",
+          "赎回金额",
+          "托管费",
+          "最短持有期",
+          "估值方法",
+          "申购金额",
+          "销售服务费",
+          "份额类型",
+          "浮动管理费比例"
+        ],
+        "property_definitions": [
+          {
+            "name": "产品名称",
+            "data_type": "string",
+            "description": "理财产品的具体名称"
+          },
+          {
+            "name": "产品代码",
+            "data_type": "string",
+            "description": "理财产品的唯一识别代码"
+          },
+          {
+            "name": "风险评级",
+            "data_type": "string",
+            "description": "产品的风险等级（如 PR1, PR2 等）"
+          },
+          {
+            "name": "产品期限",
+            "data_type": "number",
+            "description": "产品的存续天数"
+          },
+          {
+            "name": "到期日",
+            "data_type": "date",
+            "description": "产品的到期日期"
+          },
+          {
+            "name": "登记编码",
+            "data_type": "string",
+            "description": "全国银行业理财信息登记系统赋予的编码"
+          },
+          {
+            "name": "单位净值",
+            "data_type": "number",
+            "description": "每份产品的净值"
+          },
+          {
+            "name": "投资本金",
+            "data_type": "number",
+            "description": "投资者交付的货币资金"
+          },
+          {
+            "name": "预期收益率",
+            "data_type": "number",
+            "description": "产品说明书中明确规定的收益"
+          },
+          {
+            "name": "产品类型",
+            "data_type": "string",
+            "description": "产品的分类，如固定收益类、权益类等"
+          },
+          {
+            "name": "风险等级",
+            "data_type": "string",
+            "description": "产品的风险评级，如稳健型、平衡型等"
+          },
+          {
+            "name": "业绩比较基准",
+            "data_type": "string",
+            "description": "产品设定的预期收益率范围"
+          },
+          {
+            "name": "币种",
+            "data_type": "string",
+            "description": "产品投资与收益的货币种类"
+          },
+          {
+            "name": "募集期",
+            "data_type": "date",
+            "description": "产品接受认购的时间段"
+          },
+          {
+            "name": "运作起始日",
+            "data_type": "date",
+            "description": "产品正式开始运作的时间"
+          },
+          {
+            "name": "认购起点",
+            "data_type": "number",
+            "description": "投资者首次购买产品的最低金额"
+          },
+          {
+            "name": "份额面值",
+            "data_type": "number",
+            "description": "每一份理财产品份额的基准价值"
+          },
+          {
+            "name": "销售服务费",
+            "data_type": "number",
+            "description": "因销售渠道不同而产生的费用费率"
+          },
+          {
+            "name": "固定管理费",
+            "data_type": "number",
+            "description": "管理人收取的固定比例管理费用"
+          },
+          {
+            "name": "托管费",
+            "data_type": "number",
+            "description": "托管人收取的费用"
+          },
+          {
+            "name": "浮动管理费",
+            "data_type": "number",
+            "description": "基于超额收益提取的管理费用"
+          },
+          {
+            "name": "浮动管理费比例",
+            "data_type": "number",
+            "description": "超过基准后收取的管理费比例"
+          },
+          {
+            "name": "份额类型",
+            "data_type": "string",
+            "description": "产品的份额类别，如 L 类、M 类等"
+          },
+          {
+            "name": "份额代码",
+            "data_type": "string",
+            "description": "特定份额的唯一标识代码"
+          },
+          {
+            "name": "份额类别",
+            "data_type": "string",
+            "description": "产品的份额类型，如 S 类、T 类、V 类"
+          },
+          {
+            "name": "收益率",
+            "data_type": "number",
+            "description": "产品的年化收益率或业绩比较基准"
+          },
+          {
+            "name": "年化收益率",
+            "data_type": "number",
+            "description": "产品的预期或实际年化收益率"
+          },
+          {
+            "name": "固定管理费率",
+            "data_type": "number",
+            "description": "按年收取的固定管理费比例"
+          },
+          {
+            "name": "浮动管理费阈值",
+            "data_type": "number",
+            "description": "触发浮动管理费收取的收益率基准"
+          },
+          {
+            "name": "估值方法",
+            "data_type": "string",
+            "description": "资产估值采用的方法，如摊余成本法、公允价值等"
+          },
+          {
+            "name": "投资范围",
+            "data_type": "array",
+            "description": "产品可投资的资产类别列表"
+          },
+          {
+            "name": "本金",
+            "data_type": "number",
+            "description": "投资者的投资本金"
+          },
+          {
+            "name": "持有期",
+            "data_type": "number",
+            "description": "产品的最短持有期限（自然日）"
+          },
+          {
+            "name": "名称",
+            "data_type": "string",
+            "description": "理财产品名称"
+          },
+          {
+            "name": "最短持有期",
+            "data_type": "number",
+            "description": "投资者必须持有的最短天数"
+          },
+          {
+            "name": "认/申购起点",
+            "data_type": "number",
+            "description": "首次认购或申购的金额下限"
+          },
+          {
+            "name": "收益",
+            "data_type": "number",
+            "description": "投资者获得的收益"
+          },
+          {
+            "name": "募集金额上限",
+            "data_type": "number",
+            "description": "计划募集金额的上限"
+          },
+          {
+            "name": "募集金额下限",
+            "data_type": "number",
+            "description": "计划募集金额的下限"
+          },
+          {
+            "name": "认申购起点",
+            "data_type": "number",
+            "description": "初始认购或首次申购的金额要求"
+          },
+          {
+            "name": "份额单位",
+            "data_type": "string",
+            "description": "产品份额的单位"
+          },
+          {
+            "name": "交易时间",
+            "data_type": "string",
+            "description": "申购和赎回的交易时间段"
+          },
+          {
+            "name": "持仓份额比例限制",
+            "data_type": "number",
+            "description": "单个投资者持有份额不得超过产品总份额的比例"
+          },
+          {
+            "name": "持仓份额下限",
+            "data_type": "number",
+            "description": "单个投资者持仓份额的下限"
+          },
+          {
+            "name": "份额",
+            "data_type": "number",
+            "description": "投资者持有的产品份额数量"
+          },
+          {
+            "name": "认购金额",
+            "data_type": "number",
+            "description": "投资者认购产品的金额"
+          },
+          {
+            "name": "申购金额",
+            "data_type": "number",
+            "description": "投资者申购产品的金额"
+          },
+          {
+            "name": "赎回金额",
+            "data_type": "number",
+            "description": "投资者赎回产品获得的金额"
+          },
+          {
+            "name": "持有期限",
+            "data_type": "number",
+            "description": "投资者持有产品的天数"
+          },
+          {
+            "name": "托管费率",
+            "data_type": "number",
+            "description": "每日托管费率的百分比数值"
+          },
+          {
+            "name": "浮动管理费触发收益率",
+            "data_type": "number",
+            "description": "收取浮动管理费时的年化收益率阈值"
+          },
+          {
+            "name": "估值日",
+            "data_type": "date",
+            "description": "产品进行资产估值的日期"
+          },
+          {
+            "name": "成立日",
+            "data_type": "date",
+            "description": "产品成立的日期"
+          },
+          {
+            "name": "提前终止日",
+            "data_type": "date",
+            "description": "产品被提前终止的日期"
+          },
+          {
+            "name": "清算日",
+            "data_type": "date",
+            "description": "产品进行清算的日期"
+          },
+          {
+            "name": "收费标准",
+            "data_type": "object",
+            "description": "产品相关的费用标准"
+          },
+          {
+            "name": "生效时间",
+            "data_type": "datetime",
+            "description": "产品说明书生效的具体时间"
+          },
+          {
+            "name": "终止时间",
+            "data_type": "datetime",
+            "description": "产品说明书终止的具体时间"
+          }
+        ]
+      },
+      {
+        "id": "C_812b9fc4",
+        "label": "风险等级",
+        "sub_class_of": null,
+        "data_properties": [],
+        "property_definitions": []
+      },
+      {
+        "id": "C_8ab923ba",
+        "label": "投资者类型",
+        "sub_class_of": null,
+        "data_properties": [],
+        "property_definitions": []
+      },
+      {
+        "id": "C_f33f82aa",
+        "label": "资产类别",
+        "sub_class_of": null,
+        "data_properties": [
+          "投资比例"
+        ],
+        "property_definitions": [
+          {
+            "name": "投资比例",
+            "data_type": "number",
+            "description": "该类资产在投资组合中的占比"
+          }
+        ]
+      },
+      {
+        "id": "C_75a2e647",
+        "label": "投资对象",
+        "sub_class_of": "C_f33f82aa",
+        "data_properties": [],
+        "property_definitions": []
+      },
+      {
+        "id": "C_2626911f",
+        "label": "合作销售机构",
+        "sub_class_of": null,
+        "data_properties": [],
+        "property_definitions": []
+      },
+      {
+        "id": "C_7502d89a",
+        "label": "风险类型",
+        "sub_class_of": null,
+        "data_properties": [],
+        "property_definitions": []
+      },
+      {
+        "id": "C_1791024e",
+        "label": "投资者",
+        "sub_class_of": null,
+        "data_properties": [
+          "持有份额",
+          "身份类型",
+          "风险承受能力",
+          "身份信息",
+          "联系方式",
+          "客户类型"
+        ],
+        "property_definitions": [
+          {
+            "name": "风险承受能力",
+            "data_type": "string",
+            "description": "投资者适合投资的风险等级"
+          },
+          {
+            "name": "身份信息",
+            "data_type": "object",
+            "description": "投资者的身份信息（如姓名、证件号等）"
+          },
+          {
+            "name": "联系方式",
+            "data_type": "string",
+            "description": "投资者的预留联系方式"
+          },
+          {
+            "name": "持有份额",
+            "data_type": "number",
+            "description": "投资者持有的产品总份额"
+          },
+          {
+            "name": "身份类型",
+            "data_type": "string",
+            "description": "个人投资者或机构投资者"
+          },
+          {
+            "name": "客户类型",
+            "data_type": "string",
+            "description": "个人客户或机构客户"
+          }
+        ]
+      },
+      {
+        "id": "C_50310768",
+        "label": "投资资产",
+        "sub_class_of": null,
+        "data_properties": [
+          "估值价格",
+          "资产名称",
+          "风险状况",
+          "资产比例",
+          "剩余期限",
+          "公允价值",
+          "资产类型",
+          "估值机构"
+        ],
+        "property_definitions": [
+          {
+            "name": "资产类型",
+            "data_type": "string",
+            "description": "资产的类别，如国债、公司债、非标债权等"
+          },
+          {
+            "name": "剩余期限",
+            "data_type": "string",
+            "description": "资产的剩余融资期限"
+          },
+          {
+            "name": "风险状况",
+            "data_type": "string",
+            "description": "资产的风险评估情况"
+          },
+          {
+            "name": "资产名称",
+            "data_type": "string",
+            "description": "被投资资产的具体名称"
+          },
+          {
+            "name": "估值价格",
+            "data_type": "number",
+            "description": "资产的当前估值价格或净值"
+          },
+          {
+            "name": "估值机构",
+            "data_type": "string",
+            "description": "提供估值数据的第三方机构"
+          },
+          {
+            "name": "资产比例",
+            "data_type": "number",
+            "description": "该资产在投资组合中的比例"
+          },
+          {
+            "name": "公允价值",
+            "data_type": "number",
+            "description": "资产的当前市场价值"
+          }
+        ]
+      },
+      {
+        "id": "C_4fe91964",
+        "label": "投资合作机构",
+        "sub_class_of": null,
+        "data_properties": [
+          "机构类型"
+        ],
+        "property_definitions": [
+          {
+            "name": "机构类型",
+            "data_type": "string",
+            "description": "机构的角色，如发行机构、受托机构、投资顾问"
+          }
+        ]
+      },
+      {
+        "id": "C_262c82d6",
+        "label": "份额类型",
+        "sub_class_of": null,
+        "data_properties": [
+          "份额代码"
+        ],
+        "property_definitions": [
+          {
+            "name": "份额代码",
+            "data_type": "string",
+            "description": "特定份额类型的唯一标识代码"
+          }
+        ]
+      },
+      {
+        "id": "C_87129eb6",
+        "label": "募集限制",
+        "sub_class_of": null,
+        "data_properties": [
+          "金额上限",
+          "金额下限"
+        ],
+        "property_definitions": [
+          {
+            "name": "金额上限",
+            "data_type": "number",
+            "description": "计划募集金额的上限"
+          },
+          {
+            "name": "金额下限",
+            "data_type": "number",
+            "description": "计划募集金额的下限"
+          }
+        ]
+      },
+      {
+        "id": "C_a4977a12",
+        "label": "销售机构",
+        "sub_class_of": null,
+        "data_properties": [
+          "住所",
+          "企业名称",
+          "客户服务热线",
+          "统一社会信用代码",
+          "名称"
+        ],
+        "property_definitions": [
+          {
+            "name": "企业名称",
+            "data_type": "string",
+            "description": "销售机构的名称"
+          },
+          {
+            "name": "统一社会信用代码",
+            "data_type": "string",
+            "description": "销售机构的信用代码"
+          },
+          {
+            "name": "住所",
+            "data_type": "string",
+            "description": "销售机构的注册地址"
+          },
+          {
+            "name": "客户服务热线",
+            "data_type": "string",
+            "description": "销售机构的联系电话"
+          },
+          {
+            "name": "名称",
+            "data_type": "string",
+            "description": "销售机构的名称"
+          }
+        ]
+      },
+      {
+        "id": "C_f4a8d915",
+        "label": "管理人",
+        "sub_class_of": null,
+        "data_properties": [
+          "住所",
+          "企业名称",
+          "客户服务热线",
+          "统一社会信用代码",
+          "名称",
+          "机构名称"
+        ],
+        "property_definitions": [
+          {
+            "name": "企业名称",
+            "data_type": "string",
+            "description": "理财产品的管理公司名称"
+          },
+          {
+            "name": "住所",
+            "data_type": "string",
+            "description": "管理公司的注册地址"
+          },
+          {
+            "name": "客户服务热线",
+            "data_type": "string",
+            "description": "管理公司的联系电话"
+          },
+          {
+            "name": "名称",
+            "data_type": "string",
+            "description": "管理机构的名称"
+          },
+          {
+            "name": "统一社会信用代码",
+            "data_type": "string",
+            "description": "管理机构的信用代码"
+          },
+          {
+            "name": "机构名称",
+            "data_type": "string",
+            "description": "管理人的名称"
+          }
+        ]
+      },
+      {
+        "id": "C_dbc3c5b6",
+        "label": "销售渠道",
+        "sub_class_of": null,
+        "data_properties": [
+          "住所",
+          "企业名称",
+          "统一社会信用代码",
+          "渠道名称",
+          "渠道类型",
+          "客户服务热线"
+        ],
+        "property_definitions": [
+          {
+            "name": "企业名称",
+            "data_type": "string",
+            "description": "销售机构或合作银行的企业名称"
+          },
+          {
+            "name": "统一社会信用代码",
+            "data_type": "string",
+            "description": "销售机构的信用代码"
+          },
+          {
+            "name": "住所",
+            "data_type": "string",
+            "description": "销售机构的注册地址"
+          },
+          {
+            "name": "客户服务热线",
+            "data_type": "string",
+            "description": "销售机构的联系电话"
+          },
+          {
+            "name": "渠道名称",
+            "data_type": "string",
+            "description": "直销渠道或代销机构名称"
+          },
+          {
+            "name": "渠道类型",
+            "data_type": "string",
+            "description": "渠道类型，如直销或代销"
+          }
+        ]
+      },
+      {
+        "id": "C_c4a81b5c",
+        "label": "份额类别",
+        "sub_class_of": "C_110b48ac",
+        "data_properties": [
+          "申购费",
+          "认购费",
+          "固定管理费",
+          "赎回费",
+          "托管费",
+          "销售服务费",
+          "浮动管理费阈值",
+          "最低赎回份额",
+          "销售费率"
+        ],
+        "property_definitions": [
+          {
+            "name": "销售费率",
+            "data_type": "number",
+            "description": "该份额类别的销售服务费或认购费率"
+          },
+          {
+            "name": "浮动管理费阈值",
+            "data_type": "number",
+            "description": "触发浮动管理费收取的年化收益率阈值"
+          },
+          {
+            "name": "最低赎回份额",
+            "data_type": "number",
+            "description": "单次赎回允许的最小份额"
+          },
+          {
+            "name": "认购费",
+            "data_type": "number",
+            "description": "该类别份额的认购费率"
+          },
+          {
+            "name": "申购费",
+            "data_type": "number",
+            "description": "该类别份额的申购费率"
+          },
+          {
+            "name": "赎回费",
+            "data_type": "number",
+            "description": "该类别份额的赎回费率"
+          },
+          {
+            "name": "销售服务费",
+            "data_type": "number",
+            "description": "该类别份额的销售服务费率"
+          },
+          {
+            "name": "托管费",
+            "data_type": "number",
+            "description": "该类别份额的托管费率"
+          },
+          {
+            "name": "固定管理费",
+            "data_type": "number",
+            "description": "该类别份额的固定管理费率"
+          }
+        ]
+      },
+      {
+        "id": "C_b69f5f73",
+        "label": "托管人",
+        "sub_class_of": null,
+        "data_properties": [
+          "企业名称",
+          "统一社会信用代码",
+          "名称",
+          "机构名称",
+          "法定代表人"
+        ],
+        "property_definitions": [
+          {
+            "name": "名称",
+            "data_type": "string",
+            "description": "托管机构的名称"
+          },
+          {
+            "name": "统一社会信用代码",
+            "data_type": "string",
+            "description": "托管机构的信用代码"
+          },
+          {
+            "name": "企业名称",
+            "data_type": "string",
+            "description": "托管人的企业名称"
+          },
+          {
+            "name": "法定代表人",
+            "data_type": "string",
+            "description": "托管人的法定代表人"
+          },
+          {
+            "name": "机构名称",
+            "data_type": "string",
+            "description": "托管人的机构全称"
+          }
+        ]
+      },
+      {
+        "id": "C_23cd58bd",
+        "label": "投资范围",
+        "sub_class_of": null,
+        "data_properties": [
+          "投资比例",
+          "资产类别",
+          "资产类型"
+        ],
+        "property_definitions": [
+          {
+            "name": "资产类型",
+            "data_type": "string",
+            "description": "投资的具体资产类别，如债券、股票、信托计划等"
+          },
+          {
+            "name": "资产类别",
+            "data_type": "array",
+            "description": "投资的资产类型（如债券、股票、衍生品等）"
+          },
+          {
+            "name": "投资比例",
+            "data_type": "number",
+            "description": "各类资产在投资组合中的占比"
+          }
+        ]
+      },
+      {
+        "id": "C_ca9a21d5",
+        "label": "费用",
+        "sub_class_of": null,
+        "data_properties": [
+          "支付金额",
+          "费用类型",
+          "费率",
+          "费用名称",
+          "支付频率",
+          "收取条件",
+          "支付周期",
+          "收费标准"
+        ],
+        "property_definitions": [
+          {
+            "name": "费用类型",
+            "data_type": "string",
+            "description": "费用的具体名称，如认购费、托管费、固定管理费等"
+          },
+          {
+            "name": "费率",
+            "data_type": "number",
+            "description": "费用的收取比例"
+          },
+          {
+            "name": "收费标准",
+            "data_type": "object",
+            "description": "产品说明书约定的收费项目及标准"
+          },
+          {
+            "name": "费用名称",
+            "data_type": "string",
+            "description": "费用的具体名称，如认购费、赎回费等"
+          },
+          {
+            "name": "收取条件",
+            "data_type": "string",
+            "description": "费用收取的条件或触发情形"
+          },
+          {
+            "name": "支付周期",
+            "data_type": "string",
+            "description": "费用的支付频率，如每日、每月、每季、每年"
+          },
+          {
+            "name": "支付频率",
+            "data_type": "string",
+            "description": "费用的支付周期，如每日、按月"
+          },
+          {
+            "name": "支付金额",
+            "data_type": "number",
+            "description": "实际支付的费用金额"
+          }
+        ]
+      },
+      {
+        "id": "C_c30b1db2",
+        "label": "信息披露",
+        "sub_class_of": null,
+        "data_properties": [
+          "披露内容",
+          "披露时间",
+          "披露频率",
+          "披露渠道"
+        ],
+        "property_definitions": [
+          {
+            "name": "披露渠道",
+            "data_type": "string",
+            "description": "信息发布的平台或方式，如官网、公告"
+          },
+          {
+            "name": "披露频率",
+            "data_type": "string",
+            "description": "定期报告或净值披露的频率"
+          },
+          {
+            "name": "披露内容",
+            "data_type": "string",
+            "description": "披露的具体信息内容"
+          },
+          {
+            "name": "披露时间",
+            "data_type": "datetime",
+            "description": "信息披露的时间"
+          }
+        ]
+      },
+      {
+        "id": "C_781614e0",
+        "label": "费用类型",
+        "sub_class_of": null,
+        "data_properties": [
+          "费率",
+          "支付周期",
+          "计提方式"
+        ],
+        "property_definitions": [
+          {
+            "name": "费率",
+            "data_type": "number",
+            "description": "该费用类型的收取比例"
+          },
+          {
+            "name": "支付周期",
+            "data_type": "string",
+            "description": "费用的支付频率，如每日、每月、每年"
+          },
+          {
+            "name": "计提方式",
+            "data_type": "string",
+            "description": "费用的计算和计提逻辑"
+          }
+        ]
+      },
+      {
+        "id": "C_52d37b6a",
+        "label": "风险类别",
+        "sub_class_of": null,
+        "data_properties": [
+          "风险描述"
+        ],
+        "property_definitions": [
+          {
+            "name": "风险描述",
+            "data_type": "string",
+            "description": "该风险类别的具体定义和说明"
+          }
+        ]
+      },
+      {
+        "id": "C_57cc40eb",
+        "label": "产品状态",
+        "sub_class_of": null,
+        "data_properties": [
+          "状态描述"
+        ],
+        "property_definitions": [
+          {
+            "name": "状态描述",
+            "data_type": "string",
+            "description": "产品的当前状态，如存续、提前终止、不成立等"
+          }
+        ]
+      },
+      {
+        "id": "C_9c2ae5cc",
+        "label": "风险",
+        "sub_class_of": null,
+        "data_properties": [
+          "风险描述",
+          "风险类型"
+        ],
+        "property_definitions": [
+          {
+            "name": "风险描述",
+            "data_type": "string",
+            "description": "对具体风险的详细说明"
+          },
+          {
+            "name": "风险类型",
+            "data_type": "string",
+            "description": "风险的具体分类，如信用风险、市场风险"
+          }
+        ]
+      },
+      {
+        "id": "C_1a4bc2d3",
+        "label": "代销机构",
+        "sub_class_of": null,
+        "data_properties": [
+          "机构名称",
+          "联系方式",
+          "名称"
+        ],
+        "property_definitions": [
+          {
+            "name": "机构名称",
+            "data_type": "string",
+            "description": "合作销售机构的名称"
+          },
+          {
+            "name": "名称",
+            "data_type": "string",
+            "description": "代销机构的名称"
+          },
+          {
+            "name": "联系方式",
+            "data_type": "string",
+            "description": "代销机构提供的咨询或投诉联系方式"
+          }
+        ]
+      },
+      {
+        "id": "C_5e660315",
+        "label": "监管机构",
+        "sub_class_of": null,
+        "data_properties": [
+          "机构名称"
+        ],
+        "property_definitions": [
+          {
+            "name": "机构名称",
+            "data_type": "string",
+            "description": "监管机构名称（如金融监管总局、证监会等）"
+          }
+        ]
+      },
+      {
+        "id": "C_d5ad86f1",
+        "label": "投资标",
+        "sub_class_of": "C_f33f82aa",
+        "data_properties": [
+          "名称"
+        ],
+        "property_definitions": [
+          {
+            "name": "名称",
+            "data_type": "string",
+            "description": "具体投资标的名称"
+          }
+        ]
+      },
+      {
+        "id": "C_7f61018a",
+        "label": "法律文件",
+        "sub_class_of": null,
+        "data_properties": [],
+        "property_definitions": []
+      },
+      {
+        "id": "C_66a8d294",
+        "label": "税费",
+        "sub_class_of": null,
+        "data_properties": [
+          "税种",
+          "税率"
+        ],
+        "property_definitions": [
+          {
+            "name": "税种",
+            "data_type": "string",
+            "description": "税费的种类，如增值税、所得税等"
+          },
+          {
+            "name": "税率",
+            "data_type": "number",
+            "description": "税费的税率"
+          }
+        ]
+      },
+      {
+        "id": "C_8bda406e",
+        "label": "账户",
+        "sub_class_of": null,
+        "data_properties": [
+          "账户类型",
+          "账户余额"
+        ],
+        "property_definitions": [
+          {
+            "name": "账户类型",
+            "data_type": "string",
+            "description": "账户的类型，如托管账户、投资者账户等"
+          },
+          {
+            "name": "账户余额",
+            "data_type": "number",
+            "description": "账户的余额"
+          }
+        ]
+      },
+      {
+        "id": "C_3923643e",
+        "label": "争议解决方式",
+        "sub_class_of": null,
+        "data_properties": [
+          "适用法律",
+          "仲裁机构",
+          "仲裁地点"
+        ],
+        "property_definitions": [
+          {
+            "name": "适用法律",
+            "data_type": "string",
+            "description": "解决争议适用的法律体系"
+          },
+          {
+            "name": "仲裁机构",
+            "data_type": "string",
+            "description": "负责仲裁的委员会名称"
+          },
+          {
+            "name": "仲裁地点",
+            "data_type": "string",
+            "description": "仲裁进行的地理位置"
+          }
+        ]
+      }
+    ],
+    "metadata": {
+      "success_rate": 1.0,
+      "total_chunks": 12,
+      "failed_chunks": 0,
+      "total_classes": 31,
+      "successful_chunks": 12,
+      "total_object_properties": 34
+    },
+    "object_properties": [
+      {
+        "id": "OP_6072779e",
+        "label": "具有风险等级",
+        "range": "C_812b9fc4",
+        "domain": "C_110b48ac",
+        "cardinality": "one-to-one",
+        "description": "产品与其风险等级之间的关系"
+      },
+      {
+        "id": "OP_1e37696d",
+        "label": "适合",
+        "range": "C_8ab923ba",
+        "domain": "C_110b48ac",
+        "cardinality": "many-to-many",
+        "description": "产品适合某类投资者"
+      },
+      {
+        "id": "OP_8e945fca",
+        "label": "投资于",
+        "range": "C_d5ad86f1",
+        "domain": "C_110b48ac",
+        "cardinality": "many-to-many",
+        "description": "产品投资于特定的资产类别或对象"
+      },
+      {
+        "id": "OP_6c598db7",
+        "label": "由...销售",
+        "range": "C_2626911f",
+        "domain": "C_110b48ac",
+        "cardinality": "many-to-many",
+        "description": "产品由合作销售机构销售"
+      },
+      {
+        "id": "OP_a06379e0",
+        "label": "面临",
+        "range": "C_9c2ae5cc",
+        "domain": "C_110b48ac",
+        "cardinality": "many-to-many",
+        "description": "产品面临某种风险"
+      },
+      {
+        "id": "OP_6c7102ff",
+        "label": "是...的子类",
+        "range": "C_f33f82aa",
+        "domain": "C_d5ad86f1",
+        "cardinality": "many-to-one",
+        "description": "表示类的层级继承关系"
+      },
+      {
+        "id": "OP_3b8890d9",
+        "label": "持有",
+        "range": "C_110b48ac",
+        "domain": "C_1791024e",
+        "cardinality": "many-to-many",
+        "description": "投资者持有理财产品份额"
+      },
+      {
+        "id": "OP_c727c10c",
+        "label": "委托于",
+        "range": "C_4fe91964",
+        "domain": "C_110b48ac",
+        "cardinality": "many-to-many",
+        "description": "理财产品委托投资合作机构进行管理"
+      },
+      {
+        "id": "OP_c6e2a5ae",
+        "label": "属于",
+        "range": "C_262c82d6",
+        "domain": "C_110b48ac",
+        "cardinality": "many-to-one",
+        "description": "理财产品属于某种类型"
+      },
+      {
+        "id": "OP_b34c01c9",
+        "label": "受限于",
+        "range": "C_87129eb6",
+        "domain": "C_110b48ac",
+        "cardinality": "many-to-one",
+        "description": "理财产品受募集限制条款约束"
+      },
+      {
+        "id": "OP_2b01afbc",
+        "label": "合作销售机构",
+        "range": "C_1a4bc2d3",
+        "domain": "C_110b48ac",
+        "cardinality": "many-to-many",
+        "description": "理财产品与其合作的销售机构之间的关系"
+      },
+      {
+        "id": "OP_916d0df4",
+        "label": "由...管理",
+        "range": "C_f4a8d915",
+        "domain": "C_110b48ac",
+        "cardinality": "many-to-one",
+        "description": "理财产品由其管理人进行管理"
+      },
+      {
+        "id": "OP_cbe287ff",
+        "label": "包含份额类别",
+        "range": "C_c4a81b5c",
+        "domain": "C_110b48ac",
+        "cardinality": "one-to-many",
+        "description": "一个理财产品包含多个份额类别"
+      },
+      {
+        "id": "OP_1bf84958",
+        "label": "由...托管",
+        "range": "C_b69f5f73",
+        "domain": "C_110b48ac",
+        "cardinality": "one-to-one",
+        "description": "理财产品由托管人进行托管"
+      },
+      {
+        "id": "OP_37761c15",
+        "label": "包含费用",
+        "range": "C_ca9a21d5",
+        "domain": "C_110b48ac",
+        "cardinality": "one-to-many",
+        "description": "理财产品包含多种费用项目"
+      },
+      {
+        "id": "OP_1990ef70",
+        "label": "通过...披露",
+        "range": "C_c30b1db2",
+        "domain": "C_110b48ac",
+        "cardinality": "one-to-many",
+        "description": "理财产品通过特定的渠道进行信息披露"
+      },
+      {
+        "id": "OP_03017f84",
+        "label": "面临风险",
+        "range": "C_52d37b6a",
+        "domain": "C_110b48ac",
+        "cardinality": "many-to-many",
+        "description": "理财产品面临某种风险类别"
+      },
+      {
+        "id": "OP_ebf9bebe",
+        "label": "处于状态",
+        "range": "C_57cc40eb",
+        "domain": "C_110b48ac",
+        "cardinality": "one-to-one",
+        "description": "理财产品处于某种状态"
+      },
+      {
+        "id": "OP_83ea6fb9",
+        "label": "设有业绩基准",
+        "range": "C_52d37b6a",
+        "domain": "C_110b48ac",
+        "cardinality": "many-to-many",
+        "description": "理财产品份额设立业绩比较基准"
+      },
+      {
+        "id": "OP_277a951b",
+        "label": "由...代销",
+        "range": "C_1a4bc2d3",
+        "domain": "C_110b48ac",
+        "cardinality": "many-to-many",
+        "description": "产品通过代销机构进行销售"
+      },
+      {
+        "id": "OP_56a57e83",
+        "label": "受...监管",
+        "range": "C_5e660315",
+        "domain": "C_110b48ac",
+        "cardinality": "many-to-one",
+        "description": "产品受监管机构监督管理"
+      },
+      {
+        "id": "OP_61a9d281",
+        "label": "是...的一种",
+        "range": "C_110b48ac",
+        "domain": "C_110b48ac",
+        "cardinality": "many-to-one",
+        "description": "产品属于某种类型（如固收类、权益类）"
+      },
+      {
+        "id": "OP_b7b1b274",
+        "label": "具有风险评级",
+        "range": "C_8ab923ba",
+        "domain": "C_110b48ac",
+        "cardinality": "many-to-one",
+        "description": "产品与其风险评级之间的关系"
+      },
+      {
+        "id": "OP_8ba9f842",
+        "label": "受...约束",
+        "range": "C_7f61018a",
+        "domain": "C_110b48ac",
+        "cardinality": "many-to-one",
+        "description": "产品受法律文件约束"
+      },
+      {
+        "id": "OP_b8ba42b9",
+        "label": "涉及税费",
+        "range": "C_66a8d294",
+        "domain": "C_110b48ac",
+        "cardinality": "many-to-many",
+        "description": "产品与其税费之间的关系"
+      },
+      {
+        "id": "OP_7aebdce2",
+        "label": "进行信息披露",
+        "range": "C_c30b1db2",
+        "domain": "C_110b48ac",
+        "cardinality": "many-to-many",
+        "description": "产品与其信息披露之间的关系"
+      },
+      {
+        "id": "OP_cb2ca73b",
+        "label": "拥有账户",
+        "range": "C_8bda406e",
+        "domain": "C_110b48ac",
+        "cardinality": "many-to-many",
+        "description": "产品与其账户之间的关系"
+      },
+      {
+        "id": "OP_51101ab5",
+        "label": "风险等级",
+        "range": "C_812b9fc4",
+        "domain": "C_110b48ac",
+        "cardinality": "one-to-one",
+        "description": "产品与其风险等级之间的关系"
+      },
+      {
+        "id": "OP_08be09b9",
+        "label": "包含投资范围",
+        "range": "C_23cd58bd",
+        "domain": "C_110b48ac",
+        "cardinality": "one-to-many",
+        "description": "理财产品包含特定的投资范围"
+      },
+      {
+        "id": "OP_a30e9ab8",
+        "label": "产生费用",
+        "range": "C_ca9a21d5",
+        "domain": "C_110b48ac",
+        "cardinality": "many-to-many",
+        "description": "理财产品涉及的费用项目"
+      },
+      {
+        "id": "OP_4a21e3ef",
+        "label": "通过...销售",
+        "range": "C_dbc3c5b6",
+        "domain": "C_110b48ac",
+        "cardinality": "many-to-many",
+        "description": "产品通过销售渠道进行销售"
+      },
+      {
+        "id": "OP_3bbb40a2",
+        "label": "因...终止",
+        "range": "C_9c2ae5cc",
+        "domain": "C_110b48ac",
+        "cardinality": "many-to-many",
+        "description": "产品因特定原因（如不可抗力、政策调整）提前终止"
+      },
+      {
+        "id": "OP_e8907f7b",
+        "label": "因...延期清算",
+        "range": "C_9c2ae5cc",
+        "domain": "C_110b48ac",
+        "cardinality": "many-to-many",
+        "description": "产品因市场波动或流动性不足导致延期清算"
+      },
+      {
+        "id": "OP_9485ade1",
+        "label": "由...解决",
+        "range": "C_110b48ac",
+        "domain": "C_3923643e",
+        "cardinality": "many-to-one",
+        "description": "争议通过特定的争议解决方式（如仲裁）解决"
+      }
+    ]
+  }
+}

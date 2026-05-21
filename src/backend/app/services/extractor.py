@@ -26,6 +26,96 @@ from app.infrastructure.task_manager import task_manager, TaskCancelledError
 from app.core.logging import logger
 
 
+SCHEMA_EXTRACTION_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "classes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "英文语义名，如Product, Employee"},
+                    "label": {"type": "string", "description": "中文标签"},
+                    "sub_class_of": {"type": ["string", "null"], "description": "父类的id"},
+                    "data_properties": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string", "description": "属性名称（中文）"},
+                                "description": {"type": "string", "description": "属性描述（中文）"},
+                                "data_type": {"type": "string", "enum": ["string", "number", "boolean", "date", "datetime", "array", "object"], "description": "数据类型"}
+                            },
+                            "required": ["name", "data_type"]
+                        }
+                    }
+                },
+                "required": ["id", "label", "data_properties"]
+            }
+        },
+        "object_properties": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "英文语义名，如belongsTo"},
+                    "label": {"type": "string", "description": "中文标签"},
+                    "description": {"type": "string", "description": "关系描述（中文）"},
+                    "domain": {"type": "string", "description": "起点类id"},
+                    "range": {"type": "string", "description": "终点类id"},
+                    "cardinality": {"type": "string", "enum": ["one-to-one", "one-to-many", "many-to-one", "many-to-many"], "description": "关系基数"}
+                },
+                "required": ["id", "label", "domain", "range"]
+            }
+        }
+    },
+    "required": ["classes"]
+}
+
+INSTANCE_EXTRACTION_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "instances": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "英文语义名"},
+                    "type": {"type": "string", "description": "所属类的id或中文名"},
+                    "label": {"type": "string", "description": "中文标签"},
+                    "source_quote": {"type": "string", "description": "原文引用，必须一字不差地摘抄"},
+                    "object_props": {
+                        "type": "object",
+                        "description": "对象属性，键为关系id或中文名，值为目标实例label或id列表"
+                    },
+                    "data_props": {
+                        "type": "object",
+                        "description": "数据属性，键为属性名，值为属性值"
+                    }
+                },
+                "required": ["id", "type", "label", "source_quote"]
+            }
+        },
+        "links": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "link_type": {"type": "string", "description": "关系id或中文名"},
+                    "source_label": {"type": "string", "description": "源实例的label"},
+                    "source_type": {"type": "string", "description": "源实例所属类的id或中文名"},
+                    "target_label": {"type": "string", "description": "目标实例的label"},
+                    "target_type": {"type": "string", "description": "目标实例所属类的id或中文名"},
+                    "source_quote": {"type": "string", "description": "该关系在文档中的来源位置或原文引用"}
+                },
+                "required": ["link_type", "source_label", "source_type", "target_label", "target_type"]
+            }
+        }
+    },
+    "required": ["instances"]
+}
+
+
 # ─────────────────────────────────────────────────────────────
 # 工具函数
 # ─────────────────────────────────────────────────────────────
@@ -62,11 +152,23 @@ def make_deterministic_id(label: str, category: str) -> str:
 
 
 def safe_id(raw: str) -> str:
-    """
-    安全的 ID 生成函数（兼容旧代码 fallback）。
-    使用确定性哈希机制，不再使用正则替换中文。
-    """
     return make_deterministic_id(raw, "Unknown")
+
+
+def _to_snake_case(name: str) -> str:
+    import re
+    s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
+    return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
+
+
+def names_are_similar(name1: str, name2: str) -> bool:
+    n1 = _to_snake_case(name1).replace('_', '')
+    n2 = _to_snake_case(name2).replace('_', '')
+    if n1 == n2:
+        return True
+    if name1.strip() == name2.strip():
+        return True
+    return False
 
 
 # ─────────────────────────────────────────────────────────────
@@ -93,7 +195,7 @@ class OntologyExtractor:
         self, 
         text: str, 
         chunk_size: int = 15000, 
-        overlap: int = 500,
+        overlap: int = 10,
         filename: str = "unknown",
         start_chunk_index: int = 0
     ) -> List[Dict[str, Any]]:
@@ -112,10 +214,13 @@ class OntologyExtractor:
         try:
             overlap = int(overlap)
         except (ValueError, TypeError):
-            overlap = 500
+            overlap = 10
+        if overlap > 50:
+            overlap = 50
+        overlap_chars = int(chunk_size * overlap / 100)
         
         raw_chunks = self._recursive_split(
-            text, chunk_size, overlap,
+            text, chunk_size, overlap_chars,
             separators=["\n\n", "\n", "。 ", "！ ", "？ ", ". ", " ", ""]
         )
         
@@ -133,7 +238,7 @@ class OntologyExtractor:
         self,
         documents: List[Dict[str, Any]],
         chunk_size: int = 15000,
-        overlap: int = 500,
+        overlap: int = 10,
     ) -> List[Dict[str, Any]]:
         """
         对多个文档进行切分，保持每个文档的血缘信息。
@@ -175,7 +280,7 @@ class OntologyExtractor:
         
         return all_chunks
 
-    def _sub_chunk_text(self, text: str, chunk_size: int = 800, overlap: int = 100) -> List[str]:
+    def _sub_chunk_text(self, text: str, chunk_size: int = 800, overlap: int = 10) -> List[str]:
         try:
             chunk_size = int(chunk_size)
         except (ValueError, TypeError):
@@ -183,9 +288,10 @@ class OntologyExtractor:
         try:
             overlap = int(overlap)
         except (ValueError, TypeError):
-            overlap = 100
+            overlap = 10
+        overlap_chars = int(chunk_size * overlap / 100) if overlap <= 50 else overlap
         return self._recursive_split(
-            text, chunk_size, overlap,
+            text, chunk_size, overlap_chars,
             separators=["\n\n", "\n", "。 ", "！ ", "？ ", ". ", " ", ""]
         )
 
@@ -199,7 +305,7 @@ class OntologyExtractor:
         try:
             overlap = int(overlap)
         except (ValueError, TypeError):
-            overlap = 500
+            overlap = 10
 
         if len(text) <= chunk_size:
             return [text]
@@ -377,7 +483,7 @@ class OntologyExtractor:
         text: str,
         user_intent: Optional[str] = None,
         chunk_size: int = 15000,
-        chunk_overlap: int = 500,
+        chunk_overlap: int = 10,
         request_interval: int = 2,
         task_id: Optional[str] = None,
         progress_callback: Optional[Callable[[float, str], None]] = None,
@@ -432,7 +538,8 @@ class OntologyExtractor:
    - 正确示例：提取「人员」「产品」「订单」→ 这些是类，允许！
 2. 【ID 不由你决定】: 你输出的 id 字段用于辅助识别，最终 ID 将由系统重新计算，请直接用英文语义名（如 "Product", "hasName"）。
 3. 【Label 必须中文】: 所有 label 字段必须是简洁中文（非英文）。
-4. 【Data Property】: 在 classes 的 data_properties 字段中列出该类应有的属性名称列表（字符串数组）。
+4. 【Data Property】: 在 classes 的 data_properties 字段中列出该类的属性定义列表，每个属性包含 name（中文属性名）、description（属性描述）、data_type（数据类型：string/number/boolean/date/datetime/array/object）。
+5. 【关系基数】: 在 object_properties 的 cardinality 字段中指明关系基数（one-to-one/one-to-many/many-to-one/many-to-many）。
 5. 【鼓励抽取隐含关系】: 如果文本中存在明确描述或强烈暗示的「系统 A 依赖于系统 B / A 调用 B / A 部署在 B 上 / A 与 B 对接」等关系，
    即使没有出现"关系名称"这个词，也请将其提取为类与类之间的 ObjectProperty，
    关系的 label 可用简洁中文动词短语（如「依赖于」「调用」「部署于」「对接」等）。
@@ -453,15 +560,21 @@ class OntologyExtractor:
       "id": "Product",
       "label": "产品",
       "sub_class_of": null,
-      "data_properties": ["名称", "价格", "规格"]
+      "data_properties": [
+        {{"name": "名称", "description": "产品名称", "data_type": "string"}},
+        {{"name": "价格", "description": "产品价格", "data_type": "number"}},
+        {{"name": "规格", "description": "产品规格", "data_type": "string"}}
+      ]
     }}
   ],
   "object_properties": [
     {{
       "id": "belongsTo",
       "label": "属于",
+      "description": "产品属于某个类别",
       "domain": "Product",
-      "range": "Category"
+      "range": "Category",
+      "cardinality": "many-to-one"
     }}
   ]
 }}
@@ -482,7 +595,7 @@ class OntologyExtractor:
             
             logger.info(f"[SchemaExtraction] 处理分块 {i+1}/{total_chunks}")
             user_prompt = user_prompt_template.format(chunk=chunk)
-            data = self._call_llm(system_prompt, user_prompt, task_id=task_id)
+            data = self._call_llm(system_prompt, user_prompt, task_id=task_id, json_schema=SCHEMA_EXTRACTION_JSON_SCHEMA)
 
             if not data:
                 logger.warning(f"分块 {i+1}/{total_chunks} LLM 返回空，跳过")
@@ -495,26 +608,45 @@ class OntologyExtractor:
 
             # 处理 classes
             for cls in data.get("classes", []):
-                raw_label = cls.get("label", "").strip()
-                raw_llm_id = cls.get("id", "").strip()  # LLM 给出的原始英文 id（如 "Product"）
+                raw_label = (cls.get("label") or "").strip()
+                raw_llm_id = (cls.get("id") or "").strip()
                 if not raw_label:
                     continue
                 norm_label = self._normalize_term(raw_label, user_intent=user_intent)
                 det_id = make_deterministic_id(norm_label, "Class")
+                raw_dp = cls.get("data_properties", [])
+                dp_names = []
+                dp_defs = []
+                for dp in raw_dp:
+                    if isinstance(dp, dict):
+                        dp_names.append(dp.get("name", ""))
+                        dp_defs.append({
+                            "name": dp.get("name", ""),
+                            "description": dp.get("description", ""),
+                            "data_type": dp.get("data_type", "string"),
+                        })
+                    elif isinstance(dp, str):
+                        dp_names.append(dp)
+                        dp_defs.append({"name": dp, "description": "", "data_type": "string"})
                 if det_id not in all_classes:
                     all_classes[det_id] = {
                         "id": det_id,
                         "label": norm_label,
                         "sub_class_of": None,
-                        "data_properties": list(cls.get("data_properties", [])),
-                        "_raw_llm_id": raw_llm_id,  # 保留 LLM 原始 id，用于后续 domain/range/subClassOf 解析
+                        "data_properties": dp_names,
+                        "property_definitions": dp_defs,
+                        "_raw_llm_id": raw_llm_id,
                     }
                 else:
-                    # 合并 data_properties（去重）
-                    existing_dp = set(all_classes[det_id]["data_properties"])
-                    for dp in cls.get("data_properties", []):
-                        existing_dp.add(dp)
-                    all_classes[det_id]["data_properties"] = list(existing_dp)
+                    existing_dp_names = set(all_classes[det_id]["data_properties"])
+                    existing_dp_defs = {d["name"]: d for d in all_classes[det_id].get("property_definitions", [])}
+                    for name in dp_names:
+                        existing_dp_names.add(name)
+                    for d in dp_defs:
+                        if d["name"] not in existing_dp_defs:
+                            existing_dp_defs[d["name"]] = d
+                    all_classes[det_id]["data_properties"] = list(existing_dp_names)
+                    all_classes[det_id]["property_definitions"] = list(existing_dp_defs.values())
 
                 # 处理父类关系（需在所有 classes 处理完后二次解析，这里先记录原始值）
                 if cls.get("sub_class_of"):
@@ -522,9 +654,9 @@ class OntologyExtractor:
 
             # 处理 object_properties
             for op in data.get("object_properties", []):
-                raw_label = op.get("label", "").strip()
-                raw_domain = op.get("domain", "").strip()
-                raw_range = op.get("range", "").strip()
+                raw_label = (op.get("label") or "").strip()
+                raw_domain = (op.get("domain") or "").strip()
+                raw_range = (op.get("range") or "").strip()
                 if not raw_label or not raw_domain or not raw_range:
                     continue
                 norm_label = self._normalize_term(raw_label, user_intent=user_intent)
@@ -533,8 +665,10 @@ class OntologyExtractor:
                     all_obj_props[det_id] = {
                         "id": det_id,
                         "label": norm_label,
-                        "domain": raw_domain,   # 临时存原始文本，后续二次解析
+                        "description": op.get("description", ""),
+                        "domain": raw_domain,
                         "range": raw_range,
+                        "cardinality": op.get("cardinality"),
                     }
 
             # 更新进度
@@ -618,9 +752,36 @@ class OntologyExtractor:
                     f"(domain={op_data['domain']}→{domain_resolved}, range={op_data['range']}→{range_resolved})"
                 )
 
+        dedup_classes: Dict[str, dict] = {}
+        for det_id, cls_data in all_classes.items():
+            merged = False
+            for existing_id, existing_data in dedup_classes.items():
+                if names_are_similar(cls_data["label"], existing_data["label"]):
+                    for dp_name in cls_data.get("data_properties", []):
+                        if dp_name not in existing_data["data_properties"]:
+                            existing_data["data_properties"].append(dp_name)
+                    for dp_def in cls_data.get("property_definitions", []):
+                        existing_defs = {d["name"] for d in existing_data.get("property_definitions", [])}
+                        if dp_def["name"] not in existing_defs:
+                            existing_data.setdefault("property_definitions", []).append(dp_def)
+                    merged = True
+                    logger.info(f"[SchemaExtraction] 语义去重：'{cls_data['label']}' 合并到 '{existing_data['label']}'")
+                    break
+            if not merged:
+                dedup_classes[det_id] = cls_data
+        all_classes = dedup_classes
+
         result = {
             "classes": list(all_classes.values()),
             "object_properties": list(valid_obj_props.values()),
+            "metadata": {
+                "total_chunks": total_chunks,
+                "successful_chunks": sum(1 for i in range(total_chunks)),
+                "failed_chunks": 0,
+                "success_rate": 1.0,
+                "total_classes": len(all_classes),
+                "total_object_properties": len(valid_obj_props),
+            },
         }
 
         report_progress(1.0, f"骨架提取完成：{len(result['classes'])} 个类，{len(result['object_properties'])} 个关系")
@@ -635,7 +796,7 @@ class OntologyExtractor:
         text: str,
         user_intent: Optional[str] = None,
         chunk_size: int = 15000,
-        chunk_overlap: int = 500,
+        chunk_overlap: int = 10,
         request_interval: int = 2,
         task_id: Optional[str] = None,
         progress_callback: Optional[Callable[[float, str], None]] = None,
@@ -664,7 +825,7 @@ class OntologyExtractor:
         text: str,
         schema_graph: Dict[str, Any],
         chunk_size: int = 15000,
-        chunk_overlap: int = 500,
+        chunk_overlap: int = 10,
         request_interval: int = 2,
         product_code: Optional[str] = None,
         task_id: Optional[str] = None,
@@ -810,7 +971,7 @@ class OntologyExtractor:
         user_prompt_template = """【当前文本片段】:
 "{chunk}"
 
-【输出 JSON 格式（只输出 instances 数组，不得包含 classes/object_properties 字段）】:
+【输出 JSON 格式（只输出 instances 和 links 数组，不得包含 classes/object_properties 字段）】:
 {{
   "instances": [
     {{
@@ -826,12 +987,25 @@ class OntologyExtractor:
         "职级": "P6"
       }}
     }}
+  ],
+  "links": [
+    {{
+      "link_type": "worksIn",
+      "source_label": "张三",
+      "source_type": "Employee",
+      "target_label": "DeptA",
+      "target_type": "Department",
+      "source_quote": "张三同志现任技术部经理"
+    }}
   ]
 }}
 
 【重要提醒】:
 - 每个实例**必须**包含 `source_quote` 字段，必须一字不差地摘抄上方文本片段中的原句。
 - source_quote 是提取该实例的唯一依据，不能编造或改写。
+- **links 数组**：除了在实例的 object_props 中声明关系外，还**必须**在 links 数组中显式声明每条关系，包含源和目标的类型信息。这有助于准确建立实例间的关系连线。
+- links 中的 source_label/target_label 必须与对应实例的 label 完全一致。
+- links 中的 source_type/target_type 必须是上方 Schema 中定义的类 ID 或中文名。
 """
 
         # ★ 关键修复：如果传入了 documents 数组，使用它来保持文件名溯源信息
@@ -856,6 +1030,19 @@ class OntologyExtractor:
         # 为实例 type → class_id 的快速校验建立标签索引
         class_label_to_id: Dict[str, str] = {c["label"]: c["id"] for c in classes}
 
+        # 构建类到所有祖先类的映射（含自身），用于 Domain/Range 继承校验
+        class_to_ancestors: Dict[str, Set[str]] = {c["id"]: {c["id"]} for c in classes}
+        for c in classes:
+            parent_classes = c.get('parent_classes', []) or c.get('sub_class_of', None)
+            if parent_classes:
+                if isinstance(parent_classes, str):
+                    parent_classes = [parent_classes]
+                for parent_id in parent_classes:
+                    if parent_id in class_to_ancestors:
+                        class_to_ancestors[c["id"]].add(parent_id)
+                        # 递归添加祖先的祖先
+                        class_to_ancestors[c["id"]].update(class_to_ancestors.get(parent_id, {parent_id}))
+
         all_instances: Dict[str, dict] = {}  # det_id → instance dict
         discarded_count = 0
 
@@ -876,7 +1063,7 @@ class OntologyExtractor:
             
             logger.info(f"[InstanceExtraction] 处理分块 {i+1}/{total_chunks} (file={chunk_filename}, index={chunk_index})")
             user_prompt = user_prompt_template.format(chunk=chunk_text)
-            data = self._call_llm(system_prompt, user_prompt, task_id=task_id)
+            data = self._call_llm(system_prompt, user_prompt, task_id=task_id, json_schema=INSTANCE_EXTRACTION_JSON_SCHEMA)
 
             if not data:
                 logger.warning(f"分块 {i+1}/{total_chunks} LLM 返回空，跳过")
@@ -888,11 +1075,13 @@ class OntologyExtractor:
                 continue
 
             raw_instances = []
+            raw_links = []
             if isinstance(data, list):
                 raw_instances = data
                 logger.info(f"分块 {i+1}/{total_chunks} LLM 返回了列表格式，已自动适配")
             elif isinstance(data, dict):
                 raw_instances = data.get("instances", [])
+                raw_links = data.get("links", data.get("relationships", []))
             else:
                 logger.warning(f"分块 {i+1}/{total_chunks} LLM 返回格式异常 (type: {type(data)})，跳过")
                 continue
@@ -992,17 +1181,39 @@ class OntologyExtractor:
                     expected_domain, expected_range = op_constraints[resolved_op_id]
 
                     # 校验起点实例的父类是否符合 ObjectProperty 的 domain
-                    if not resolved_type or resolved_type != expected_domain:
+                    # 支持继承：如果实例的 type 是 domain 类的子类，也允许通过
+                    instance_ancestors = class_to_ancestors.get(resolved_type, {resolved_type})
+                    if not resolved_type or expected_domain not in instance_ancestors:
                         logger.warning(
                             f"[EdgeDiscard] 实例 '{raw_label}' (Type: {resolved_type}) 试图通过关系 '{resolved_op_id}' 连接，"
-                            f"但被拦截。原因：Domain 不匹配（期望：{expected_domain}, 实际：{resolved_type}）。"
+                            f"但被拦截。原因：Domain 不匹配（期望：{expected_domain}, 实际：{resolved_type}，"
+                            f"祖先类：{instance_ancestors}）。"
                         )
                         discarded_count += len(targets_list)
                         continue
 
                     valid_targets = []
                     for t_raw in targets_list:
-                        valid_targets.append(t_raw)
+                        # 如果目标是 dict（LLM 返回了完整对象），提取其 label 或 id 作为引用
+                        if isinstance(t_raw, dict):
+                            t_raw = t_raw.get("label") or t_raw.get("id") or t_raw.get("name", "")
+                            if not t_raw:
+                                continue
+                        # 确保 t_raw 是字符串
+                        t_raw = str(t_raw)
+                        
+                        if t_raw in all_instances:
+                            valid_targets.append(t_raw)
+                        else:
+                            found = False
+                            for existing_id, existing_inst in all_instances.items():
+                                if names_are_similar(t_raw, existing_inst.get("label", "")):
+                                    valid_targets.append(existing_id)
+                                    found = True
+                                    logger.info(f"[InstanceExtraction] 模糊匹配：'{t_raw}' -> '{existing_inst['label']}' (id={existing_id})")
+                                    break
+                            if not found:
+                                valid_targets.append(t_raw)
 
                     if valid_targets:
                         valid_obj_props[resolved_op_id] = valid_targets
@@ -1020,11 +1231,109 @@ class OntologyExtractor:
                     existing = all_instances[det_id]
                     for op_id, targets in valid_obj_props.items():
                         if op_id in existing["object_props"]:
-                            merged = list(set(existing["object_props"][op_id] + targets))
+                            # 去重合并：将可能包含 dict 的目标转为 JSON 字符串再比较
+                            existing_targets = existing["object_props"][op_id]
+                            seen = set()
+                            merged = []
+                            for t in existing_targets + targets:
+                                # 将 dict 转为可哈希的 JSON 字符串用于去重
+                                key = json.dumps(t, sort_keys=True) if isinstance(t, dict) else t
+                                if key not in seen:
+                                    seen.add(key)
+                                    merged.append(t)
                             existing["object_props"][op_id] = merged
                         else:
                             existing["object_props"][op_id] = targets
                     existing["data_props"].update(inst.get("data_props", {}))
+
+            # ── 处理 links 数组：补充和修正实例间的关系 ──
+            # links 提供了更精确的 source/target 类型信息，可以修正 object_props 中可能放错的关系
+            for link in raw_links:
+                link_type = link.get("link_type", link.get("type", ""))
+                source_label = link.get("source_label", link.get("source_object_name", ""))
+                source_type_raw = link.get("source_type", link.get("source_object_type", ""))
+                target_label = link.get("target_label", link.get("target_object_name", ""))
+                target_type_raw = link.get("target_type", link.get("target_object_type", ""))
+
+                if not link_type or not source_label or not target_label:
+                    continue
+
+                # 解析 link_type
+                resolved_op_id = link_type
+                if resolved_op_id not in op_constraints:
+                    if resolved_op_id in op_label_to_id:
+                        resolved_op_id = op_label_to_id[resolved_op_id]
+                    else:
+                        continue
+
+                # 解析 source_type
+                resolved_source_type = None
+                if source_type_raw in valid_class_ids:
+                    resolved_source_type = source_type_raw
+                elif source_type_raw in class_label_to_id:
+                    resolved_source_type = class_label_to_id[source_type_raw]
+
+                # 解析 target_type
+                resolved_target_type = None
+                if target_type_raw in valid_class_ids:
+                    resolved_target_type = target_type_raw
+                elif target_type_raw in class_label_to_id:
+                    resolved_target_type = class_label_to_id[target_type_raw]
+
+                # 查找 source 实例
+                source_det_id = make_deterministic_id(source_label.strip(), "Instance")
+                if product_code:
+                    source_det_id = f"{source_det_id}_{product_code}"
+                if source_det_id not in all_instances:
+                    for eid, einst in all_instances.items():
+                        if names_are_similar(source_label, einst.get("label", "")):
+                            source_det_id = eid
+                            break
+
+                # 查找 target 实例
+                target_det_id = make_deterministic_id(target_label.strip(), "Instance")
+                if product_code:
+                    target_det_id = f"{target_det_id}_{product_code}"
+                if target_det_id not in all_instances:
+                    for eid, einst in all_instances.items():
+                        if names_are_similar(target_label, einst.get("label", "")):
+                            target_det_id = eid
+                            break
+
+                if source_det_id not in all_instances or target_det_id not in all_instances:
+                    continue
+
+                # 校验 Domain/Range（支持继承）
+                expected_domain, expected_range = op_constraints[resolved_op_id]
+                actual_source_type = all_instances[source_det_id].get("type", "")
+                actual_target_type = all_instances[target_det_id].get("type", "")
+
+                source_ancestors = class_to_ancestors.get(actual_source_type, {actual_source_type})
+                target_ancestors = class_to_ancestors.get(actual_target_type, {actual_target_type})
+
+                if expected_domain not in source_ancestors:
+                    logger.debug(
+                        f"[LinkDiscard] Link Domain 不匹配：关系 '{resolved_op_id}'，"
+                        f"source '{source_label}'(type={actual_source_type})，"
+                        f"期望 domain={expected_domain}"
+                    )
+                    continue
+                if expected_range not in target_ancestors:
+                    logger.debug(
+                        f"[LinkDiscard] Link Range 不匹配：关系 '{resolved_op_id}'，"
+                        f"target '{target_label}'(type={actual_target_type})，"
+                        f"期望 range={expected_range}"
+                    )
+                    continue
+
+                # 将 link 补充到 source 实例的 object_props 中
+                source_inst = all_instances[source_det_id]
+                if resolved_op_id not in source_inst["object_props"]:
+                    source_inst["object_props"][resolved_op_id] = [target_det_id]
+                elif target_det_id not in source_inst["object_props"][resolved_op_id]:
+                    source_inst["object_props"][resolved_op_id].append(target_det_id)
+
+                logger.debug(f"[LinkProcess] Link 补充：'{source_label}' --[{resolved_op_id}]--> '{target_label}'")
 
             # 更新进度
             progress = (i + 1) / total_chunks * 0.9  # 预留 10% 给后续处理
@@ -1036,6 +1345,15 @@ class OntologyExtractor:
         result = {
             "instances": list(all_instances.values()),
             "discarded_edges_count": discarded_count,
+            "metadata": {
+                "total_chunks": total_chunks,
+                "successful_chunks": sum(1 for i in range(total_chunks)),
+                "failed_chunks": 0,
+                "success_rate": 1.0,
+                "total_instances": len(all_instances),
+                "total_edges": sum(len(inst.get("object_props", {})) for inst in all_instances.values()),
+                "discarded_edges_count": discarded_count,
+            },
         }
         report_progress(1.0, f"实例提取完成：{len(result['instances'])} 个实例")
         logger.info(
@@ -1065,7 +1383,7 @@ class OntologyExtractor:
         text: str,
         schema_graph: Dict[str, Any],
         chunk_size: int = 15000,
-        chunk_overlap: int = 500,
+        chunk_overlap: int = 10,
         request_interval: int = 2,
         product_code: Optional[str] = None,
         task_id: Optional[str] = None,
@@ -1110,15 +1428,22 @@ class OntologyExtractor:
             cid = cls["id"]
             if cid in processed:
                 continue
+            prop_defs = cls.get("property_definitions") or []
+            props_with_type = {}
+            for dp in cls.get("data_properties", []) or []:
+                props_with_type[dp] = ""
+            node_data = {
+                "label": cls["label"],
+                "type": "owl:Class",
+                "properties": props_with_type,
+            }
+            if prop_defs:
+                node_data["property_definitions"] = prop_defs
             nodes.append({
                 "id": cid,
                 "type": "custom",
                 "position": {"x": 0, "y": 0},
-                "data": {
-                    "label": cls["label"],
-                    "type": "owl:Class",
-                    "properties": {dp: "" for dp in cls.get("data_properties", []) or []},
-                },
+                "data": node_data,
             })
             processed.add(cid)
 
@@ -1147,13 +1472,18 @@ class OntologyExtractor:
             src = op["domain"]
             tgt = op["range"]
             if src in processed and tgt in processed:
+                edge_data = {"label": op["label"], "prop_id": op["id"]}
+                if op.get("cardinality"):
+                    edge_data["cardinality"] = op["cardinality"]
+                if op.get("description"):
+                    edge_data["description"] = op["description"]
                 edges.append({
                     "id": f"e_{src}_{tgt}_{op['id']}",
                     "source": src,
                     "target": tgt,
                     "label": op["label"],
                     "type": "custom",
-                    "data": {"label": op["label"], "prop_id": op["id"]},
+                    "data": edge_data,
                 })
 
         return {"nodes": nodes, "edges": edges}
@@ -1232,6 +1562,22 @@ class OntologyExtractor:
         
         # 使用去重后的实例列表
         instances = deduplicated_instances
+
+        # 构建 class_id → class_label 映射，用于实例节点展示
+        class_id_to_label: Dict[str, str] = {}
+        class_id_to_prop_defs: Dict[str, List[Dict]] = {}
+        for n in nodes:
+            if n.get("data", {}).get("type") == "owl:Class":
+                class_id_to_label[n["id"]] = n["data"].get("label", "")
+                class_id_to_prop_defs[n["id"]] = n["data"].get("property_definitions", [])
+
+        # 构建 op_id → op_label 映射，用于边的可读标签
+        op_id_to_label: Dict[str, str] = {}
+        for e in edges:
+            eid = e.get("data", {}).get("prop_id", "")
+            elabel = e.get("data", {}).get("label", "")
+            if eid and elabel:
+                op_id_to_label[eid] = elabel
         
         for inst in instances:
             iid = inst["id"]
@@ -1249,15 +1595,24 @@ class OntologyExtractor:
                 if "_domain" in inst:
                     node_properties["_domain"] = inst["_domain"]
                 
+                # 获取所属类的中文名和属性定义
+                inst_type = inst.get("type", "")
+                class_label = class_id_to_label.get(inst_type, "")
+                prop_defs = class_id_to_prop_defs.get(inst_type, [])
+                
+                inst_node_data = {
+                    "label": inst["label"],
+                    "type": "owl:NamedIndividual",
+                    "class_label": class_label,
+                    "properties": node_properties,
+                }
+                if prop_defs:
+                    inst_node_data["property_definitions"] = prop_defs
                 nodes.append({
                     "id": iid,
                     "type": "custom",
                     "position": {"x": 0, "y": 0},
-                    "data": {
-                        "label": inst["label"],
-                        "type": "owl:NamedIndividual",
-                        "properties": node_properties,
-                    },
+                    "data": inst_node_data,
                 })
                 existing_ids.add(iid)
             label_to_inst_id[inst["label"]] = iid
@@ -1280,6 +1635,8 @@ class OntologyExtractor:
         for inst in instances:
             src_id = inst["id"]
             for op_id, targets in inst.get("object_props", {}).items():
+                # 使用可读的关系标签
+                op_label = op_id_to_label.get(op_id, op_id)
                 for t_raw in targets:
                     # 先按确定性 ID 查，再按 label 查
                     tgt_id = label_to_inst_id.get(t_raw)
@@ -1288,9 +1645,9 @@ class OntologyExtractor:
                             "id": f"e_{src_id}_{tgt_id}_{op_id}",
                             "source": src_id,
                             "target": tgt_id,
-                            "label": op_id,
+                            "label": op_label,
                             "type": "custom",
-                            "data": {"label": op_id},
+                            "data": {"label": op_label, "prop_id": op_id, "relation": "object_property"},
                         })
 
         return {"nodes": nodes, "edges": edges}
@@ -1487,7 +1844,7 @@ class OntologyExtractor:
         scenario_desc: str,
         entities_df,
         chunk_size: int = 15000,
-        chunk_overlap: int = 500,
+        chunk_overlap: int = 10,
         request_interval: int = 2,
         progress=None,
         product_code: Optional[str] = None,
@@ -1595,18 +1952,35 @@ class OntologyExtractor:
                 parent_uri = self.EX[parent_id]  # 父类 ID 已是 C_xxx 格式
                 master_g.add((uri, RDFS.subClassOf, parent_uri))
             # 声明该类的 DataProperty 骨架
+            prop_defs = cls.get("property_definitions") or []
+            dp_name_to_def = {d["name"]: d for d in prop_defs}
             for dp_name in cls.get("data_properties", []):
                 dp_uri = get_dp_uri(dp_name)
                 master_g.add((dp_uri, RDF.type, OWL.DatatypeProperty))
                 master_g.add((dp_uri, RDFS.label, Literal(dp_name, lang="zh")))
                 master_g.add((dp_uri, RDFS.domain, uri))
+                dp_def = dp_name_to_def.get(dp_name)
+                if dp_def:
+                    if dp_def.get("description"):
+                        master_g.add((dp_uri, RDFS.comment, Literal(dp_def["description"], lang="zh")))
+                    if dp_def.get("data_type"):
+                        xsd_type_map = {
+                            "string": XSD.string, "number": XSD.decimal,
+                            "boolean": XSD.boolean, "date": XSD.date,
+                            "datetime": XSD.dateTime, "array": XSD.string,
+                            "object": XSD.string,
+                        }
+                        xsd_type = xsd_type_map.get(dp_def["data_type"], XSD.string)
+                        master_g.add((dp_uri, RDFS.range, xsd_type))
 
         for op in schema.get("object_properties", []):
-            op_uri = self.EX[op["id"]]  # ObjectProperty ID 已是 OP_xxx 格式
+            op_uri = self.EX[op["id"]]
             master_g.add((op_uri, RDF.type, OWL.ObjectProperty))
             master_g.add((op_uri, RDFS.label, Literal(op["label"], lang="zh")))
             master_g.add((op_uri, RDFS.domain, self.EX[op["domain"]]))
             master_g.add((op_uri, RDFS.range, self.EX[op["range"]]))
+            if op.get("description"):
+                master_g.add((op_uri, RDFS.comment, Literal(op["description"], lang="zh")))
 
         for inst in inst_result.get("instances", []):
             inst_uri = self.EX[inst["id"]]  # 实例 ID 已是 I_xxx 格式

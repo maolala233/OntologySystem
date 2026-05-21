@@ -62,7 +62,7 @@ import {
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import Navbar from '../components/Layout/Navbar';
-import { OntologyNode, OntologyEdge } from '../types/ontology';
+import { OntologyNode, OntologyEdge, ExtractionMetadata, DataPropertyDef } from '../types/ontology';
 import { projectsApi } from '../api/projects';
 import { getLayoutedElements } from '../utils/layoutUtils';
 import { systemApi } from '../api/system';
@@ -168,6 +168,7 @@ const OntologyBuilderPage: React.FC = () => {
     
     // 继承属性状态（用于显示）
     const [inheritedProperties, setInheritedProperties] = useState<{ name: string; value: string; from: string }[]>([]);
+    const [extractionMetadata, setExtractionMetadata] = useState<ExtractionMetadata | null>(null);
 
     // 测试连通性状态
     const [testingLLM, setTestingLLM] = useState(false);
@@ -178,9 +179,10 @@ const OntologyBuilderPage: React.FC = () => {
     // 提取配置参数（从系统配置中读取）
     const [extractConfig, setExtractConfig] = useState({
         chunk_size: 15000,
-        chunk_overlap: 500,
+        chunk_overlap: 10,
         request_interval: 2,
-        llm_timeout: 300,  // LLM调用超时时间（秒）
+        llm_timeout: 300,
+        disable_think: true,
     });
 
     useEffect(() => {
@@ -202,9 +204,10 @@ const OntologyBuilderPage: React.FC = () => {
                 if (config?.value) {
                     setExtractConfig({
                         chunk_size: config.value.chunk_size || 15000,
-                        chunk_overlap: config.value.chunk_overlap || 500,
+                        chunk_overlap: config.value.chunk_overlap || 10,
                         request_interval: config.value.request_interval || 2,
-                        llm_timeout: config.value.llm_timeout || 300,  // LLM调用超时时间（秒）
+                        llm_timeout: config.value.llm_timeout || 300,
+                        disable_think: config.value.disable_think !== undefined ? config.value.disable_think : true,
                     });
                 }
             } catch (error) {
@@ -815,6 +818,7 @@ const OntologyBuilderPage: React.FC = () => {
                 request_interval: extractConfig.request_interval,
                 async_mode: true,
                 save_documents: true,
+                disable_think: extractConfig.disable_think,
             });
 
             // 如果返回 task_id，说明是异步任务
@@ -840,6 +844,9 @@ const OntologyBuilderPage: React.FC = () => {
                 setEdges(layoutedEdges);
                 
                 message.success(response.message || `骨架提取完成！`);
+                if (response.metadata) {
+                    setExtractionMetadata(response.metadata);
+                }
             } else if (response.nodes && response.nodes.length > 0) {
                 const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
                     response.nodes,
@@ -848,6 +855,9 @@ const OntologyBuilderPage: React.FC = () => {
                 setNodes(layoutedNodes);
                 setEdges(layoutedEdges);
                 message.success(response.message || '本体处理成功！');
+                if (response.metadata) {
+                    setExtractionMetadata(response.metadata);
+                }
             } else {
                 message.warning('提取完成，但未发现有效的本体节点');
             }
@@ -909,6 +919,7 @@ const OntologyBuilderPage: React.FC = () => {
                 chunk_overlap: extractConfig.chunk_overlap,
                 request_interval: extractConfig.request_interval,
                 async_mode: true,
+                disable_think: extractConfig.disable_think,
             });
 
             // 如果返回 task_id，说明是异步任务
@@ -1018,11 +1029,12 @@ const OntologyBuilderPage: React.FC = () => {
             // 使用 TTL 导入的 schema，实例会添加到已有类结构上
             const instanceResponse = await projectsApi.extractInstances(Number(projectId), {
                 text_content: textContent,
-                schema_graph: schemaGraph,  // 使用 TTL 的 schema，不是新提取的
+                schema_graph: schemaGraph,
                 chunk_size: extractConfig.chunk_size,
                 chunk_overlap: extractConfig.chunk_overlap,
                 request_interval: extractConfig.request_interval,
                 async_mode: true,
+                disable_think: extractConfig.disable_think,
             });
 
             // 如果返回 task_id，说明是异步任务
@@ -1250,8 +1262,16 @@ const OntologyBuilderPage: React.FC = () => {
                 ...values,
                 streaming_enabled: values.streaming_enabled === true,
                 milvus_enabled: values.milvus_enabled === true,
+                disable_think: values.disable_think === true,
             };
             await systemApi.updateConfig('llm_config', configValues);
+            setExtractConfig({
+                chunk_size: configValues.chunk_size || 15000,
+                chunk_overlap: configValues.chunk_overlap || 10,
+                request_interval: configValues.request_interval || 2,
+                llm_timeout: configValues.llm_timeout || 300,
+                disable_think: configValues.disable_think !== undefined ? configValues.disable_think : true,
+            });
             message.success('系统配置已保存');
             setIsConfigModalOpen(false);
         } catch (error) {
@@ -1504,6 +1524,10 @@ const OntologyBuilderPage: React.FC = () => {
                     }
                 }
                 
+                if (data.result?.metadata) {
+                    setExtractionMetadata(data.result.metadata);
+                }
+                
                 // 构建成功消息（支持实例提取的 discarded_edges_count）
                 let successMsg = data.message || '任务完成！';
                 if (data.result && data.result.discarded_edges_count > 0) {
@@ -1619,6 +1643,7 @@ const OntologyBuilderPage: React.FC = () => {
                 chunk_overlap: extractConfig.chunk_overlap,
                 request_interval: extractConfig.request_interval,
                 async_mode: true,
+                disable_think: extractConfig.disable_think,
             });
 
             // 如果返回 task_id，说明是异步任务
@@ -1644,6 +1669,9 @@ const OntologyBuilderPage: React.FC = () => {
                 setEdges(layoutedEdges);
                 
                 message.success(response.message || `骨架提取完成！`);
+                if (response.metadata) {
+                    setExtractionMetadata(response.metadata);
+                }
             } else {
                 message.warning('提取完成，但未发现有效的本体节点');
             }
@@ -1690,6 +1718,7 @@ const OntologyBuilderPage: React.FC = () => {
                 chunk_overlap: extractConfig.chunk_overlap,
                 request_interval: extractConfig.request_interval,
                 async_mode: true,
+                disable_think: extractConfig.disable_think,
             });
 
             // 如果返回 task_id，说明是异步任务
@@ -1715,6 +1744,9 @@ const OntologyBuilderPage: React.FC = () => {
                     successMsg += ` (⚠️ ${response.discarded_edges_count} 条不合规连线已自动丢弃)`;
                 }
                 message.success(successMsg);
+                if (response.metadata) {
+                    setExtractionMetadata(response.metadata);
+                }
             } else {
                 message.warning('实例提取完成，但未发现有效实例');
             }
@@ -1755,8 +1787,15 @@ const OntologyBuilderPage: React.FC = () => {
             const classTitle = classNode.data?.label || '未命名类';
             const children = classToInstances[classNode.id]?.map(instance => {
                 const instanceTitle = instance.data?.label || '未命名实例';
+                const props = instance.data?.properties || {};
+                const nonEmptyProps = Object.entries(props)
+                    .filter(([k, v]) => v && !k.startsWith('_') && String(v).trim())
+                    .slice(0, 2);
+                const propPreview = nonEmptyProps.length > 0 
+                    ? ` (${nonEmptyProps.map(([k, v]) => `${k}:${v}`).join(', ')})` 
+                    : '';
                 return {
-                    title: instanceTitle,
+                    title: `${instanceTitle}${propPreview}`,
                     key: instance.id,
                     icon: <span className="inline-block w-3 h-3 rounded-full bg-[#f79767] mr-2" />,
                     isLeaf: true,
@@ -2468,7 +2507,11 @@ const OntologyBuilderPage: React.FC = () => {
                                             </Form.Item>
 
                                             <Form.Item name="type" label="节点类型">
-                                                <Input disabled value={form.getFieldValue('type') === 'owl:Class' ? '类 (Class)' : '实例 (Individual)'} />
+                                                <Input disabled value={
+                                                    form.getFieldValue('type') === 'owl:Class' 
+                                                        ? '类 (Class)' 
+                                                        : `实例 (Individual)${selectedElement?.data?.class_label ? ' - ' + selectedElement.data.class_label : ''}`
+                                                } />
                                             </Form.Item>
 
                                             <div className="flex items-center gap-2 mb-3 pb-3 border-b border-gray-100">
@@ -2523,19 +2566,30 @@ const OntologyBuilderPage: React.FC = () => {
                                             </div>
                                             
                                             <Form.List name="properties">
-                                                {(fields, { add, remove }) => (
+                                                {(fields, { add, remove }) => {
+                                                    const propDefs: DataPropertyDef[] = (selectedElement as any)?.data?.property_definitions || [];
+                                                    const getPropDef = (propName: string) => propDefs.find(d => d.name === propName);
+                                                    return (
                                                     <>
-                                                        {fields.map(({ key, name, ...restField }) => (
+                                                        {fields.map(({ key, name, ...restField }) => {
+                                                            const propName = form.getFieldValue(['properties', name, 'name']);
+                                                            const propDef = getPropDef(propName);
+                                                            return (
                                                             <div key={key} className="flex gap-2 mb-2 items-start">
-                                                                <Form.Item
-                                                                    {...restField}
-                                                                    name={[name, 'name']}
-                                                                    rules={[{ required: true, message: '属性名不能为空' }]}
-                                                                    className="flex-shrink-0 mb-0"
-                                                                    style={{ width: '100px' }}
-                                                                >
-                                                                    <Input placeholder="属性名" size="small" />
-                                                                </Form.Item>
+                                                                <div className="flex-shrink-0 flex items-center gap-1" style={{ width: '120px' }}>
+                                                                    <Form.Item
+                                                                        {...restField}
+                                                                        name={[name, 'name']}
+                                                                        rules={[{ required: true, message: '属性名不能为空' }]}
+                                                                        className="mb-0"
+                                                                        style={{ width: '100px' }}
+                                                                    >
+                                                                        <Input placeholder="属性名" size="small" />
+                                                                    </Form.Item>
+                                                                    {propDef && (
+                                                                        <Tag color="blue" className="text-xs flex-shrink-0 mt-1">{propDef.data_type}</Tag>
+                                                                    )}
+                                                                </div>
                                                                 <Form.Item
                                                                     {...restField}
                                                                     name={[name, 'value']}
@@ -2548,12 +2602,14 @@ const OntologyBuilderPage: React.FC = () => {
                                                                     className="text-gray-400 hover:text-red-500 cursor-pointer mt-2 flex-shrink-0"
                                                                 />
                                                             </div>
-                                                        ))}
+                                                        );
+                                                        })}
                                                         <Button type="dashed" onClick={() => add()} block icon={<PlusOutlined />} size="small" className="mt-2">
                                                             添加属性
                                                         </Button>
                                                     </>
-                                                )}
+                                                    );
+                                                }}
                                             </Form.List>
                                         </>
                                     ) : (
@@ -2566,6 +2622,16 @@ const OntologyBuilderPage: React.FC = () => {
                                             <Form.Item name="label" label="关系标签" rules={[{ required: true, message: '请输入关系标签' }]}>
                                                 <Input placeholder="例如：关联、属于、包含" />
                                             </Form.Item>
+
+                                            {(selectedElement as any)?.data?.cardinality && (
+                                                <div className="mb-4">
+                                                    <Tag color="purple">{(selectedElement as any).data.cardinality}</Tag>
+                                                </div>
+                                            )}
+
+                                            {(selectedElement as any)?.data?.description && (
+                                                <div className="mb-4 text-sm text-gray-500">{(selectedElement as any).data.description}</div>
+                                            )}
 
                                             <Form.Item name="relation" label="关系类型" rules={[{ required: true, message: '请选择关系类型' }]}>
                                                 <Select
@@ -2843,7 +2909,33 @@ const OntologyBuilderPage: React.FC = () => {
                                         <div className="text-sm text-gray-700">{taskDetail}</div>
                                     </div>
                                 )}
-                                
+
+                                {taskStatus === 'completed' && extractionMetadata && (
+                                    <div className="mt-4 p-3 bg-gray-50 rounded-lg">
+                                        <div className="font-medium text-sm mb-2">提取统计</div>
+                                        <div className="grid grid-cols-2 gap-2 text-xs">
+                                            {extractionMetadata.total_chunks !== undefined && (
+                                                <div>处理分块: {extractionMetadata.successful_chunks || 0}/{extractionMetadata.total_chunks}</div>
+                                            )}
+                                            {extractionMetadata.total_classes !== undefined && (
+                                                <div>提取类: {extractionMetadata.total_classes}</div>
+                                            )}
+                                            {extractionMetadata.total_object_properties !== undefined && (
+                                                <div>提取关系: {extractionMetadata.total_object_properties}</div>
+                                            )}
+                                            {extractionMetadata.total_instances !== undefined && (
+                                                <div>提取实例: {extractionMetadata.total_instances}</div>
+                                            )}
+                                            {extractionMetadata.discarded_edges_count !== undefined && extractionMetadata.discarded_edges_count > 0 && (
+                                                <div className="text-orange-500">丢弃连线: {extractionMetadata.discarded_edges_count}</div>
+                                            )}
+                                            {extractionMetadata.success_rate !== undefined && (
+                                                <div>成功率: {(extractionMetadata.success_rate * 100).toFixed(0)}%</div>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+
                                 {/* 任务 ID */}
                                 {currentTaskId && (
                                     <div className="text-xs text-gray-400">
@@ -3216,9 +3308,12 @@ const OntologyBuilderPage: React.FC = () => {
                                         <Input placeholder="gpt-3.5-turbo" />
                                     </Form.Item>
                                     <Form.Item name="chunk_size" label="分块大小"><Input type="number" suffix="字符" /></Form.Item>
-                                    <Form.Item name="chunk_overlap" label="重叠"><Input type="number" suffix="字符" /></Form.Item>
+                                    <Form.Item name="chunk_overlap" label="分块重叠(%)"><Input type="number" min={0} max={50} suffix="%" /></Form.Item>
                                     <Form.Item name="request_interval" label="请求间隔"><Input type="number" suffix="秒" /></Form.Item>
                                     <Form.Item name="llm_timeout" label="LLM超时时间" tooltip="大模型调用超时时间，单位：秒"><Input type="number" suffix="秒" placeholder="300" /></Form.Item>
+                                    <Form.Item label="思考模式" name="disable_think" valuePropName="checked" tooltip="关闭可提升响应速度（Qwen3/Gemma等思考模型生效，仅Ollama）">
+                                        <Switch checkedChildren="关闭" unCheckedChildren="开启" />
+                                    </Form.Item>
                                     <Form.Item name="streaming_enabled" valuePropName="checked" className="col-span-2">
                                         <Switch checkedChildren="流式启用" unCheckedChildren="流式禁用" />
                                     </Form.Item>

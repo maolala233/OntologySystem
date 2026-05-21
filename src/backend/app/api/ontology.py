@@ -252,9 +252,10 @@ async def extract_schema_from_documents(
     document_ids: str = Form(..., description="已上传文档 ID 列表，逗号分隔"),
     user_intent: Optional[str] = Form(None, description="用户意图/关注领域（可选）"),
     chunk_size: int = Form(15000),
-    chunk_overlap: int = Form(500),
+    chunk_overlap: int = Form(10, description="分块重叠百分比(0-50)"),
     request_interval: int = Form(2),
     async_mode: str = Form("true", description="是否异步执行（支持取消）"),
+    disable_think: bool = Form(True, description="是否禁用思考模式（Qwen3等思考模型）"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -312,10 +313,10 @@ async def extract_schema_from_documents(
     logger.info(f"[extract-schema-from-documents] 合并后总文本长度={len(combined_text)}")
 
     # 获取 LLM 配置
-    extractor = _build_extractor(db)
+    extractor = _build_extractor(db, disable_think=disable_think)
 
     # 异步模式
-    is_async_mode = async_mode.lower() == "true"
+    is_async_mode = async_mode == "true" if isinstance(async_mode, str) else bool(async_mode)
     
     if is_async_mode:
         # 异步模式：创建任务并后台执行
@@ -356,7 +357,7 @@ async def extract_schema_from_documents(
                 
                 task_manager.complete_task(
                     task_id,
-                    result={"schema_graph": schema, "graph_data": graph_data, "text_content": combined_text},
+                    result={"schema_graph": schema, "graph_data": graph_data, "text_content": combined_text, "metadata": schema.get("metadata")},
                     message=f"骨架提取完成：{len(schema['classes'])} 个类，{len(schema['object_properties'])} 个关系（来自 {len(documents)} 个文档）"
                 )
             except TaskCancelledError:
@@ -397,6 +398,7 @@ async def extract_schema_from_documents(
             "schema_graph": schema,
             "graph_data": graph_data,
             "text_content": combined_text,
+            "metadata": schema.get("metadata"),
             "message": (
                 f"骨架提取完成：{len(schema['classes'])} 个类，"
                 f"{len(schema['object_properties'])} 个关系（来自 {len(documents)} 个文档）。"
@@ -411,17 +413,17 @@ async def extract_schema_endpoint(
     files: List[UploadFile] = File(..., description="支持多文件上传"),
     user_intent: Optional[str] = Form(None, description="用户意图/关注领域（可选）"),
     chunk_size: int = Form(15000),
-    chunk_overlap: int = Form(500),
+    chunk_overlap: int = Form(10, description="分块重叠百分比(0-50)"),
     request_interval: int = Form(2),
     async_mode: str = Form("false", description="是否异步执行（支持取消）"),
     save_documents: bool = Form("true", description="是否保存文档记录到数据库"),
+    disable_think: bool = Form(True, description="是否禁用思考模式（Qwen3等思考模型）"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     # 正确解析布尔值：只有 "true" (不区分大小写) 才为 True
-    is_async_mode = async_mode.lower() == "true"
-    # 正确解析 save_documents 参数
-    should_save_documents = save_documents.lower() == "true" or save_documents is True
+    is_async_mode = async_mode == "true" if isinstance(async_mode, str) else bool(async_mode)
+    should_save_documents = save_documents == "true" if isinstance(save_documents, str) else bool(save_documents)
     
     """
     【API 1 - 骨架提取】
@@ -526,7 +528,7 @@ async def extract_schema_endpoint(
         logger.info(f"[extract-schema] 合并后总文本长度={len(combined_text)}")
 
         # 获取 LLM 配置
-        extractor = _build_extractor(db)
+        extractor = _build_extractor(db, disable_think=disable_think)
 
         if is_async_mode:
             # 异步模式：创建任务并后台执行
@@ -567,7 +569,7 @@ async def extract_schema_endpoint(
                     
                     task_manager.complete_task(
                         task_id,
-                        result={"schema_graph": schema, "graph_data": graph_data, "text_content": combined_text},
+                        result={"schema_graph": schema, "graph_data": graph_data, "text_content": combined_text, "metadata": schema.get("metadata")},
                         message=f"骨架提取完成：{len(schema['classes'])} 个类，{len(schema['object_properties'])} 个关系（来自 {len(files)} 个文件）"
                     )
                 except TaskCancelledError:
@@ -617,6 +619,7 @@ async def extract_schema_endpoint(
                 "schema_graph": schema,
                 "graph_data": graph_data,
                 "text_content": combined_text,
+                "metadata": schema.get("metadata"),
                 "saved_documents": [
                     {
                         "id": doc.id,
@@ -654,7 +657,7 @@ async def extract_instances_from_documents(
     project_id: int,
     document_ids: str = Form(..., description="已上传文档 ID 列表，逗号分隔"),
     chunk_size: int = Form(15000),
-    chunk_overlap: int = Form(500),
+    chunk_overlap: int = Form(10, description="分块重叠百分比(0-50)"),
     request_interval: int = Form(2),
     async_mode: str = Form("true", description="是否异步执行（支持取消）"),
     current_user: User = Depends(get_current_user),
@@ -760,10 +763,10 @@ async def extract_instances_from_documents(
     domains_str = db_project.domains or domain_name
     
     # 获取 LLM 配置
-    extractor = _build_extractor(db)
+    extractor = _build_extractor(db, disable_think=disable_think)
 
     # 异步模式
-    is_async_mode = async_mode.lower() == "true"
+    is_async_mode = async_mode == "true" if isinstance(async_mode, str) else bool(async_mode)
     
     if is_async_mode:
         # 异步模式：创建任务并后台执行
@@ -879,6 +882,7 @@ async def extract_instances_from_documents(
                         "discarded_edges_count": inst_result.get("discarded_edges_count", 0),
                         "schema_graph": schema_dict,
                         "text_content": combined_text,
+                        "metadata": inst_result.get("metadata"),
                     },
                     message=f"实例提取完成：{len(inst_result['instances'])} 个实例" + (
                         f" ({inst_result.get('discarded_edges_count', 0)} 条不合规连线已自动丢弃)" 
@@ -994,6 +998,7 @@ async def extract_instances_from_documents(
             "instances": inst_result["instances"],
             "graph_data": full_graph_data,
             "discarded_edges_count": inst_result.get("discarded_edges_count", 0),
+            "metadata": inst_result.get("metadata"),
             "message": (
                 f"实例提取完成：{len(inst_result['instances'])} 个实例。"
                 f"{'⚠️ ' + str(inst_result.get('discarded_edges_count', 0)) + ' 条不合规连线已自动丢弃。' if inst_result.get('discarded_edges_count', 0) > 0 else ''}"
@@ -1070,7 +1075,7 @@ async def extract_instances_endpoint(
                             text=request_data.get("text_content", ""),
                             schema_graph=schema_dict,
                             chunk_size=request_data.get("chunk_size", 15000),
-                            chunk_overlap=request_data.get("chunk_overlap", 500),
+                            chunk_overlap=request_data.get("chunk_overlap", 10),
                             request_interval=request_data.get("request_interval", 2),
                             product_code=request_data.get("product_code"),
                             task_id=task_id,
@@ -1103,6 +1108,7 @@ async def extract_instances_endpoint(
                             "discarded_edges_count": inst_result.get("discarded_edges_count", 0),
                             "schema_graph": schema_dict,
                             "text_content": request_data.get("text_content", ""),
+                            "metadata": inst_result.get("metadata"),
                         },
                         message=f"实例提取完成：{len(inst_result['instances'])} 个实例" + (
                             f" ({inst_result.get('discarded_edges_count', 0)} 条不合规连线已自动丢弃)" 
@@ -1129,7 +1135,7 @@ async def extract_instances_endpoint(
                 text=request_data.get("text_content", ""),
                 schema_graph=schema_dict,
                 chunk_size=request_data.get("chunk_size", 15000),
-                chunk_overlap=request_data.get("chunk_overlap", 500),
+                chunk_overlap=request_data.get("chunk_overlap", 10),
                 request_interval=request_data.get("request_interval", 2),
                 product_code=request_data.get("product_code"),
             )
@@ -1155,6 +1161,7 @@ async def extract_instances_endpoint(
                 "instances": inst_result["instances"],
                 "graph_data": full_graph_data,
                 "discarded_edges_count": inst_result["discarded_edges_count"],
+                "metadata": inst_result.get("metadata"),
                 "message": (
                     f"实例提取完成：{len(inst_result['instances'])} 个实例。"
                     f"{'⚠️ ' + str(inst_result['discarded_edges_count']) + ' 条不合规连线已自动丢弃。' if inst_result['discarded_edges_count'] > 0 else ''}"
@@ -1177,7 +1184,7 @@ async def upload_document(
     file: UploadFile = File(...),
     scenario: Optional[str] = None,
     chunk_size: int = 15000,
-    chunk_overlap: int = 500,
+    chunk_overlap: int = 10,
     request_interval: int = 2,
     product_code: Optional[str] = None,
     current_user: User = Depends(get_current_user),
@@ -1221,7 +1228,7 @@ async def upload_document(
             parser = FileParser()
             text_content = parser.parse_file(temp_path) or ""
 
-            extractor = _build_extractor(db, chunk_size, chunk_overlap, request_interval)
+            extractor = _build_extractor(db, chunk_size, chunk_overlap, request_interval, disable_think=True)
 
             df = pd.DataFrame(columns=["主体 (Class)", "属性 (DataProp)", "关系 (ObjectProp)"])
             ttl_filename, msg = extractor.build_ontology(
@@ -1773,11 +1780,24 @@ def build_schema_from_graph_data(nodes: List[dict], edges: List[dict]) -> dict:
             "id": node_id,
             "label": info['label'],
             "parent_classes": info['parent_classes'],
-            "data_properties": all_properties,  # 所有属性（用于实例提取）
-            "direct_properties": direct_props,  # 直接定义的属性
-            "inherited_properties": inherited_props,  # 继承的属性
-            "properties_with_source": properties_with_source,  # 带来源标记的属性
+            "data_properties": all_properties,
+            "direct_properties": direct_props,
+            "inherited_properties": inherited_props,
+            "properties_with_source": properties_with_source,
         })
+    
+    for node in nodes:
+        node_type = node.get('data', {}).get('type', '')
+        if node_type == 'owl:Class':
+            node_id = str(node['id'])
+            for cls in classes:
+                if cls['id'] == node_id:
+                    all_properties = cls['data_properties']
+                    prop_defs = node.get('data', {}).get('property_definitions')
+                    if not prop_defs:
+                        prop_defs = [{"name": p, "description": "", "data_type": "string"} for p in all_properties]
+                    cls["property_definitions"] = prop_defs
+                    break
     
     # 从边中提取 ObjectProperty
     for edge in edges:
@@ -1804,6 +1824,10 @@ def build_schema_from_graph_data(nodes: List[dict], edges: List[dict]) -> dict:
                 "domain": edge.get('source', ''),
                 "range": edge.get('target', ''),
             })
+            if edge_data.get('cardinality'):
+                object_properties[-1]["cardinality"] = edge_data['cardinality']
+            if edge_data.get('description'):
+                object_properties[-1]["description"] = edge_data['description']
     
     logger.info(f"[build_schema_from_graph_data] 构建完成：{len(classes)} 个类，{len(object_properties)} 个 ObjectProperty")
     
@@ -1816,10 +1840,10 @@ def build_schema_from_graph_data(nodes: List[dict], edges: List[dict]) -> dict:
 def _build_extractor(
     db: Session,
     chunk_size: int = 15000,
-    chunk_overlap: int = 500,
+    chunk_overlap: int = 10,
     request_interval: int = 2,
+    disable_think: bool = True,
 ) -> OntologyExtractor:
-    """从数据库配置中读取 LLM 参数，构建 OntologyExtractor 实例。"""
     db_config = db.query(SystemConfig).filter(SystemConfig.key == "llm_config").first()
     llm_config = db_config.value if db_config else {}
 
@@ -1827,7 +1851,12 @@ def _build_extractor(
     base_url = llm_config.get("base_url") or settings.VLLM_BASE_URL
     model = llm_config.get("model") or settings.VLLM_MODEL
 
-    return OntologyExtractor(api_key=api_key, base_url=base_url, model=model)
+    extractor = OntologyExtractor(api_key=api_key, base_url=base_url, model=model)
+    if disable_think:
+        extractor.llm_client.think_mode = "disabled"
+    else:
+        extractor.llm_client.think_mode = "enabled"
+    return extractor
 
 
 def generate_ttl_from_graph_data(nodes: List[dict], edges: List[dict]) -> str:
