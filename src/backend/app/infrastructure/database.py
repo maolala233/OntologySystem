@@ -140,7 +140,14 @@ print(f"🔧 [Database] Using connection URL: {DB_URL}")
 
 # 根据数据库类型选择合适的参数
 if DB_URL.startswith("mysql"):
-    engine = create_engine(DB_URL, pool_pre_ping=True, pool_recycle=3600)
+    engine = create_engine(
+        DB_URL,
+        pool_pre_ping=True,
+        pool_recycle=3600,
+        pool_size=20,
+        max_overflow=10,
+        pool_timeout=30,
+    )
 else:
     engine = create_engine(DB_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

@@ -354,42 +354,35 @@ class OntologyExtractor:
 
     def _get_streaming_config(self) -> bool:
         try:
-            from app.infrastructure.database import get_db, SystemConfig
-            db = next(get_db())
-            config = db.query(SystemConfig).filter(SystemConfig.key == "llm_config").first()
-            if config and config.value:
-                db.expire(config)
-                db.refresh(config)
-                val = config.value.get("streaming_enabled", True)
+            from app.infrastructure.database import SessionLocal, SystemConfig
+            db = SessionLocal()
+            try:
+                config = db.query(SystemConfig).filter(SystemConfig.key == "llm_config").first()
+                if config and config.value:
+                    val = config.value.get("streaming_enabled", True)
+                    return val
+                return True
+            finally:
                 db.close()
-                return val
-            db.close()
-            return True
         except Exception as e:
             logger.warning(f"获取流式配置失败，使用默认值：{e}")
             return True
 
     def _get_timeout_config(self) -> int:
-        """
-        从数据库获取 LLM 调用超时配置（秒）。
-        如果未配置或获取失败，返回默认值 300 秒。
-        """
         try:
-            from app.infrastructure.database import get_db, SystemConfig
-            db = next(get_db())
-            config = db.query(SystemConfig).filter(SystemConfig.key == "llm_config").first()
-            if config and config.value:
-                db.expire(config)
-                db.refresh(config)
-                timeout_val = config.value.get("llm_timeout", 300)
+            from app.infrastructure.database import SessionLocal, SystemConfig
+            db = SessionLocal()
+            try:
+                config = db.query(SystemConfig).filter(SystemConfig.key == "llm_config").first()
+                if config and config.value:
+                    timeout_val = config.value.get("llm_timeout", 300)
+                    try:
+                        return int(timeout_val) if timeout_val else 300
+                    except (ValueError, TypeError):
+                        return 300
+                return 300
+            finally:
                 db.close()
-                # 确保返回有效的整数
-                try:
-                    return int(timeout_val) if timeout_val else 300
-                except (ValueError, TypeError):
-                    return 300
-            db.close()
-            return 300
         except Exception as e:
             logger.warning(f"获取超时配置失败，使用默认值 300 秒：{e}")
             return 300
@@ -2044,3 +2037,745 @@ class OntologyExtractor:
             progress(1.0, desc="完成！")
 
         return filename, msg
+
+    # ──────────────────────────────────────────
+    # ★ 异步方法：生产级非阻塞接口
+    # ──────────────────────────────────────────
+
+    async def _async_call_llm(self, system_prompt: str, user_prompt: str,
+                               task_id: Optional[str] = None, timeout: Optional[int] = None,
+                               json_schema: Optional[Dict[str, Any]] = None) -> Optional[dict]:
+        streaming = self._get_streaming_config()
+        if timeout is None:
+            timeout = self._get_timeout_config()
+        try:
+            if task_id and task_manager.is_cancelled(task_id):
+                raise TaskCancelledError("Task cancelled before LLM call")
+            result = await self.llm_client.async_call_llm(
+                system_prompt, user_prompt,
+                max_retries=3,
+                stream=streaming,
+                timeout=timeout,
+                task_id=task_id,
+                json_schema=json_schema,
+            )
+            if task_id and task_manager.is_cancelled(task_id):
+                raise TaskCancelledError("Task cancelled after LLM call")
+            return result
+        except TaskCancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"异步 LLM 调用失败：{e}")
+            return None
+
+    async def async_extract_schema(
+        self,
+        text: str,
+        user_intent: Optional[str] = None,
+        chunk_size: int = 15000,
+        chunk_overlap: int = 10,
+        request_interval: int = 2,
+        task_id: Optional[str] = None,
+        progress_callback: Optional[Callable[[float, str], None]] = None,
+    ) -> Dict[str, Any]:
+        logger.info(f"[AsyncAPI1-SchemaExtraction] 开始骨架提取，意图：{user_intent or '通用'}")
+
+        def report_progress(progress: float, message: str = ""):
+            if progress_callback:
+                progress_callback(progress, message)
+            if task_id:
+                task_manager.update_progress(task_id, progress=progress, message=message)
+
+        def check_cancelled():
+            if task_id:
+                task_manager.check_cancelled(task_id)
+
+        report_progress(0.0, "开始骨架提取...")
+
+        intent_instruction = ""
+        if user_intent:
+            intent_instruction = (
+                f"\n【⚡ 用户意图约束】: 用户关注领域为「{user_intent}」。"
+                f"请严格聚焦该领域，提取与之直接相关的类和关系，忽略无关领域的概念。\n"
+            )
+
+        system_prompt = f"""你是一位精通 OWL2 DL 标准的本体架构师，正在执行「骨架提取」任务。
+
+【严格约束 - 违反将导致任务失败】：
+1. 【禁止提取实例】: 绝对不允许提取任何具体实例 (NamedIndividual)。只提取抽象的「类」和「属性」。
+   - 错误示例：提取「张三」「产品 A」「订单 001」→ 这些是实例，禁止！
+   - 正确示例：提取「人员」「产品」「订单」→ 这些是类，允许！
+2. 【ID 不由你决定】: 你输出的 id 字段用于辅助识别，最终 ID 将由系统重新计算，请直接用英文语义名（如 "Product", "hasName"）。
+3. 【Label 必须中文】: 所有 label 字段必须是简洁中文（非英文）。
+4. 【Data Property】: 在 classes 的 data_properties 字段中列出该类的属性定义列表，每个属性包含 name（中文属性名）、description（属性描述）、data_type（数据类型：string/number/boolean/date/datetime/array/object）。
+5. 【关系基数】: 在 object_properties 的 cardinality 字段中指明关系基数（one-to-one/one-to-many/many-to-one/many-to-many）。
+5. 【鼓励抽取隐含关系】: 如果文本中存在明确描述或强烈暗示的「系统 A 依赖于系统 B / A 调用 B / A 部署在 B 上 / A 与 B 对接」等关系，
+   即使没有出现"关系名称"这个词，也请将其提取为类与类之间的 ObjectProperty，
+   关系的 label 可用简洁中文动词短语（如「依赖于」「调用」「部署于」「对接」等）。
+6. 【必须提取子类关系】: 如果文本中存在类的继承/层级关系（如"A 是 B 的一种"、"A 属于 B 类"、"A 是 B 的子类"、"A 包括 B"等），
+   必须在 sub_class_of 字段中明确指出父类。这是构建本体层级的关键！
+   - 示例：如果文本提到"量子密钥分发设备是一种量子设备"，则"量子密钥分发设备"的 sub_class_of 应该是"量子设备"的 id。
+   - 示例：如果文本提到"系统包括认证系统和审计系统"，则"认证系统"和"审计系统"的 sub_class_of 应该是"系统"的 id。
+{intent_instruction}
+"""
+
+        user_prompt_template = """【当前文本片段】:
+"{chunk}"
+
+【输出 JSON 格式（严格遵守，不输出任何注释）】:
+{{
+  "classes": [
+    {{
+      "id": "Product",
+      "label": "产品",
+      "sub_class_of": null,
+      "data_properties": [
+        {{"name": "名称", "description": "产品名称", "data_type": "string"}},
+        {{"name": "价格", "description": "产品价格", "data_type": "number"}},
+        {{"name": "规格", "description": "产品规格", "data_type": "string"}}
+      ]
+    }}
+  ],
+  "object_properties": [
+    {{
+      "id": "belongsTo",
+      "label": "属于",
+      "description": "产品属于某个类别",
+      "domain": "Product",
+      "range": "Category",
+      "cardinality": "many-to-one"
+    }}
+  ]
+}}
+
+【约束提醒】: 不得包含 instances 字段。只输出 classes 和 object_properties。
+"""
+
+        chunks = self._chunk_text(text, chunk_size=chunk_size, overlap=chunk_overlap)
+        total_chunks = len(chunks)
+
+        all_classes: Dict[str, dict] = {}
+        all_obj_props: Dict[str, dict] = {}
+
+        for i, chunk in enumerate(chunks):
+            check_cancelled()
+            logger.info(f"[AsyncSchemaExtraction] 处理分块 {i+1}/{total_chunks}")
+            user_prompt = user_prompt_template.format(chunk=chunk)
+            data = await self._async_call_llm(system_prompt, user_prompt, task_id=task_id, json_schema=SCHEMA_EXTRACTION_JSON_SCHEMA)
+
+            if not data:
+                logger.warning(f"分块 {i+1}/{total_chunks} LLM 返回空，跳过")
+                if i < total_chunks - 1:
+                    for _ in range(request_interval * 10):
+                        check_cancelled()
+                        await asyncio.sleep(0.1)
+                continue
+
+            for cls in data.get("classes", []):
+                raw_label = (cls.get("label") or "").strip()
+                raw_llm_id = (cls.get("id") or "").strip()
+                if not raw_label:
+                    continue
+                norm_label = self._normalize_term(raw_label, user_intent=user_intent)
+                det_id = make_deterministic_id(norm_label, "Class")
+                raw_dp = cls.get("data_properties", [])
+                dp_names = []
+                dp_defs = []
+                for dp in raw_dp:
+                    if isinstance(dp, dict):
+                        dp_names.append(dp.get("name", ""))
+                        dp_defs.append({
+                            "name": dp.get("name", ""),
+                            "description": dp.get("description", ""),
+                            "data_type": dp.get("data_type", "string"),
+                        })
+                    elif isinstance(dp, str):
+                        dp_names.append(dp)
+                        dp_defs.append({"name": dp, "description": "", "data_type": "string"})
+                if det_id not in all_classes:
+                    all_classes[det_id] = {
+                        "id": det_id,
+                        "label": norm_label,
+                        "sub_class_of": None,
+                        "data_properties": dp_names,
+                        "property_definitions": dp_defs,
+                        "_raw_llm_id": raw_llm_id,
+                    }
+                else:
+                    existing_dp_names = set(all_classes[det_id]["data_properties"])
+                    existing_dp_defs = {d["name"]: d for d in all_classes[det_id].get("property_definitions", [])}
+                    for name in dp_names:
+                        existing_dp_names.add(name)
+                    for d in dp_defs:
+                        if d["name"] not in existing_dp_defs:
+                            existing_dp_defs[d["name"]] = d
+                    all_classes[det_id]["data_properties"] = list(existing_dp_names)
+                    all_classes[det_id]["property_definitions"] = list(existing_dp_defs.values())
+
+                if cls.get("sub_class_of"):
+                    all_classes[det_id]["_raw_sub_class_of"] = cls["sub_class_of"]
+
+            for op in data.get("object_properties", []):
+                raw_label = (op.get("label") or "").strip()
+                raw_domain = (op.get("domain") or "").strip()
+                raw_range = (op.get("range") or "").strip()
+                if not raw_label or not raw_domain or not raw_range:
+                    continue
+                norm_label = self._normalize_term(raw_label, user_intent=user_intent)
+                det_id = make_deterministic_id(norm_label, "ObjectProperty")
+                if det_id not in all_obj_props:
+                    all_obj_props[det_id] = {
+                        "id": det_id,
+                        "label": norm_label,
+                        "description": op.get("description", ""),
+                        "domain": raw_domain,
+                        "range": raw_range,
+                        "cardinality": op.get("cardinality"),
+                    }
+
+            progress = (i + 1) / total_chunks * 0.9
+            report_progress(progress, f"处理分块 {i+1}/{total_chunks}")
+
+            if i < total_chunks - 1:
+                await asyncio.sleep(request_interval)
+
+        label_to_det_id: Dict[str, str] = {v["label"]: k for k, v in all_classes.items()}
+        raw_llm_id_to_det_id: Dict[str, str] = {}
+        for det_id, cls_data in all_classes.items():
+            llm_id = cls_data.get("_raw_llm_id", "")
+            if llm_id:
+                raw_llm_id_to_det_id[llm_id] = det_id
+            raw_llm_id_to_det_id[det_id] = det_id
+
+        def resolve_class_id(raw: str) -> Optional[str]:
+            if not raw:
+                return None
+            if raw in all_classes:
+                return raw
+            if raw in label_to_det_id:
+                return label_to_det_id[raw]
+            if raw in raw_llm_id_to_det_id:
+                return raw_llm_id_to_det_id[raw]
+            raw_lower = raw.lower()
+            for llm_id, did in raw_llm_id_to_det_id.items():
+                if llm_id.lower() == raw_lower:
+                    return did
+            for lbl, did in label_to_det_id.items():
+                if raw in lbl or lbl in raw:
+                    return did
+            return None
+
+        for det_id, cls_data in all_classes.items():
+            raw_sco = cls_data.pop("_raw_sub_class_of", None)
+            cls_data.pop("_raw_llm_id", None)
+            if raw_sco:
+                resolved = resolve_class_id(raw_sco)
+                if resolved and resolved != det_id:
+                    cls_data["sub_class_of"] = resolved
+                else:
+                    logger.warning(f"[AsyncSchemaExtraction] 子类关系无法解析：{cls_data['label']} 的父类 '{raw_sco}' 未找到")
+
+        valid_obj_props: Dict[str, dict] = {}
+        for det_id, op_data in all_obj_props.items():
+            domain_resolved = resolve_class_id(op_data["domain"])
+            range_resolved = resolve_class_id(op_data["range"])
+            if domain_resolved and range_resolved:
+                op_data["domain"] = domain_resolved
+                op_data["range"] = range_resolved
+                valid_obj_props[det_id] = op_data
+            else:
+                logger.warning(
+                    f"[AsyncSchemaExtraction] ObjectProperty '{op_data['label']}' "
+                    f"domain/range 无法解析，已丢弃"
+                )
+
+        dedup_classes: Dict[str, dict] = {}
+        for det_id, cls_data in all_classes.items():
+            merged = False
+            for existing_id, existing_data in dedup_classes.items():
+                if names_are_similar(cls_data["label"], existing_data["label"]):
+                    for dp_name in cls_data.get("data_properties", []):
+                        if dp_name not in existing_data["data_properties"]:
+                            existing_data["data_properties"].append(dp_name)
+                    for dp_def in cls_data.get("property_definitions", []):
+                        existing_defs = {d["name"] for d in existing_data.get("property_definitions", [])}
+                        if dp_def["name"] not in existing_defs:
+                            existing_data.setdefault("property_definitions", []).append(dp_def)
+                    merged = True
+                    break
+            if not merged:
+                dedup_classes[det_id] = cls_data
+        all_classes = dedup_classes
+
+        result = {
+            "classes": list(all_classes.values()),
+            "object_properties": list(valid_obj_props.values()),
+            "metadata": {
+                "total_chunks": total_chunks,
+                "successful_chunks": total_chunks,
+                "failed_chunks": 0,
+                "success_rate": 1.0,
+                "total_classes": len(all_classes),
+                "total_object_properties": len(valid_obj_props),
+            },
+        }
+
+        report_progress(1.0, f"骨架提取完成：{len(result['classes'])} 个类，{len(result['object_properties'])} 个关系")
+        return result
+
+    async def async_extract_schema_only(
+        self,
+        text: str,
+        user_intent: Optional[str] = None,
+        chunk_size: int = 15000,
+        chunk_overlap: int = 10,
+        request_interval: int = 2,
+        task_id: Optional[str] = None,
+        progress_callback: Optional[Callable[[float, str], None]] = None,
+    ) -> Dict[str, Any]:
+        return await self.async_extract_schema(
+            text=text,
+            user_intent=user_intent,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            request_interval=request_interval,
+            task_id=task_id,
+            progress_callback=progress_callback,
+        )
+
+    async def async_extract_instances(
+        self,
+        text: str,
+        schema_graph: Dict[str, Any],
+        chunk_size: int = 15000,
+        chunk_overlap: int = 10,
+        request_interval: int = 2,
+        product_code: Optional[str] = None,
+        task_id: Optional[str] = None,
+        progress_callback: Optional[Callable[[float, str], None]] = None,
+        documents: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        logger.info("=" * 80)
+        logger.info(f"[AsyncAPI2-InstanceExtraction] 开始实例提取")
+        logger.info(f"[AsyncInstanceExtraction] Schema 包含 {len(schema_graph.get('classes', []))} 个类，{len(schema_graph.get('object_properties', []))} 个关系")
+
+        def report_progress(progress: float, message: str = ""):
+            if progress_callback:
+                progress_callback(progress, message)
+            if task_id:
+                task_manager.update_progress(task_id, progress=progress, message=message)
+
+        def check_cancelled():
+            if task_id:
+                task_manager.check_cancelled(task_id)
+
+        report_progress(0.0, "开始实例提取...")
+
+        classes: List[dict] = schema_graph.get("classes", [])
+        obj_props: List[dict] = schema_graph.get("object_properties", [])
+
+        if not classes:
+            return {"instances": [], "discarded_edges_count": 0}
+
+        class_id_to_info: Dict[str, dict] = {c['id']: c for c in classes}
+        class_to_subclasses: Dict[str, List[str]] = {c['id']: [] for c in classes}
+        for c in classes:
+            parent_classes = c.get('parent_classes', []) or c.get('sub_class_of', None)
+            if parent_classes:
+                if isinstance(parent_classes, str):
+                    parent_classes = [parent_classes]
+                for parent_id in parent_classes:
+                    if parent_id in class_to_subclasses:
+                        class_to_subclasses[parent_id].append(c['id'])
+
+        class_list_items = []
+        for c in classes:
+            cid = c['id']
+            label = c['label']
+            props = ', '.join(c.get('data_properties', []) or []) or '无'
+            subclasses = class_to_subclasses.get(cid, [])
+            subclass_info = ""
+            if subclasses:
+                subclass_labels = [class_id_to_info.get(sc, {}).get('label', sc) for sc in subclasses]
+                subclass_info = f" | 子类：{', '.join(subclass_labels)}"
+            class_list_items.append(
+                f"  - 类 ID: {cid} | 中文名：{label} | 属性字段：{props}{subclass_info}"
+            )
+        class_list_str = "\n".join(class_list_items)
+
+        op_list_str = "\n".join(
+            f"  - 关系 ID: {op['id']} | 名称：{op['label']} | 起点类：{op['domain']} → 终点类：{op['range']}"
+            for op in obj_props
+        ) or "  （当前 Schema 无 ObjectProperty）"
+
+        domain_code_clause = ""
+        if product_code:
+            domain_code_clause = (
+                f"\n【🔴 知识域隔离】所有实例 ID 必须以 `_{product_code}` 结尾，"
+                f"例如：`张三_HR` → `{make_deterministic_id('张三', 'Instance')}_{product_code}`。\n"
+            )
+
+        domain_context = ""
+        if product_code:
+            domain_context = f"\n【📚 知识域上下文】当前提取任务属于【{product_code}】知识域。请确保提取的实例与该知识域相关。\n"
+
+        system_prompt = f"""你是一位精通 OWL2 DL 的本体工程师，正在执行「实例提取」任务。
+
+【已审核的类 Schema（你只能实例化这些类）】:
+{class_list_str}
+
+【已审核的关系 Schema（连线只能使用这些关系，且必须符合 domain→range）】:
+{op_list_str}
+{domain_code_clause}
+{domain_context}
+【子类继承说明】:
+- 如果某个类有子类，你可以将实例分配给该类或其任意子类。
+- 优先将实例分配给最具体的子类（叶子类），而不是父类。
+
+【严格约束】:
+1. 【区分属性与关系】:
+   - 如果是文本值（如 "1.0 版", "高性能"），放入 data_props。
+   - 如果是指向另一个**实体**（如指向 "算法 A"），放入 object_props。
+   - 不要把 "平台名称"、"版本" 等属性放到 object_props 里！
+2. 【仅实例化已定义的类】: type 字段的值必须是上方某个「类 ID」。绝对不能创建 Schema 以外的类型。
+3. 【连线必须符合 domain→range】: object_props 中使用的关系 ID 必须是上方已定义的，且起点/终点类型必须匹配。
+4. 【禁止重新定义类】: 不要输出 classes 或 object_properties 字段。
+5. 【ID 使用语义英文名】: 你输出的 id 用于辅助，系统将重新计算确定性 ID。
+6. 【Label 必须中文】: label 字段必须是中文。
+7. 【不遗漏】: 文本中出现的所有符合上述类定义的实体都必须提取，不得只举例代表。
+8. 【具体化命名原则】: 实例的 label 必须是文档中出现的最具体的专有名词或实体名称。
+   绝对禁止直接照抄所属类的名称作为实例的 label。
+9. 【消除同名冗余】: 如果提取出的实例 label 与它的 type（类的 ID 对应的中文标签）完全一样，说明你提取错了，必须回到上下文中寻找更具体的限定词。
+10. 【属性防冗余】: 如果某个专有名词已经作为实例的 label 出现，就不要再把同样的字符串重复放入 data_props 的"名称""系统名称"等字段中。
+11. 【🔴 强制溯源】: 每个实例**必须**包含 `source_quote` 字段，该字段必须一字不差地摘抄原文原句，作为提取该实例的依据。
+    - source_quote 必须是原文中的完整句子，不能改写或缩写。
+    - 如果无法找到直接支持的原文句子，该实例不应被提取。
+"""
+
+        user_prompt_template = """【当前文本片段】:
+"{chunk}"
+
+【输出 JSON 格式（只输出 instances 和 links 数组，不得包含 classes/object_properties 字段）】:
+{{
+  "instances": [
+    {{
+      "id": "ZhangSan",
+      "type": "Employee",
+      "label": "张三",
+      "source_quote": "张三同志现任技术部经理，工号 001，职级 P6。",
+      "object_props": {{
+        "worksIn": ["DeptA"]
+      }},
+      "data_props": {{
+        "工号": "001",
+        "职级": "P6"
+      }}
+    }}
+  ],
+  "links": [
+    {{
+      "link_type": "worksIn",
+      "source_label": "张三",
+      "source_type": "Employee",
+      "target_label": "DeptA",
+      "target_type": "Department",
+      "source_quote": "张三同志现任技术部经理"
+    }}
+  ]
+}}
+
+【重要提醒】:
+- 每个实例**必须**包含 `source_quote` 字段，必须一字不差地摘抄上方文本片段中的原句。
+- **links 数组**：除了在实例的 object_props 中声明关系外，还**必须**在 links 数组中显式声明每条关系，包含源和目标的类型信息。
+- links 中的 source_label/target_label 必须与对应实例的 label 完全一致。
+- links 中的 source_type/target_type 必须是上方 Schema 中定义的类 ID 或中文名。
+"""
+
+        if documents and len(documents) > 0:
+            chunks = self._chunk_documents(documents, chunk_size=chunk_size, overlap=chunk_overlap)
+        else:
+            chunks = self._chunk_text(text, chunk_size=chunk_size, overlap=chunk_overlap)
+
+        total_chunks = len(chunks)
+
+        valid_class_ids: Set[str] = {c["id"] for c in classes}
+        op_constraints: Dict[str, Tuple[str, str]] = {op["id"]: (op["domain"], op["range"]) for op in obj_props}
+        op_label_to_id: Dict[str, str] = {op["label"]: op["id"] for op in obj_props}
+        class_label_to_id: Dict[str, str] = {c["label"]: c["id"] for c in classes}
+
+        class_to_ancestors: Dict[str, Set[str]] = {c["id"]: {c["id"]} for c in classes}
+        for c in classes:
+            parent_classes = c.get('parent_classes', []) or c.get('sub_class_of', None)
+            if parent_classes:
+                if isinstance(parent_classes, str):
+                    parent_classes = [parent_classes]
+                for parent_id in parent_classes:
+                    if parent_id in class_to_ancestors:
+                        class_to_ancestors[c["id"]].add(parent_id)
+                        class_to_ancestors[c["id"]].update(class_to_ancestors.get(parent_id, {parent_id}))
+
+        all_instances: Dict[str, dict] = {}
+        discarded_count = 0
+
+        for i, chunk in enumerate(chunks):
+            check_cancelled()
+
+            if isinstance(chunk, dict):
+                chunk_text = chunk.get("text", "")
+                chunk_filename = chunk.get("filename", "unknown")
+                chunk_index = chunk.get("chunk_index", i)
+            else:
+                chunk_text = chunk
+                chunk_filename = "unknown"
+                chunk_index = i
+
+            logger.info(f"[AsyncInstanceExtraction] 处理分块 {i+1}/{total_chunks} (file={chunk_filename})")
+            user_prompt = user_prompt_template.format(chunk=chunk_text)
+            data = await self._async_call_llm(system_prompt, user_prompt, task_id=task_id, json_schema=INSTANCE_EXTRACTION_JSON_SCHEMA)
+
+            if not data:
+                logger.warning(f"分块 {i+1}/{total_chunks} LLM 返回空，跳过")
+                if i < total_chunks - 1:
+                    for _ in range(request_interval * 10):
+                        check_cancelled()
+                        await asyncio.sleep(0.1)
+                continue
+
+            raw_instances = []
+            raw_links = []
+            if isinstance(data, list):
+                raw_instances = data
+            elif isinstance(data, dict):
+                raw_instances = data.get("instances", [])
+                raw_links = data.get("links", data.get("relationships", []))
+            else:
+                continue
+
+            for inst in raw_instances:
+                source_quote = inst.get("source_quote", "")
+                if not source_quote:
+                    source_quote = inst.get("label", "")
+
+                inst["_source_file"] = chunk_filename
+                inst["_source_chunk_index"] = chunk_index
+                inst["_source_quote"] = source_quote
+                if product_code:
+                    inst["_domain"] = product_code
+
+                raw_label = inst.get("label", "").strip()
+                raw_type = inst.get("type", "").strip()
+
+                if not raw_label:
+                    continue
+
+                resolved_type = None
+                if raw_type in valid_class_ids:
+                    resolved_type = raw_type
+                elif raw_type in class_label_to_id:
+                    resolved_type = class_label_to_id[raw_type]
+                else:
+                    discarded_count += 1
+                    continue
+
+                det_id = make_deterministic_id(raw_label, "Instance")
+                if product_code:
+                    det_id = f"{det_id}_{product_code}"
+
+                valid_obj_props: Dict[str, List[str]] = {}
+
+                valid_data_props_keys = set()
+                if resolved_type:
+                    target_cls = next((c for c in classes if c["id"] == resolved_type), None)
+                    if target_cls:
+                        direct_props = set(target_cls.get("data_properties", []) or [])
+                        inherited_props = set(target_cls.get("inherited_properties", []) or [])
+                        valid_data_props_keys = direct_props | inherited_props
+
+                raw_obj_props = inst.get("object_props", {})
+
+                if "data_props" not in inst:
+                    inst["data_props"] = {}
+
+                for op_key, targets in raw_obj_props.items():
+                    targets_list = targets if isinstance(targets, list) else [targets]
+
+                    if op_key in valid_data_props_keys:
+                        val_str = ", ".join([str(t) for t in targets_list])
+                        inst["data_props"][op_key] = val_str
+                        continue
+
+                    resolved_op_id = op_key
+                    if resolved_op_id not in op_constraints:
+                        if resolved_op_id in op_label_to_id:
+                            resolved_op_id = op_label_to_id[resolved_op_id]
+                        else:
+                            discarded_count += len(targets_list)
+                            continue
+
+                    expected_domain, expected_range = op_constraints[resolved_op_id]
+                    instance_ancestors = class_to_ancestors.get(resolved_type, {resolved_type})
+                    if not resolved_type or expected_domain not in instance_ancestors:
+                        discarded_count += len(targets_list)
+                        continue
+
+                    valid_targets = []
+                    for t_raw in targets_list:
+                        if isinstance(t_raw, dict):
+                            t_raw = t_raw.get("label") or t_raw.get("id") or t_raw.get("name", "")
+                            if not t_raw:
+                                continue
+                        t_raw = str(t_raw)
+                        if t_raw in all_instances:
+                            valid_targets.append(t_raw)
+                        else:
+                            found = False
+                            for existing_id, existing_inst in all_instances.items():
+                                if names_are_similar(t_raw, existing_inst.get("label", "")):
+                                    valid_targets.append(existing_id)
+                                    found = True
+                                    break
+                            if not found:
+                                valid_targets.append(t_raw)
+
+                    if valid_targets:
+                        valid_obj_props[resolved_op_id] = valid_targets
+
+                if det_id not in all_instances:
+                    all_instances[det_id] = {
+                        "id": det_id,
+                        "type": resolved_type,
+                        "label": raw_label,
+                        "object_props": valid_obj_props,
+                        "data_props": inst.get("data_props", {}),
+                    }
+                else:
+                    existing = all_instances[det_id]
+                    for op_id, targets in valid_obj_props.items():
+                        if op_id in existing["object_props"]:
+                            existing_targets = existing["object_props"][op_id]
+                            seen = set()
+                            merged = []
+                            for t in existing_targets + targets:
+                                key = json.dumps(t, sort_keys=True) if isinstance(t, dict) else t
+                                if key not in seen:
+                                    seen.add(key)
+                                    merged.append(t)
+                            existing["object_props"][op_id] = merged
+                        else:
+                            existing["object_props"][op_id] = targets
+                    existing["data_props"].update(inst.get("data_props", {}))
+
+            for link in raw_links:
+                link_type = link.get("link_type", link.get("type", ""))
+                source_label = link.get("source_label", link.get("source_object_name", ""))
+                source_type_raw = link.get("source_type", link.get("source_object_type", ""))
+                target_label = link.get("target_label", link.get("target_object_name", ""))
+                target_type_raw = link.get("target_type", link.get("target_object_type", ""))
+
+                if not link_type or not source_label or not target_label:
+                    continue
+
+                resolved_op_id = link_type
+                if resolved_op_id not in op_constraints:
+                    if resolved_op_id in op_label_to_id:
+                        resolved_op_id = op_label_to_id[resolved_op_id]
+                    else:
+                        continue
+
+                resolved_source_type = None
+                if source_type_raw in valid_class_ids:
+                    resolved_source_type = source_type_raw
+                elif source_type_raw in class_label_to_id:
+                    resolved_source_type = class_label_to_id[source_type_raw]
+
+                resolved_target_type = None
+                if target_type_raw in valid_class_ids:
+                    resolved_target_type = target_type_raw
+                elif target_type_raw in class_label_to_id:
+                    resolved_target_type = class_label_to_id[target_type_raw]
+
+                source_det_id = make_deterministic_id(source_label.strip(), "Instance")
+                if product_code:
+                    source_det_id = f"{source_det_id}_{product_code}"
+                if source_det_id not in all_instances:
+                    for eid, einst in all_instances.items():
+                        if names_are_similar(source_label, einst.get("label", "")):
+                            source_det_id = eid
+                            break
+
+                target_det_id = make_deterministic_id(target_label.strip(), "Instance")
+                if product_code:
+                    target_det_id = f"{target_det_id}_{product_code}"
+                if target_det_id not in all_instances:
+                    for eid, einst in all_instances.items():
+                        if names_are_similar(target_label, einst.get("label", "")):
+                            target_det_id = eid
+                            break
+
+                if source_det_id not in all_instances or target_det_id not in all_instances:
+                    continue
+
+                expected_domain, expected_range = op_constraints[resolved_op_id]
+                actual_source_type = all_instances[source_det_id].get("type", "")
+                actual_target_type = all_instances[target_det_id].get("type", "")
+
+                source_ancestors = class_to_ancestors.get(actual_source_type, {actual_source_type})
+                target_ancestors = class_to_ancestors.get(actual_target_type, {actual_target_type})
+
+                if expected_domain not in source_ancestors:
+                    continue
+                if expected_range not in target_ancestors:
+                    continue
+
+                source_inst = all_instances[source_det_id]
+                if resolved_op_id not in source_inst["object_props"]:
+                    source_inst["object_props"][resolved_op_id] = [target_det_id]
+                elif target_det_id not in source_inst["object_props"][resolved_op_id]:
+                    source_inst["object_props"][resolved_op_id].append(target_det_id)
+
+            progress = (i + 1) / total_chunks * 0.9
+            report_progress(progress, f"处理分块 {i+1}/{total_chunks}")
+
+            if i < total_chunks - 1:
+                await asyncio.sleep(request_interval)
+
+        result = {
+            "instances": list(all_instances.values()),
+            "discarded_edges_count": discarded_count,
+            "metadata": {
+                "total_chunks": total_chunks,
+                "successful_chunks": total_chunks,
+                "failed_chunks": 0,
+                "success_rate": 1.0,
+                "total_instances": len(all_instances),
+                "total_edges": sum(len(inst.get("object_props", {})) for inst in all_instances.values()),
+                "discarded_edges_count": discarded_count,
+            },
+        }
+        report_progress(1.0, f"实例提取完成：{len(result['instances'])} 个实例")
+        logger.info(f"[AsyncInstanceExtraction] 完成：{len(result['instances'])} 个实例，{discarded_count} 条不合规连线已丢弃")
+        return result
+
+    async def async_extract_instances_with_constraints(
+        self,
+        text: str,
+        schema_graph: Dict[str, Any],
+        chunk_size: int = 15000,
+        chunk_overlap: int = 10,
+        request_interval: int = 2,
+        product_code: Optional[str] = None,
+        task_id: Optional[str] = None,
+        progress_callback: Optional[Callable[[float, str], None]] = None,
+        documents: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        return await self.async_extract_instances(
+            text=text,
+            schema_graph=schema_graph,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            request_interval=request_interval,
+            product_code=product_code,
+            task_id=task_id,
+            progress_callback=progress_callback,
+            documents=documents,
+        )

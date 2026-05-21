@@ -28,6 +28,8 @@ from rdflib import Graph, RDF, OWL, RDFS
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
+EXTRACTION_SEMAPHORE = asyncio.Semaphore(3)
+
 # ─────────────────────────────────────────────
 #  CRUD 基础接口（保持不变）
 # ─────────────────────────────────────────────
@@ -326,45 +328,42 @@ async def extract_schema_from_documents(
         
         # 后台执行提取任务
         async def run_extraction():
-            try:
-                def progress_callback(progress: float, message: str):
-                    task_manager.update_progress(task_id, progress=progress, message=message)
-                
-                # 在线程池中运行同步提取方法（使用合并后的文本）
-                schema = await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: extractor.extract_schema_only(
-                        text=combined_text,
-                        user_intent=user_intent,
-                        chunk_size=chunk_size,
-                        chunk_overlap=chunk_overlap,
-                        request_interval=request_interval,
-                        task_id=task_id,
-                        progress_callback=progress_callback,
+            async with EXTRACTION_SEMAPHORE:
+                try:
+                    def progress_callback(progress: float, message: str):
+                        task_manager.update_progress(task_id, progress=progress, message=message)
+                    
+                    schema = await extractor.async_extract_schema_only(
+                            text=combined_text,
+                            user_intent=user_intent,
+                            chunk_size=chunk_size,
+                            chunk_overlap=chunk_overlap,
+                            request_interval=request_interval,
+                            task_id=task_id,
+                            progress_callback=progress_callback,
+                        )
+                    
+                    # 转换为前端渲染格式
+                    graph_data = OntologyExtractor.schema_to_graph_data(schema)
+                    
+                    # 将骨架 schema 临时存到 project graph_data
+                    merged_graph = {
+                        "schema": schema,
+                        **graph_data,
+                    }
+                    db_project.graph_data = merged_graph
+                    db.commit()
+                    
+                    task_manager.complete_task(
+                        task_id,
+                        result={"schema_graph": schema, "graph_data": graph_data, "text_content": combined_text, "metadata": schema.get("metadata")},
+                        message=f"骨架提取完成：{len(schema['classes'])} 个类，{len(schema['object_properties'])} 个关系（来自 {len(documents)} 个文档）"
                     )
-                )
-                
-                # 转换为前端渲染格式
-                graph_data = OntologyExtractor.schema_to_graph_data(schema)
-                
-                # 将骨架 schema 临时存到 project graph_data
-                merged_graph = {
-                    "schema": schema,
-                    **graph_data,
-                }
-                db_project.graph_data = merged_graph
-                db.commit()
-                
-                task_manager.complete_task(
-                    task_id,
-                    result={"schema_graph": schema, "graph_data": graph_data, "text_content": combined_text, "metadata": schema.get("metadata")},
-                    message=f"骨架提取完成：{len(schema['classes'])} 个类，{len(schema['object_properties'])} 个关系（来自 {len(documents)} 个文档）"
-                )
-            except TaskCancelledError:
-                task_manager.cancel_task(task_id, "用户取消任务")
-            except Exception as e:
-                logger.error(f"[extract-schema-from-documents] 错误：{e}", exc_info=True)
-                task_manager.fail_task(task_id, str(e), "骨架提取失败")
+                except TaskCancelledError:
+                    task_manager.cancel_task(task_id, "用户取消任务")
+                except Exception as e:
+                    logger.error(f"[extract-schema-from-documents] 错误：{e}", exc_info=True)
+                    task_manager.fail_task(task_id, str(e), "骨架提取失败")
         
         # 启动后台任务
         asyncio.create_task(run_extraction())
@@ -374,8 +373,7 @@ async def extract_schema_from_documents(
             "message": "任务已启动，请使用 task_id 查询进度",
         }
     else:
-        # 同步模式
-        schema = extractor.extract_schema_only(
+        schema = await extractor.async_extract_schema_only(
             text=combined_text,
             user_intent=user_intent,
             chunk_size=chunk_size,
@@ -383,10 +381,8 @@ async def extract_schema_from_documents(
             request_interval=request_interval,
         )
 
-        # 转换为前端渲染格式
         graph_data = OntologyExtractor.schema_to_graph_data(schema)
 
-        # 将骨架 schema 临时存到 project graph_data
         merged_graph = {
             "schema": schema,
             **graph_data,
@@ -538,45 +534,42 @@ async def extract_schema_endpoint(
             
             # 后台执行提取任务
             async def run_extraction():
-                try:
-                    def progress_callback(progress: float, message: str):
-                        task_manager.update_progress(task_id, progress=progress, message=message)
-                    
-                    # 在线程池中运行同步提取方法（使用合并后的文本）
-                    schema = await asyncio.get_event_loop().run_in_executor(
-                        None,
-                        lambda: extractor.extract_schema_only(
-                            text=combined_text,
-                            user_intent=user_intent,
-                            chunk_size=chunk_size,
-                            chunk_overlap=chunk_overlap,
-                            request_interval=request_interval,
-                            task_id=task_id,
-                            progress_callback=progress_callback,
+                async with EXTRACTION_SEMAPHORE:
+                    try:
+                        def progress_callback(progress: float, message: str):
+                            task_manager.update_progress(task_id, progress=progress, message=message)
+                        
+                        schema = await extractor.async_extract_schema_only(
+                                text=combined_text,
+                                user_intent=user_intent,
+                                chunk_size=chunk_size,
+                                chunk_overlap=chunk_overlap,
+                                request_interval=request_interval,
+                                task_id=task_id,
+                                progress_callback=progress_callback,
+                            )
+                        
+                        # 转换为前端渲染格式
+                        graph_data = OntologyExtractor.schema_to_graph_data(schema)
+                        
+                        # 将骨架 schema 临时存到 project graph_data
+                        merged_graph = {
+                            "schema": schema,
+                            **graph_data,
+                        }
+                        db_project.graph_data = merged_graph
+                        db.commit()
+                        
+                        task_manager.complete_task(
+                            task_id,
+                            result={"schema_graph": schema, "graph_data": graph_data, "text_content": combined_text, "metadata": schema.get("metadata")},
+                            message=f"骨架提取完成：{len(schema['classes'])} 个类，{len(schema['object_properties'])} 个关系（来自 {len(files)} 个文件）"
                         )
-                    )
-                    
-                    # 转换为前端渲染格式
-                    graph_data = OntologyExtractor.schema_to_graph_data(schema)
-                    
-                    # 将骨架 schema 临时存到 project graph_data
-                    merged_graph = {
-                        "schema": schema,
-                        **graph_data,
-                    }
-                    db_project.graph_data = merged_graph
-                    db.commit()
-                    
-                    task_manager.complete_task(
-                        task_id,
-                        result={"schema_graph": schema, "graph_data": graph_data, "text_content": combined_text, "metadata": schema.get("metadata")},
-                        message=f"骨架提取完成：{len(schema['classes'])} 个类，{len(schema['object_properties'])} 个关系（来自 {len(files)} 个文件）"
-                    )
-                except TaskCancelledError:
-                    task_manager.cancel_task(task_id, "用户取消任务")
-                except Exception as e:
-                    logger.error(f"[extract-schema] 错误：{e}", exc_info=True)
-                    task_manager.fail_task(task_id, str(e), "骨架提取失败")
+                    except TaskCancelledError:
+                        task_manager.cancel_task(task_id, "用户取消任务")
+                    except Exception as e:
+                        logger.error(f"[extract-schema] 错误：{e}", exc_info=True)
+                        task_manager.fail_task(task_id, str(e), "骨架提取失败")
             
             # 启动后台任务
             asyncio.create_task(run_extraction())
@@ -595,8 +588,7 @@ async def extract_schema_endpoint(
                 ] if saved_docs else [],
             }
         else:
-            # 同步模式（默认，保持向后兼容）
-            schema = extractor.extract_schema_only(
+            schema = await extractor.async_extract_schema_only(
                 text=combined_text,
                 user_intent=user_intent,
                 chunk_size=chunk_size,
@@ -604,10 +596,8 @@ async def extract_schema_endpoint(
                 request_interval=request_interval,
             )
 
-            # 转换为前端渲染格式
             graph_data = OntologyExtractor.schema_to_graph_data(schema)
 
-            # 将骨架 schema 临时存到 project graph_data
             merged_graph = {
                 "schema": schema,
                 **graph_data,
@@ -776,124 +766,107 @@ async def extract_instances_from_documents(
         
         # 后台执行提取任务
         async def run_extraction():
-            try:
-                def progress_callback(progress: float, message: str):
-                    task_manager.update_progress(task_id, progress=progress, message=message)
-                
-                # 在线程池中运行同步提取方法，传递知识域信息和 documents 数组
-                inst_result = await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: extractor.extract_instances_with_constraints(
-                        text=combined_text,
-                        schema_graph=schema_dict,
-                        chunk_size=chunk_size,
-                        chunk_overlap=chunk_overlap,
-                        request_interval=request_interval,
-                        product_code=domains_str,  # 传递知识域作为 product_code
-                        task_id=task_id,
-                        progress_callback=progress_callback,
-                        documents=documents_list,  # ★ 关键修复：传递 documents 数组保持溯源信息
-                    )
-                )
-
-                # ★ 关键修复：直接使用数据库中已保存的骨架图（用户审核后的版本）
-                # 而不是重新从 schema_dict 生成，以保留用户手动调整的节点位置等信息
-                existing_nodes = (db_project.graph_data or {}).get("nodes", [])
-                existing_edges = (db_project.graph_data or {}).get("edges", [])
-                
-                # 从现有图中筛选出类节点（owl:Class）和类间关系边（subClassOf, ObjectProperty）
-                class_node_ids = set()
-                schema_nodes = []
-                schema_edges = []
-                
-                for node in existing_nodes:
-                    node_type = node.get('data', {}).get('type', '')
-                    if node_type == 'owl:Class':
-                        class_node_ids.add(node['id'])
-                        schema_nodes.append(node)
-                
-                for edge in existing_edges:
-                    edge_data = edge.get('data', {})
-                    relation = edge_data.get('relation', '')
-                    label = edge.get('label', '')
-                    # 保留类间关系边（subClassOf 或 ObjectProperty）
-                    if relation == 'subclass_of' or label in ('subClassOf', 'subclass_of'):
-                        schema_edges.append(edge)
-                    elif relation and relation not in ('rdf:type', 'type'):
-                        # ObjectProperty 关系边
-                        schema_edges.append(edge)
-                
-                schema_graph_data = {"nodes": schema_nodes, "edges": schema_edges}
-                
-                # 合并实例到完整图
-                full_graph_data = OntologyExtractor.merge_instances_to_graph_data(
-                    schema_graph_data=schema_graph_data,
-                    instances=inst_result["instances"],
-                )
-
-                # 更新 project graph_data
-                db_project.graph_data = {
-                    "schema": schema_dict,
-                    **full_graph_data,
-                }
-                db.commit()
-
-                # ★ 向量入库：将提取的实例同步到向量库
+            async with EXTRACTION_SEMAPHORE:
                 try:
-                    # 获取知识域信息
-                    domain_name = ""
-                    if db_project.domain_id:
-                        domain = db.query(KnowledgeDomain).filter(KnowledgeDomain.id == db_project.domain_id).first()
-                        if domain:
-                            domain_name = domain.name
+                    def progress_callback(progress: float, message: str):
+                        task_manager.update_progress(task_id, progress=progress, message=message)
                     
-                    # 构建 TTL 内容用于向量入库
-                    ttl_content = generate_ttl_from_graph_data(full_graph_data["nodes"], full_graph_data["edges"])
-                    
-                    # 保存临时 TTL 文件
-                    with tempfile.NamedTemporaryFile(mode='w', suffix='.ttl', delete=False, encoding='utf-8') as f:
-                        f.write(ttl_content)
-                        temp_ttl_path = f.name
-                    
-                    try:
-                        # 同步到向量库，传入正确的 collection_name
-                        collection_name = f"project_{project_id}"
-                        extractor.sync_ttl_to_vector_store(
-                            ttl_file_path=temp_ttl_path,
-                            project_id=project_id,
-                            domain=domain_name,
-                            collection_name=collection_name,
+                    inst_result = await extractor.async_extract_instances_with_constraints(
+                            text=combined_text,
+                            schema_graph=schema_dict,
+                            chunk_size=chunk_size,
+                            chunk_overlap=chunk_overlap,
+                            request_interval=request_interval,
+                            product_code=domains_str,
+                            task_id=task_id,
+                            progress_callback=progress_callback,
+                            documents=documents_list,
                         )
-                        logger.info(f"[extract-instances-from-documents] 向量入库成功：project_id={project_id}, domain={domain_name}, collection={collection_name}")
-                    except Exception as e:
-                        logger.error(f"[extract-instances-from-documents] 向量入库失败：{e}")
-                    finally:
-                        # 清理临时文件
-                        if temp_ttl_path and os.path.exists(temp_ttl_path):
-                            os.remove(temp_ttl_path)
-                except Exception as e:
-                    logger.error(f"[extract-instances-from-documents] 向量入库异常：{e}")
 
-                task_manager.complete_task(
-                    task_id,
-                    result={
-                        "instances": inst_result["instances"],
-                        "graph_data": full_graph_data,
-                        "discarded_edges_count": inst_result.get("discarded_edges_count", 0),
-                        "schema_graph": schema_dict,
-                        "text_content": combined_text,
-                        "metadata": inst_result.get("metadata"),
-                    },
-                    message=f"实例提取完成：{len(inst_result['instances'])} 个实例" + (
-                        f" ({inst_result.get('discarded_edges_count', 0)} 条不合规连线已自动丢弃)" 
-                        if inst_result.get('discarded_edges_count', 0) > 0 else ""
+                    existing_nodes = (db_project.graph_data or {}).get("nodes", [])
+                    existing_edges = (db_project.graph_data or {}).get("edges", [])
+                    
+                    class_node_ids = set()
+                    schema_nodes = []
+                    schema_edges = []
+                    
+                    for node in existing_nodes:
+                        node_type = node.get('data', {}).get('type', '')
+                        if node_type == 'owl:Class':
+                            class_node_ids.add(node['id'])
+                            schema_nodes.append(node)
+                    
+                    for edge in existing_edges:
+                        edge_data = edge.get('data', {})
+                        relation = edge_data.get('relation', '')
+                        label = edge.get('label', '')
+                        if relation == 'subclass_of' or label in ('subClassOf', 'subclass_of'):
+                            schema_edges.append(edge)
+                        elif relation and relation not in ('rdf:type', 'type'):
+                            schema_edges.append(edge)
+                    
+                    schema_graph_data = {"nodes": schema_nodes, "edges": schema_edges}
+                    
+                    full_graph_data = OntologyExtractor.merge_instances_to_graph_data(
+                        schema_graph_data=schema_graph_data,
+                        instances=inst_result["instances"],
                     )
-                )
-            except TaskCancelledError:
-                task_manager.cancel_task(task_id, "用户取消任务")
-            except Exception as e:
-                logger.error(f"[extract-instances-from-documents] 错误：{e}", exc_info=True)
-                task_manager.fail_task(task_id, str(e), "实例提取失败")
+
+                    db_project.graph_data = {
+                        "schema": schema_dict,
+                        **full_graph_data,
+                    }
+                    db.commit()
+
+                    try:
+                        domain_name = ""
+                        if db_project.domain_id:
+                            domain = db.query(KnowledgeDomain).filter(KnowledgeDomain.id == db_project.domain_id).first()
+                            if domain:
+                                domain_name = domain.name
+                        
+                        ttl_content = generate_ttl_from_graph_data(full_graph_data["nodes"], full_graph_data["edges"])
+                        
+                        with tempfile.NamedTemporaryFile(mode='w', suffix='.ttl', delete=False, encoding='utf-8') as f:
+                            f.write(ttl_content)
+                            temp_ttl_path = f.name
+                        
+                        try:
+                            collection_name = f"project_{project_id}"
+                            extractor.sync_ttl_to_vector_store(
+                                ttl_file_path=temp_ttl_path,
+                                project_id=project_id,
+                                domain=domain_name,
+                                collection_name=collection_name,
+                            )
+                        except Exception as e:
+                            logger.error(f"[extract-instances-from-documents] 向量入库失败：{e}")
+                        finally:
+                            if temp_ttl_path and os.path.exists(temp_ttl_path):
+                                os.remove(temp_ttl_path)
+                    except Exception as e:
+                        logger.error(f"[extract-instances-from-documents] 向量入库异常：{e}")
+
+                    task_manager.complete_task(
+                        task_id,
+                        result={
+                            "instances": inst_result["instances"],
+                            "graph_data": full_graph_data,
+                            "discarded_edges_count": inst_result.get("discarded_edges_count", 0),
+                            "schema_graph": schema_dict,
+                            "text_content": combined_text,
+                            "metadata": inst_result.get("metadata"),
+                        },
+                        message=f"实例提取完成：{len(inst_result['instances'])} 个实例" + (
+                            f" ({inst_result.get('discarded_edges_count', 0)} 条不合规连线已自动丢弃)" 
+                            if inst_result.get('discarded_edges_count', 0) > 0 else ""
+                        )
+                    )
+                except TaskCancelledError:
+                    task_manager.cancel_task(task_id, "用户取消任务")
+                except Exception as e:
+                    logger.error(f"[extract-instances-from-documents] 错误：{e}", exc_info=True)
+                    task_manager.fail_task(task_id, str(e), "实例提取失败")
         
         # 启动后台任务
         asyncio.create_task(run_extraction())
@@ -903,25 +876,20 @@ async def extract_instances_from_documents(
             "message": "任务已启动，请使用 task_id 查询进度",
         }
     else:
-        # 同步模式，传递知识域信息和 documents 数组
-        inst_result = extractor.extract_instances_with_constraints(
+        inst_result = await extractor.async_extract_instances_with_constraints(
             text=combined_text,
             schema_graph=schema_dict,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             request_interval=request_interval,
-            product_code=domains_str,  # 传递知识域作为 product_code
+            product_code=domains_str,
             task_id=None,
-            documents=documents_list,  # ★ 关键修复：传递 documents 数组保持溯源信息
+            documents=documents_list,
         )
 
-        # ★ 关键修复：直接使用数据库中已保存的骨架图（用户审核后的版本）
-        # 而不是重新从 schema_dict 生成，以保留用户手动调整的节点位置、自定义属性等信息
-        # 这对于 TTL 导入场景尤为重要，因为用户可能已经手动调整了骨架结构
         existing_nodes = (db_project.graph_data or {}).get("nodes", [])
         existing_edges = (db_project.graph_data or {}).get("edges", [])
         
-        # 从现有图中筛选出类节点（owl:Class）和类间关系边（subClassOf, ObjectProperty）
         class_node_ids = set()
         schema_nodes = []
         schema_edges = []
@@ -930,17 +898,15 @@ async def extract_instances_from_documents(
             node_type = node.get('data', {}).get('type', '')
             if node_type == 'owl:Class':
                 class_node_ids.add(node['id'])
-                schema_nodes.append(node)  # 保留原始节点（包括位置、自定义属性等）
+                schema_nodes.append(node)
         
         for edge in existing_edges:
             edge_data = edge.get('data', {})
             relation = edge_data.get('relation', '')
             label = edge.get('label', '')
-            # 保留类间关系边（subClassOf 或 ObjectProperty）
             if relation == 'subclass_of' or label in ('subClassOf', 'subclass_of'):
                 schema_edges.append(edge)
             elif relation and relation not in ('rdf:type', 'type'):
-                # ObjectProperty 关系边
                 schema_edges.append(edge)
         
         schema_graph_data = {"nodes": schema_nodes, "edges": schema_edges}
@@ -1064,62 +1030,55 @@ async def extract_instances_endpoint(
             
             # 后台执行提取任务
             async def run_extraction():
-                try:
-                    def progress_callback(progress: float, message: str):
-                        task_manager.update_progress(task_id, progress=progress, message=message)
-                    
-                    # 在线程池中运行同步提取方法
-                    inst_result = await asyncio.get_event_loop().run_in_executor(
-                        None,
-                        lambda: extractor.extract_instances_with_constraints(
-                            text=request_data.get("text_content", ""),
-                            schema_graph=schema_dict,
-                            chunk_size=request_data.get("chunk_size", 15000),
-                            chunk_overlap=request_data.get("chunk_overlap", 10),
-                            request_interval=request_data.get("request_interval", 2),
-                            product_code=request_data.get("product_code"),
-                            task_id=task_id,
-                            progress_callback=progress_callback,
+                async with EXTRACTION_SEMAPHORE:
+                    try:
+                        def progress_callback(progress: float, message: str):
+                            task_manager.update_progress(task_id, progress=progress, message=message)
+                        
+                        inst_result = await extractor.async_extract_instances_with_constraints(
+                                text=request_data.get("text_content", ""),
+                                schema_graph=schema_dict,
+                                chunk_size=request_data.get("chunk_size", 15000),
+                                chunk_overlap=request_data.get("chunk_overlap", 10),
+                                request_interval=request_data.get("request_interval", 2),
+                                product_code=request_data.get("product_code"),
+                                task_id=task_id,
+                                progress_callback=progress_callback,
+                            )
+
+                        schema_graph_data = OntologyExtractor.schema_to_graph_data(schema_dict)
+                        
+                        full_graph_data = OntologyExtractor.merge_instances_to_graph_data(
+                            schema_graph_data=schema_graph_data,
+                            instances=inst_result["instances"],
                         )
-                    )
 
-                    # 【关键修复】从前端传递的 schema_graph 构建基础图数据，而不是依赖数据库
-                    # 这样确保实例是添加到用户指定的 schema 框架上
-                    schema_graph_data = OntologyExtractor.schema_to_graph_data(schema_dict)
-                    
-                    # 合并实例到完整图
-                    full_graph_data = OntologyExtractor.merge_instances_to_graph_data(
-                        schema_graph_data=schema_graph_data,
-                        instances=inst_result["instances"],
-                    )
+                        db_project.graph_data = {
+                            "schema": schema_dict,
+                            **full_graph_data,
+                        }
+                        db.commit()
 
-                    # 更新 project graph_data
-                    db_project.graph_data = {
-                        "schema": schema_dict,
-                        **full_graph_data,
-                    }
-                    db.commit()
-
-                    task_manager.complete_task(
-                        task_id,
-                        result={
-                            "instances": inst_result["instances"],
-                            "graph_data": full_graph_data,
-                            "discarded_edges_count": inst_result.get("discarded_edges_count", 0),
-                            "schema_graph": schema_dict,
-                            "text_content": request_data.get("text_content", ""),
-                            "metadata": inst_result.get("metadata"),
-                        },
-                        message=f"实例提取完成：{len(inst_result['instances'])} 个实例" + (
-                            f" ({inst_result.get('discarded_edges_count', 0)} 条不合规连线已自动丢弃)" 
-                            if inst_result.get("discarded_edges_count", 0) > 0 else ""
+                        task_manager.complete_task(
+                            task_id,
+                            result={
+                                "instances": inst_result["instances"],
+                                "graph_data": full_graph_data,
+                                "discarded_edges_count": inst_result.get("discarded_edges_count", 0),
+                                "schema_graph": schema_dict,
+                                "text_content": request_data.get("text_content", ""),
+                                "metadata": inst_result.get("metadata"),
+                            },
+                            message=f"实例提取完成：{len(inst_result['instances'])} 个实例" + (
+                                f" ({inst_result.get('discarded_edges_count', 0)} 条不合规连线已自动丢弃)" 
+                                if inst_result.get("discarded_edges_count", 0) > 0 else ""
+                            )
                         )
-                    )
-                except TaskCancelledError:
-                    task_manager.cancel_task(task_id, "用户取消任务")
-                except Exception as e:
-                    logger.error(f"[extract-instances] 错误：{e}", exc_info=True)
-                    task_manager.fail_task(task_id, str(e), "实例提取失败")
+                    except TaskCancelledError:
+                        task_manager.cancel_task(task_id, "用户取消任务")
+                    except Exception as e:
+                        logger.error(f"[extract-instances] 错误：{e}", exc_info=True)
+                        task_manager.fail_task(task_id, str(e), "实例提取失败")
             
             # 启动后台任务
             asyncio.create_task(run_extraction())
@@ -1129,9 +1088,7 @@ async def extract_instances_endpoint(
                 "message": "任务已启动，请使用 task_id 查询进度",
             }
         else:
-            # 同步模式（默认，保持向后兼容）
-            # ── 调用第二阶段引擎（带 Schema 约束） ──
-            inst_result = extractor.extract_instances_with_constraints(
+            inst_result = await extractor.async_extract_instances_with_constraints(
                 text=request_data.get("text_content", ""),
                 schema_graph=schema_dict,
                 chunk_size=request_data.get("chunk_size", 15000),
@@ -1140,17 +1097,13 @@ async def extract_instances_endpoint(
                 product_code=request_data.get("product_code"),
             )
 
-            # 【关键修复】从前端传递的 schema_graph 构建基础图数据，而不是依赖数据库
-            # 这样确保实例是添加到用户指定的 schema 框架上
             schema_graph_data = OntologyExtractor.schema_to_graph_data(schema_dict)
             
-            # 合并实例到完整图
             full_graph_data = OntologyExtractor.merge_instances_to_graph_data(
                 schema_graph_data=schema_graph_data,
                 instances=inst_result["instances"],
             )
 
-            # 更新 project graph_data
             db_project.graph_data = {
                 "schema": schema_dict,
                 **full_graph_data,
