@@ -1,0 +1,5131 @@
+{
+  "timestamp": "20260520_154144",
+  "merged_ontology_schema": {
+    "object_types": [
+      {
+        "name": "WealthManagementProduct",
+        "description": "理财产品，指金融机构接受投资者委托，按照约定条件和实际投资收益情况向投资者支付收益、不保证本金支付和收益水平的非保本理财产品。",
+        "primary_key": "product_code",
+        "properties": [
+          {
+            "name": "product_name",
+            "description": "理财产品名称",
+            "data_type": "string"
+          },
+          {
+            "name": "product_code",
+            "description": "理财产品代码",
+            "data_type": "string"
+          },
+          {
+            "name": "registration_code",
+            "description": "理财产品登记编码",
+            "data_type": "string"
+          },
+          {
+            "name": "risk_rating",
+            "description": "产品风险评级",
+            "data_type": "string"
+          },
+          {
+            "name": "term_days",
+            "description": "产品期限（天）",
+            "data_type": "number"
+          },
+          {
+            "name": "maturity_date",
+            "description": "产品到期日",
+            "data_type": "date"
+          },
+          {
+            "name": "product_type",
+            "description": "产品类型（如公募、固定收益类、封闭式）",
+            "data_type": "string"
+          },
+          {
+            "name": "net_value",
+            "description": "理财产品单位净值",
+            "data_type": "number"
+          },
+          {
+            "name": "status",
+            "description": "产品状态（如存续、到期、终止）",
+            "data_type": "string"
+          },
+          {
+            "name": "establishment_date",
+            "description": "产品成立日",
+            "data_type": "date"
+          },
+          {
+            "name": "principal_amount",
+            "description": "理财本金",
+            "data_type": "number"
+          },
+          {
+            "name": "face_value",
+            "description": "理财产品份额面值，通常为人民币 1 元。",
+            "data_type": "number"
+          },
+          {
+            "name": "hold_period",
+            "description": "理财产品最短持有期或封闭期，以自然日或工作日计。",
+            "data_type": "number"
+          },
+          {
+            "name": "issuance_target",
+            "description": "发行对象类型，如个人、机构或特定风险承受能力的投资者。",
+            "data_type": "string"
+          },
+          {
+            "name": "investment_scope",
+            "description": "产品投资范围，包括债权类、权益类、商品及金融衍生品类资产等。",
+            "data_type": "string"
+          },
+          {
+            "name": "share_class_code",
+            "description": "理财产品份额类型代码，如 A 类、B 类等。",
+            "data_type": "string"
+          },
+          {
+            "name": "share_class_name",
+            "description": "理财产品份额类型名称。",
+            "data_type": "string"
+          },
+          {
+            "name": "open_date",
+            "description": "首个赎回开放日，例如2023年4月12日",
+            "data_type": "date"
+          },
+          {
+            "name": "cycle",
+            "description": "开放周期，例如每个工作日",
+            "data_type": "string"
+          },
+          {
+            "name": "asset_allocation_strategy",
+            "description": "资产配置策略，例如自上而下系统化决策支持的大类资产配置方法",
+            "data_type": "string"
+          },
+          {
+            "name": "asset_proportions",
+            "description": "各投资对象投资比例，例如债权类资产80%-100%",
+            "data_type": "object"
+          },
+          {
+            "name": "risk_rating_id",
+            "description": "关联的风险评级ID",
+            "data_type": "string"
+          },
+          {
+            "name": "manager_id",
+            "description": "关联的管理人ID",
+            "data_type": "string"
+          },
+          {
+            "name": "launch_date",
+            "description": "产品成立日期",
+            "data_type": "date"
+          }
+        ]
+      },
+      {
+        "name": "Investor",
+        "description": "投资者，指符合相关法律法规、监管规定要求的，可以购买理财产品的自然人、法人和非法人组织。",
+        "primary_key": "investor_id",
+        "properties": [
+          {
+            "name": "investor_id",
+            "description": "投资者唯一标识 ID",
+            "data_type": "string"
+          },
+          {
+            "name": "investor_name",
+            "description": "投资者名称",
+            "data_type": "string"
+          },
+          {
+            "name": "investor_type",
+            "description": "投资者类型（个人/机构）",
+            "data_type": "string"
+          },
+          {
+            "name": "risk_tolerance",
+            "description": "风险承受能力等级",
+            "data_type": "string"
+          },
+          {
+            "name": "contact_phone",
+            "description": "预留联系方式",
+            "data_type": "string"
+          },
+          {
+            "name": "contact_info",
+            "description": "投资者预留的有效联系方式。",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "ProductManager",
+        "description": "产品管理人，指接受投资者委托，对受托的投资者财产进行投资和管理的金融机构。",
+        "primary_key": "manager_name",
+        "properties": [
+          {
+            "name": "manager_name",
+            "description": "管理人名称",
+            "data_type": "string"
+          },
+          {
+            "name": "license_number",
+            "description": "金融牌照号码",
+            "data_type": "string"
+          },
+          {
+            "name": "establishment_date",
+            "description": "管理人成立日期",
+            "data_type": "date"
+          },
+          {
+            "name": "license_info",
+            "description": "管理人牌照信息",
+            "data_type": "string"
+          },
+          {
+            "name": "contact_info",
+            "description": "管理人联系方式",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "SalesAgent",
+        "description": "销售机构，指接受信银理财委托在其销售渠道代理销售信银理财依法发行的理财产品的机构。",
+        "primary_key": "agent_code",
+        "properties": [
+          {
+            "name": "agent_name",
+            "description": "代销机构名称",
+            "data_type": "string"
+          },
+          {
+            "name": "agent_code",
+            "description": "代销机构代码",
+            "data_type": "string"
+          },
+          {
+            "name": "contact_address",
+            "description": "机构联系地址",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "InvestmentAsset",
+        "description": "投资标的，指理财产品所投资的各类资产，包括债权类、权益类、商品及金融衍生品类资产等。",
+        "primary_key": "asset_code",
+        "properties": [
+          {
+            "name": "asset_name",
+            "description": "资产名称",
+            "data_type": "string"
+          },
+          {
+            "name": "asset_type",
+            "description": "资产类型（如债券、股票、衍生品）",
+            "data_type": "string"
+          },
+          {
+            "name": "asset_code",
+            "description": "资产代码",
+            "data_type": "string"
+          },
+          {
+            "name": "allocation_ratio",
+            "description": "投资比例",
+            "data_type": "number"
+          },
+          {
+            "name": "market_value",
+            "description": "市场价值",
+            "data_type": "number"
+          },
+          {
+            "name": "issuer_name",
+            "description": "发行主体名称",
+            "data_type": "string"
+          },
+          {
+            "name": "proportion",
+            "description": "投资比例，例如80%-100%或0%-5%",
+            "data_type": "string"
+          },
+          {
+            "name": "liquidity_status",
+            "description": "流动性状态，例如流动性受限资产、7个工作日可变现资产",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "RiskProfile",
+        "description": "风险评级，指理财产品风险等级及其对应的适合投资者类型。",
+        "primary_key": "risk_level",
+        "properties": [
+          {
+            "name": "risk_level",
+            "description": "风险等级（如 PR1, PR2）",
+            "data_type": "string"
+          },
+          {
+            "name": "risk_description",
+            "description": "风险程度描述",
+            "data_type": "string"
+          },
+          {
+            "name": "suitable_investor_types",
+            "description": "适合投资者类型列表",
+            "data_type": "array"
+          }
+        ]
+      },
+      {
+        "name": "RegulatoryBody",
+        "description": "监管机构，指对管理人实施监督管理的机构。",
+        "primary_key": "regulatory_body_name",
+        "properties": [
+          {
+            "name": "regulatory_body_name",
+            "description": "监管机构名称",
+            "data_type": "string"
+          },
+          {
+            "name": "authority_type",
+            "description": "机构类型（如央行、金融监管总局）",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "InvestmentStrategy",
+        "description": "投资策略，指产品管理人制定的投资原则、资产配置规则及投资限制。",
+        "primary_key": "strategy_description",
+        "properties": [
+          {
+            "name": "strategy_description",
+            "description": "策略描述",
+            "data_type": "string"
+          },
+          {
+            "name": "asset_allocation_rules",
+            "description": "资产配置规则",
+            "data_type": "object"
+          },
+          {
+            "name": "investment_restrictions",
+            "description": "投资限制条款",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "AssetManager",
+        "description": "资产管理人，指接受投资者委托，对受托的投资者财产进行投资和管理的金融机构。",
+        "primary_key": "manager_name",
+        "properties": [
+          {
+            "name": "manager_name",
+            "description": "资产管理人机构名称。",
+            "data_type": "string"
+          },
+          {
+            "name": "license_number",
+            "description": "资产管理人业务许可证号。",
+            "data_type": "string"
+          },
+          {
+            "name": "headquarters",
+            "description": "资产管理人总部地址。",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "Custodian",
+        "description": "托管人，指根据合同约定从事理财产品受托投资的机构。",
+        "primary_key": "custodian_name",
+        "properties": [
+          {
+            "name": "custodian_name",
+            "description": "托管人机构名称。",
+            "data_type": "string"
+          },
+          {
+            "name": "license_number",
+            "description": "托管人业务许可证号。",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "InvestmentAdvisor",
+        "description": "投资顾问，指与理财产品投资管理相关的提供投资顾问服务的机构。",
+        "primary_key": "advisor_name",
+        "properties": [
+          {
+            "name": "advisor_name",
+            "description": "投资顾问机构名称。",
+            "data_type": "string"
+          },
+          {
+            "name": "service_scope",
+            "description": "投资顾问服务的具体范围。",
+            "data_type": "string"
+          },
+          {
+            "name": "advisor_role",
+            "description": "顾问角色",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "Distributor",
+        "description": "合作销售机构或代销机构，指接受资产管理人委托在其销售渠道代理销售理财产品的机构。",
+        "primary_key": "distributor_name",
+        "properties": [
+          {
+            "name": "distributor_name",
+            "description": "代销机构名称。",
+            "data_type": "string"
+          },
+          {
+            "name": "license_number",
+            "description": "代销机构业务许可证号。",
+            "data_type": "string"
+          },
+          {
+            "name": "sales_channel",
+            "description": "销售渠道类型，如电子渠道、直销渠道、营业场所。",
+            "data_type": "string"
+          },
+          {
+            "name": "institution_type",
+            "description": "机构类型",
+            "data_type": "string"
+          },
+          {
+            "name": "contact_info",
+            "description": "代销机构联系方式",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "InvestmentTarget",
+        "description": "投资标的，指理财产品存续期间投资的各类资产对象。",
+        "primary_key": "target_name",
+        "properties": [
+          {
+            "name": "target_name",
+            "description": "投资标的名称。",
+            "data_type": "string"
+          },
+          {
+            "name": "asset_type",
+            "description": "资产类型，如货币市场类、固定收益类、权益类、商品及金融衍生品类。",
+            "data_type": "string"
+          },
+          {
+            "name": "maturity_date",
+            "description": "投资标的到期日。",
+            "data_type": "date"
+          },
+          {
+            "name": "market_value",
+            "description": "投资标的当前市场价值。",
+            "data_type": "number"
+          }
+        ]
+      },
+      {
+        "name": "NonStandardizedAsset",
+        "description": "非标准化债权类资产，指理财产品投资中需要向投资者披露的特定资产信息。",
+        "primary_key": "financing_client",
+        "properties": [
+          {
+            "name": "financing_client",
+            "description": "融资客户名称。",
+            "data_type": "string"
+          },
+          {
+            "name": "project_name",
+            "description": "项目名称。",
+            "data_type": "string"
+          },
+          {
+            "name": "remaining_term",
+            "description": "剩余融资期限。",
+            "data_type": "number"
+          },
+          {
+            "name": "yield_distribution",
+            "description": "到期收益分配。",
+            "data_type": "string"
+          },
+          {
+            "name": "transaction_structure",
+            "description": "交易结构。",
+            "data_type": "string"
+          },
+          {
+            "name": "risk_status",
+            "description": "风险状况。",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "ShareClass",
+        "description": "理财产品份额，指管理人依据理财产品销售合同向投资者发行的理财产品受益凭证。",
+        "primary_key": "share_class_code",
+        "properties": [
+          {
+            "name": "share_class_code",
+            "description": "份额类型代码。",
+            "data_type": "string"
+          },
+          {
+            "name": "share_class_name",
+            "description": "份额类型名称。",
+            "data_type": "string"
+          },
+          {
+            "name": "face_value",
+            "description": "份额面值。",
+            "data_type": "number"
+          },
+          {
+            "name": "net_value",
+            "description": "份额单位净值。",
+            "data_type": "number"
+          }
+        ]
+      },
+      {
+        "name": "Regulator",
+        "description": "监管机构，指对管理人实施监督管理的机构。",
+        "primary_key": "regulator_name",
+        "properties": [
+          {
+            "name": "regulator_name",
+            "description": "监管机构名称，如中国人民银行、国家金融监督管理总局等。",
+            "data_type": "string"
+          },
+          {
+            "name": "authority_type",
+            "description": "监管权限类型。",
+            "data_type": "string"
+          },
+          {
+            "name": "authority_scope",
+            "description": "监管权限范围",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "Fee",
+        "description": "理财产品相关费用，包括认购费、申购费、赎回费等。",
+        "primary_key": "fee_name",
+        "properties": [
+          {
+            "name": "fee_name",
+            "description": "费用名称。",
+            "data_type": "string"
+          },
+          {
+            "name": "fee_rate",
+            "description": "费率。",
+            "data_type": "number"
+          },
+          {
+            "name": "fee_type",
+            "description": "费用类型。",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "Risk",
+        "description": "理财产品风险类型，如信用风险、市场风险、流动性风险等。",
+        "primary_key": "risk_name",
+        "properties": [
+          {
+            "name": "risk_name",
+            "description": "风险名称。",
+            "data_type": "string"
+          },
+          {
+            "name": "risk_description",
+            "description": "风险具体描述。",
+            "data_type": "string"
+          },
+          {
+            "name": "risk_level",
+            "description": "风险等级。",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "RiskFactor",
+        "description": "风险因素，指理财产品可能面临的各种风险，包括信用风险、市场风险、流动性风险等。",
+        "primary_key": "id",
+        "properties": [
+          {
+            "name": "risk_name",
+            "description": "风险名称，例如信用风险、市场风险、流动性风险",
+            "data_type": "string"
+          },
+          {
+            "name": "risk_description",
+            "description": "风险描述，例如投资对象发生信用违约事件、金融市场存在波动性等",
+            "data_type": "string"
+          },
+          {
+            "name": "severity",
+            "description": "风险严重程度",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "Asset",
+        "description": "投资资产，包括现金、债券、存款、资产支持证券等投资标的。",
+        "primary_key": "asset_code",
+        "properties": [
+          {
+            "name": "asset_code",
+            "description": "资产唯一编码",
+            "data_type": "string"
+          },
+          {
+            "name": "asset_name",
+            "description": "资产名称",
+            "data_type": "string"
+          },
+          {
+            "name": "asset_class_id",
+            "description": "关联的资产类别ID",
+            "data_type": "string"
+          },
+          {
+            "name": "issuer",
+            "description": "发行主体名称",
+            "data_type": "string"
+          },
+          {
+            "name": "maturity_date",
+            "description": "资产到期日期",
+            "data_type": "date"
+          },
+          {
+            "name": "liquidity_status_id",
+            "description": "关联的流动性状态ID",
+            "data_type": "string"
+          },
+          {
+            "name": "price",
+            "description": "资产价格",
+            "data_type": "number"
+          }
+        ]
+      },
+      {
+        "name": "AssetClass",
+        "description": "资产类别，定义可投资的金融工具类型，如固收类、权益类等。",
+        "primary_key": "class_code",
+        "properties": [
+          {
+            "name": "class_code",
+            "description": "资产类别编码",
+            "data_type": "string"
+          },
+          {
+            "name": "class_name",
+            "description": "资产类别名称",
+            "data_type": "string"
+          },
+          {
+            "name": "description",
+            "description": "资产类别详细描述",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "Manager",
+        "description": "产品管理人，指负责管理理财产品的机构，如信银理财。",
+        "primary_key": "manager_code",
+        "properties": [
+          {
+            "name": "manager_code",
+            "description": "管理人唯一编码",
+            "data_type": "string"
+          },
+          {
+            "name": "manager_name",
+            "description": "管理人名称",
+            "data_type": "string"
+          },
+          {
+            "name": "license_number",
+            "description": "管理人牌照号码",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "RiskRating",
+        "description": "风险评级，定义产品的风险等级，如PR1至PR5级。",
+        "primary_key": "rating_level",
+        "properties": [
+          {
+            "name": "rating_level",
+            "description": "风险等级代码，如PR1, PR2",
+            "data_type": "string"
+          },
+          {
+            "name": "risk_level_description",
+            "description": "风险程度描述，如低、中低",
+            "data_type": "string"
+          },
+          {
+            "name": "suitable_investor_types",
+            "description": "适合的投资者类型列表",
+            "data_type": "array"
+          }
+        ]
+      },
+      {
+        "name": "InvestorType",
+        "description": "投资者类型，定义投资者的风险偏好分类。",
+        "primary_key": "type_code",
+        "properties": [
+          {
+            "name": "type_code",
+            "description": "投资者类型代码",
+            "data_type": "string"
+          },
+          {
+            "name": "type_name",
+            "description": "投资者类型名称，如谨慎型、稳健型",
+            "data_type": "string"
+          },
+          {
+            "name": "risk_tolerance",
+            "description": "风险承受能力描述",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "Channel",
+        "description": "销售渠道，指产品销售的电子渠道、直销渠道或代销机构。",
+        "primary_key": "channel_code",
+        "properties": [
+          {
+            "name": "channel_code",
+            "description": "渠道编码",
+            "data_type": "string"
+          },
+          {
+            "name": "channel_type",
+            "description": "渠道类型，如电子渠道、直销渠道",
+            "data_type": "string"
+          },
+          {
+            "name": "url",
+            "description": "渠道网址",
+            "data_type": "string"
+          },
+          {
+            "name": "location",
+            "description": "营业场所地址",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "Contract",
+        "description": "理财产品合同，包括说明书、风险揭示书、投资协议书等。",
+        "primary_key": "contract_code",
+        "properties": [
+          {
+            "name": "contract_code",
+            "description": "合同编码",
+            "data_type": "string"
+          },
+          {
+            "name": "contract_type",
+            "description": "合同类型，如说明书、风险揭示书",
+            "data_type": "string"
+          },
+          {
+            "name": "contract_name",
+            "description": "合同名称",
+            "data_type": "string"
+          },
+          {
+            "name": "version",
+            "description": "合同版本号",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "SalesDocument",
+        "description": "销售文件，包括销售总协议、客户权益须知等销售相关文件。",
+        "primary_key": "document_code",
+        "properties": [
+          {
+            "name": "document_code",
+            "description": "文件编码",
+            "data_type": "string"
+          },
+          {
+            "name": "document_type",
+            "description": "文件类型",
+            "data_type": "string"
+          },
+          {
+            "name": "document_name",
+            "description": "文件名称",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "InvestmentRestriction",
+        "description": "投资限制，定义产品投资比例、杠杆水平等合规限制条款。",
+        "primary_key": "restriction_code",
+        "properties": [
+          {
+            "name": "restriction_code",
+            "description": "限制条款编码",
+            "data_type": "string"
+          },
+          {
+            "name": "rule_description",
+            "description": "限制规则描述",
+            "data_type": "string"
+          },
+          {
+            "name": "limit_percentage",
+            "description": "限制比例上限",
+            "data_type": "number"
+          },
+          {
+            "name": "adjustment_period",
+            "description": "调整期限（交易日）",
+            "data_type": "number"
+          }
+        ]
+      },
+      {
+        "name": "InvestmentScope",
+        "description": "投资范围，定义产品允许投资的金融工具类别。",
+        "primary_key": "scope_code",
+        "properties": [
+          {
+            "name": "scope_code",
+            "description": "范围编码",
+            "data_type": "string"
+          },
+          {
+            "name": "scope_category",
+            "description": "投资类别，如现金、债券、存款",
+            "data_type": "string"
+          },
+          {
+            "name": "description",
+            "description": "投资范围详细描述",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "InvestmentProhibition",
+        "description": "投资禁止，定义产品禁止投资的金融工具。",
+        "primary_key": "prohibition_code",
+        "properties": [
+          {
+            "name": "prohibition_code",
+            "description": "禁止项编码",
+            "data_type": "string"
+          },
+          {
+            "name": "prohibition_category",
+            "description": "禁止投资类别，如股票、可转债",
+            "data_type": "string"
+          },
+          {
+            "name": "description",
+            "description": "禁止投资详细描述",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "LiquidityStatus",
+        "description": "流动性状态，定义资产的变现能力，如可变现、流动性受限。",
+        "primary_key": "status_code",
+        "properties": [
+          {
+            "name": "status_code",
+            "description": "状态编码",
+            "data_type": "string"
+          },
+          {
+            "name": "status_name",
+            "description": "状态名称，如可变现、流动性受限",
+            "data_type": "string"
+          },
+          {
+            "name": "description",
+            "description": "流动性状态描述",
+            "data_type": "string"
+          }
+        ]
+      }
+    ],
+    "link_types": [
+      {
+        "name": "ManagedBy",
+        "description": "理财产品由产品管理人管理",
+        "source_object_type": "WealthManagementProduct",
+        "target_object_type": "ProductManager",
+        "cardinality": "one-to-one"
+      },
+      {
+        "name": "SoldBy",
+        "description": "理财产品由销售机构代销",
+        "source_object_type": "WealthManagementProduct",
+        "target_object_type": "SalesAgent",
+        "cardinality": "one-to-many"
+      },
+      {
+        "name": "InvestsIn",
+        "description": "投资者投资于理财产品",
+        "source_object_type": "Investor",
+        "target_object_type": "WealthManagementProduct",
+        "cardinality": "many-to-one"
+      },
+      {
+        "name": "InvestsInAsset",
+        "description": "理财产品投资于特定资产标的",
+        "source_object_type": "WealthManagementProduct",
+        "target_object_type": "InvestmentAsset",
+        "cardinality": "many-to-many"
+      },
+      {
+        "name": "HasRiskProfile",
+        "description": "理财产品具有特定的风险评级",
+        "source_object_type": "WealthManagementProduct",
+        "target_object_type": "RiskProfile",
+        "cardinality": "one-to-one"
+      },
+      {
+        "name": "RegulatedBy",
+        "description": "理财产品受监管机构监管",
+        "source_object_type": "WealthManagementProduct",
+        "target_object_type": "RegulatoryBody",
+        "cardinality": "one-to-one"
+      },
+      {
+        "name": "Advises",
+        "description": "产品管理人提供投资策略或顾问服务",
+        "source_object_type": "WealthManagementProduct",
+        "target_object_type": "InvestmentStrategy",
+        "cardinality": "one-to-one"
+      },
+      {
+        "name": "CustodiedBy",
+        "description": "理财产品由托管人托管。",
+        "source_object_type": "WealthManagementProduct",
+        "target_object_type": "Custodian",
+        "cardinality": "one-to-one"
+      },
+      {
+        "name": "AdvisedBy",
+        "description": "理财产品由投资顾问提供投资顾问服务。",
+        "source_object_type": "WealthManagementProduct",
+        "target_object_type": "InvestmentAdvisor",
+        "cardinality": "one-to-many"
+      },
+      {
+        "name": "Holds",
+        "description": "投资者持有理财产品份额。",
+        "source_object_type": "Investor",
+        "target_object_type": "ShareClass",
+        "cardinality": "many-to-many"
+      },
+      {
+        "name": "RelatedPartyOf",
+        "description": "理财产品与管理人及其关联方发生关联交易。",
+        "source_object_type": "WealthManagementProduct",
+        "target_object_type": "AssetManager",
+        "cardinality": "one-to-many"
+      },
+      {
+        "name": "Discloses",
+        "description": "理财产品披露非标准化债权类资产信息。",
+        "source_object_type": "WealthManagementProduct",
+        "target_object_type": "NonStandardizedAsset",
+        "cardinality": "one-to-many"
+      },
+      {
+        "name": "ApplicableTo",
+        "description": "风险评级适用于特定类型的投资者。",
+        "source_object_type": "Risk",
+        "target_object_type": "Investor",
+        "cardinality": "many-to-many"
+      },
+      {
+        "name": "AssociatedFee",
+        "description": "理财产品关联相关费用。",
+        "source_object_type": "WealthManagementProduct",
+        "target_object_type": "Fee",
+        "cardinality": "one-to-many"
+      },
+      {
+        "name": "PurchasedBy",
+        "description": "投资者购买理财产品，建立投资者与理财产品之间的持有关系。",
+        "source_object_type": "WealthManagementProduct",
+        "target_object_type": "Investor",
+        "cardinality": "many-to-many"
+      },
+      {
+        "name": "ExposesTo",
+        "description": "理财产品暴露于各类风险因素，建立理财产品与风险因素之间的风险暴露关系。",
+        "source_object_type": "WealthManagementProduct",
+        "target_object_type": "RiskFactor",
+        "cardinality": "many-to-many"
+      },
+      {
+        "name": "SuitableFor",
+        "description": "理财产品适合特定风险承受能力的投资者，建立理财产品与投资者之间的适合关系。",
+        "source_object_type": "WealthManagementProduct",
+        "target_object_type": "Investor",
+        "cardinality": "many-to-many"
+      },
+      {
+        "name": "HasRiskRating",
+        "description": "理财产品关联其当前的风险评级",
+        "source_object_type": "WealthManagementProduct",
+        "target_object_type": "RiskRating",
+        "cardinality": "one-to-one"
+      },
+      {
+        "name": "AvailableIn",
+        "description": "理财产品可在特定销售渠道购买",
+        "source_object_type": "WealthManagementProduct",
+        "target_object_type": "Channel",
+        "cardinality": "one-to-many"
+      },
+      {
+        "name": "IncludesContract",
+        "description": "理财产品包含相关的合同文件",
+        "source_object_type": "WealthManagementProduct",
+        "target_object_type": "Contract",
+        "cardinality": "one-to-many"
+      },
+      {
+        "name": "IncludesSalesDocument",
+        "description": "理财产品包含相关的销售文件",
+        "source_object_type": "WealthManagementProduct",
+        "target_object_type": "SalesDocument",
+        "cardinality": "one-to-many"
+      },
+      {
+        "name": "HasRestriction",
+        "description": "理财产品受特定的投资限制条款约束",
+        "source_object_type": "WealthManagementProduct",
+        "target_object_type": "InvestmentRestriction",
+        "cardinality": "one-to-many"
+      },
+      {
+        "name": "HasScope",
+        "description": "理财产品允许的投资范围",
+        "source_object_type": "WealthManagementProduct",
+        "target_object_type": "InvestmentScope",
+        "cardinality": "one-to-many"
+      },
+      {
+        "name": "HasProhibition",
+        "description": "理财产品禁止投资的工具列表",
+        "source_object_type": "WealthManagementProduct",
+        "target_object_type": "InvestmentProhibition",
+        "cardinality": "one-to-many"
+      },
+      {
+        "name": "BelongsToClass",
+        "description": "资产属于特定的资产类别",
+        "source_object_type": "Asset",
+        "target_object_type": "AssetClass",
+        "cardinality": "one-to-one"
+      },
+      {
+        "name": "HasLiquidityStatus",
+        "description": "资产具有特定的流动性状态",
+        "source_object_type": "Asset",
+        "target_object_type": "LiquidityStatus",
+        "cardinality": "one-to-one"
+      }
+    ],
+    "action_types": [
+      {
+        "name": "Purchase",
+        "description": "投资者认购理财产品",
+        "target_object_type": "WealthManagementProduct",
+        "parameters": [
+          {
+            "name": "amount",
+            "data_type": "number"
+          },
+          {
+            "name": "investor_id",
+            "data_type": "string"
+          },
+          {
+            "name": "share_class_code",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "Redeem",
+        "description": "投资者赎回理财产品",
+        "target_object_type": "WealthManagementProduct",
+        "parameters": [
+          {
+            "name": "amount",
+            "data_type": "number"
+          },
+          {
+            "name": "investor_id",
+            "data_type": "string"
+          },
+          {
+            "name": "share_class_code",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "QueryInfo",
+        "description": "查询理财产品详细信息",
+        "target_object_type": "WealthManagementProduct",
+        "parameters": []
+      },
+      {
+        "name": "ReportIssue",
+        "description": "报告产品相关风险或问题",
+        "target_object_type": "WealthManagementProduct",
+        "parameters": [
+          {
+            "name": "issue_type",
+            "data_type": "string"
+          },
+          {
+            "name": "description",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "Subscribe",
+        "description": "投资者申购理财产品份额。",
+        "target_object_type": "WealthManagementProduct",
+        "parameters": [
+          {
+            "name": "amount",
+            "data_type": "number"
+          },
+          {
+            "name": "share_class_code",
+            "data_type": "string"
+          },
+          {
+            "name": "investor_id",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "ReportNonStandardizedAsset",
+        "description": "管理人向投资者披露非标准化债权类资产信息。",
+        "target_object_type": "NonStandardizedAsset",
+        "parameters": [
+          {
+            "name": "asset_info",
+            "data_type": "object"
+          }
+        ]
+      },
+      {
+        "name": "UpdateValuation",
+        "description": "管理人更新理财产品单位净值。",
+        "target_object_type": "WealthManagementProduct",
+        "parameters": [
+          {
+            "name": "net_value",
+            "data_type": "number"
+          }
+        ]
+      },
+      {
+        "name": "AdjustInvestmentScope",
+        "description": "产品管理人根据市场情况或监管政策调整理财产品的投资范围或投资比例。",
+        "target_object_type": "WealthManagementProduct",
+        "parameters": [
+          {
+            "name": "new_scope",
+            "data_type": "string"
+          },
+          {
+            "name": "notification_method",
+            "data_type": "string"
+          },
+          {
+            "name": "new_scope_code",
+            "data_type": "string"
+          },
+          {
+            "name": "limit_percentage",
+            "data_type": "number"
+          }
+        ]
+      },
+      {
+        "name": "ReportRisk",
+        "description": "报告理财产品面临的风险事件或风险状况。",
+        "target_object_type": "RiskFactor",
+        "parameters": [
+          {
+            "name": "risk_description",
+            "data_type": "string"
+          },
+          {
+            "name": "severity",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "Liquidate",
+        "description": "理财产品到期或提前终止时进行清算。",
+        "target_object_type": "WealthManagementProduct",
+        "parameters": [
+          {
+            "name": "liquidation_date",
+            "data_type": "date"
+          },
+          {
+            "name": "reason",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "UpdateProductInfo",
+        "description": "更新理财产品的基本信息，如名称、状态等",
+        "target_object_type": "WealthManagementProduct",
+        "parameters": [
+          {
+            "name": "product_name",
+            "data_type": "string"
+          },
+          {
+            "name": "status",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "RedeemProduct",
+        "description": "投资者申请赎回理财产品份额",
+        "target_object_type": "WealthManagementProduct",
+        "parameters": [
+          {
+            "name": "investor_id",
+            "data_type": "string"
+          },
+          {
+            "name": "redemption_amount",
+            "data_type": "number"
+          }
+        ]
+      },
+      {
+        "name": "RegisterProduct",
+        "description": "管理人注册新的理财产品",
+        "target_object_type": "WealthManagementProduct",
+        "parameters": [
+          {
+            "name": "product_code",
+            "data_type": "string"
+          },
+          {
+            "name": "product_name",
+            "data_type": "string"
+          }
+        ]
+      },
+      {
+        "name": "AdjustRiskRating",
+        "description": "调整产品的风险评级",
+        "target_object_type": "WealthManagementProduct",
+        "parameters": [
+          {
+            "name": "new_rating_level",
+            "data_type": "string"
+          }
+        ]
+      }
+    ]
+  },
+  "schema_path": "data/schemas/ontology_20260520_160050.json",
+  "merged_nodes": [
+    {
+      "id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "type": "WealthManagementProduct",
+      "name": "信银理财安盈象固收稳利十四个月封闭式 242 号理财产品",
+      "properties": {
+        "product_name": "信银理财安盈象固收稳利十四个月封闭式 242 号理财产品",
+        "product_code": "AF253322",
+        "registration_code": "Z7002626000092",
+        "risk_rating": "PR2",
+        "term_days": "421",
+        "maturity_date": "2027 年 4 月 22 日",
+        "product_type": "公募、固定收益类、封闭式"
+      },
+      "source_location": "第 1 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "307a25a1-c903-4327-8876-13c85a8c4561",
+      "type": "ProductManager",
+      "name": "信银理财有限责任公司",
+      "properties": {
+        "manager_name": "信银理财有限责任公司",
+        "license_number": "未披露",
+        "headquarters": "上海市黄浦区中山东二路600 号1 幢35 层、36 层"
+      },
+      "source_location": "第 1 页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+      ]
+    },
+    {
+      "id": "70ff1c24-6a93-44b9-833e-b1cbfa412276",
+      "type": "RiskProfile",
+      "name": "PR2",
+      "properties": {
+        "risk_level": "PR2",
+        "risk_description": "中低",
+        "suitable_investor_types": "稳健型、平衡型、进取型、激进型"
+      },
+      "source_location": "第 3 页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+      ]
+    },
+    {
+      "id": "daa94145-38f2-4a05-a259-f6ddeb743388",
+      "type": "Risk",
+      "name": "信用风险",
+      "properties": {
+        "risk_name": "信用风险",
+        "risk_description": "投资对象发生信用违约事件",
+        "risk_level": "中低"
+      },
+      "source_location": "第 2 页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "d93912e0-fa23-407b-90c6-016adcd9adb1",
+      "type": "Risk",
+      "name": "市场风险",
+      "properties": {
+        "risk_name": "市场风险",
+        "risk_description": "金融市场存在波动性，投资资产市值下跌",
+        "risk_level": "中低"
+      },
+      "source_location": "第 2 页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "6bb76f21-7968-4606-a843-43ea0904484e",
+      "type": "Risk",
+      "name": "流动性风险",
+      "properties": {
+        "risk_name": "流动性风险",
+        "risk_description": "投资者不能随时提前终止本产品，无法随时变现",
+        "risk_level": "中低"
+      },
+      "source_location": "第 2 页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "fc63640e-70cb-4679-a578-7b767be3be79",
+      "type": "Risk",
+      "name": "提前终止风险",
+      "properties": {
+        "risk_name": "提前终止风险",
+        "risk_description": "如发生提前终止条款约定情形，可能导致本产品提前终止",
+        "risk_level": "中低"
+      },
+      "source_location": "第 2 页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "c3497a38-d3bf-4566-a127-8e7dcb2539bc",
+      "type": "Risk",
+      "name": "政策风险",
+      "properties": {
+        "risk_name": "政策风险",
+        "risk_description": "国家政策以及相关法律法规等发生变化",
+        "risk_level": "中低"
+      },
+      "source_location": "第 2 页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "5d40d796-00b8-4312-82a4-35cc067661d0",
+      "type": "Risk",
+      "name": "信息传递风险",
+      "properties": {
+        "risk_name": "信息传递风险",
+        "risk_description": "投资者未及时查询或通讯故障导致无法及时了解产品信息",
+        "risk_level": "中低"
+      },
+      "source_location": "第 2 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "65aa7785-4f9a-4122-bdfd-c2123051b144",
+      "type": "Risk",
+      "name": "管理风险",
+      "properties": {
+        "risk_name": "管理风险",
+        "risk_description": "产品管理人、所投资资管产品的受托人/管理人、投资顾问等受经验、技能等因素的限制",
+        "risk_level": "中低"
+      },
+      "source_location": "第 2 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "53e92f8b-6f6e-4ae1-a2e3-9c21062ec852",
+      "type": "Risk",
+      "name": "延期清算风险",
+      "properties": {
+        "risk_name": "延期清算风险",
+        "risk_description": "所投资资产市场流动性不足或受限导致未能正常买卖结算",
+        "risk_level": "中低"
+      },
+      "source_location": "第 2 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "6e037f51-7a67-4688-88d7-8556ae54be3a",
+      "type": "Risk",
+      "name": "理财产品不成立风险",
+      "properties": {
+        "risk_name": "理财产品不成立风险",
+        "risk_description": "如发生理财产品不成立条款约定之情形",
+        "risk_level": "中低"
+      },
+      "source_location": "第 2 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "cbca9782-14c1-46e3-a66c-1fb09f6e0c24",
+      "type": "Risk",
+      "name": "不可抗力及意外事件风险",
+      "properties": {
+        "risk_name": "不可抗力及意外事件风险",
+        "risk_description": "自然灾害、战争等不可抗力因素的出现或系统故障",
+        "risk_level": "中低"
+      },
+      "source_location": "第 2 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "a9b26dcc-ceb0-4a6d-b35d-cae33c79b0eb",
+      "type": "Risk",
+      "name": "理财本金全部损失风险",
+      "properties": {
+        "risk_name": "理财本金全部损失风险",
+        "risk_description": "市场价格波动导致本产品投资工具贬值，或者投资工具发生信用违约",
+        "risk_level": "中低"
+      },
+      "source_location": "第 2 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "cb64e985-190d-4113-84cb-2a70251ea121",
+      "type": "Risk",
+      "name": "合作销售机构风险",
+      "properties": {
+        "risk_name": "合作销售机构风险",
+        "risk_description": "合作销售机构资金清算账户余额不足或未及时办理资金清算",
+        "risk_level": "中低"
+      },
+      "source_location": "第 2 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "0037a6ae-1d6c-4245-8f4f-96ad2f817b75",
+      "type": "Risk",
+      "name": "操作风险",
+      "properties": {
+        "risk_name": "操作风险",
+        "risk_description": "产品管理人、代销机构由于内部作业、人员管理、系统操作及事务处理不当或失误等",
+        "risk_level": "中低"
+      },
+      "source_location": "第 2 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "36a8b661-a6e0-421e-8482-de10e0ffbc3c",
+      "type": "Risk",
+      "name": "关联交易风险",
+      "properties": {
+        "risk_name": "关联交易风险",
+        "risk_description": "理财产品可能与管理人及其控股股东、实际控制人等发生关联交易",
+        "risk_level": "中低"
+      },
+      "source_location": "第 2 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "c4e72209-c363-4de7-866c-b73b359544e6",
+      "type": "InvestmentAsset",
+      "name": "债权类资产",
+      "properties": {
+        "asset_name": "债权类资产",
+        "asset_type": "债权类",
+        "allocation_ratio": "80%-100%"
+      },
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "6a315247-8f3d-4341-b5f0-a238488159b6",
+      "type": "InvestmentAsset",
+      "name": "权益类资产",
+      "properties": {
+        "asset_name": "权益类资产",
+        "asset_type": "权益类",
+        "allocation_ratio": "0%"
+      },
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "5628e945-02ca-4c82-93ce-ffcbaade12e7",
+      "type": "InvestmentAsset",
+      "name": "商品及金融衍生品类资产",
+      "properties": {
+        "asset_name": "商品及金融衍生品类资产",
+        "asset_type": "商品及金融衍生品类",
+        "allocation_ratio": "0%-20%"
+      },
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "181d6a74-a941-4569-91ef-09111265cc4c",
+      "type": "InvestmentRestriction",
+      "name": "1",
+      "properties": {
+        "restriction_code": "1",
+        "rule_description": "本产品总资产不得超过净资产的 200%"
+      },
+      "source_location": "第 6 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "377ab377-2731-4df1-bba2-7437df3717ac",
+      "type": "InvestmentRestriction",
+      "name": "2",
+      "properties": {
+        "restriction_code": "2",
+        "rule_description": "本产品投资单只证券或者单只公募证券投资基金的市值不得超过产品净资产的 10%"
+      },
+      "source_location": "第 6 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "d98e9d94-0c17-41f9-bf2e-521eebc9a2fc",
+      "type": "RegulatoryBody",
+      "name": "中国人民银行",
+      "properties": {
+        "regulatory_body_name": "中国人民银行",
+        "authority_type": "监管机构"
+      },
+      "source_location": "第 4 页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "0f5dd7b9-e353-42f5-ad31-62f31023a1c2",
+      "type": "RegulatoryBody",
+      "name": "国家金融监督管理总局",
+      "properties": {
+        "regulatory_body_name": "国家金融监督管理总局",
+        "authority_type": "监管机构"
+      },
+      "source_location": "第 4 页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+      ]
+    },
+    {
+      "id": "cf9b1b51-65b7-4d3f-956f-b5587d68812d",
+      "type": "RegulatoryBody",
+      "name": "中国证券监督管理委员会",
+      "properties": {
+        "regulatory_body_name": "中国证券监督管理委员会",
+        "authority_type": "监管机构"
+      },
+      "source_location": "第 4 页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "58542c0c-d736-4376-ad16-f53b663b44ac",
+      "type": "Channel",
+      "name": "电子渠道",
+      "properties": {
+        "channel_code": "电子渠道",
+        "channel_type": "官方网站、APP",
+        "url": "http://www.citic-wealth.com"
+      },
+      "source_location": "第 4 页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+      ]
+    },
+    {
+      "id": "d034511b-20ab-47d9-b723-1b6e32861d36",
+      "type": "Channel",
+      "name": "直销渠道",
+      "properties": {
+        "channel_code": "直销渠道",
+        "channel_type": "电子渠道及营业场所",
+        "location": "营业场所"
+      },
+      "source_location": "第 4 页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+      ]
+    },
+    {
+      "id": "80dda61d-95cb-41cc-9b00-fffd2ab370c2",
+      "type": "Contract",
+      "name": "信银理财理财产品销售总协议",
+      "properties": {
+        "contract_name": "信银理财理财产品销售总协议",
+        "contract_type": "销售协议"
+      },
+      "source_location": "第 1 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "72912b25-0816-4aa8-bf43-b7a0d4df6bc7",
+      "type": "Contract",
+      "name": "信银理财理财产品说明书",
+      "properties": {
+        "contract_name": "信银理财理财产品说明书",
+        "contract_type": "说明书"
+      },
+      "source_location": "第 1 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "2be3b93c-a4e2-4b97-8446-0ffa7eef1145",
+      "type": "Contract",
+      "name": "信银理财理财产品风险揭示书",
+      "properties": {
+        "contract_name": "信银理财理财产品风险揭示书",
+        "contract_type": "风险揭示书"
+      },
+      "source_location": "第 1 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "1f068698-86d0-4b6b-bf0d-e435626efbf1",
+      "type": "Contract",
+      "name": "信银理财理财产品投资协议书",
+      "properties": {
+        "contract_name": "信银理财理财产品投资协议书",
+        "contract_type": "投资协议书"
+      },
+      "source_location": "第 1 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "8a51d8ce-fbf0-4720-9513-05ab5ea7ca80",
+      "type": "SalesDocument",
+      "name": "信银理财理财产品说明书",
+      "properties": {
+        "document_name": "信银理财理财产品说明书",
+        "document_type": "说明书"
+      },
+      "source_location": "第 1 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "87223275-a0ff-40a5-aa42-17bccd0078b9",
+      "type": "RiskFactor",
+      "name": "利率变化",
+      "properties": {
+        "risk_name": "利率变化",
+        "risk_description": "投资债券面临的利率变化"
+      },
+      "source_location": "第 2 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "09c7eda0-a80c-4f8c-96c3-4020695524af",
+      "type": "RiskFactor",
+      "name": "汇率波动",
+      "properties": {
+        "risk_name": "汇率波动",
+        "risk_description": "产品投资涉及外币资产时，存在汇率波动带来的风险"
+      },
+      "source_location": "第 2 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "53efedbf-8301-4ab9-b116-ce836af94cf0",
+      "type": "Investor",
+      "name": "个人投资者",
+      "properties": {
+        "investor_name": "个人投资者",
+        "investor_type": "自然人"
+      },
+      "source_location": "第 4 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "0699d496-d328-4656-921b-e36693d21e75",
+      "type": "Investor",
+      "name": "机构投资者",
+      "properties": {
+        "investor_name": "机构投资者",
+        "investor_type": "法人和非法人组织"
+      },
+      "source_location": "第 4 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "552c2a46-a97a-4ba5-9fcb-f1436585800c",
+      "type": "RiskRating",
+      "name": "PR2",
+      "properties": {
+        "rating_level": "PR2",
+        "risk_level_description": "中低",
+        "suitable_investor_types": "稳健型、平衡型、进取型、激进型"
+      },
+      "source_location": "第 3 页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+      ]
+    },
+    {
+      "id": "cf0d70e9-38dc-414c-83ab-f7fd6f624523",
+      "type": "InvestmentScope",
+      "name": "债权类资产",
+      "properties": {
+        "scope_code": "债权类资产",
+        "scope_category": "债权类",
+        "description": "货币市场类、固定收益类资产"
+      },
+      "source_location": "第 5 页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+      ]
+    },
+    {
+      "id": "6217ccac-fa6c-4b83-8211-be86a84b4d24",
+      "type": "InvestmentScope",
+      "name": "权益类资产",
+      "properties": {
+        "scope_code": "权益类资产",
+        "scope_category": "权益类",
+        "description": "上市交易的股票及权益特征资产"
+      },
+      "source_location": "第 5 页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+      ]
+    },
+    {
+      "id": "43bf1eda-eb24-48c7-a680-4540ba1e2ade",
+      "type": "InvestmentScope",
+      "name": "商品及金融衍生品类资产",
+      "properties": {
+        "scope_code": "商品及金融衍生品类资产",
+        "scope_category": "商品及金融衍生品类",
+        "description": "商品现货、衍生工具等"
+      },
+      "source_location": "第 5 页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+      ]
+    },
+    {
+      "id": "71e38e91-8c49-4e42-a2c7-7dd231ab51a7",
+      "type": "AssetClass",
+      "name": "债权类",
+      "properties": {
+        "class_code": "债权类",
+        "class_name": "债权类资产",
+        "description": "货币市场类、固定收益类资产"
+      },
+      "source_location": "第 5 页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+      ]
+    },
+    {
+      "id": "ec6dab3e-b29b-42e5-b17d-198f229a2666",
+      "type": "AssetClass",
+      "name": "权益类",
+      "properties": {
+        "class_code": "权益类",
+        "class_name": "权益类资产",
+        "description": "上市交易的股票及权益特征资产"
+      },
+      "source_location": "第 5 页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+      ]
+    },
+    {
+      "id": "eedfb217-bb00-491d-9d90-79d3616f08e7",
+      "type": "AssetClass",
+      "name": "商品及金融衍生品类",
+      "properties": {
+        "class_code": "商品及金融衍生品类",
+        "class_name": "商品及金融衍生品类资产",
+        "description": "商品现货、衍生工具等"
+      },
+      "source_location": "第 5 页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+      ]
+    },
+    {
+      "id": "18327140-32c9-4fdc-bd0c-298a743b26e7",
+      "type": "LiquidityStatus",
+      "name": "流动性受限",
+      "properties": {
+        "status_code": "流动性受限",
+        "status_name": "流动性受限资产"
+      },
+      "source_location": "第 4 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "14e778f2-9c8e-4368-ae14-e3689f1ba845",
+      "type": "InvestmentAdvisor",
+      "name": "投资顾问",
+      "properties": {
+        "advisor_name": "投资顾问",
+        "service_scope": "提供投资顾问等服务"
+      },
+      "source_location": "第 6 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "7e0af679-fb26-43e2-ac49-d66e0167c3fc",
+      "type": "Distributor",
+      "name": "合作销售机构",
+      "properties": {
+        "distributor_name": "合作销售机构",
+        "sales_channel": "代销机构"
+      },
+      "source_location": "第 2 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "e4f5fcb2-823f-4ac5-9ef6-dcfcd1cf21d8",
+      "type": "NonStandardizedAsset",
+      "name": "融资客户",
+      "properties": {
+        "financing_client": "融资客户",
+        "project_name": "项目名称",
+        "remaining_term": "剩余融资期限",
+        "yield_distribution": "到期收益分配",
+        "transaction_structure": "交易结构",
+        "risk_status": "风险状况"
+      },
+      "source_location": "第 6 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "53cf5caf-c4ca-4bf0-9b27-b208abba3b51",
+      "type": "Fee",
+      "name": "销售服务费",
+      "properties": {
+        "fee_name": "销售服务费",
+        "fee_rate": "0.15%/年",
+        "fee_type": "销售服务费",
+        "source_location": "第10页"
+      },
+      "source_location": "第10页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "d2d9c097-779a-4661-a980-8f0f0cfb40c4",
+      "type": "Fee",
+      "name": "托管费",
+      "properties": {
+        "fee_name": "托管费",
+        "fee_rate": "0.05%/年",
+        "fee_type": "托管费",
+        "source_location": "第10页"
+      },
+      "source_location": "第10页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "96894997-804c-4bc6-9798-3d1e6aa7c9af",
+      "type": "Fee",
+      "name": "固定管理费",
+      "properties": {
+        "fee_name": "固定管理费",
+        "fee_rate": "0.15%/年",
+        "fee_type": "固定管理费",
+        "source_location": "第10页"
+      },
+      "source_location": "第10页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "0571d361-5934-4f62-a93e-e870b2302a08",
+      "type": "InvestmentRestriction",
+      "name": "总资产比例限制",
+      "properties": {
+        "restriction_code": "总资产比例限制",
+        "rule_description": "本产品总资产不得超过净资产的200%",
+        "limit_percentage": 140
+      },
+      "source_location": "第1页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+      ]
+    },
+    {
+      "id": "390388a5-3b7a-4a24-9c1e-49d7392a6ba0",
+      "type": "InvestmentRestriction",
+      "name": "单只证券比例限制",
+      "properties": {
+        "restriction_code": "单只证券比例限制",
+        "rule_description": "本产品投资单只证券或者单只公募证券投资基金的市值不得超过产品净资产的10%"
+      },
+      "source_location": "第1页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "21dd8ddc-4530-4869-a718-2b43ea32a9d6",
+      "type": "ShareClass",
+      "name": "AF253322A",
+      "properties": {
+        "share_class_code": "AF253322A",
+        "share_class_name": "A类份额"
+      },
+      "source_location": "第7页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "ecbe088a-3189-47fe-8bc6-670b7913260e",
+      "type": "ShareClass",
+      "name": "AF253322D",
+      "properties": {
+        "share_class_code": "AF253322D",
+        "share_class_name": "D类份额"
+      },
+      "source_location": "第7页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "82334a4e-ac21-4c5f-a206-7cf9c105a99f",
+      "type": "InvestorType",
+      "name": "稳健型",
+      "properties": {
+        "type_name": "稳健型",
+        "risk_tolerance": "稳健",
+        "type_code": "稳健型"
+      },
+      "source_location": "第7页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "c1666ce0-acdb-43aa-bf87-ae700e108c92",
+      "type": "InvestorType",
+      "name": "平衡型",
+      "properties": {
+        "type_name": "平衡型",
+        "risk_tolerance": "平衡",
+        "type_code": "平衡型"
+      },
+      "source_location": "第7页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "b1ab8d59-dfe5-475b-ab3b-47fb8b721f6a",
+      "type": "AssetClass",
+      "name": "固定收益类",
+      "properties": {
+        "class_code": "固定收益类",
+        "class_name": "固定收益类"
+      },
+      "source_location": "第7页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "bd309b94-a778-4e65-aaa1-f1a19cc52cee",
+      "type": "Distributor",
+      "name": "中信银行股份有限公司",
+      "properties": {
+        "distributor_name": "中信银行股份有限公司",
+        "institution_type": "代销机构"
+      },
+      "source_location": "第11页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "3ef50811-1171-4783-9270-a793f4d909bc",
+      "type": "WealthManagementProduct",
+      "name": "信银理财安盈象固收稳利十四个月封闭式242号理财产品",
+      "properties": {
+        "product_name": "信银理财安盈象固收稳利十四个月封闭式242号理财产品",
+        "product_code": "AF253322",
+        "risk_rating": "PR2"
+      },
+      "source_location": "第12页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "44b7924f-bc66-4741-9670-ba3a5d770c6b",
+      "type": "AssetManager",
+      "name": "信银理财有限责任公司",
+      "properties": {
+        "manager_name": "信银理财有限责任公司",
+        "license_number": "91310000MA1FL7AC87"
+      },
+      "source_location": "第12页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "5e1859c4-1885-4835-8bb6-c98a3660b2a0",
+      "type": "SalesAgent",
+      "name": "中信银行股份有限公司",
+      "properties": {
+        "agent_code": "中信银行股份有限公司",
+        "agent_name": "中信银行股份有限公司",
+        "contact_address": "北京市朝阳区光华路10 号中信大厦"
+      },
+      "source_location": "第12页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "96bd70d8-6fe7-4a5a-8f5f-559b29edcc13",
+      "type": "SalesAgent",
+      "name": "富滇银行股份有限公司",
+      "properties": {
+        "agent_code": "富滇银行股份有限公司",
+        "agent_name": "富滇银行股份有限公司",
+        "contact_address": "云南省昆明市西山区西园路1912 号"
+      },
+      "source_location": "第13页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "a4d91ca1-8585-4f6a-aec1-37d737e338ba",
+      "type": "SalesAgent",
+      "name": "江苏宜兴农村商业银行股份有限公司",
+      "properties": {
+        "agent_code": "江苏宜兴农村商业银行股份有限公司",
+        "agent_name": "江苏宜兴农村商业银行股份有限公司",
+        "contact_address": "江苏省宜兴市宜城街道解放东路579 号"
+      },
+      "source_location": "第13页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "2bd6ec32-833e-4f21-b7aa-10a7719ccfc1",
+      "type": "SalesAgent",
+      "name": "杭州联合农村商业银行股份有限公司",
+      "properties": {
+        "agent_code": "杭州联合农村商业银行股份有限公司",
+        "agent_name": "杭州联合农村商业银行股份有限公司",
+        "contact_address": "浙江省杭州市上城区建国中路99 号"
+      },
+      "source_location": "第14页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "90846e98-0d6e-42a0-a7e3-eb0b895f51c4",
+      "type": "SalesAgent",
+      "name": "莱商银行股份有限公司",
+      "properties": {
+        "agent_code": "莱商银行股份有限公司",
+        "agent_name": "莱商银行股份有限公司",
+        "contact_address": "山东省济南市莱芜高新区龙潭东大街137 号"
+      },
+      "source_location": "第16页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "fc79850e-0b9d-442a-b00c-668413012717",
+      "type": "ShareClass",
+      "name": "AF253322M",
+      "properties": {
+        "share_class_code": "AF253322M",
+        "share_class_name": "M 类份额"
+      },
+      "source_location": "第13页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "8b1f176c-0479-4247-a3c5-6efa41341b64",
+      "type": "ShareClass",
+      "name": "AF253322N",
+      "properties": {
+        "share_class_code": "AF253322N",
+        "share_class_name": "N 类份额"
+      },
+      "source_location": "第14页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "cfbee2ce-7a5e-4c99-bbbf-da83410f752e",
+      "type": "RiskFactor",
+      "name": "理财产品风险",
+      "properties": {
+        "risk_name": "理财产品风险",
+        "risk_description": "理财非存款、产品有风险、投资须谨慎"
+      },
+      "source_location": "第12页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "ac2be872-6bf0-41c6-a092-7b56465d8519",
+      "type": "ShareClass",
+      "name": "AF253322S",
+      "properties": {
+        "share_class_code": "AF253322S",
+        "share_class_name": "S 类份额"
+      },
+      "source_location": "第22页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "943275f0-d720-40da-9ac9-5afac5d1ef36",
+      "type": "ShareClass",
+      "name": "AF253322T",
+      "properties": {
+        "share_class_code": "AF253322T",
+        "share_class_name": "T 类份额"
+      },
+      "source_location": "第22页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "042ca4ca-d907-42b6-a2a4-4ca323dae7b8",
+      "type": "ShareClass",
+      "name": "AF253322V",
+      "properties": {
+        "share_class_code": "AF253322V",
+        "share_class_name": "V 类份额"
+      },
+      "source_location": "第22页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "e80c7c3c-fd89-4a9b-8eb3-f87af274a8f4",
+      "type": "ShareClass",
+      "name": "AF253322Y",
+      "properties": {
+        "share_class_code": "AF253322Y",
+        "share_class_name": "Y 类份额"
+      },
+      "source_location": "第22页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "ed7e99ed-662f-4a7b-8418-5138a0a5df2f",
+      "type": "Custodian",
+      "name": "中信银行股份有限公司",
+      "properties": {
+        "custodian_name": "中信银行股份有限公司",
+        "license_number": "91110000101690725E",
+        "headquarters": "北京市朝阳区光华路10 号中信大厦",
+        "source_location": "第11页"
+      },
+      "source_location": "第23页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "fa6aaa54-f767-4676-a86e-47877a9321cd",
+      "type": "Risk",
+      "name": "理财非存款、产品有风险",
+      "properties": {
+        "risk_name": "理财非存款、产品有风险"
+      },
+      "source_location": "第17页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "641f31f3-9ade-40bc-8a1e-ceeb7ced26d8",
+      "type": "RegulatoryBody",
+      "name": "国务院银行业监督管理机构",
+      "properties": {
+        "regulatory_body_name": "国务院银行业监督管理机构",
+        "authority_type": "监管机构"
+      },
+      "source_location": "第22页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "e8279089-e9c5-435d-b710-c7957463ccc1",
+      "type": "SalesAgent",
+      "name": "91110000101690725E",
+      "properties": {
+        "agent_name": "中信银行股份有限公司",
+        "agent_code": "91110000101690725E",
+        "contact_address": "北京市朝阳区光华路10 号中信大厦"
+      },
+      "source_location": "第22页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+      ]
+    },
+    {
+      "id": "a0d2c988-db7e-47ec-8227-c0ab8830a887",
+      "type": "SalesAgent",
+      "name": "9131000013221158XC",
+      "properties": {
+        "agent_name": "上海浦东发展银行股份有限公司",
+        "agent_code": "9131000013221158XC"
+      },
+      "source_location": "第22页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "758629f7-b8d1-4049-ba28-31370c700d2b",
+      "type": "ProductManager",
+      "name": "信银理财",
+      "properties": {
+        "manager_name": "信银理财",
+        "license_number": "",
+        "establishment_date": "",
+        "license_info": "",
+        "contact_info": "",
+        "source_location": "第11页"
+      },
+      "source_location": "第25页",
+      "source_pdf": [
+        "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf",
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "77d881be-a340-43e9-a988-6997a1f17bab",
+      "type": "Channel",
+      "name": "http://www.citic-wealth.com",
+      "properties": {
+        "channel_code": "http://www.citic-wealth.com",
+        "channel_type": "信息披露渠道"
+      },
+      "source_location": "第23页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "ad00df43-628d-4521-b809-6867748e4666",
+      "type": "InvestmentScope",
+      "name": "各类投资对象",
+      "properties": {
+        "scope_code": "各类投资对象",
+        "scope_category": "投资范围"
+      },
+      "source_location": "第25页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "88a05607-809b-488b-8b0c-adc4b66f4702",
+      "type": "InvestmentProhibition",
+      "name": "拒绝接受认购申请的情形",
+      "properties": {
+        "prohibition_code": "拒绝接受认购申请的情形",
+        "prohibition_category": "认购限制"
+      },
+      "source_location": "第26页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "2b613f49-86c0-440b-9c4f-ede5f124d8ce",
+      "type": "InvestmentRestriction",
+      "name": "投资比例调整",
+      "properties": {
+        "restriction_code": "投资比例调整",
+        "rule_description": "因市场重大变化导致投资比例暂时超出约定区间"
+      },
+      "source_location": "第24页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "372b0979-ccf5-4fa1-a9a4-2e8864de7edf",
+      "type": "WealthManagementProduct",
+      "name": "信银理财慧盈象固收增利六个月持有期108 号理财产品",
+      "properties": {
+        "product_name": "信银理财慧盈象固收增利六个月持有期108 号理财产品",
+        "product_code": "AF263647",
+        "registration_code": "Z7002626000317",
+        "risk_rating": "PR2",
+        "term_days": 180,
+        "hold_period": 180,
+        "product_type": "定期开放型",
+        "status": "存续期",
+        "investment_scope": "债权类、权益类、商品及金融衍生品类资产",
+        "asset_allocation_strategy": "自上而下系统化决策支持的大类资产配置方法",
+        "risk_rating_id": "PR2"
+      },
+      "source_location": "第1页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "21ef8686-99d4-4ee0-9bd8-f9b2558540d6",
+      "type": "InvestorType",
+      "name": "稳健型、平衡型、进取型、激进型",
+      "properties": {
+        "type_name": "稳健型、平衡型、进取型、激进型",
+        "risk_tolerance": "中低"
+      },
+      "source_location": "第5页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "e62a7a2e-1d5d-4d15-9f6a-fb10fadb50ec",
+      "type": "RiskFactor",
+      "name": "信用风险",
+      "properties": {
+        "risk_name": "信用风险",
+        "risk_description": "投资对象发生信用违约事件导致收益损失",
+        "severity": "中"
+      },
+      "source_location": "第2页",
+      "source_pdf": [
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "c3baabd8-8cbc-4eba-abb0-a910d0e82d05",
+      "type": "RiskFactor",
+      "name": "市场风险",
+      "properties": {
+        "risk_name": "市场风险",
+        "risk_description": "金融市场波动导致投资资产市值下跌",
+        "severity": "中"
+      },
+      "source_location": "第2页",
+      "source_pdf": [
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "fca0e2bb-f593-4af6-b54e-6a71ee194c28",
+      "type": "RiskFactor",
+      "name": "流动性风险",
+      "properties": {
+        "risk_name": "流动性风险",
+        "risk_description": "无法随时提前终止产品导致资金无法变现",
+        "severity": "中"
+      },
+      "source_location": "第2页",
+      "source_pdf": [
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "97c1c6c0-a8e6-4688-b801-3eb4a23012a1",
+      "type": "SalesDocument",
+      "name": "销售文件",
+      "properties": {
+        "document_code": "销售文件",
+        "document_type": "销售文件",
+        "document_name": "信银理财理财产品合同及《信银理财理财产品销售总协议》"
+      },
+      "source_location": "第2页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "ac369dfb-8728-4c9e-acb9-b346912bb6e2",
+      "type": "SalesAgent",
+      "name": "91310000MA1FL7AC87",
+      "properties": {
+        "agent_name": "信银理财有限责任公司",
+        "agent_code": "91310000MA1FL7AC87",
+        "contact_address": "上海市黄浦区中山东二路600 号1 幢35 层、36 层"
+      },
+      "source_location": "第11页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "a77ccb82-1852-4efc-ba12-97dfc902ca9e",
+      "type": "InvestmentAsset",
+      "name": "债券",
+      "properties": {
+        "asset_name": "债券",
+        "asset_type": "债权类资产",
+        "allocation_ratio": "80%-100%"
+      },
+      "source_location": "第6页",
+      "source_pdf": [
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "e700b29b-50ef-4339-9010-1e22d72cf8b8",
+      "type": "InvestmentAsset",
+      "name": "股票",
+      "properties": {
+        "asset_name": "股票",
+        "asset_type": "权益类资产",
+        "allocation_ratio": "0%-5%"
+      },
+      "source_location": "第6页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "1f0f4698-0438-4299-96e9-327c0b5c5dbe",
+      "type": "InvestmentAsset",
+      "name": "商品及金融衍生品",
+      "properties": {
+        "asset_name": "商品及金融衍生品",
+        "asset_type": "商品及金融衍生品类资产",
+        "allocation_ratio": "0%-20%"
+      },
+      "source_location": "第6页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "b2a8b326-c32e-4c78-9012-55522df0d3c0",
+      "type": "InvestmentRestriction",
+      "name": "总资产不得超过净资产的140%",
+      "properties": {
+        "restriction_code": "总资产不得超过净资产的140%",
+        "rule_description": "本产品总资产不得超过净资产的140%",
+        "limit_percentage": "140%"
+      },
+      "source_location": "第6页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "c2f7d601-a945-4b25-ae18-56ef9cc46364",
+      "type": "InvestmentRestriction",
+      "name": "单只证券市值不得超过产品净资产的10%",
+      "properties": {
+        "restriction_code": "单只证券市值不得超过产品净资产的10%",
+        "rule_description": "投资单只证券或者单只证券投资基金的市值不得超过产品净资产的10%",
+        "limit_percentage": "10%"
+      },
+      "source_location": "第6页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "8edc426b-6498-4805-9335-9eb51367dfc4",
+      "type": "InvestmentRestriction",
+      "name": "单一投资者持有份额不得超过产品总份额的50%",
+      "properties": {
+        "restriction_code": "单一投资者持有份额不得超过产品总份额的50%",
+        "rule_description": "单一投资者持有份额不得超过产品总份额的50%",
+        "limit_percentage": "50%"
+      },
+      "source_location": "第6页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "823fe2e9-4da3-4739-b283-6abd922e8467",
+      "type": "Fee",
+      "name": "浮动管理费",
+      "properties": {
+        "fee_name": "浮动管理费",
+        "fee_rate": "50%",
+        "fee_type": "浮动管理费"
+      },
+      "source_location": "第10页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "e2873f47-1162-47b4-88bd-f72a5d4cb5f5",
+      "type": "ShareClass",
+      "name": "AF263647A",
+      "properties": {
+        "share_class_code": "AF263647A",
+        "share_class_name": "A类份额",
+        "face_value": "1",
+        "currency": "人民币"
+      },
+      "source_location": "第7页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "f9e09413-07e5-4732-9953-37f34632d859",
+      "type": "ShareClass",
+      "name": "AF263647D",
+      "properties": {
+        "share_class_code": "AF263647D",
+        "share_class_name": "D类份额",
+        "face_value": "1",
+        "currency": "人民币"
+      },
+      "source_location": "第7页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "6184ec57-78e2-471d-a918-f3931dafc50d",
+      "type": "InvestorType",
+      "name": "进取型",
+      "properties": {
+        "type_name": "进取型",
+        "type_code": "进取型",
+        "risk_tolerance": "进取"
+      },
+      "source_location": "第7页",
+      "source_pdf": [
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "9a69ef80-2bb1-4404-83ff-25f5269b7638",
+      "type": "InvestorType",
+      "name": "激进型",
+      "properties": {
+        "type_name": "激进型",
+        "type_code": "激进型",
+        "risk_tolerance": "激进"
+      },
+      "source_location": "第7页",
+      "source_pdf": [
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "274e7a21-1f0d-43f2-88cb-74701c29f3e7",
+      "type": "Channel",
+      "name": "代销机构",
+      "properties": {
+        "channel_code": "代销机构",
+        "channel_type": "代销",
+        "location": "代销机构规定的渠道"
+      },
+      "source_location": "第9页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "10f1c34d-a3d2-4991-a565-e1cecd6d2b02",
+      "type": "SalesDocument",
+      "name": "产品说明书",
+      "properties": {
+        "document_code": "产品说明书",
+        "document_type": "说明书",
+        "document_name": "产品说明书"
+      },
+      "source_location": "第1页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "8e3d487f-0f29-4332-a0fe-561afed8ecd5",
+      "type": "WealthManagementProduct",
+      "name": "信银理财产品",
+      "properties": {
+        "product_name": "信银理财产品",
+        "product_code": "AF263647A",
+        "risk_rating": "PR2",
+        "status": "存续",
+        "product_type": "理财产品"
+      },
+      "source_location": "第 11 页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "d04fb5c7-93c2-477a-8299-b9eaab78b15a",
+      "type": "Fee",
+      "name": "认购费率",
+      "properties": {
+        "fee_name": "认购费率",
+        "fee_rate": "0%",
+        "fee_type": "认购费"
+      },
+      "source_location": "第 14 页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "d21f50a1-9d14-4d76-8f83-80ea930889a1",
+      "type": "Fee",
+      "name": "申购费率",
+      "properties": {
+        "fee_name": "申购费率",
+        "fee_rate": "0%",
+        "fee_type": "申购费"
+      },
+      "source_location": "第 14 页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "e2846cd4-a9ca-4f92-ba85-baadbd843ea8",
+      "type": "Fee",
+      "name": "赎回费率",
+      "properties": {
+        "fee_name": "赎回费率",
+        "fee_rate": "0%",
+        "fee_type": "赎回费"
+      },
+      "source_location": "第 15 页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "7759aee4-32a5-4217-8a42-0e0c6e71f634",
+      "type": "InvestmentRestriction",
+      "name": "单一投资者认购金额上限",
+      "properties": {
+        "restriction_code": "单一投资者认购金额上限",
+        "rule_description": "设定单一投资者认购金额上限",
+        "limit_percentage": "10%"
+      },
+      "source_location": "第 16 页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "c4c34e45-06cd-4815-a876-12186a423a66",
+      "type": "InvestmentRestriction",
+      "name": "拒绝大额认购",
+      "properties": {
+        "restriction_code": "拒绝大额认购",
+        "rule_description": "拒绝大额认购",
+        "limit_percentage": "10%"
+      },
+      "source_location": "第 16 页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "179e2f72-4a6e-4639-bfd2-857511ff3b64",
+      "type": "InvestmentScope",
+      "name": "投资范围",
+      "properties": {
+        "scope_code": "投资范围",
+        "scope_category": "证券类基础资产",
+        "description": "各类投资对象"
+      },
+      "source_location": "第 14 页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "950493ef-c0b3-4e01-9783-0e29492ff9e7",
+      "type": "Investor",
+      "name": "投资者",
+      "properties": {
+        "investor_name": "投资者",
+        "investor_type": "个人/机构",
+        "risk_tolerance": "稳健型"
+      },
+      "source_location": "第 11 页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "e9337b85-e56d-4030-8314-f5a2d196b9a2",
+      "type": "Channel",
+      "name": "官方网站",
+      "properties": {
+        "channel_code": "官方网站",
+        "channel_type": "网站",
+        "url": "http://www.citic-wealth.com"
+      },
+      "source_location": "第 13 页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "3145b9bc-4c71-44d2-aed5-b7f8e55b53f9",
+      "type": "Channel",
+      "name": "手机银行",
+      "properties": {
+        "channel_code": "手机银行",
+        "channel_type": "APP",
+        "location": "线上"
+      },
+      "source_location": "第 13 页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "f3b59dbb-7f16-456c-9e94-9192f79f6d54",
+      "type": "Channel",
+      "name": "网上银行",
+      "properties": {
+        "channel_code": "网上银行",
+        "channel_type": "Web",
+        "location": "线上"
+      },
+      "source_location": "第 13 页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "4d214eda-c688-4c47-9b47-97288cbd0aa3",
+      "type": "RiskFactor",
+      "name": "市场重大变化",
+      "properties": {
+        "risk_name": "市场重大变化",
+        "risk_description": "市场波动风险",
+        "severity": "中"
+      },
+      "source_location": "第 16 页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "8cca480c-d34f-48f9-bd06-0031e2e80cb2",
+      "type": "WealthManagementProduct",
+      "name": "本产品",
+      "properties": {
+        "product_name": "本产品",
+        "risk_level": "PR2",
+        "product_code": "",
+        "risk_rating": "PR1"
+      },
+      "source_location": "第21页",
+      "source_pdf": [
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "955142be-0328-420a-ae11-44d0eabeee95",
+      "type": "RiskFactor",
+      "name": "提前终止风险",
+      "properties": {
+        "risk_name": "提前终止风险",
+        "risk_description": "发生提前终止条款约定情形",
+        "severity": ""
+      },
+      "source_location": "第23页",
+      "source_pdf": [
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "996422f6-2401-4930-a609-ae31ccaca9ce",
+      "type": "RiskFactor",
+      "name": "政策风险",
+      "properties": {
+        "risk_name": "政策风险",
+        "risk_description": "国家政策发生变化",
+        "severity": ""
+      },
+      "source_location": "第23页",
+      "source_pdf": [
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "b1266f48-a857-452e-9cae-b64f977d1dce",
+      "type": "RiskFactor",
+      "name": "信息传递风险",
+      "properties": {
+        "risk_name": "信息传递风险",
+        "risk_description": "未及时查询",
+        "severity": ""
+      },
+      "source_location": "第23页",
+      "source_pdf": [
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "90b0dc5a-2c4c-4761-8461-7422d02e92be",
+      "type": "RiskFactor",
+      "name": "管理风险",
+      "properties": {
+        "risk_name": "管理风险",
+        "risk_description": "管理人经验技能限制",
+        "severity": ""
+      },
+      "source_location": "第23页",
+      "source_pdf": [
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "219e4d0b-82cc-40bb-93df-f273d0753f58",
+      "type": "RiskFactor",
+      "name": "延期清算风险",
+      "properties": {
+        "risk_name": "延期清算风险",
+        "risk_description": "流动性不足",
+        "severity": ""
+      },
+      "source_location": "第23页",
+      "source_pdf": [
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "c0c37e7b-a9dd-418f-a511-1681f3d35e8e",
+      "type": "RiskFactor",
+      "name": "理财产品不成立风险",
+      "properties": {
+        "risk_name": "理财产品不成立风险",
+        "risk_description": "发生不成立条款约定情形",
+        "severity": ""
+      },
+      "source_location": "第23页",
+      "source_pdf": [
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "eb674edb-d867-4bb3-8dbd-760bb2da84ea",
+      "type": "RiskFactor",
+      "name": "不可抗力及意外事件风险",
+      "properties": {
+        "risk_name": "不可抗力及意外事件风险",
+        "risk_description": "自然灾害等",
+        "severity": ""
+      },
+      "source_location": "第23页",
+      "source_pdf": [
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "06aefd99-447e-4a0e-9444-1858ff2a290b",
+      "type": "RiskFactor",
+      "name": "理财本金全部损失风险",
+      "properties": {
+        "risk_name": "理财本金全部损失风险",
+        "risk_description": "市场价格波动等",
+        "severity": ""
+      },
+      "source_location": "第23页",
+      "source_pdf": [
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "61b61be2-5e11-4d00-a20b-de70e2339fb6",
+      "type": "RiskFactor",
+      "name": "合作销售机构风险",
+      "properties": {
+        "risk_name": "合作销售机构风险",
+        "risk_description": "代销机构清算问题",
+        "severity": ""
+      },
+      "source_location": "第23页",
+      "source_pdf": [
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "35ef84d2-9e77-4808-958b-a9e8af50e2c5",
+      "type": "RiskFactor",
+      "name": "操作风险",
+      "properties": {
+        "risk_name": "操作风险",
+        "risk_description": "内部作业失误",
+        "severity": ""
+      },
+      "source_location": "第23页",
+      "source_pdf": [
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "5ff463c3-ce38-428c-a40b-cfb1ea342af9",
+      "type": "RiskFactor",
+      "name": "关联交易风险",
+      "properties": {
+        "risk_name": "关联交易风险",
+        "risk_description": "关联方交易",
+        "severity": ""
+      },
+      "source_location": "第23页",
+      "source_pdf": [
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "7f17069f-79c5-4508-aa45-0cb05d98009b",
+      "type": "Contract",
+      "name": "理财产品合同",
+      "properties": {
+        "contract_code": "",
+        "contract_type": "理财产品合同",
+        "contract_name": "理财产品合同",
+        "version": ""
+      },
+      "source_location": "第24页",
+      "source_pdf": [
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "fe86c38e-4c33-4e5c-b58b-691ab3d0c521",
+      "type": "SalesDocument",
+      "name": "本产品说明书",
+      "properties": {
+        "document_code": "",
+        "document_type": "产品说明书",
+        "document_name": "本产品说明书"
+      },
+      "source_location": "第21页",
+      "source_pdf": [
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "434a2f2c-2862-4604-8875-48225b526fa6",
+      "type": "Channel",
+      "name": "信银理财营业场所",
+      "properties": {
+        "channel_code": "信银理财营业场所",
+        "channel_type": "营业场所",
+        "url": "",
+        "location": "信银理财营业场所"
+      },
+      "source_location": "第23页",
+      "source_pdf": [
+        "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf",
+        "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+      ]
+    },
+    {
+      "id": "187ccaea-b8b8-448f-9b05-abe0c41c8363",
+      "type": "RegulatoryBody",
+      "name": "监管机构",
+      "properties": {
+        "regulatory_body_name": "监管机构",
+        "authority_type": ""
+      },
+      "source_location": "第22页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "c31089b5-e90d-488d-8a26-8450e36e6e89",
+      "type": "InvestmentRestriction",
+      "name": "限制与例外条款",
+      "properties": {
+        "restriction_code": "限制与例外条款",
+        "rule_description": "",
+        "limit_percentage": "",
+        "adjustment_period": ""
+      },
+      "source_location": "第23页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "99b4aa43-560a-4db3-9897-a8b813f4f1bc",
+      "type": "InvestmentProhibition",
+      "name": "禁止违法活动",
+      "properties": {
+        "prohibition_code": "禁止违法活动",
+        "prohibition_category": "",
+        "description": ""
+      },
+      "source_location": "第22页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "ead74f24-96eb-44d3-b2ce-3837f6df4157",
+      "type": "Fee",
+      "name": "收费标准",
+      "properties": {
+        "fee_name": "收费标准",
+        "fee_rate": "",
+        "fee_type": ""
+      },
+      "source_location": "第23页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "c180c22d-5a47-47ab-8a59-0262034e865d",
+      "type": "SalesAgent",
+      "name": "代销机构",
+      "properties": {
+        "agent_name": "代销机构",
+        "agent_code": "",
+        "contact_address": ""
+      },
+      "source_location": "第21页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "bb94faed-24c3-4c01-ae80-01528e634799",
+      "type": "Asset",
+      "name": "投资资产",
+      "properties": {
+        "asset_code": "",
+        "asset_name": "投资资产",
+        "asset_class_id": "",
+        "issuer": "",
+        "maturity_date": "",
+        "liquidity_status_id": "",
+        "price": ""
+      },
+      "source_location": "第21页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "21a5988d-6f19-4a1e-8de0-89d2ee5fdffd",
+      "type": "LiquidityStatus",
+      "name": "流动性不足",
+      "properties": {
+        "status_code": "流动性不足",
+        "status_name": "流动性不足",
+        "description": ""
+      },
+      "source_location": "第21页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "fe6c3934-f2a7-456e-8319-9de40f43ee88",
+      "type": "RiskProfile",
+      "name": "PR1",
+      "properties": {
+        "risk_level": "PR1",
+        "risk_description": "低"
+      },
+      "source_location": "第 1 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "4c3a29a3-dd5e-42c0-9808-653f1621c1ab",
+      "type": "InvestorType",
+      "name": "谨慎型",
+      "properties": {
+        "type_name": "谨慎型",
+        "risk_tolerance": "Low"
+      },
+      "source_location": "第 4 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "8b2b7032-3ff1-464e-8e47-39da41fefb16",
+      "type": "InvestmentAsset",
+      "name": "现金",
+      "properties": {
+        "asset_name": "现金",
+        "asset_type": "货币市场工具"
+      },
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "261943a5-173c-4734-917d-e9d9103e640e",
+      "type": "InvestmentAsset",
+      "name": "银行存款",
+      "properties": {
+        "asset_name": "银行存款",
+        "asset_type": "货币市场工具"
+      },
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "f7feb344-e87c-4ff3-b9d9-bb2366c72766",
+      "type": "InvestmentAsset",
+      "name": "同业存单",
+      "properties": {
+        "asset_name": "同业存单",
+        "asset_type": "货币市场工具"
+      },
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "8e437463-320d-4e98-82dd-044aab669903",
+      "type": "InvestmentAsset",
+      "name": "国债",
+      "properties": {
+        "asset_name": "国债",
+        "asset_type": "固定收益类"
+      },
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "082f3381-9c3f-49fb-a379-1f74df806cb5",
+      "type": "InvestmentAsset",
+      "name": "地方政府债券",
+      "properties": {
+        "asset_name": "地方政府债券",
+        "asset_type": "固定收益类"
+      },
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "7bc6af11-8c6a-46c5-843e-f053fed84297",
+      "type": "InvestmentAsset",
+      "name": "公司信用类债券",
+      "properties": {
+        "asset_name": "公司信用类债券",
+        "asset_type": "固定收益类"
+      },
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "265c0fb3-969d-48dc-ace2-1857410a5f93",
+      "type": "InvestmentAsset",
+      "name": "资产支持证券",
+      "properties": {
+        "asset_name": "资产支持证券",
+        "asset_type": "固定收益类"
+      },
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "8cebeb88-c989-4f99-87ff-19c2f0e6eac8",
+      "type": "InvestmentAsset",
+      "name": "债券型证券投资基金",
+      "properties": {
+        "asset_name": "债券型证券投资基金",
+        "asset_type": "固定收益类"
+      },
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "acc9e69d-2612-4fb0-9da5-a1c55df5d806",
+      "type": "InvestmentRestriction",
+      "name": "SameIssuerLimit",
+      "properties": {
+        "restriction_code": "SameIssuerLimit",
+        "rule_description": "同一机构发行的债券比例合计不得超过10%"
+      },
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "1c30a4a0-b2a2-48ea-a8c9-8e89994e6e89",
+      "type": "InvestmentRestriction",
+      "name": "LowCreditLimit",
+      "properties": {
+        "restriction_code": "LowCreditLimit",
+        "rule_description": "主体信用评级低于AAA的机构比例合计不得超过10%"
+      },
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "47ee84c8-e563-49ca-946c-c6228d451640",
+      "type": "InvestmentRestriction",
+      "name": "TimeDepositLimit",
+      "properties": {
+        "restriction_code": "TimeDepositLimit",
+        "rule_description": "有固定期限银行存款比例合计不得超过30%"
+      },
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "91dd8717-596b-4733-98be-8c895abb1aaa",
+      "type": "InvestmentRestriction",
+      "name": "LiquidityRestrictedLimit",
+      "properties": {
+        "restriction_code": "LiquidityRestrictedLimit",
+        "rule_description": "流动性受限资产合计不得超过10%"
+      },
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "79d6ea40-ed93-4a74-ac31-759410096e18",
+      "type": "InvestmentRestriction",
+      "name": "CashHoldingLimit",
+      "properties": {
+        "restriction_code": "CashHoldingLimit",
+        "rule_description": "持有不低于5%的现金、国债等"
+      },
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "fdd8fcb3-2cb7-4861-a56e-90f1736cb010",
+      "type": "InvestmentProhibition",
+      "name": "Stock",
+      "properties": {
+        "prohibition_code": "Stock",
+        "prohibition_category": "股票"
+      },
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "823438b9-282a-46ec-a474-6b6108f68c07",
+      "type": "InvestmentProhibition",
+      "name": "ConvertibleBond",
+      "properties": {
+        "prohibition_code": "ConvertibleBond",
+        "prohibition_category": "可转换债券"
+      },
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "d4a43458-9eb5-47d9-b824-b6bb485fecaa",
+      "type": "InvestmentProhibition",
+      "name": "LowCreditBond",
+      "properties": {
+        "prohibition_code": "LowCreditBond",
+        "prohibition_category": "信用等级在AA+以下的债券"
+      },
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "349e57f6-3bee-418c-a928-5afbe474dd13",
+      "type": "InvestmentScope",
+      "name": "MonetaryMarket",
+      "properties": {
+        "scope_code": "MonetaryMarket",
+        "scope_category": "货币市场类"
+      },
+      "source_location": "第 2 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "4ca76817-4af3-4aff-9681-317074623383",
+      "type": "InvestmentScope",
+      "name": "FixedIncome",
+      "properties": {
+        "scope_code": "FixedIncome",
+        "scope_category": "固定收益类"
+      },
+      "source_location": "第 2 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "ae3e7cd4-01ea-48d0-a7fd-2b788a776ecf",
+      "type": "AssetClass",
+      "name": "MonetaryMarket",
+      "properties": {
+        "class_code": "MonetaryMarket",
+        "class_name": "货币市场类"
+      },
+      "source_location": "第 2 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "f3c1abde-0dca-463a-a872-e0d7c2106b36",
+      "type": "AssetClass",
+      "name": "FixedIncome",
+      "properties": {
+        "class_code": "FixedIncome",
+        "class_name": "固定收益类"
+      },
+      "source_location": "第 2 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "f9ea5fb7-37ed-4fc3-8873-10f52913e726",
+      "type": "InvestmentStrategy",
+      "name": "综合分析经济形势、货币政策、利率走势、行业状况、信用风险等因素，立足于经济周期的不同阶段自上而下判断利率趋势及行业趋势",
+      "properties": {
+        "strategy_description": "综合分析经济形势、货币政策、利率走势、行业状况、信用风险等因素，立足于经济周期的不同阶段自上而下判断利率趋势及行业趋势"
+      },
+      "source_location": "第 4 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "0bfd82c5-bba3-469e-a90a-428d791defc9",
+      "type": "Contract",
+      "name": "信银理财理财产品合同",
+      "properties": {
+        "contract_name": "信银理财理财产品合同",
+        "contract_type": "理财产品合同"
+      },
+      "source_location": "第 3 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "26953fe1-6777-4c65-8f9e-0156ead88d7a",
+      "type": "SalesDocument",
+      "name": "信银理财理财产品销售总协议",
+      "properties": {
+        "document_name": "信银理财理财产品销售总协议",
+        "document_type": "销售总协议"
+      },
+      "source_location": "第 2 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "a158228e-a261-4946-8199-0fcb97a10907",
+      "type": "Channel",
+      "name": "Electronic",
+      "properties": {
+        "channel_code": "Electronic",
+        "channel_type": "电子渠道"
+      },
+      "source_location": "第 3 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "8a71f49a-7eb4-4aca-a196-d5264762ca61",
+      "type": "Channel",
+      "name": "Direct",
+      "properties": {
+        "channel_code": "Direct",
+        "channel_type": "直销渠道"
+      },
+      "source_location": "第 3 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "dbed76fa-b815-4c46-9198-c4de1b4df464",
+      "type": "WealthManagementProduct",
+      "name": "信银理财日盈象天天利55 号现金管理型理财产品",
+      "properties": {
+        "product_name": "信银理财日盈象天天利55 号现金管理型理财产品",
+        "product_code": "AM233056",
+        "registration_code": "Z7002623000153",
+        "risk_rating": "PR1",
+        "product_type": "公募、固定收益类、开放式",
+        "establishment_date": "2023年4月11日",
+        "maturity_date": "无固定期限",
+        "source_location": "第7页"
+      },
+      "source_location": "chunk_2",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "b9448dba-bd91-4480-aba6-e11ce86e2347",
+      "type": "ShareClass",
+      "name": "AM233056A",
+      "properties": {
+        "share_class_code": "AM233056A",
+        "share_class_name": "A 类份额",
+        "face_value": "1 元",
+        "source_location": "第7页"
+      },
+      "source_location": "chunk_2",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "df7cee5f-e207-4199-81d4-2d4865ff40ff",
+      "type": "ShareClass",
+      "name": "AM233056D",
+      "properties": {
+        "share_class_code": "AM233056D",
+        "share_class_name": "D 类份额",
+        "face_value": "1 元",
+        "source_location": "第7页"
+      },
+      "source_location": "chunk_2",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "f9ccb4f4-7345-4277-a358-9e7f46a74a36",
+      "type": "SalesAgent",
+      "name": "95558",
+      "properties": {
+        "agent_name": "中信银行股份有限公司",
+        "agent_code": "95558",
+        "source_location": "第11页"
+      },
+      "source_location": "chunk_2",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "dc06af4e-74af-4a3a-89c0-d22a38070a45",
+      "type": "SalesAgent",
+      "name": "950950",
+      "properties": {
+        "agent_name": "信银理财有限责任公司",
+        "agent_code": "950950",
+        "source_location": "第11页"
+      },
+      "source_location": "chunk_2",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "1f508cec-a130-4fab-a033-e845fa421055",
+      "type": "RiskRating",
+      "name": "PR1",
+      "properties": {
+        "rating_level": "PR1",
+        "source_location": "第7页"
+      },
+      "source_location": "chunk_2",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "71b32181-3cdf-40d5-af68-8d29752b21d5",
+      "type": "InvestmentRestriction",
+      "name": "R001",
+      "properties": {
+        "restriction_code": "R001",
+        "rule_description": "投资于同一机构发行的债券及其作为原始权益人的资产支持证券的比例合计不得超过产品资产净值的10%",
+        "source_location": "第6页"
+      },
+      "source_location": "chunk_2",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "583481c2-6f9c-48ba-b896-943d480edf67",
+      "type": "InvestmentRestriction",
+      "name": "R002",
+      "properties": {
+        "restriction_code": "R002",
+        "rule_description": "投资于所有主体信用评级低于AAA 的机构发行的金融工具的比例合计不得超过产品资产净值的10%",
+        "source_location": "第6页"
+      },
+      "source_location": "chunk_2",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "b15bf300-f4f3-43bd-aa5b-c7cde2b31b38",
+      "type": "InvestmentRestriction",
+      "name": "R003",
+      "properties": {
+        "restriction_code": "R003",
+        "rule_description": "投资于有固定期限银行存款的比例合计不得超过产品资产净值的30%",
+        "source_location": "第6页"
+      },
+      "source_location": "chunk_2",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "50ec2165-d223-44e3-903b-ba6e59db48e5",
+      "type": "InvestmentProhibition",
+      "name": "P001",
+      "properties": {
+        "prohibition_code": "P001",
+        "prohibition_category": "股票",
+        "source_location": "第6页"
+      },
+      "source_location": "chunk_2",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "af195b14-6ea8-4549-91d9-cdeab9a09451",
+      "type": "InvestmentProhibition",
+      "name": "P002",
+      "properties": {
+        "prohibition_code": "P002",
+        "prohibition_category": "可转换债券、可交换债券",
+        "source_location": "第6页"
+      },
+      "source_location": "chunk_2",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "5a6f89e4-3043-4d13-8ba8-6b2bef182a40",
+      "type": "InvestmentProhibition",
+      "name": "P003",
+      "properties": {
+        "prohibition_code": "P003",
+        "prohibition_category": "以定期存款利率为基准利率的浮动利率债券",
+        "source_location": "第6页"
+      },
+      "source_location": "chunk_2",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "5200eced-8e56-448b-be04-64f98cac3952",
+      "type": "InvestmentProhibition",
+      "name": "P004",
+      "properties": {
+        "prohibition_code": "P004",
+        "prohibition_category": "信用等级在AA+以下的债券、资产支持证券",
+        "source_location": "第6页"
+      },
+      "source_location": "chunk_2",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "86ed7cb5-373e-4f6b-bc4f-f62d7bd39874",
+      "type": "InvestmentScope",
+      "name": "S001",
+      "properties": {
+        "scope_code": "S001",
+        "scope_category": "现金、国债、中央银行票据、政策性金融债券",
+        "source_location": "第6页"
+      },
+      "source_location": "chunk_2",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "7cfd2e62-fcc0-4132-981a-fe0a03e2b754",
+      "type": "InvestorType",
+      "name": "个人",
+      "properties": {
+        "type_name": "个人",
+        "risk_tolerance": "谨慎型",
+        "source_location": "第7页"
+      },
+      "source_location": "chunk_2",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "07273bbb-a9b6-4a7a-91ae-6dca586caeeb",
+      "type": "InvestorType",
+      "name": "机构",
+      "properties": {
+        "type_name": "机构",
+        "risk_tolerance": "稳健型",
+        "source_location": "第7页"
+      },
+      "source_location": "chunk_2",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "5c4fcf1b-d0c5-4d6e-8a66-c41be1fc2cb8",
+      "type": "Channel",
+      "name": "C001",
+      "properties": {
+        "channel_code": "C001",
+        "channel_type": "直销渠道",
+        "source_location": "第9页"
+      },
+      "source_location": "chunk_2",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "c069bbf9-9e20-4c97-83c6-5fb15ff4a419",
+      "type": "Channel",
+      "name": "C002",
+      "properties": {
+        "channel_code": "C002",
+        "channel_type": "代销机构",
+        "source_location": "第9页"
+      },
+      "source_location": "chunk_2",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "56f4ea3d-e7e8-4f5c-8e9d-14c698ccd036",
+      "type": "Channel",
+      "name": "信银理财电子渠道",
+      "properties": {
+        "channel_code": "信银理财电子渠道",
+        "channel_type": "电子渠道"
+      },
+      "source_location": "第 23 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "7fb5ce86-4841-4817-9b54-f2edbc2a21f8",
+      "type": "Channel",
+      "name": "信银理财网站",
+      "properties": {
+        "channel_code": "信银理财网站",
+        "channel_type": "网站",
+        "url": "http://www.citic-wealth.com/"
+      },
+      "source_location": "第 23 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "92075ea8-58ef-4246-92bc-5e8ad19e3fb5",
+      "type": "Distributor",
+      "name": "代销机构",
+      "properties": {
+        "distributor_name": "代销机构",
+        "institution_type": "合作销售机构"
+      },
+      "source_location": "第 21 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "a8cf4d4a-2c90-4f74-8cdc-499dd251aa17",
+      "type": "InvestmentRestriction",
+      "name": "不使用贷款",
+      "properties": {
+        "restriction_code": "不使用贷款",
+        "rule_description": "保证不使用贷款、发行债券等筹集的非自有资金投资理财产品"
+      },
+      "source_location": "第 22 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "33d1ce46-0384-4e24-aa5c-986f5c85f929",
+      "type": "InvestmentProhibition",
+      "name": "不利用本理财业务",
+      "properties": {
+        "prohibition_code": "不利用本理财业务",
+        "prohibition_category": "违法活动"
+      },
+      "source_location": "第 22 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    }
+  ],
+  "merged_edges": [
+    {
+      "id": "cdb3d428-7922-4ffc-b91a-227461531396",
+      "type": "ManagedBy",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "307a25a1-c903-4327-8876-13c85a8c4561",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "ProductManager",
+      "properties": {},
+      "source_location": "第 1 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "6f8443c1-1926-4aad-8115-5f83b5dea781",
+      "type": "HasRiskProfile",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "70ff1c24-6a93-44b9-833e-b1cbfa412276",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RiskProfile",
+      "properties": {},
+      "source_location": "第 3 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "22ec512b-79a5-4084-9281-68441c6df52c",
+      "type": "HasRiskRating",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "552c2a46-a97a-4ba5-9fcb-f1436585800c",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RiskRating",
+      "properties": {},
+      "source_location": "第 3 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "39d05bc2-cc9c-425f-af1a-2b32a6abb8cd",
+      "type": "InvestsInAsset",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "c4e72209-c363-4de7-866c-b73b359544e6",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "InvestmentAsset",
+      "properties": {},
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "e48e7e4a-c916-4b06-9ba6-8e335a231544",
+      "type": "InvestsInAsset",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "6a315247-8f3d-4341-b5f0-a238488159b6",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "InvestmentAsset",
+      "properties": {},
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "41849eee-1dce-461c-8036-97a51b48f6ca",
+      "type": "InvestsInAsset",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "5628e945-02ca-4c82-93ce-ffcbaade12e7",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "InvestmentAsset",
+      "properties": {},
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "48ced0e4-2c4a-4cdc-80d6-b65dabb7f43c",
+      "type": "HasRestriction",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "181d6a74-a941-4569-91ef-09111265cc4c",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "InvestmentRestriction",
+      "properties": {},
+      "source_location": "第 6 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "fdb39ae9-6905-484b-b9d8-4aadd2490e72",
+      "type": "HasRestriction",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "377ab377-2731-4df1-bba2-7437df3717ac",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "InvestmentRestriction",
+      "properties": {},
+      "source_location": "第 6 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "5a778f38-65c3-47f4-9fdb-0b7616de1b54",
+      "type": "RegulatedBy",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "d98e9d94-0c17-41f9-bf2e-521eebc9a2fc",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RegulatoryBody",
+      "properties": {},
+      "source_location": "第 4 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "ba1f0462-abed-4e33-9392-14ced1306991",
+      "type": "RegulatedBy",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "0f5dd7b9-e353-42f5-ad31-62f31023a1c2",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RegulatoryBody",
+      "properties": {},
+      "source_location": "第 4 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "a77554a7-4961-47d9-80d7-22b93547bf31",
+      "type": "RegulatedBy",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "cf9b1b51-65b7-4d3f-956f-b5587d68812d",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RegulatoryBody",
+      "properties": {},
+      "source_location": "第 4 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "59f33f4d-747f-42e6-9101-85eb91e9f879",
+      "type": "AvailableIn",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "58542c0c-d736-4376-ad16-f53b663b44ac",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "Channel",
+      "properties": {},
+      "source_location": "第 4 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "c7211fed-9f49-4b5c-8c4e-a4ef3389780e",
+      "type": "AvailableIn",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "d034511b-20ab-47d9-b723-1b6e32861d36",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "Channel",
+      "properties": {},
+      "source_location": "第 4 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "07bad21f-692a-499a-8fc1-b589e61d61f9",
+      "type": "IncludesContract",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "80dda61d-95cb-41cc-9b00-fffd2ab370c2",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "Contract",
+      "properties": {},
+      "source_location": "第 1 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "4115f6df-4830-42cd-aa0f-9ab17a887215",
+      "type": "IncludesContract",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "72912b25-0816-4aa8-bf43-b7a0d4df6bc7",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "Contract",
+      "properties": {},
+      "source_location": "第 1 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "042618e6-d283-44a8-99db-ea200fcdd19a",
+      "type": "IncludesContract",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "2be3b93c-a4e2-4b97-8446-0ffa7eef1145",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "Contract",
+      "properties": {},
+      "source_location": "第 1 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "922dada5-186a-4991-ac5b-baae1ba77f25",
+      "type": "IncludesContract",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "1f068698-86d0-4b6b-bf0d-e435626efbf1",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "Contract",
+      "properties": {},
+      "source_location": "第 1 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "323d84a1-3483-470a-82b8-b03c2434122d",
+      "type": "IncludesSalesDocument",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "8a51d8ce-fbf0-4720-9513-05ab5ea7ca80",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "SalesDocument",
+      "properties": {},
+      "source_location": "第 1 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "43ec92b1-0d94-49c6-968f-25c7bf527772",
+      "type": "ExposesTo",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "87223275-a0ff-40a5-aa42-17bccd0078b9",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RiskFactor",
+      "properties": {},
+      "source_location": "第 2 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "918dcf93-757b-478a-8d55-63b95d2e21e2",
+      "type": "ExposesTo",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "09c7eda0-a80c-4f8c-96c3-4020695524af",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RiskFactor",
+      "properties": {},
+      "source_location": "第 2 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "8a39ecf9-975c-4350-97a5-4e145d20269d",
+      "type": "SuitableFor",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "53efedbf-8301-4ab9-b116-ce836af94cf0",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "Investor",
+      "properties": {},
+      "source_location": "第 4 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "f6d78657-fbce-4759-bcff-a254b88e06fe",
+      "type": "SuitableFor",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "0699d496-d328-4656-921b-e36693d21e75",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "Investor",
+      "properties": {},
+      "source_location": "第 4 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "fa164b7c-1135-4d31-b496-49112ac66690",
+      "type": "ApplicableTo",
+      "source_id": "daa94145-38f2-4a05-a259-f6ddeb743388",
+      "target_id": "53efedbf-8301-4ab9-b116-ce836af94cf0",
+      "source_object_type": "Risk",
+      "target_object_type": "Investor",
+      "properties": {},
+      "source_location": "第 2 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "c4f73716-f80c-428a-a2be-e490a1c5dae0",
+      "type": "ApplicableTo",
+      "source_id": "daa94145-38f2-4a05-a259-f6ddeb743388",
+      "target_id": "0699d496-d328-4656-921b-e36693d21e75",
+      "source_object_type": "Risk",
+      "target_object_type": "Investor",
+      "properties": {},
+      "source_location": "第 2 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "a23cca01-ca63-405a-9463-13b88b5a8def",
+      "type": "HasScope",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "cf0d70e9-38dc-414c-83ab-f7fd6f624523",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "InvestmentScope",
+      "properties": {},
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "141b92dc-adc5-4725-bd2b-30a2a4f168fd",
+      "type": "HasScope",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "6217ccac-fa6c-4b83-8211-be86a84b4d24",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "InvestmentScope",
+      "properties": {},
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "9865d797-9e8c-4535-b6d5-b14426a4b1ef",
+      "type": "HasScope",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "43bf1eda-eb24-48c7-a680-4540ba1e2ade",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "InvestmentScope",
+      "properties": {},
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "71e4e661-04d5-44fb-8bbf-850c34ea4b1a",
+      "type": "RelatedPartyOf",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "44b7924f-bc66-4741-9670-ba3a5d770c6b",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "AssetManager",
+      "properties": {},
+      "source_location": "第 2 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "2b35d7d5-d86e-4ac1-a4dd-9decd90faec1",
+      "type": "PurchasedBy",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "53efedbf-8301-4ab9-b116-ce836af94cf0",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "Investor",
+      "properties": {},
+      "source_location": "第 4 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "4016943b-e05b-4f3c-a214-454e42f0e903",
+      "type": "PurchasedBy",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "0699d496-d328-4656-921b-e36693d21e75",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "Investor",
+      "properties": {},
+      "source_location": "第 4 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "96e28c77-0ca2-4e21-9bf3-2a368a1e95fd",
+      "type": "Discloses",
+      "source_id": "5fd180ac-fac2-49f5-b20e-e568be06ca18",
+      "target_id": "e4f5fcb2-823f-4ac5-9ef6-dcfcd1cf21d8",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "NonStandardizedAsset",
+      "properties": {},
+      "source_location": "第 6 页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "6d7a7ad9-ece3-4f85-a15b-8d9a60717e98",
+      "type": "ManagedBy",
+      "source_id": "3ef50811-1171-4783-9270-a793f4d909bc",
+      "target_id": "307a25a1-c903-4327-8876-13c85a8c4561",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "ProductManager",
+      "properties": {},
+      "source_location": "第11页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "a0ac47c2-d702-4258-90d8-fe3475820ca9",
+      "type": "HasRiskProfile",
+      "source_id": "3ef50811-1171-4783-9270-a793f4d909bc",
+      "target_id": "70ff1c24-6a93-44b9-833e-b1cbfa412276",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "RiskProfile",
+      "properties": {},
+      "source_location": "第6页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "90e1bf21-5602-4aa9-a235-71e8079b63c8",
+      "type": "AssociatedFee",
+      "source_id": "3ef50811-1171-4783-9270-a793f4d909bc",
+      "target_id": "53cf5caf-c4ca-4bf0-9b27-b208abba3b51",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "Fee",
+      "properties": {},
+      "source_location": "第10页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "81e6dea1-4010-4e2e-a556-cd4d393b0600",
+      "type": "AssociatedFee",
+      "source_id": "3ef50811-1171-4783-9270-a793f4d909bc",
+      "target_id": "d2d9c097-779a-4661-a980-8f0f0cfb40c4",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "Fee",
+      "properties": {},
+      "source_location": "第10页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "7f7183b5-c22e-431a-8757-1fa6ad40ca38",
+      "type": "AssociatedFee",
+      "source_id": "3ef50811-1171-4783-9270-a793f4d909bc",
+      "target_id": "96894997-804c-4bc6-9798-3d1e6aa7c9af",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "Fee",
+      "properties": {},
+      "source_location": "第10页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "cec09b47-6a8a-4e70-bdf2-cad70ee79348",
+      "type": "HasRestriction",
+      "source_id": "3ef50811-1171-4783-9270-a793f4d909bc",
+      "target_id": "0571d361-5934-4f62-a93e-e870b2302a08",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "InvestmentRestriction",
+      "properties": {},
+      "source_location": "第1页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "15ff62e1-5248-428f-b598-cff051a25547",
+      "type": "HasRestriction",
+      "source_id": "3ef50811-1171-4783-9270-a793f4d909bc",
+      "target_id": "390388a5-3b7a-4a24-9c1e-49d7392a6ba0",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "InvestmentRestriction",
+      "properties": {},
+      "source_location": "第1页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "726496b0-2f16-4e88-aeef-3e86a2864d88",
+      "type": "RelatedPartyOf",
+      "source_id": "3ef50811-1171-4783-9270-a793f4d909bc",
+      "target_id": "44b7924f-bc66-4741-9670-ba3a5d770c6b",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "InvestmentCooperator",
+      "properties": {},
+      "source_location": "第5页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "3f5e7b2e-9b5e-472e-8885-b9dda6fbe076",
+      "type": "SoldBy",
+      "source_id": "3ef50811-1171-4783-9270-a793f4d909bc",
+      "target_id": "5e1859c4-1885-4835-8bb6-c98a3660b2a0",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "SalesAgent",
+      "properties": {},
+      "source_location": "第12页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "06e41b4b-f8cc-4677-aa1f-4de6a7ba79e8",
+      "type": "SoldBy",
+      "source_id": "3ef50811-1171-4783-9270-a793f4d909bc",
+      "target_id": "96bd70d8-6fe7-4a5a-8f5f-559b29edcc13",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "SalesAgent",
+      "properties": {},
+      "source_location": "第13页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "8a9319da-6735-4111-a2fb-50ae2ff99c46",
+      "type": "SoldBy",
+      "source_id": "3ef50811-1171-4783-9270-a793f4d909bc",
+      "target_id": "a4d91ca1-8585-4f6a-aec1-37d737e338ba",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "SalesAgent",
+      "properties": {},
+      "source_location": "第13页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "4d49a68a-ae1c-49f9-9040-c0f03cc567f7",
+      "type": "SoldBy",
+      "source_id": "3ef50811-1171-4783-9270-a793f4d909bc",
+      "target_id": "2bd6ec32-833e-4f21-b7aa-10a7719ccfc1",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "SalesAgent",
+      "properties": {},
+      "source_location": "第14页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "dfa98010-070e-4b0b-80c5-c1cda460ef59",
+      "type": "SoldBy",
+      "source_id": "3ef50811-1171-4783-9270-a793f4d909bc",
+      "target_id": "90846e98-0d6e-42a0-a7e3-eb0b895f51c4",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "SalesAgent",
+      "properties": {},
+      "source_location": "第16页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "e3c15ceb-5cce-4844-a07d-bea032ae45e8",
+      "type": "HasRiskRating",
+      "source_id": "3ef50811-1171-4783-9270-a793f4d909bc",
+      "target_id": "552c2a46-a97a-4ba5-9fcb-f1436585800c",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RiskRating",
+      "properties": {},
+      "source_location": "第12页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "899f6a34-bd37-4046-9eb5-443a754d10e0",
+      "type": "ExposesTo",
+      "source_id": "3ef50811-1171-4783-9270-a793f4d909bc",
+      "target_id": "cfbee2ce-7a5e-4c99-bbbf-da83410f752e",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RiskFactor",
+      "properties": {},
+      "source_location": "第12页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "7b7fb627-482d-43ef-b712-f6ab9a72e137",
+      "type": "CustodiedBy",
+      "source_id": "3ef50811-1171-4783-9270-a793f4d909bc",
+      "target_id": "ed7e99ed-662f-4a7b-8418-5138a0a5df2f",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "Custodian",
+      "properties": {},
+      "source_location": "第23页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "7470deb5-0660-4a8c-8904-5f6d90e330f1",
+      "type": "RegulatedBy",
+      "source_id": "3ef50811-1171-4783-9270-a793f4d909bc",
+      "target_id": "641f31f3-9ade-40bc-8a1e-ceeb7ced26d8",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RegulatoryBody",
+      "properties": {},
+      "source_location": "第22页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "beb4d00a-db5c-4f0c-93e4-086da44a7b27",
+      "type": "ManagedBy",
+      "source_id": "3ef50811-1171-4783-9270-a793f4d909bc",
+      "target_id": "758629f7-b8d1-4049-ba28-31370c700d2b",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "ProductManager",
+      "properties": {},
+      "source_location": "第25页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "e43146aa-6cd6-490d-bb52-56d5455ba893",
+      "type": "AvailableIn",
+      "source_id": "3ef50811-1171-4783-9270-a793f4d909bc",
+      "target_id": "77d881be-a340-43e9-a988-6997a1f17bab",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "Channel",
+      "properties": {},
+      "source_location": "第23页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "55fccc74-a865-4340-84b4-fe2f03880463",
+      "type": "HasScope",
+      "source_id": "3ef50811-1171-4783-9270-a793f4d909bc",
+      "target_id": "ad00df43-628d-4521-b809-6867748e4666",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "InvestmentScope",
+      "properties": {},
+      "source_location": "第25页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "6111c0df-3e19-43c9-be17-60d031422252",
+      "type": "HasProhibition",
+      "source_id": "3ef50811-1171-4783-9270-a793f4d909bc",
+      "target_id": "88a05607-809b-488b-8b0c-adc4b66f4702",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "InvestmentProhibition",
+      "properties": {},
+      "source_location": "第26页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "c349be7b-a171-4182-9b65-5e2486c1f677",
+      "type": "HasRestriction",
+      "source_id": "3ef50811-1171-4783-9270-a793f4d909bc",
+      "target_id": "2b613f49-86c0-440b-9c4f-ede5f124d8ce",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "InvestmentRestriction",
+      "properties": {},
+      "source_location": "第24页",
+      "source_pdf": "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf"
+    },
+    {
+      "id": "26229368-bc85-47d0-aa81-8b483332a479",
+      "type": "ExposesTo",
+      "source_id": "372b0979-ccf5-4fa1-a9a4-2e8864de7edf",
+      "target_id": "e62a7a2e-1d5d-4d15-9f6a-fb10fadb50ec",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RiskFactor",
+      "properties": {},
+      "source_location": "第2页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "2659d84b-3bfd-43c6-bc42-39c5449f92ff",
+      "type": "ExposesTo",
+      "source_id": "372b0979-ccf5-4fa1-a9a4-2e8864de7edf",
+      "target_id": "c3baabd8-8cbc-4eba-abb0-a910d0e82d05",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RiskFactor",
+      "properties": {},
+      "source_location": "第2页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "2c7e4ab7-99cd-4b0c-822b-c77719a76cef",
+      "type": "ExposesTo",
+      "source_id": "372b0979-ccf5-4fa1-a9a4-2e8864de7edf",
+      "target_id": "fca0e2bb-f593-4af6-b54e-6a71ee194c28",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RiskFactor",
+      "properties": {},
+      "source_location": "第2页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "cfa78e57-c6b5-40bc-ac99-8919f15696e9",
+      "type": "IncludesSalesDocument",
+      "source_id": "372b0979-ccf5-4fa1-a9a4-2e8864de7edf",
+      "target_id": "97c1c6c0-a8e6-4688-b801-3eb4a23012a1",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "SalesDocument",
+      "properties": {},
+      "source_location": "第2页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "a580800b-0eba-4c66-86c1-c81ac683207c",
+      "type": "InvestsInAsset",
+      "source_id": "372b0979-ccf5-4fa1-a9a4-2e8864de7edf",
+      "target_id": "a77ccb82-1852-4efc-ba12-97dfc902ca9e",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "InvestmentAsset",
+      "properties": {},
+      "source_location": "第6页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "9376edf3-f99e-44fd-8877-31c14a8fa814",
+      "type": "InvestsInAsset",
+      "source_id": "372b0979-ccf5-4fa1-a9a4-2e8864de7edf",
+      "target_id": "e700b29b-50ef-4339-9010-1e22d72cf8b8",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "InvestmentAsset",
+      "properties": {},
+      "source_location": "第6页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "e7d265f4-80ce-4df2-9d12-e559e61d211a",
+      "type": "InvestsInAsset",
+      "source_id": "372b0979-ccf5-4fa1-a9a4-2e8864de7edf",
+      "target_id": "1f0f4698-0438-4299-96e9-327c0b5c5dbe",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "InvestmentAsset",
+      "properties": {},
+      "source_location": "第6页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "7d816fdc-3af6-4c7b-8c79-7edc96eb3a18",
+      "type": "HasRestriction",
+      "source_id": "372b0979-ccf5-4fa1-a9a4-2e8864de7edf",
+      "target_id": "b2a8b326-c32e-4c78-9012-55522df0d3c0",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "InvestmentRestriction",
+      "properties": {},
+      "source_location": "第6页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "9e594a21-3665-4d39-8bc6-c07a025c97fe",
+      "type": "HasRestriction",
+      "source_id": "372b0979-ccf5-4fa1-a9a4-2e8864de7edf",
+      "target_id": "c2f7d601-a945-4b25-ae18-56ef9cc46364",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "InvestmentRestriction",
+      "properties": {},
+      "source_location": "第6页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "29f706a8-33fb-4b41-968e-cca6db3b8d68",
+      "type": "HasRestriction",
+      "source_id": "372b0979-ccf5-4fa1-a9a4-2e8864de7edf",
+      "target_id": "8edc426b-6498-4805-9335-9eb51367dfc4",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "InvestmentRestriction",
+      "properties": {},
+      "source_location": "第6页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "b05d3cae-bf4e-454e-8388-45985a7353a8",
+      "type": "AssociatedFee",
+      "source_id": "372b0979-ccf5-4fa1-a9a4-2e8864de7edf",
+      "target_id": "823fe2e9-4da3-4739-b283-6abd922e8467",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "Fee",
+      "properties": {},
+      "source_location": "第10页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "c2a3163c-a153-4791-b9f4-08f0f746eea2",
+      "type": "AvailableIn",
+      "source_id": "372b0979-ccf5-4fa1-a9a4-2e8864de7edf",
+      "target_id": "274e7a21-1f0d-43f2-88cb-74701c29f3e7",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "Channel",
+      "properties": {},
+      "source_location": "第9页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "4560d77d-09ab-4075-a070-dfe8efb80d16",
+      "type": "IncludesSalesDocument",
+      "source_id": "372b0979-ccf5-4fa1-a9a4-2e8864de7edf",
+      "target_id": "10f1c34d-a3d2-4991-a565-e1cecd6d2b02",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "SalesDocument",
+      "properties": {},
+      "source_location": "第1页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "16d16285-956b-42e7-8789-1ed2e545b534",
+      "type": "HasRestriction",
+      "source_id": "8e3d487f-0f29-4332-a0fe-561afed8ecd5",
+      "target_id": "7759aee4-32a5-4217-8a42-0e0c6e71f634",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "InvestmentRestriction",
+      "properties": {},
+      "source_location": "第 16 页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "48b4be0b-94e5-4e3f-8d39-83e16ca81781",
+      "type": "HasRestriction",
+      "source_id": "8e3d487f-0f29-4332-a0fe-561afed8ecd5",
+      "target_id": "c4c34e45-06cd-4815-a876-12186a423a66",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "InvestmentRestriction",
+      "properties": {},
+      "source_location": "第 16 页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "7ab5fa9c-5c17-48a1-9368-4423e031a2c6",
+      "type": "HasScope",
+      "source_id": "8e3d487f-0f29-4332-a0fe-561afed8ecd5",
+      "target_id": "179e2f72-4a6e-4639-bfd2-857511ff3b64",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "InvestmentScope",
+      "properties": {},
+      "source_location": "第 14 页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "40cdca3e-9047-45ce-8dad-08ea2b06b9a8",
+      "type": "AssociatedFee",
+      "source_id": "8e3d487f-0f29-4332-a0fe-561afed8ecd5",
+      "target_id": "d04fb5c7-93c2-477a-8299-b9eaab78b15a",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "Fee",
+      "properties": {},
+      "source_location": "第 14 页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "9ac7a382-0386-4151-be16-fab020f41d10",
+      "type": "AssociatedFee",
+      "source_id": "8e3d487f-0f29-4332-a0fe-561afed8ecd5",
+      "target_id": "d21f50a1-9d14-4d76-8f83-80ea930889a1",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "Fee",
+      "properties": {},
+      "source_location": "第 14 页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "6fb561c1-e476-40b4-a727-6e7b8f348a99",
+      "type": "AssociatedFee",
+      "source_id": "8e3d487f-0f29-4332-a0fe-561afed8ecd5",
+      "target_id": "e2846cd4-a9ca-4f92-ba85-baadbd843ea8",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "Fee",
+      "properties": {},
+      "source_location": "第 15 页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "190f50a8-8bd9-45a0-86ae-7beaa6baf66f",
+      "type": "AssociatedFee",
+      "source_id": "8e3d487f-0f29-4332-a0fe-561afed8ecd5",
+      "target_id": "823fe2e9-4da3-4739-b283-6abd922e8467",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "Fee",
+      "properties": {},
+      "source_location": "第 15 页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "0f510057-3f3e-4cf5-ace4-6198bedfb895",
+      "type": "AvailableIn",
+      "source_id": "8e3d487f-0f29-4332-a0fe-561afed8ecd5",
+      "target_id": "e9337b85-e56d-4030-8314-f5a2d196b9a2",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "Channel",
+      "properties": {},
+      "source_location": "第 13 页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "79ee24ca-89c4-42d3-b8a4-aa9fb4f0ffd0",
+      "type": "AvailableIn",
+      "source_id": "8e3d487f-0f29-4332-a0fe-561afed8ecd5",
+      "target_id": "3145b9bc-4c71-44d2-aed5-b7f8e55b53f9",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "Channel",
+      "properties": {},
+      "source_location": "第 13 页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "3889022d-29a6-4b46-a399-9f5415ab951e",
+      "type": "AvailableIn",
+      "source_id": "8e3d487f-0f29-4332-a0fe-561afed8ecd5",
+      "target_id": "f3b59dbb-7f16-456c-9e94-9192f79f6d54",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "Channel",
+      "properties": {},
+      "source_location": "第 13 页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "dbd5ed82-99a4-4385-8404-37fbb65d6763",
+      "type": "ExposesTo",
+      "source_id": "8e3d487f-0f29-4332-a0fe-561afed8ecd5",
+      "target_id": "fca0e2bb-f593-4af6-b54e-6a71ee194c28",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RiskFactor",
+      "properties": {},
+      "source_location": "第 16 页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "d82730ba-d666-4f6e-86ef-53d0bf3df950",
+      "type": "ExposesTo",
+      "source_id": "8e3d487f-0f29-4332-a0fe-561afed8ecd5",
+      "target_id": "4d214eda-c688-4c47-9b47-97288cbd0aa3",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RiskFactor",
+      "properties": {},
+      "source_location": "第 16 页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "d40e93eb-09c7-4bf2-8e5f-04ad8de14557",
+      "type": "PurchasedBy",
+      "source_id": "8cca480c-d34f-48f9-bd06-0031e2e80cb2",
+      "target_id": "950493ef-c0b3-4e01-9783-0e29492ff9e7",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "Investor",
+      "properties": {},
+      "source_location": "第21页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "324ebdf5-0e3a-4dba-b9cb-5bf980841096",
+      "type": "ExposesTo",
+      "source_id": "8cca480c-d34f-48f9-bd06-0031e2e80cb2",
+      "target_id": "e62a7a2e-1d5d-4d15-9f6a-fb10fadb50ec",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RiskFactor",
+      "properties": {},
+      "source_location": "第23页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "3825424b-8516-4309-9da2-eb46087901f4",
+      "type": "ExposesTo",
+      "source_id": "8cca480c-d34f-48f9-bd06-0031e2e80cb2",
+      "target_id": "c3baabd8-8cbc-4eba-abb0-a910d0e82d05",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RiskFactor",
+      "properties": {},
+      "source_location": "第23页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "a3b89c31-a189-4256-b900-d25863cecc05",
+      "type": "ExposesTo",
+      "source_id": "8cca480c-d34f-48f9-bd06-0031e2e80cb2",
+      "target_id": "fca0e2bb-f593-4af6-b54e-6a71ee194c28",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RiskFactor",
+      "properties": {},
+      "source_location": "第23页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "0fda048c-613f-4a0c-bdd5-bf48a430f53b",
+      "type": "ExposesTo",
+      "source_id": "8cca480c-d34f-48f9-bd06-0031e2e80cb2",
+      "target_id": "955142be-0328-420a-ae11-44d0eabeee95",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RiskFactor",
+      "properties": {},
+      "source_location": "第23页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "9c2b1af9-87b4-40ae-a7ad-9bb96bfb5f31",
+      "type": "ExposesTo",
+      "source_id": "8cca480c-d34f-48f9-bd06-0031e2e80cb2",
+      "target_id": "996422f6-2401-4930-a609-ae31ccaca9ce",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RiskFactor",
+      "properties": {},
+      "source_location": "第23页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "5f08cb92-f494-4487-9e2a-a11fb5970f8c",
+      "type": "ExposesTo",
+      "source_id": "8cca480c-d34f-48f9-bd06-0031e2e80cb2",
+      "target_id": "b1266f48-a857-452e-9cae-b64f977d1dce",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RiskFactor",
+      "properties": {},
+      "source_location": "第23页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "c9239e22-cadd-44c5-b0ff-b111508228ff",
+      "type": "ExposesTo",
+      "source_id": "8cca480c-d34f-48f9-bd06-0031e2e80cb2",
+      "target_id": "90b0dc5a-2c4c-4761-8461-7422d02e92be",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RiskFactor",
+      "properties": {},
+      "source_location": "第23页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "2a7bc7ad-a16e-4c5f-8f45-b0d53b9708e0",
+      "type": "ExposesTo",
+      "source_id": "8cca480c-d34f-48f9-bd06-0031e2e80cb2",
+      "target_id": "219e4d0b-82cc-40bb-93df-f273d0753f58",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RiskFactor",
+      "properties": {},
+      "source_location": "第23页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "baaa8793-a643-490c-a4d1-ad5126265162",
+      "type": "ExposesTo",
+      "source_id": "8cca480c-d34f-48f9-bd06-0031e2e80cb2",
+      "target_id": "c0c37e7b-a9dd-418f-a511-1681f3d35e8e",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RiskFactor",
+      "properties": {},
+      "source_location": "第23页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "78b3427c-9417-4119-9228-3479fbd11adf",
+      "type": "ExposesTo",
+      "source_id": "8cca480c-d34f-48f9-bd06-0031e2e80cb2",
+      "target_id": "eb674edb-d867-4bb3-8dbd-760bb2da84ea",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RiskFactor",
+      "properties": {},
+      "source_location": "第23页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "80f11ad3-d3a9-4870-9096-5902d60870e8",
+      "type": "ExposesTo",
+      "source_id": "8cca480c-d34f-48f9-bd06-0031e2e80cb2",
+      "target_id": "06aefd99-447e-4a0e-9444-1858ff2a290b",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RiskFactor",
+      "properties": {},
+      "source_location": "第23页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "03cf942e-eba4-4d01-a2c8-913e5da8f0cf",
+      "type": "ExposesTo",
+      "source_id": "8cca480c-d34f-48f9-bd06-0031e2e80cb2",
+      "target_id": "61b61be2-5e11-4d00-a20b-de70e2339fb6",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RiskFactor",
+      "properties": {},
+      "source_location": "第23页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "06fe5620-e678-474c-bc81-c86dd969c09a",
+      "type": "ExposesTo",
+      "source_id": "8cca480c-d34f-48f9-bd06-0031e2e80cb2",
+      "target_id": "35ef84d2-9e77-4808-958b-a9e8af50e2c5",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RiskFactor",
+      "properties": {},
+      "source_location": "第23页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "f4749368-5340-4034-93b1-d20d4d0391fa",
+      "type": "ExposesTo",
+      "source_id": "8cca480c-d34f-48f9-bd06-0031e2e80cb2",
+      "target_id": "5ff463c3-ce38-428c-a40b-cfb1ea342af9",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RiskFactor",
+      "properties": {},
+      "source_location": "第23页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "de6b05c1-c6f4-4681-8b38-56a7cc97068a",
+      "type": "IncludesContract",
+      "source_id": "8cca480c-d34f-48f9-bd06-0031e2e80cb2",
+      "target_id": "7f17069f-79c5-4508-aa45-0cb05d98009b",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "Contract",
+      "properties": {},
+      "source_location": "第24页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "fd1dd0d3-c2e2-4f7a-9d80-ee12022fc28e",
+      "type": "IncludesSalesDocument",
+      "source_id": "8cca480c-d34f-48f9-bd06-0031e2e80cb2",
+      "target_id": "fe86c38e-4c33-4e5c-b58b-691ab3d0c521",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "SalesDocument",
+      "properties": {},
+      "source_location": "第21页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "2e62ca7a-ca31-451b-a2e7-5f66fce930e6",
+      "type": "AvailableIn",
+      "source_id": "8cca480c-d34f-48f9-bd06-0031e2e80cb2",
+      "target_id": "434a2f2c-2862-4604-8875-48225b526fa6",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "Channel",
+      "properties": {},
+      "source_location": "第23页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "b743fc40-f60f-46f5-8c71-b6610b98ce8c",
+      "type": "AvailableIn",
+      "source_id": "8cca480c-d34f-48f9-bd06-0031e2e80cb2",
+      "target_id": "274e7a21-1f0d-43f2-88cb-74701c29f3e7",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "Channel",
+      "properties": {},
+      "source_location": "第23页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "54ab5283-11cb-49a3-9034-feb6aab8a0e9",
+      "type": "RegulatedBy",
+      "source_id": "8cca480c-d34f-48f9-bd06-0031e2e80cb2",
+      "target_id": "187ccaea-b8b8-448f-9b05-abe0c41c8363",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RegulatoryBody",
+      "properties": {},
+      "source_location": "第22页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "a187358c-cc95-4061-923f-cd193118ee3d",
+      "type": "HasRestriction",
+      "source_id": "8cca480c-d34f-48f9-bd06-0031e2e80cb2",
+      "target_id": "c31089b5-e90d-488d-8a26-8450e36e6e89",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "InvestmentRestriction",
+      "properties": {},
+      "source_location": "第23页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "03afc261-d178-4bc7-baff-53b6779180a9",
+      "type": "HasProhibition",
+      "source_id": "8cca480c-d34f-48f9-bd06-0031e2e80cb2",
+      "target_id": "99b4aa43-560a-4db3-9897-a8b813f4f1bc",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "InvestmentProhibition",
+      "properties": {},
+      "source_location": "第22页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "6ccdb0a8-d5e9-4e6f-b521-5c9e57698775",
+      "type": "AssociatedFee",
+      "source_id": "8cca480c-d34f-48f9-bd06-0031e2e80cb2",
+      "target_id": "ead74f24-96eb-44d3-b2ce-3837f6df4157",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "Fee",
+      "properties": {},
+      "source_location": "第23页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "b4eb737c-90e8-4753-b8f4-ab920a93ff2a",
+      "type": "SoldBy",
+      "source_id": "8cca480c-d34f-48f9-bd06-0031e2e80cb2",
+      "target_id": "c180c22d-5a47-47ab-8a59-0262034e865d",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "SalesAgent",
+      "properties": {},
+      "source_location": "第21页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "7e1d496a-e2ea-4618-84e5-3bd68b24af24",
+      "type": "HasLiquidityStatus",
+      "source_id": "bb94faed-24c3-4c01-ae80-01528e634799",
+      "target_id": "21a5988d-6f19-4a1e-8de0-89d2ee5fdffd",
+      "source_object_type": "Asset",
+      "target_object_type": "LiquidityStatus",
+      "properties": {},
+      "source_location": "第21页",
+      "source_pdf": "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf"
+    },
+    {
+      "id": "a1439ea4-0599-4810-bfe8-99811b0ad043",
+      "type": "HasRiskProfile",
+      "source_id": "dbed76fa-b815-4c46-9198-c4de1b4df464",
+      "target_id": "fe6c3934-f2a7-456e-8319-9de40f43ee88",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "RiskProfile",
+      "properties": {},
+      "source_location": "第 1 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "890a9490-3186-4950-a55c-0c255360f56a",
+      "type": "InvestsInAsset",
+      "source_id": "dbed76fa-b815-4c46-9198-c4de1b4df464",
+      "target_id": "8b2b7032-3ff1-464e-8e47-39da41fefb16",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "InvestmentAsset",
+      "properties": {},
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "ed04d7db-e474-41d1-aa49-fdba1d797341",
+      "type": "InvestsInAsset",
+      "source_id": "dbed76fa-b815-4c46-9198-c4de1b4df464",
+      "target_id": "261943a5-173c-4734-917d-e9d9103e640e",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "InvestmentAsset",
+      "properties": {},
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "0f7951b3-6716-449a-b266-b935e0d48caf",
+      "type": "InvestsInAsset",
+      "source_id": "dbed76fa-b815-4c46-9198-c4de1b4df464",
+      "target_id": "f7feb344-e87c-4ff3-b9d9-bb2366c72766",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "InvestmentAsset",
+      "properties": {},
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "1f098505-061b-4dd9-b7b8-1e692c74aaca",
+      "type": "InvestsInAsset",
+      "source_id": "dbed76fa-b815-4c46-9198-c4de1b4df464",
+      "target_id": "8e437463-320d-4e98-82dd-044aab669903",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "InvestmentAsset",
+      "properties": {},
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "8b73ae76-5776-46a9-b8cd-1928d27e1eab",
+      "type": "InvestsInAsset",
+      "source_id": "dbed76fa-b815-4c46-9198-c4de1b4df464",
+      "target_id": "082f3381-9c3f-49fb-a379-1f74df806cb5",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "InvestmentAsset",
+      "properties": {},
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "fd862ce0-2cda-4d41-945e-3ba51a07bf9e",
+      "type": "InvestsInAsset",
+      "source_id": "dbed76fa-b815-4c46-9198-c4de1b4df464",
+      "target_id": "7bc6af11-8c6a-46c5-843e-f053fed84297",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "InvestmentAsset",
+      "properties": {},
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "175f31b7-37bb-4b14-8a65-573e3a05ac5c",
+      "type": "InvestsInAsset",
+      "source_id": "dbed76fa-b815-4c46-9198-c4de1b4df464",
+      "target_id": "265c0fb3-969d-48dc-ace2-1857410a5f93",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "InvestmentAsset",
+      "properties": {},
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "759972a5-4a7e-43a8-a7fe-bc3f2b8ff1aa",
+      "type": "InvestsInAsset",
+      "source_id": "dbed76fa-b815-4c46-9198-c4de1b4df464",
+      "target_id": "8cebeb88-c989-4f99-87ff-19c2f0e6eac8",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "InvestmentAsset",
+      "properties": {},
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "d243a523-9cdc-4099-9ab2-d654ae2886f2",
+      "type": "HasRestriction",
+      "source_id": "dbed76fa-b815-4c46-9198-c4de1b4df464",
+      "target_id": "acc9e69d-2612-4fb0-9da5-a1c55df5d806",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "InvestmentRestriction",
+      "properties": {},
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "57b66cbf-a54c-46d0-9a7b-838f72568684",
+      "type": "HasRestriction",
+      "source_id": "dbed76fa-b815-4c46-9198-c4de1b4df464",
+      "target_id": "1c30a4a0-b2a2-48ea-a8c9-8e89994e6e89",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "InvestmentRestriction",
+      "properties": {},
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "6bfdc9f9-7dbc-4354-99b7-dfdf7e2cd0db",
+      "type": "HasRestriction",
+      "source_id": "dbed76fa-b815-4c46-9198-c4de1b4df464",
+      "target_id": "47ee84c8-e563-49ca-946c-c6228d451640",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "InvestmentRestriction",
+      "properties": {},
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "529261c7-46e3-4ac7-8d20-1e86b8335829",
+      "type": "HasRestriction",
+      "source_id": "dbed76fa-b815-4c46-9198-c4de1b4df464",
+      "target_id": "91dd8717-596b-4733-98be-8c895abb1aaa",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "InvestmentRestriction",
+      "properties": {},
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "6ce234c1-dfcc-4702-a36a-76ba1e59d178",
+      "type": "HasRestriction",
+      "source_id": "dbed76fa-b815-4c46-9198-c4de1b4df464",
+      "target_id": "79d6ea40-ed93-4a74-ac31-759410096e18",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "InvestmentRestriction",
+      "properties": {},
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "121422ca-064d-4897-87f3-e0904d85d86b",
+      "type": "HasProhibition",
+      "source_id": "dbed76fa-b815-4c46-9198-c4de1b4df464",
+      "target_id": "fdd8fcb3-2cb7-4861-a56e-90f1736cb010",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "InvestmentProhibition",
+      "properties": {},
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "16ad3724-0c34-4c59-8e1e-731238c5b75f",
+      "type": "HasProhibition",
+      "source_id": "dbed76fa-b815-4c46-9198-c4de1b4df464",
+      "target_id": "823438b9-282a-46ec-a474-6b6108f68c07",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "InvestmentProhibition",
+      "properties": {},
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "bbb208e9-923d-46ac-b1ea-b296ca8d30c7",
+      "type": "HasProhibition",
+      "source_id": "dbed76fa-b815-4c46-9198-c4de1b4df464",
+      "target_id": "d4a43458-9eb5-47d9-b824-b6bb485fecaa",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "InvestmentProhibition",
+      "properties": {},
+      "source_location": "第 5 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "14d531f7-495e-4306-96bb-88b7ebe36f47",
+      "type": "HasScope",
+      "source_id": "dbed76fa-b815-4c46-9198-c4de1b4df464",
+      "target_id": "349e57f6-3bee-418c-a928-5afbe474dd13",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "InvestmentScope",
+      "properties": {},
+      "source_location": "第 2 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "08fea2ca-0d6e-4957-83d0-5887a1a484da",
+      "type": "HasScope",
+      "source_id": "dbed76fa-b815-4c46-9198-c4de1b4df464",
+      "target_id": "4ca76817-4af3-4aff-9681-317074623383",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "InvestmentScope",
+      "properties": {},
+      "source_location": "第 2 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "25c12817-cb98-4cb1-9f76-75a61eead215",
+      "type": "Advises",
+      "source_id": "dbed76fa-b815-4c46-9198-c4de1b4df464",
+      "target_id": "f9ea5fb7-37ed-4fc3-8873-10f52913e726",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "InvestmentStrategy",
+      "properties": {},
+      "source_location": "第 4 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "381949a0-45d9-4be9-8993-ed8af8dbdec1",
+      "type": "IncludesContract",
+      "source_id": "dbed76fa-b815-4c46-9198-c4de1b4df464",
+      "target_id": "0bfd82c5-bba3-469e-a90a-428d791defc9",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "Contract",
+      "properties": {},
+      "source_location": "第 3 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "0ce3aeb7-e40c-4629-b1fa-2a10baac3267",
+      "type": "IncludesSalesDocument",
+      "source_id": "dbed76fa-b815-4c46-9198-c4de1b4df464",
+      "target_id": "26953fe1-6777-4c65-8f9e-0156ead88d7a",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "SalesDocument",
+      "properties": {},
+      "source_location": "第 2 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "3605e60e-b714-4ba4-991d-0e809a82089e",
+      "type": "AvailableIn",
+      "source_id": "dbed76fa-b815-4c46-9198-c4de1b4df464",
+      "target_id": "a158228e-a261-4946-8199-0fcb97a10907",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "Channel",
+      "properties": {},
+      "source_location": "第 3 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "f2faa103-d6f5-4d79-9dc8-b5d695d81902",
+      "type": "AvailableIn",
+      "source_id": "dbed76fa-b815-4c46-9198-c4de1b4df464",
+      "target_id": "8a71f49a-7eb4-4aca-a196-d5264762ca61",
+      "source_object_type": "FinancialProduct",
+      "target_object_type": "Channel",
+      "properties": {},
+      "source_location": "第 3 页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    },
+    {
+      "id": "b6b0c819-959f-4cb1-9cbd-f366c090bd0d",
+      "type": "HasRiskRating",
+      "source_id": "dbed76fa-b815-4c46-9198-c4de1b4df464",
+      "target_id": "1f508cec-a130-4fab-a033-e845fa421055",
+      "source_object_type": "WealthManagementProduct",
+      "target_object_type": "RiskRating",
+      "properties": {},
+      "source_location": "第7页",
+      "source_pdf": "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf"
+    }
+  ],
+  "per_pdf_results": {
+    "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf": {
+      "status": "success",
+      "nodes_count": 82,
+      "edges_count": 65,
+      "metadata": {
+        "chunk_stats": {
+          "total_chunks": 6,
+          "successful_chunks": 6,
+          "failed_chunks": 0,
+          "success_rate": 1.0
+        },
+        "ontology_stats": {
+          "object_types": 31,
+          "link_types": 26,
+          "total_objects": 82,
+          "total_links": 65
+        }
+      }
+    },
+    "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf": {
+      "status": "success",
+      "nodes_count": 78,
+      "edges_count": 79,
+      "metadata": {
+        "chunk_stats": {
+          "total_chunks": 5,
+          "successful_chunks": 5,
+          "failed_chunks": 0,
+          "success_rate": 1.0
+        },
+        "ontology_stats": {
+          "object_types": 31,
+          "link_types": 26,
+          "total_objects": 78,
+          "total_links": 79
+        }
+      }
+    },
+    "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf": {
+      "status": "success",
+      "nodes_count": 86,
+      "edges_count": 45,
+      "metadata": {
+        "chunk_stats": {
+          "total_chunks": 5,
+          "successful_chunks": 5,
+          "failed_chunks": 0,
+          "success_rate": 1.0
+        },
+        "ontology_stats": {
+          "object_types": 31,
+          "link_types": 26,
+          "total_objects": 86,
+          "total_links": 45
+        }
+      }
+    }
+  }
+}

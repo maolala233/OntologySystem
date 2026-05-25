@@ -279,6 +279,7 @@ export const projectsApi = {
             product_code?: string;
             async_mode?: boolean;
             disable_think?: boolean;
+            source_name?: string;
         }
     ): Promise<any> => {
         const formData = new FormData();
@@ -291,6 +292,7 @@ export const projectsApi = {
             request_interval: data.request_interval,
             product_code: data.product_code,
             disable_think: data.disable_think,
+            source_name: data.source_name,
         }));
 
         const response = await apiClient.post(

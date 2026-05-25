@@ -59,6 +59,7 @@ import {
     MessageOutlined,
     BookOutlined,
     SendOutlined,
+    ThunderboltOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import Navbar from '../components/Layout/Navbar';
@@ -81,6 +82,15 @@ declare global {
         shouldExtractInstancesAfterFileSelect?: boolean;
     }
 }
+
+const PROP_NAME_MAP: Record<string, string> = {
+    _source_file: '来源文档',
+    _source_quote: '原文内容',
+};
+const PROP_HIDDEN_SET = new Set(['_source_chunk_index']);
+const PROP_NAME_REVERSE_MAP: Record<string, string> = Object.fromEntries(
+    Object.entries(PROP_NAME_MAP).map(([k, v]) => [v, k])
+);
 
 const OntologyBuilderPage: React.FC = () => {
     const { projectId } = useParams<{ projectId: string }>();
@@ -162,6 +172,16 @@ const OntologyBuilderPage: React.FC = () => {
     
     // 树形列表展开状态（仅控制列表内部显示，不影响画布）
     const [manualExpandedKeys, setManualExpandedKeys] = useState<Set<string>>(new Set());
+    
+    const [documentFilter, setDocumentFilter] = useState<string | null>(null);
+    const availableDocuments = useMemo(() => {
+        const docs = new Set<string>();
+        nodes.forEach(node => {
+            const doc = node.data?.source_document || node.data?._source_file;
+            if (doc && doc !== 'unknown') docs.add(doc);
+        });
+        return Array.from(docs);
+    }, [nodes]);
     
     // 画布缩放控制
     const [canvasZoom, setCanvasZoom] = useState(1);
@@ -331,27 +351,24 @@ const OntologyBuilderPage: React.FC = () => {
         };
         
         if (propertiesWithSource.length > 0) {
-            // 使用 properties_with_source 区分直接属性和继承属性
             propertiesWithSource.forEach((p: any) => {
+                if (PROP_HIDDEN_SET.has(p.name)) return;
+                const displayName = PROP_NAME_MAP[p.name] || p.name;
                 if (p.source === 'direct') {
-                    // 直接属性：从当前节点的 properties 中获取值
                     const currentProps = node.data?.properties || {};
                     directPropsArray.push({
-                        name: p.name,
+                        name: displayName,
                         value: String(currentProps[p.name] || '')
                     });
                 } else if (p.source === 'inherited') {
-                    // 继承属性：从父类节点中查找属性值
                     const parentClassIds = findParentClassIds(node.id);
                     let inheritedValue = '';
                     let sourceClass = p.from || '父类';
                     
-                    // 遍历所有父类，查找属性值
                     for (const parentId of parentClassIds) {
                         const value = findInheritedPropertyValue(p.name, parentId);
                         if (value !== '') {
                             inheritedValue = value;
-                            // 更新来源类名
                             const parentNode = nodes.find(n => n.id === parentId);
                             if (parentNode) {
                                 sourceClass = parentNode.data?.label || '父类';
@@ -361,21 +378,21 @@ const OntologyBuilderPage: React.FC = () => {
                     }
                     
                     inheritedPropsArray.push({
-                        name: p.name,
+                        name: displayName,
                         value: inheritedValue,
                         from: sourceClass
                     });
                 }
             });
         } else {
-            // 回退到旧的 properties 字段（兼容旧数据）
             const propsObj = node.data?.properties || {};
-            directPropsArray = Object.entries(propsObj).map(([key, value]) => ({
-                name: key,
-                value: String(value)
-            }));
+            directPropsArray = Object.entries(propsObj)
+                .filter(([key]) => !PROP_HIDDEN_SET.has(key))
+                .map(([key, value]) => ({
+                    name: PROP_NAME_MAP[key] || key,
+                    value: String(value)
+                }));
             
-            // ★ 对于没有 properties_with_source 的旧数据，尝试从父类获取继承属性
             const parentClassIds = findParentClassIds(node.id);
             for (const parentId of parentClassIds) {
                 const parentNode = nodes.find(n => n.id === parentId);
@@ -383,10 +400,10 @@ const OntologyBuilderPage: React.FC = () => {
                     const parentProps = parentNode.data?.properties || {};
                     const parentLabel = parentNode.data?.label || '父类';
                     Object.entries(parentProps).forEach(([key, value]) => {
-                        // 只添加当前节点没有的属性（真正的继承属性）
+                        if (PROP_HIDDEN_SET.has(key)) return;
                         if (!propsObj.hasOwnProperty(key)) {
                             inheritedPropsArray.push({
-                                name: key,
+                                name: PROP_NAME_MAP[key] || key,
                                 value: String(value),
                                 from: parentLabel
                             });
@@ -427,8 +444,8 @@ const OntologyBuilderPage: React.FC = () => {
             if (Array.isArray(properties)) {
                 properties.forEach((p: any) => {
                     if (p && p.name) {
-                        // 如果值为 undefined 或 null，使用空字符串代替
-                        propsObj[p.name] = p.value ?? '';
+                        const originalName = PROP_NAME_REVERSE_MAP[p.name] || p.name;
+                        propsObj[originalName] = p.value ?? '';
                     }
                 });
             }
@@ -835,6 +852,8 @@ const OntologyBuilderPage: React.FC = () => {
                 const textContent = response.text_content || '';
                 localStorage.setItem(`project_${projectId}_text_content`, textContent);
                 localStorage.setItem(`project_${projectId}_schema_graph`, JSON.stringify(response.schema_graph));
+                const schemaFileNames = pendingFiles.map(f => f.name).join(', ');
+                localStorage.setItem(`project_${projectId}_source_name`, schemaFileNames);
 
                 const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
                     response.graph_data.nodes || [],
@@ -874,7 +893,6 @@ const OntologyBuilderPage: React.FC = () => {
         if (!projectId) return;
 
         try {
-            const textContent = localStorage.getItem(`project_${projectId}_text_content`) || '';
             const schemaGraphStr = localStorage.getItem(`project_${projectId}_schema_graph`);
             
             if (!schemaGraphStr) {
@@ -882,13 +900,29 @@ const OntologyBuilderPage: React.FC = () => {
                 return;
             }
             
-            // 检查是否有文本内容（TTL 方式构建骨架时没有文本内容）
-            if (!textContent || textContent.trim() === '') {
+            // 优先从数据库获取已上传文档，使用 extractInstancesFromDocuments 端点
+            let docIds: number[] = [];
+            
+            // 先尝试使用已加载的 uploadedDocuments
+            if (uploadedDocuments.length > 0) {
+                docIds = uploadedDocuments.map(doc => doc.id);
+            } else {
+                // 如果 uploadedDocuments 为空，从数据库获取文档列表
+                try {
+                    const response = await projectsApi.getDocuments(Number(projectId));
+                    const docsArray = Array.isArray(response) ? response : (response.documents || response.data || []);
+                    docIds = docsArray.map((doc: any) => doc.id);
+                } catch (e) {
+                    console.warn('获取文档列表失败:', e);
+                }
+            }
+            
+            if (docIds.length === 0) {
                 Modal.info({
                     title: '需要上传文档',
                     content: (
                         <div>
-                            <p>当前骨架是通过 TTL 文件导入的，没有关联的原始文档。</p>
+                            <p>当前没有关联的原始文档。</p>
                             <p className="mt-2 text-gray-600">
                                 实例提取需要基于原始文档内容进行抽取。请上传相关文档（TXT/PDF/DOC/DOCX），
                                 系统将基于已定义的类结构从文档中提取实例。
@@ -897,10 +931,8 @@ const OntologyBuilderPage: React.FC = () => {
                     ),
                     okText: '上传文档',
                     onOk: () => {
-                        // 触发文档文件选择，并设置标志
                         const fileInput = document.getElementById('llm-schema-input');
                         if (fileInput) {
-                            // 设置标志，表示文件选择后需要直接进行实例提取
                             window.shouldExtractInstancesAfterFileSelect = true;
                             fileInput.click();
                         }
@@ -909,12 +941,15 @@ const OntologyBuilderPage: React.FC = () => {
                 return;
             }
 
-            const schemaGraph = JSON.parse(schemaGraphStr);
+            // 保存当前画布状态到数据库
+            await projectsApi.updateProject(Number(projectId), {
+                graph_data: { nodes, edges },
+            });
+            await projectsApi.updateOntology(Number(projectId), { nodes, edges });
+            message.info('已保存当前画布状态，开始实例提取...');
 
-            // 使用异步模式，支持取消
-            const response = await projectsApi.extractInstances(Number(projectId), {
-                text_content: textContent,
-                schema_graph: schemaGraph,
+            // 使用 extractInstancesFromDocuments 端点，后端从数据库获取文档名
+            const response = await projectsApi.extractInstancesFromDocuments(Number(projectId), docIds, {
                 chunk_size: extractConfig.chunk_size,
                 chunk_overlap: extractConfig.chunk_overlap,
                 request_interval: extractConfig.request_interval,
@@ -932,7 +967,6 @@ const OntologyBuilderPage: React.FC = () => {
                 connectToProgressStream(response.task_id);
                 message.info('任务已启动，请在进度窗口查看进度');
             } else if (response.graph_data) {
-                // 同步模式返回结果（保持向后兼容）
                 const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
                     response.graph_data.nodes || [],
                     response.graph_data.edges || []
@@ -945,6 +979,9 @@ const OntologyBuilderPage: React.FC = () => {
                     successMsg += ` (⚠️ ${response.discarded_edges_count} 条不合规连线已自动丢弃)`;
                 }
                 message.success(successMsg);
+                if (response.metadata) {
+                    setExtractionMetadata(response.metadata);
+                }
             } else {
                 message.warning('实例提取完成，但未发现有效实例');
             }
@@ -977,98 +1014,78 @@ const OntologyBuilderPage: React.FC = () => {
     };
 
     const handleStartInstanceExtractionWithFiles = async (files?: File[]) => {
-        /**
-         * 当用户通过 TTL 方式构建骨架后，上传文档进行实例提取时使用
-         * 调用后端 API 解析文件（支持 PDF/DOC/DOCX/TXT）
-         * 
-         * 关键点：
-         * 1. 只解析文件获取文本内容，不重新提取 schema
-         * 2. 使用 TTL 导入的 schema 进行实例提取
-         * 3. 实例会添加到已有的类结构框架上
-         * 4. 在调用实例提取前，先保存当前画布状态到数据库
-         * 
-         * 参数:
-         * - files: 可选的文件数组，如果提供则直接使用，否则使用 pendingFiles 状态
-         */
         const filesToUse = files || pendingFiles;
         if (!projectId || filesToUse.length === 0) return;
 
         setLoading(true);
         try {
-            // 获取已保存的 schema（使用 TTL 导入的 schema）
-            const schemaGraphStr = localStorage.getItem(`project_${projectId}_schema_graph`);
-            if (!schemaGraphStr) {
-                message.error('Schema 不存在，请先提取骨架');
-                return;
-            }
-            
-            const schemaGraph = JSON.parse(schemaGraphStr);
-
-            // 【关键修复】在调用实例提取前，先保存当前画布状态到数据库
-            // 这样后端才能从 db_project.graph_data 中获取到正确的类结构
+            // 在调用实例提取前，先保存当前画布状态到数据库
             await projectsApi.updateProject(Number(projectId), {
                 graph_data: { nodes, edges },
             });
             await projectsApi.updateOntology(Number(projectId), { nodes, edges });
             message.info('已保存当前画布状态，开始解析文件...');
 
-            // 使用新的 parseFiles API 解析文件获取文本内容
+            // 使用 parseFiles API 解析文件并保存到数据库
             const parseResponse = await projectsApi.parseFiles(Number(projectId), filesToUse);
             
-            // 获取解析后的文本内容（parseResponse 已经是 response.data）
             const textContent = parseResponse?.text_content || '';
             if (!textContent) {
                 message.error('文件解析失败，未获取到文本内容');
                 return;
             }
             
-            // 保存文本内容到 localStorage
             localStorage.setItem(`project_${projectId}_text_content`, textContent);
 
-            // 使用异步模式进行实例提取
-            // 使用 TTL 导入的 schema，实例会添加到已有类结构上
-            const instanceResponse = await projectsApi.extractInstances(Number(projectId), {
-                text_content: textContent,
-                schema_graph: schemaGraph,
-                chunk_size: extractConfig.chunk_size,
-                chunk_overlap: extractConfig.chunk_overlap,
-                request_interval: extractConfig.request_interval,
-                async_mode: true,
-                disable_think: extractConfig.disable_think,
-            });
+            // 从 parseFiles 响应中获取保存的文档 ID
+            const savedDocs = parseResponse?.saved_documents || [];
+            const docIds: number[] = savedDocs.map((doc: any) => doc.id).filter(Boolean);
 
-            // 如果返回 task_id，说明是异步任务
-            if (instanceResponse.task_id) {
-                setCurrentTaskId(instanceResponse.task_id);
-                setIsProgressModalOpen(true);
-                setTaskStatus('running');
-                setTaskProgress(0);
-                setTaskMessage('开始实例提取...');
-                connectToProgressStream(instanceResponse.task_id);
-                message.info('任务已启动，请在进度窗口查看进度');
-            } else if (instanceResponse.graph_data) {
-                // 同步模式返回结果
-                const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
-                    instanceResponse.graph_data.nodes || [],
-                    instanceResponse.graph_data.edges || []
-                );
-                setNodes(layoutedNodes);
-                setEdges(layoutedEdges);
-                
-                let successMsg = instanceResponse.message || `实例提取完成：${instanceResponse.instances?.length || 0} 个实例`;
-                if (instanceResponse.discarded_edges_count > 0) {
-                    successMsg += ` (⚠️ ${instanceResponse.discarded_edges_count} 条不合规连线已自动丢弃)`;
+            if (docIds.length > 0) {
+                // 使用 extractInstancesFromDocuments 端点，后端从数据库获取文档名
+                const instanceResponse = await projectsApi.extractInstancesFromDocuments(Number(projectId), docIds, {
+                    chunk_size: extractConfig.chunk_size,
+                    chunk_overlap: extractConfig.chunk_overlap,
+                    request_interval: extractConfig.request_interval,
+                    async_mode: true,
+                    disable_think: extractConfig.disable_think,
+                });
+
+                if (instanceResponse.task_id) {
+                    setCurrentTaskId(instanceResponse.task_id);
+                    setIsProgressModalOpen(true);
+                    setTaskStatus('running');
+                    setTaskProgress(0);
+                    setTaskMessage('开始实例提取...');
+                    connectToProgressStream(instanceResponse.task_id);
+                    message.info('任务已启动，请在进度窗口查看进度');
+                } else if (instanceResponse.graph_data) {
+                    const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
+                        instanceResponse.graph_data.nodes || [],
+                        instanceResponse.graph_data.edges || []
+                    );
+                    setNodes(layoutedNodes);
+                    setEdges(layoutedEdges);
+                    
+                    let successMsg = instanceResponse.message || `实例提取完成：${instanceResponse.instances?.length || 0} 个实例`;
+                    if (instanceResponse.discarded_edges_count > 0) {
+                        successMsg += ` (⚠️ ${instanceResponse.discarded_edges_count} 条不合规连线已自动丢弃)`;
+                    }
+                    message.success(successMsg);
+                    if (instanceResponse.metadata) {
+                        setExtractionMetadata(instanceResponse.metadata);
+                    }
+                } else {
+                    message.warning('实例提取完成，但未发现有效实例');
                 }
-                message.success(successMsg);
             } else {
-                message.warning('实例提取完成，但未发现有效实例');
+                message.error('文档保存失败，无法进行实例提取');
             }
         } catch (error: any) {
             const errorDetail = error.response?.data?.detail || error.message || '未知错误';
             message.error(`实例提取失败：${errorDetail}`);
         } finally {
             setLoading(false);
-            // 只在没有传入 files 参数时才清空 pendingFiles（避免重复清空）
             if (!files) {
                 setPendingFiles([]);
             }
@@ -1204,7 +1221,12 @@ const OntologyBuilderPage: React.FC = () => {
             }
         });
 
-        const displayNodes = nodes.filter(n => visibleNodeIds.has(n.id));
+        const displayNodes = nodes.filter(n => {
+            if (!visibleNodeIds.has(n.id)) return false;
+            if (!documentFilter) return true;
+            if (n.data?.type === 'owl:Class') return true;
+            return n.data?.source_document === documentFilter || n.data?._source_file === documentFilter;
+        });
 
         const displayEdges = edges.filter(e => {
             const sourceId = String(e.source);
@@ -1213,7 +1235,7 @@ const OntologyBuilderPage: React.FC = () => {
         });
 
         return { displayNodes, displayEdges };
-    }, [nodes, edges, expandedNodeIds]);
+    }, [nodes, edges, expandedNodeIds, documentFilter]);
 
     const { displayNodes, displayEdges } = getDisplayElements();
 
@@ -1777,7 +1799,6 @@ const OntologyBuilderPage: React.FC = () => {
             }
         });
 
-        // 搜索过滤
         const filterNode = (title: string) => {
             if (!treeSearchValue) return true;
             return title.toLowerCase().includes(treeSearchValue.toLowerCase());
@@ -1785,19 +1806,15 @@ const OntologyBuilderPage: React.FC = () => {
 
         return classNodes.map(classNode => {
             const classTitle = classNode.data?.label || '未命名类';
+            const rawId = classNode.data?.raw_id || '';
+            const isActionType = rawId.startsWith('AT_') || classNode.id?.startsWith('AT_');
             const children = classToInstances[classNode.id]?.map(instance => {
                 const instanceTitle = instance.data?.label || '未命名实例';
-                const props = instance.data?.properties || {};
-                const nonEmptyProps = Object.entries(props)
-                    .filter(([k, v]) => v && !k.startsWith('_') && String(v).trim())
-                    .slice(0, 2);
-                const propPreview = nonEmptyProps.length > 0 
-                    ? ` (${nonEmptyProps.map(([k, v]) => `${k}:${v}`).join(', ')})` 
-                    : '';
+                const isActionInst = instance.data?._is_action_instance;
                 return {
-                    title: `${instanceTitle}${propPreview}`,
+                    title: instanceTitle,
                     key: instance.id,
-                    icon: <span className="inline-block w-3 h-3 rounded-full bg-[#f79767] mr-2" />,
+                    icon: <span className={`inline-block w-3 h-3 rounded-full mr-2 ${isActionInst ? 'bg-[#8a8a8a]' : 'bg-[#f79767]'}`} />,
                     isLeaf: true,
                     searchableTitle: instanceTitle,
                 };
@@ -1806,12 +1823,11 @@ const OntologyBuilderPage: React.FC = () => {
             return {
                 title: classTitle,
                 key: classNode.id,
-                icon: <span className="inline-block w-3 h-3 rounded-full bg-[#4cc9f0] mr-2" />,
+                icon: <span className={`inline-block w-3 h-3 rounded-full mr-2 ${isActionType ? 'bg-[#555555]' : 'bg-[#4cc9f0]'}`} />,
                 children,
                 searchableTitle: classTitle,
             };
         }).filter(node => {
-            // 如果节点本身或子节点匹配搜索，则显示
             if (!treeSearchValue) return true;
             const selfMatch = node.searchableTitle?.toLowerCase().includes(treeSearchValue.toLowerCase());
             const childrenMatch = node.children?.some((child: any) => 
@@ -2112,6 +2128,20 @@ const OntologyBuilderPage: React.FC = () => {
                                     allowClear
                                     prefix={<SearchOutlined className="text-gray-400" />}
                                 />
+                                {availableDocuments.length > 0 && (
+                                    <Select
+                                        style={{ width: '100%', marginTop: 8 }}
+                                        placeholder="按文档筛选"
+                                        allowClear
+                                        size="small"
+                                        value={documentFilter || undefined}
+                                        onChange={(value) => setDocumentFilter(value || null)}
+                                    >
+                                        {availableDocuments.map(doc => (
+                                            <Select.Option key={doc} value={doc}>{doc}</Select.Option>
+                                        ))}
+                                    </Select>
+                                )}
                             </div>
                             
                             {/* 树形列表 */}
@@ -2514,6 +2544,42 @@ const OntologyBuilderPage: React.FC = () => {
                                                 } />
                                             </Form.Item>
 
+                                            {selectedElement?.data?.description && (
+                                                <Form.Item label="描述">
+                                                    <Input.TextArea 
+                                                        value={selectedElement.data.description}
+                                                        autoSize={{ minRows: 2, maxRows: 6 }}
+                                                        disabled
+                                                        className="text-gray-600"
+                                                    />
+                                                </Form.Item>
+                                            )}
+
+                                            {selectedElement?.data?.source_document && (
+                                                <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                                                    <div className="flex items-center gap-2 mb-2">
+                                                        <FileTextOutlined className="text-blue-500" />
+                                                        <span className="font-medium text-blue-700">溯源文档</span>
+                                                    </div>
+                                                    <Tag color="blue" className="text-sm">{selectedElement.data.source_document}</Tag>
+                                                </div>
+                                            )}
+
+                                            {selectedElement?.data?.type === 'action' && selectedElement?.data?.parameters && (
+                                                <div className="mb-4">
+                                                    <div className="flex items-center gap-2 mb-2 pb-2 border-b border-gray-100">
+                                                        <ThunderboltOutlined className="text-orange-500" />
+                                                        <span className="font-medium text-gray-700">动作参数</span>
+                                                    </div>
+                                                    {selectedElement.data.parameters.map((param: any, idx: number) => (
+                                                        <div key={idx} className="flex gap-2 mb-1 items-center">
+                                                            <Tag color="orange">{param.name}</Tag>
+                                                            <Tag color="default">{param.data_type}</Tag>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+
                                             <div className="flex items-center gap-2 mb-3 pb-3 border-b border-gray-100">
                                                 <TagsOutlined className="text-purple-500" />
                                                 <span className="font-medium text-gray-700">自定义属性</span>
@@ -2574,6 +2640,7 @@ const OntologyBuilderPage: React.FC = () => {
                                                         {fields.map(({ key, name, ...restField }) => {
                                                             const propName = form.getFieldValue(['properties', name, 'name']);
                                                             const propDef = getPropDef(propName);
+                                                            const isMappedProp = PROP_NAME_REVERSE_MAP.hasOwnProperty(propName);
                                                             return (
                                                             <div key={key} className="flex gap-2 mb-2 items-start">
                                                                 <div className="flex-shrink-0 flex items-center gap-1" style={{ width: '120px' }}>
@@ -2584,7 +2651,7 @@ const OntologyBuilderPage: React.FC = () => {
                                                                         className="mb-0"
                                                                         style={{ width: '100px' }}
                                                                     >
-                                                                        <Input placeholder="属性名" size="small" />
+                                                                        <Input placeholder="属性名" size="small" disabled={isMappedProp} className={isMappedProp ? 'text-gray-500 bg-gray-50' : ''} />
                                                                     </Form.Item>
                                                                     {propDef && (
                                                                         <Tag color="blue" className="text-xs flex-shrink-0 mt-1">{propDef.data_type}</Tag>

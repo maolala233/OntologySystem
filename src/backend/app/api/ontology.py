@@ -129,7 +129,12 @@ def update_project(
     if project_update.description is not None:
         db_project.description = project_update.description
     if project_update.graph_data is not None:
-        db_project.graph_data = project_update.graph_data
+        existing_graph_data = db_project.graph_data or {}
+        new_graph_data = project_update.graph_data
+        if isinstance(existing_graph_data, dict) and "schema" in existing_graph_data:
+            if "schema" not in new_graph_data:
+                new_graph_data["schema"] = existing_graph_data["schema"]
+        db_project.graph_data = new_graph_data
     if project_update.domain_id is not None:
         db_project.domain_id = project_update.domain_id
 
@@ -351,13 +356,27 @@ async def extract_schema_from_documents(
                         "schema": schema,
                         **graph_data,
                     }
-                    db_project.graph_data = merged_graph
-                    db.commit()
+                    # 在异步上下文中需要重新获取db_project并使用新的session
+                    from app.infrastructure.database import SessionLocal
+                    _db = SessionLocal()
+                    try:
+                        _project = _db.query(Project).filter(Project.id == project_id).first()
+                        if _project:
+                            _project.graph_data = merged_graph
+                            _db.commit()
+                            logger.info(f"[extract-schema-from-documents] Schema已保存到数据库 - nodes={len(graph_data.get('nodes',[]))}, edges={len(graph_data.get('edges',[]))}")
+                        else:
+                            logger.error(f"[extract-schema-from-documents] 项目 {project_id} 不存在，无法保存schema")
+                    except Exception as db_err:
+                        _db.rollback()
+                        logger.error(f"[extract-schema-from-documents] 保存schema到数据库失败: {db_err}")
+                    finally:
+                        _db.close()
                     
                     task_manager.complete_task(
                         task_id,
                         result={"schema_graph": schema, "graph_data": graph_data, "text_content": combined_text, "metadata": schema.get("metadata")},
-                        message=f"骨架提取完成：{len(schema['classes'])} 个类，{len(schema['object_properties'])} 个关系（来自 {len(documents)} 个文档）"
+                        message=f"骨架提取完成：{len(schema.get('object_types', schema.get('classes', [])))} 个对象类型，{len(schema.get('link_types', schema.get('object_properties', [])))} 个链接类型，{len(schema.get('action_types', []))} 个动作类型（来自 {len(documents)} 个文档）"
                     )
                 except TaskCancelledError:
                     task_manager.cancel_task(task_id, "用户取消任务")
@@ -396,8 +415,9 @@ async def extract_schema_from_documents(
             "text_content": combined_text,
             "metadata": schema.get("metadata"),
             "message": (
-                f"骨架提取完成：{len(schema['classes'])} 个类，"
-                f"{len(schema['object_properties'])} 个关系（来自 {len(documents)} 个文档）。"
+                f"骨架提取完成：{len(schema.get('object_types', schema.get('classes', [])))} 个对象类型，"
+                f"{len(schema.get('link_types', schema.get('object_properties', [])))} 个链接类型，"
+                f"{len(schema.get('action_types', []))} 个动作类型（来自 {len(documents)} 个文档）。"
                 f"请在画布中审核、修改后，点击「提取实例」进入第二阶段。"
             ),
         }
@@ -563,7 +583,7 @@ async def extract_schema_endpoint(
                         task_manager.complete_task(
                             task_id,
                             result={"schema_graph": schema, "graph_data": graph_data, "text_content": combined_text, "metadata": schema.get("metadata")},
-                            message=f"骨架提取完成：{len(schema['classes'])} 个类，{len(schema['object_properties'])} 个关系（来自 {len(files)} 个文件）"
+                            message=f"骨架提取完成：{len(schema.get('object_types', schema.get('classes', [])))} 个对象类型，{len(schema.get('link_types', schema.get('object_properties', [])))} 个链接类型，{len(schema.get('action_types', []))} 个动作类型（来自 {len(files)} 个文件）"
                         )
                     except TaskCancelledError:
                         task_manager.cancel_task(task_id, "用户取消任务")
@@ -620,8 +640,9 @@ async def extract_schema_endpoint(
                     for doc in saved_docs
                 ] if saved_docs else [],
                 "message": (
-                    f"骨架提取完成：{len(schema['classes'])} 个类，"
-                    f"{len(schema['object_properties'])} 个关系（来自 {len(files)} 个文件）。"
+                    f"骨架提取完成：{len(schema.get('object_types', schema.get('classes', [])))} 个对象类型，"
+                    f"{len(schema.get('link_types', schema.get('object_properties', [])))} 个链接类型，"
+                    f"{len(schema.get('action_types', []))} 个动作类型（来自 {len(files)} 个文件）。"
                     f"请在画布中审核、修改后，点击「提取实例」进入第二阶段。"
                 ),
             }
@@ -650,6 +671,7 @@ async def extract_instances_from_documents(
     chunk_overlap: int = Form(10, description="分块重叠百分比(0-50)"),
     request_interval: int = Form(2),
     async_mode: str = Form("true", description="是否异步执行（支持取消）"),
+    disable_think: bool = Form(True, description="是否禁用思考模式（Qwen3等思考模型）"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -733,15 +755,70 @@ async def extract_instances_from_documents(
     schema_dict = (db_project.graph_data or {}).get("schema", {})
     
     # 如果没有 schema 字段，尝试从 nodes 和 edges 动态构建（兼容 TTL 导入场景）
-    if not schema_dict or not schema_dict.get("classes"):
+    if not schema_dict or not (schema_dict.get("classes") or schema_dict.get("object_types")):
         nodes = (db_project.graph_data or {}).get("nodes", [])
         edges = (db_project.graph_data or {}).get("edges", [])
         if nodes or edges:
-            # 从 nodes 和 edges 构建 schema
             schema_dict = build_schema_from_graph_data(nodes, edges)
+            logger.info(f"[extract-instances-from-documents] 从 graph_data 动态构建 schema：{len(schema_dict.get('classes', []))} 个类，{len(schema_dict.get('object_properties', []))} 个 ObjectProperty，{len(schema_dict.get('action_types', []))} 个 ActionType")
+    else:
+        # schema 字段存在，但可能缺少用户通过前端添加的 action_types
+        # 需要从 graph_data 的节点中检查是否有 AT_ 前缀的节点
+        existing_action_types = schema_dict.get("action_types", [])
+        existing_at_names = {at.get("name", "") for at in existing_action_types} | {at.get("label", "") for at in existing_action_types}
+        
+        nodes = (db_project.graph_data or {}).get("nodes", [])
+        edges = (db_project.graph_data or {}).get("edges", [])
+        
+        missing_action_types = []
+        for node in nodes:
+            node_type = node.get('data', {}).get('type', '')
+            if node_type == 'owl:Class':
+                raw_id = node.get('data', {}).get('raw_id', '')
+                node_id = str(node.get('id', ''))
+                node_label = node.get('data', {}).get('label', '')
+                is_action = raw_id.startswith('AT_') or node_id.startswith('AT_')
+                if is_action and node_label not in existing_at_names and node_id not in existing_at_names:
+                    target_object_type = ""
+                    for edge in edges:
+                        edge_data = edge.get('data', {})
+                        edge_relation = edge_data.get('relation', '')
+                        if edge_relation == 'action' and edge.get('source') == node_id:
+                            tgt_id = edge.get('target', '')
+                            for n2 in nodes:
+                                if str(n2.get('id', '')) == tgt_id:
+                                    target_object_type = n2.get('data', {}).get('label', tgt_id)
+                                    break
+                            break
+                    
+                    parameters = node.get('data', {}).get('parameters', [])
+                    if not parameters:
+                        prop_defs = node.get('data', {}).get('property_definitions', [])
+                        parameters = [{"name": p.get("name", ""), "data_type": p.get("data_type", "string")} for p in prop_defs if isinstance(p, dict)]
+                    
+                    missing_action_types.append({
+                        "id": raw_id or node_id,
+                        "name": node_label,
+                        "label": node_label,
+                        "description": node.get('data', {}).get('description', ''),
+                        "target_object_type": target_object_type,
+                        "parameters": parameters,
+                    })
+        
+        if missing_action_types:
+            if "action_types" not in schema_dict:
+                schema_dict["action_types"] = []
+            schema_dict["action_types"].extend(missing_action_types)
+            logger.info(f"[extract-instances-from-documents] 从 graph_data 补充了 {len(missing_action_types)} 个缺失的 ActionType 到 schema_dict")
     
-    if not schema_dict or not schema_dict.get("classes"):
+    if not schema_dict or not (schema_dict.get("classes") or schema_dict.get("object_types")):
         raise HTTPException(status_code=400, detail="请先提取骨架再进行实例提取")
+
+    at_count = len(schema_dict.get("action_types", []))
+    logger.info(f"[extract-instances-from-documents] schema_dict 包含 action_types: {at_count} 个")
+    if at_count > 0:
+        for at in schema_dict.get("action_types", []):
+            logger.info(f"[extract-instances-from-documents]   - ActionType: name={at.get('name')}, label={at.get('label')}, target={at.get('target_object_type')}")
 
     # 获取知识域信息（用于注入到 Prompt 中）
     domain_name = ""
@@ -766,6 +843,7 @@ async def extract_instances_from_documents(
         
         # 后台执行提取任务
         async def run_extraction():
+            from app.infrastructure.database import SessionLocal as InstSessionLocal
             async with EXTRACTION_SEMAPHORE:
                 try:
                     def progress_callback(progress: float, message: str):
@@ -783,12 +861,17 @@ async def extract_instances_from_documents(
                             documents=documents_list,
                         )
 
-                    existing_nodes = (db_project.graph_data or {}).get("nodes", [])
-                    existing_edges = (db_project.graph_data or {}).get("edges", [])
+                    # 在异步上下文中重新获取graph_data
+                    _schema_db = InstSessionLocal()
+                    try:
+                        _schema_proj = _schema_db.query(Project).filter(Project.id == project_id).first()
+                        existing_nodes = (_schema_proj.graph_data or {}).get("nodes", []) if _schema_proj else []
+                        existing_edges = (_schema_proj.graph_data or {}).get("edges", []) if _schema_proj else []
+                    finally:
+                        _schema_db.close()
                     
                     class_node_ids = set()
                     schema_nodes = []
-                    schema_edges = []
                     
                     for node in existing_nodes:
                         node_type = node.get('data', {}).get('type', '')
@@ -796,34 +879,65 @@ async def extract_instances_from_documents(
                             class_node_ids.add(node['id'])
                             schema_nodes.append(node)
                     
+                    schema_edges = []
                     for edge in existing_edges:
                         edge_data = edge.get('data', {})
                         relation = edge_data.get('relation', '')
                         label = edge.get('label', '')
+                        src = edge.get('source', '')
+                        tgt = edge.get('target', '')
                         if relation == 'subclass_of' or label in ('subClassOf', 'subclass_of'):
-                            schema_edges.append(edge)
+                            if src in class_node_ids and tgt in class_node_ids:
+                                schema_edges.append(edge)
+                        elif relation == 'action':
+                            if src in class_node_ids and tgt in class_node_ids:
+                                schema_edges.append(edge)
+                        elif relation == 'object_property' or edge_data.get('prop_id'):
+                            if src in class_node_ids and tgt in class_node_ids:
+                                schema_edges.append(edge)
                         elif relation and relation not in ('rdf:type', 'type'):
-                            schema_edges.append(edge)
+                            if src in class_node_ids and tgt in class_node_ids:
+                                schema_edges.append(edge)
                     
                     schema_graph_data = {"nodes": schema_nodes, "edges": schema_edges}
                     
                     full_graph_data = OntologyExtractor.merge_instances_to_graph_data(
                         schema_graph_data=schema_graph_data,
                         instances=inst_result["instances"],
+                        action_instances=inst_result.get("action_instances", []),
                     )
 
-                    db_project.graph_data = {
-                        "schema": schema_dict,
-                        **full_graph_data,
-                    }
-                    db.commit()
+                    # 在异步上下文中需要重新获取db对象并使用新的session
+                    from app.infrastructure.database import SessionLocal as InstSessionLocal
+                    _inst_db = InstSessionLocal()
+                    try:
+                        _inst_project = _inst_db.query(Project).filter(Project.id == project_id).first()
+                        if _inst_project:
+                            _inst_project.graph_data = {
+                                "schema": schema_dict,
+                                **full_graph_data,
+                            }
+                            _inst_db.commit()
+                            logger.info(f"[extract-instances-from-documents] 实例数据已保存到数据库 - nodes={len(full_graph_data.get('nodes',[]))}, edges={len(full_graph_data.get('edges',[]))}")
+                        else:
+                            logger.error(f"[extract-instances-from-documents] 项目 {project_id} 不存在，无法保存实例数据")
+                    except Exception as db_err:
+                        _inst_db.rollback()
+                        logger.error(f"[extract-instances-from-documents] 保存实例数据到数据库失败: {db_err}")
+                    finally:
+                        _inst_db.close()
 
                     try:
                         domain_name = ""
-                        if db_project.domain_id:
-                            domain = db.query(KnowledgeDomain).filter(KnowledgeDomain.id == db_project.domain_id).first()
-                            if domain:
-                                domain_name = domain.name
+                        _vdb = InstSessionLocal()
+                        try:
+                            _vproject = _vdb.query(Project).filter(Project.id == project_id).first()
+                            if _vproject and _vproject.domain_id:
+                                domain = _vdb.query(KnowledgeDomain).filter(KnowledgeDomain.id == _vproject.domain_id).first()
+                                if domain:
+                                    domain_name = domain.name
+                        finally:
+                            _vdb.close()
                         
                         ttl_content = generate_ttl_from_graph_data(full_graph_data["nodes"], full_graph_data["edges"])
                         
@@ -892,7 +1006,6 @@ async def extract_instances_from_documents(
         
         class_node_ids = set()
         schema_nodes = []
-        schema_edges = []
         
         for node in existing_nodes:
             node_type = node.get('data', {}).get('type', '')
@@ -900,14 +1013,25 @@ async def extract_instances_from_documents(
                 class_node_ids.add(node['id'])
                 schema_nodes.append(node)
         
+        schema_edges = []
         for edge in existing_edges:
             edge_data = edge.get('data', {})
             relation = edge_data.get('relation', '')
             label = edge.get('label', '')
+            src = edge.get('source', '')
+            tgt = edge.get('target', '')
             if relation == 'subclass_of' or label in ('subClassOf', 'subclass_of'):
-                schema_edges.append(edge)
+                if src in class_node_ids and tgt in class_node_ids:
+                    schema_edges.append(edge)
+            elif relation == 'action':
+                if src in class_node_ids and tgt in class_node_ids:
+                    schema_edges.append(edge)
+            elif relation == 'object_property' or edge_data.get('prop_id'):
+                if src in class_node_ids and tgt in class_node_ids:
+                    schema_edges.append(edge)
             elif relation and relation not in ('rdf:type', 'type'):
-                schema_edges.append(edge)
+                if src in class_node_ids and tgt in class_node_ids:
+                    schema_edges.append(edge)
         
         schema_graph_data = {"nodes": schema_nodes, "edges": schema_edges}
         logger.info(f"[extract-instances-from-documents] 同步模式：使用现有骨架图 - {len(schema_nodes)} 个类节点，{len(schema_edges)} 条边")
@@ -916,6 +1040,7 @@ async def extract_instances_from_documents(
         full_graph_data = OntologyExtractor.merge_instances_to_graph_data(
             schema_graph_data=schema_graph_data,
             instances=inst_result["instances"],
+            action_instances=inst_result.get("action_instances", []),
         )
 
         # 更新 project graph_data
@@ -1022,6 +1147,14 @@ async def extract_instances_endpoint(
 
         # schema_graph 来自请求体（用户已审核版本）
         schema_dict = request_data.get("schema_graph", {})
+        
+        # 构造 documents 列表以传递溯源信息
+        text_content = request_data.get("text_content", "")
+        source_name = request_data.get("source_name", "") or request_data.get("document_name", "")
+        documents_list = None
+        if text_content:
+            doc_name = source_name if source_name else "手动输入"
+            documents_list = [{"text": text_content, "filename": doc_name}]
 
         if async_mode:
             # 异步模式：创建任务并后台执行
@@ -1036,7 +1169,7 @@ async def extract_instances_endpoint(
                             task_manager.update_progress(task_id, progress=progress, message=message)
                         
                         inst_result = await extractor.async_extract_instances_with_constraints(
-                                text=request_data.get("text_content", ""),
+                                text=text_content,
                                 schema_graph=schema_dict,
                                 chunk_size=request_data.get("chunk_size", 15000),
                                 chunk_overlap=request_data.get("chunk_overlap", 10),
@@ -1044,6 +1177,7 @@ async def extract_instances_endpoint(
                                 product_code=request_data.get("product_code"),
                                 task_id=task_id,
                                 progress_callback=progress_callback,
+                                documents=documents_list,
                             )
 
                         schema_graph_data = OntologyExtractor.schema_to_graph_data(schema_dict)
@@ -1051,6 +1185,7 @@ async def extract_instances_endpoint(
                         full_graph_data = OntologyExtractor.merge_instances_to_graph_data(
                             schema_graph_data=schema_graph_data,
                             instances=inst_result["instances"],
+                            action_instances=inst_result.get("action_instances", []),
                         )
 
                         db_project.graph_data = {
@@ -1089,12 +1224,13 @@ async def extract_instances_endpoint(
             }
         else:
             inst_result = await extractor.async_extract_instances_with_constraints(
-                text=request_data.get("text_content", ""),
+                text=text_content,
                 schema_graph=schema_dict,
                 chunk_size=request_data.get("chunk_size", 15000),
                 chunk_overlap=request_data.get("chunk_overlap", 10),
                 request_interval=request_data.get("request_interval", 2),
                 product_code=request_data.get("product_code"),
+                documents=documents_list,
             )
 
             schema_graph_data = OntologyExtractor.schema_to_graph_data(schema_dict)
@@ -1102,6 +1238,7 @@ async def extract_instances_endpoint(
             full_graph_data = OntologyExtractor.merge_instances_to_graph_data(
                 schema_graph_data=schema_graph_data,
                 instances=inst_result["instances"],
+                action_instances=inst_result.get("action_instances", []),
             )
 
             db_project.graph_data = {
@@ -1624,35 +1761,73 @@ def build_schema_from_graph_data(nodes: List[dict], edges: List[dict]) -> dict:
     但有 nodes 和 edges，本函数从这些数据中提取 schema。
     
     ★ 属性继承：子类自动继承父类的所有属性，无需重复定义。
+    ★ Action Types：从 raw_id 以 AT_ 开头的 owl:Class 节点中提取动作类型。
     """
     from app.core.logging import logger
     
     classes = []
     object_properties = []
+    action_types = []
     
     logger.info(f"[build_schema_from_graph_data] 开始从 {len(nodes)} 个节点和 {len(edges)} 个边构建 schema")
     
-    # ★ 第一步：先收集所有类的直接属性和父类关系
-    class_info = {}  # node_id -> {'label': str, 'parent_classes': list, 'direct_properties': list}
+    class_info = {}
+    action_type_info = {}
+    node_id_to_label = {}
     
     for node in nodes:
         node_type = node.get('data', {}).get('type', '')
         if node_type == 'owl:Class':
             node_id = str(node['id'])
             node_label = node.get('data', {}).get('label', node_id)
+            raw_id = node.get('data', {}).get('raw_id', '')
+            node_id_to_label[node_id] = node_label
+            if raw_id:
+                node_id_to_label[raw_id] = node_label
+    
+    for node in nodes:
+        node_type = node.get('data', {}).get('type', '')
+        if node_type == 'owl:Class':
+            node_id = str(node['id'])
+            node_label = node.get('data', {}).get('label', node_id)
+            raw_id = node.get('data', {}).get('raw_id', '')
             
-            # 获取父类（通过 subclassOf 边）
+            is_action_type = raw_id.startswith('AT_') or node_id.startswith('AT_')
+            
+            if is_action_type:
+                target_object_type = ""
+                for edge in edges:
+                    edge_data = edge.get('data', {})
+                    edge_relation = edge_data.get('relation', '')
+                    if edge_relation == 'action' and edge.get('source') == node_id:
+                        target_node_id = edge.get('target', '')
+                        target_object_type = node_id_to_label.get(target_node_id, target_node_id)
+                        break
+                
+                parameters = node.get('data', {}).get('parameters', [])
+                if not parameters:
+                    prop_defs = node.get('data', {}).get('property_definitions', [])
+                    parameters = [{"name": p.get("name", ""), "data_type": p.get("data_type", "string")} for p in prop_defs if isinstance(p, dict)]
+                
+                action_type_info[node_id] = {
+                    'label': node_label,
+                    'name': node_label,
+                    'target_object_type': target_object_type,
+                    'parameters': parameters,
+                    'description': node.get('data', {}).get('description', ''),
+                }
+                logger.info(f"[build_schema_from_graph_data] 发现 ActionType: node_id={node_id}, label={node_label}, raw_id={raw_id}, target_object_type={target_object_type}")
+                continue
+            
             parent_classes = []
             for edge in edges:
                 edge_data = edge.get('data', {})
                 edge_relation = edge_data.get('relation', '')
                 edge_label = edge.get('label', '')
-                # 检查是否是 subclassOf 关系
                 if edge_relation == 'subclass_of' or edge_label in ('subClassOf', 'subclass_of'):
                     if edge.get('source') == node_id:
                         parent_classes.append(edge.get('target'))
             
-            # 获取数据属性（从 properties 中提取键名）
             direct_properties = []
             node_data = node.get('data', {})
             properties = node_data.get('properties', {})
@@ -1665,61 +1840,34 @@ def build_schema_from_graph_data(nodes: List[dict], edges: List[dict]) -> dict:
                 'direct_properties': direct_properties,
             }
     
-    # ★ 第二步：递归计算每个类的继承属性
     def get_inherited_properties(class_id: str, visited: set = None) -> list:
-        """
-        递归获取类的所有继承属性（从父类链向上追溯）。
-        
-        参数:
-        - class_id: 类 ID
-        - visited: 已访问的类（防止循环继承）
-        
-        返回:
-        - 该类继承的所有属性列表（不含直接属性）
-        """
         if visited is None:
             visited = set()
-        
         if class_id in visited or class_id not in class_info:
             return []
-        
         visited.add(class_id)
-        
         inherited_props = []
         info = class_info[class_id]
-        
-        # 遍历所有父类
         for parent_id in info['parent_classes']:
             if parent_id in class_info:
-                # 获取父类的直接属性
                 parent_direct_props = class_info[parent_id]['direct_properties']
                 inherited_props.extend(parent_direct_props)
-                
-                # 递归获取父类的继承属性
                 parent_inherited_props = get_inherited_properties(parent_id, visited)
                 inherited_props.extend(parent_inherited_props)
-        
         return inherited_props
     
-    # ★ 第三步：构建最终的类列表（合并直接属性和继承属性）
     for node_id, info in class_info.items():
         direct_props = info['direct_properties']
         inherited_props = get_inherited_properties(node_id)
-        
-        # 合并属性（去重），继承属性标记来源
         all_properties = list(set(direct_props + inherited_props))
-        
-        # 区分直接属性和继承属性
         inherited_props_set = set(inherited_props)
         direct_props_set = set(direct_props)
         
-        # 标记属性来源
         properties_with_source = []
         for prop in all_properties:
             if prop in direct_props_set:
                 properties_with_source.append({'name': prop, 'source': 'direct'})
             else:
-                # 找出继承来源（哪个父类）
                 source_class = None
                 for parent_id in info['parent_classes']:
                     if parent_id in class_info and prop in class_info[parent_id]['direct_properties']:
@@ -1743,6 +1891,10 @@ def build_schema_from_graph_data(nodes: List[dict], edges: List[dict]) -> dict:
         node_type = node.get('data', {}).get('type', '')
         if node_type == 'owl:Class':
             node_id = str(node['id'])
+            raw_id = node.get('data', {}).get('raw_id', '')
+            is_action_type = raw_id.startswith('AT_') or node_id.startswith('AT_')
+            if is_action_type:
+                continue
             for cls in classes:
                 if cls['id'] == node_id:
                     all_properties = cls['data_properties']
@@ -1752,41 +1904,57 @@ def build_schema_from_graph_data(nodes: List[dict], edges: List[dict]) -> dict:
                     cls["property_definitions"] = prop_defs
                     break
     
-    # 从边中提取 ObjectProperty
     for edge in edges:
         edge_data = edge.get('data', {})
         relation = edge_data.get('relation', '')
         label = edge.get('label', '') or edge_data.get('label', '')
         
-        # 只提取 ObjectProperty 关系（排除 subClassOf 和 type）
+        if relation == 'action':
+            continue
+        
         if relation and relation not in ('rdf:type', 'type', 'subClassOf', 'subclass_of'):
-            # 也检查 label 是否是 subclassOf 关系
             if label in ('subClassOf', 'subclass_of'):
                 continue
-                
+            
             prop_id = edge_data.get('prop_id', '')
-            # 如果 prop_id 为空或无效，使用 label 生成
             if not prop_id or prop_id in ('', '_', '__', '___'):
                 prop_id = label if label else relation
             
-            logger.info(f"[build_schema_from_graph_data] 添加 ObjectProperty: {prop_id}, label={label}, domain={edge.get('source')}, range={edge.get('target')}")
+            src_node_id = edge.get('source', '')
+            tgt_node_id = edge.get('target', '')
+            src_label = node_id_to_label.get(src_node_id, src_node_id)
+            tgt_label = node_id_to_label.get(tgt_node_id, tgt_node_id)
+            
+            logger.info(f"[build_schema_from_graph_data] 添加 ObjectProperty: {prop_id}, label={label}, domain={src_label}({src_node_id}), range={tgt_label}({tgt_node_id})")
             
             object_properties.append({
                 "id": prop_id,
                 "label": label,
-                "domain": edge.get('source', ''),
-                "range": edge.get('target', ''),
+                "domain": src_label,
+                "range": tgt_label,
             })
             if edge_data.get('cardinality'):
                 object_properties[-1]["cardinality"] = edge_data['cardinality']
             if edge_data.get('description'):
                 object_properties[-1]["description"] = edge_data['description']
     
-    logger.info(f"[build_schema_from_graph_data] 构建完成：{len(classes)} 个类，{len(object_properties)} 个 ObjectProperty")
+    for at_id, at_info in action_type_info.items():
+        action_types.append({
+            "id": at_id,
+            "name": at_info['name'],
+            "label": at_info['label'],
+            "description": at_info['description'],
+            "target_object_type": at_info['target_object_type'],
+            "parameters": at_info['parameters'],
+        })
+        logger.info(f"[build_schema_from_graph_data] 添加 ActionType: {at_id}, label={at_info['label']}, target={at_info['target_object_type']}")
+    
+    logger.info(f"[build_schema_from_graph_data] 构建完成：{len(classes)} 个类，{len(object_properties)} 个 ObjectProperty，{len(action_types)} 个 ActionType")
     
     return {
         "classes": classes,
         "object_properties": object_properties,
+        "action_types": action_types,
     }
 
 

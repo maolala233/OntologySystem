@@ -184,7 +184,7 @@ class LLMClient:
             ],
             "temperature": 0.1,
             "stream": stream,
-            "max_tokens": 30000,
+            "max_tokens": 50000,
             "stop": ["</s>", "\n\n\n"]
         }
         if self._should_disable_think():
@@ -521,7 +521,7 @@ class LLMClient:
 
     def _repair_truncated_json(self, json_str: str) -> Dict[str, Any]:
         if not json_str:
-            return {"classes": [], "instances": []}
+            return {"classes": [], "instances": [], "object_types": [], "link_types": [], "action_types": [], "links": []}
 
         clean = json_str.strip()
         clean = re.sub(r'^```json\s*', '', clean, flags=re.MULTILINE)
@@ -531,7 +531,7 @@ class LLMClient:
 
         if clean.lower().startswith(('hello', 'hi ', 'i ', 'the ', 'this ', 'that ', 'yes', 'no', 'ok', 'sure', 'sorry', 'cannot', 'unable')):
             logger.warning(f"检测到非 JSON 内容：{clean[:100]}...，返回默认结构")
-            return {'classes': [], 'instances': []}
+            return {'classes': [], 'instances': [], 'object_types': [], 'link_types': [], 'action_types': [], 'links': []}
 
         try:
             return json.loads(clean)
@@ -546,10 +546,12 @@ class LLMClient:
                 if fixed_json:
                     logger.debug(f"[JSON 修复尝试 {fix_attempts}] 结构修复：{len(fixed_json)} 字符")
                     parsed = json.loads(fixed_json)
-                    if "classes" not in parsed:
-                        parsed["classes"] = []
-                    if "instances" not in parsed:
-                        parsed["instances"] = []
+                    for key in ["classes", "object_types"]:
+                        if key not in parsed:
+                            parsed[key] = []
+                    for key in ["instances", "link_types", "action_types", "links"]:
+                        if key not in parsed:
+                            parsed[key] = []
                     logger.info(f"[JSON 修复成功] 方法：结构修复")
                     return parsed
             except Exception as e:
@@ -568,10 +570,12 @@ class LLMClient:
                             possible_json = clean[json_start:i+1]
                             try:
                                 parsed = json.loads(possible_json)
-                                if "classes" not in parsed:
-                                    parsed["classes"] = []
-                                if "instances" not in parsed:
-                                    parsed["instances"] = []
+                                for key in ["classes", "object_types"]:
+                                    if key not in parsed:
+                                        parsed[key] = []
+                                for key in ["instances", "link_types", "action_types", "links"]:
+                                    if key not in parsed:
+                                        parsed[key] = []
                                 logger.info(f"[JSON 修复成功] 方法：括号平衡法，提取 {len(possible_json)} 字符")
                                 return parsed
                             except json.JSONDecodeError as je:
@@ -584,10 +588,12 @@ class LLMClient:
                 fixed_json = clean[:last_object_end + 1] + "]}"
                 try:
                     parsed = json.loads(fixed_json)
-                    if "classes" not in parsed:
-                        parsed["classes"] = []
-                    if "instances" not in parsed:
-                        parsed["instances"] = []
+                    for key in ["classes", "object_types"]:
+                        if key not in parsed:
+                            parsed[key] = []
+                    for key in ["instances", "link_types", "action_types", "links"]:
+                        if key not in parsed:
+                            parsed[key] = []
                     logger.info(f"[JSON 修复成功] 方法：截断到最后对象，提取 {len(fixed_json)} 字符")
                     return parsed
                 except json.JSONDecodeError as je:
@@ -599,10 +605,12 @@ class LLMClient:
                 fixed_json = clean[:last_bracket + 1] + "]}"
                 try:
                     parsed = json.loads(fixed_json)
-                    if "classes" not in parsed:
-                        parsed["classes"] = []
-                    if "instances" not in parsed:
-                        parsed["instances"] = []
+                    for key in ["classes", "object_types"]:
+                        if key not in parsed:
+                            parsed[key] = []
+                    for key in ["instances", "link_types", "action_types", "links"]:
+                        if key not in parsed:
+                            parsed[key] = []
                     logger.info(f"[JSON 修复成功] 方法：最后括号截断，提取 {len(fixed_json)} 字符")
                     return parsed
                 except json.JSONDecodeError as je:
@@ -613,17 +621,19 @@ class LLMClient:
                 cleaned = re.sub(r',\s*}', '}', clean)
                 cleaned = re.sub(r',\s*]', ']', cleaned)
                 parsed = json.loads(cleaned)
-                if "classes" not in parsed:
-                    parsed["classes"] = []
-                if "instances" not in parsed:
-                    parsed["instances"] = []
+                for key in ["classes", "object_types"]:
+                    if key not in parsed:
+                        parsed[key] = []
+                for key in ["instances", "link_types", "action_types", "links"]:
+                    if key not in parsed:
+                        parsed[key] = []
                 logger.info(f"[JSON 修复成功] 方法：逗号修复，提取 {len(cleaned)} 字符")
                 return parsed
             except json.JSONDecodeError as je:
                 logger.debug(f"[JSON 修复尝试 {fix_attempts}] 逗号修复失败：{je}")
 
             logger.error(f"JSON 修复失败 (共尝试 {fix_attempts} 种方法)，返回默认结构，原始内容前 200 字符：{clean[:200]}...")
-            return {"classes": [], "instances": []}
+            return {"classes": [], "instances": [], "object_types": [], "link_types": [], "action_types": [], "links": []}
 
     def _clean_continued_content(self, content: str) -> str:
         content = re.sub(r'^```(?:json)?\s*', '', content.lstrip())
@@ -655,7 +665,7 @@ class LLMClient:
             "messages": messages,
             "temperature": 0.1,
             "stream": False,
-            "max_tokens": 30000,
+            "max_tokens": 50000,
             "stop": ["</s>", "\n\n\n"]
         }
 
@@ -728,7 +738,7 @@ class LLMClient:
             "messages": messages,
             "temperature": 0.1,
             "stream": False,
-            "max_tokens": 30000,
+            "max_tokens": 50000,
             "stop": ["</s>", "\n\n\n"]
         }
 
@@ -844,7 +854,7 @@ class LLMClient:
                     ],
                     "temperature": 0.1,
                     "stream": stream,
-                    "max_tokens": 30000,
+                    "max_tokens": 50000,
                     "stop": ["</s>", "\n\n\n"]
                 }
 
@@ -968,7 +978,7 @@ class LLMClient:
                     ],
                     "temperature": 0.1,
                     "stream": stream,
-                    "max_tokens": 30000,
+                    "max_tokens": 50000,
                     "stop": ["</s>", "\n\n\n"]
                 }
 

@@ -5,14 +5,46 @@ import { Typography } from 'antd';
 const { Text } = Typography;
 
 const Neo4jNode = ({ data, selected, isConnectable, dragging }: NodeProps) => {
+    // 判断是否为 Action Type 节点（通过 raw_id 或 id 前缀识别）
+    const rawId = data.raw_id || '';
+    const nodeId = data.id || '';
+    const isActionType = rawId.startsWith('AT_') || nodeId.startsWith('AT_');
+
     // 颜色映射
-    const bgColor = data.type === 'owl:Class' ? '#68bdf6' :
-                   (data.type === 'owl:NamedIndividual' ? '#f79767' : '#c990c0');
+    let bgColor: string;
+    let borderColor: string;
+    let fontSize: number;
+    let size: number;
 
-    // 大小映射
-    const size = data.type === 'owl:Class' ? 80 : 50;
+    if (isActionType) {
+        // Action Type 节点：灰黑色样式
+        bgColor = '#f5f5f5';
+        borderColor = selected ? '#b0b0b0' : '#d0d0d0';
+        fontSize = 11;
+        size = 70;
+    } else if (data.type === 'owl:Class') {
+        // Object Type 节点：蓝色
+        bgColor = '#68bdf6';
+        borderColor = selected ? '#bce0fd' : 'white';
+        fontSize = 12;
+        size = 80;
+    } else if (data.type === 'owl:NamedIndividual') {
+        // 实例节点：橙色
+        bgColor = '#f79767';
+        borderColor = selected ? '#fcd5b8' : 'white';
+        fontSize = 10;
+        size = 50;
+    } else {
+        // 其他节点：紫色
+        bgColor = '#c990c0';
+        borderColor = selected ? '#e0c0db' : 'white';
+        fontSize = 10;
+        size = 50;
+    }
 
-    console.log('Rendering Neo4jNode:', data.label, 'Selected:', selected); // 添加调试日志
+    // Action Type 节点文字颜色
+    const textColor = isActionType ? '#666666' : '#fff';
+    const opacity = isActionType ? 0.85 : 1;
 
     return (
         <div style={{
@@ -20,26 +52,27 @@ const Neo4jNode = ({ data, selected, isConnectable, dragging }: NodeProps) => {
             height: size,
             borderRadius: '50%',
             backgroundColor: bgColor,
-            border: selected ? '4px solid #bce0fd' : '2px solid white',
+            border: `2px solid ${borderColor}`,
             display: 'flex',
             justifyContent: 'center',
             alignItems: 'center',
-            boxShadow: '0 3px 6px rgba(0,0,0,0.16)',
-            cursor: 'pointer', // 改为 pointer 便于识别
+            boxShadow: isActionType ? '0 2px 4px rgba(0,0,0,0.08)' : '0 3px 6px rgba(0,0,0,0.16)',
+            cursor: 'pointer',
             pointerEvents: 'auto',
             userSelect: 'none',
             WebkitUserSelect: 'none',
             MozUserSelect: 'none',
             msUserSelect: 'none',
             transition: 'all 0.3s ease',
-            position: 'relative'
+            position: 'relative',
+            opacity,
         }}>
             <Handle type="target" position={Position.Top} isConnectable={isConnectable} style={{ opacity: 0 }} />
 
             <div style={{
                 textAlign: 'center',
-                color: '#fff',
-                fontSize: data.type === 'owl:Class' ? 12 : 10,
+                color: textColor,
+                fontSize: fontSize,
                 padding: 4,
                 overflow: 'hidden',
                 display: '-webkit-box',
@@ -47,7 +80,7 @@ const Neo4jNode = ({ data, selected, isConnectable, dragging }: NodeProps) => {
                 WebkitBoxOrient: 'vertical',
                 lineHeight: 1.2
             }}>
-                <Text strong style={{ color: 'white' }}>
+                <Text strong style={{ color: textColor }}>
                     {data.currentLang === 'en' ? (data.labelEn || data.label) : data.label}
                 </Text>
             </div>

@@ -29,47 +29,74 @@ from app.core.logging import logger
 SCHEMA_EXTRACTION_JSON_SCHEMA = {
     "type": "object",
     "properties": {
-        "classes": {
+        "object_types": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
-                    "id": {"type": "string", "description": "英文语义名，如Product, Employee"},
+                    "name": {"type": "string", "description": "对象类型名称，必须使用中文命名，如'理财产品'、'风险事件'"},
                     "label": {"type": "string", "description": "中文标签"},
-                    "sub_class_of": {"type": ["string", "null"], "description": "父类的id"},
-                    "data_properties": {
+                    "description": {"type": "string", "description": "对象类型描述，必须使用中文"},
+                    "primary_key": {"type": "string", "description": "主键字段名"},
+                    "sub_class_of": {"type": ["string", "null"], "description": "父类名称"},
+                    "properties": {
                         "type": "array",
                         "items": {
                             "type": "object",
                             "properties": {
-                                "name": {"type": "string", "description": "属性名称（中文）"},
-                                "description": {"type": "string", "description": "属性描述（中文）"},
-                                "data_type": {"type": "string", "enum": ["string", "number", "boolean", "date", "datetime", "array", "object"], "description": "数据类型"}
+                                "name": {"type": "string", "description": "属性名称，必须使用中文命名，如'登记编码'、'风险评级'"},
+                                "label": {"type": "string", "description": "中文属性名"},
+                                "description": {"type": "string", "description": "属性描述，必须使用中文"},
+                                "data_type": {"type": "string", "enum": ["string", "number", "boolean", "date", "datetime", "array", "object"]}
+                            },
+                            "required": ["name", "label", "description", "data_type"]
+                        }
+                    }
+                },
+                "required": ["name", "label", "description", "properties"]
+            }
+        },
+        "link_types": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "链接类型名称，必须使用中文命名，如'购买'、'管理'"},
+                    "label": {"type": "string", "description": "中文标签"},
+                    "description": {"type": "string", "description": "链接类型描述，必须使用中文"},
+                    "source_object_type": {"type": "string", "description": "源对象类型名称"},
+                    "target_object_type": {"type": "string", "description": "目标对象类型名称"},
+                    "cardinality": {"type": "string", "enum": ["one-to-one", "one-to-many", "many-to-one", "many-to-many"]}
+                },
+                "required": ["name", "label", "description", "source_object_type", "target_object_type"]
+            }
+        },
+        "action_types": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "动作类型名称，必须使用中文命名，如'购买产品'、'赎回产品'"},
+                    "label": {"type": "string", "description": "中文标签"},
+                    "description": {"type": "string", "description": "动作描述，必须使用中文"},
+                    "target_object_type": {"type": "string", "description": "作用的对象类型"},
+                    "parameters": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string", "description": "参数名称，必须使用中文命名，如'金额'、'日期'"},
+                                "data_type": {"type": "string", "description": "参数类型"}
                             },
                             "required": ["name", "data_type"]
                         }
                     }
                 },
-                "required": ["id", "label", "data_properties"]
-            }
-        },
-        "object_properties": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "id": {"type": "string", "description": "英文语义名，如belongsTo"},
-                    "label": {"type": "string", "description": "中文标签"},
-                    "description": {"type": "string", "description": "关系描述（中文）"},
-                    "domain": {"type": "string", "description": "起点类id"},
-                    "range": {"type": "string", "description": "终点类id"},
-                    "cardinality": {"type": "string", "enum": ["one-to-one", "one-to-many", "many-to-one", "many-to-many"], "description": "关系基数"}
-                },
-                "required": ["id", "label", "domain", "range"]
+                "required": ["name", "label", "description", "target_object_type"]
             }
         }
     },
-    "required": ["classes"]
+    "required": ["object_types", "link_types"]
 }
 
 INSTANCE_EXTRACTION_JSON_SCHEMA = {
@@ -110,6 +137,25 @@ INSTANCE_EXTRACTION_JSON_SCHEMA = {
                 },
                 "required": ["link_type", "source_label", "source_type", "target_label", "target_type"]
             }
+        },
+        "action_instances": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "动作实例标识"},
+                    "action_type": {"type": "string", "description": "所属动作类型的name或label"},
+                    "label": {"type": "string", "description": "动作实例的中文标签"},
+                    "target_instance_label": {"type": "string", "description": "作用的目标实例label"},
+                    "target_type": {"type": "string", "description": "目标实例所属类型"},
+                    "source_quote": {"type": "string", "description": "原文引用"},
+                    "parameters": {
+                        "type": "object",
+                        "description": "动作参数，键为参数名，值为参数值"
+                    }
+                },
+                "required": ["action_type", "label", "target_instance_label", "target_type"]
+            }
         }
     },
     "required": ["instances"]
@@ -141,9 +187,12 @@ def make_deterministic_id(label: str, category: str) -> str:
     # 类别前缀映射
     prefix_map = {
         "Class": "C",
+        "ObjectType": "C",
         "Instance": "I",
         "ObjectProperty": "OP",
+        "LinkType": "OP",
         "DataProperty": "DP",
+        "ActionType": "AT",
     }
     prefix = prefix_map.get(category, "Node")
     
@@ -169,6 +218,151 @@ def names_are_similar(name1: str, name2: str) -> bool:
     if name1.strip() == name2.strip():
         return True
     return False
+
+
+def _normalize_schema_response(data: dict) -> dict:
+    """
+    将 LLM 返回的 Schema 数据归一化为 Palantir Ontology 格式。
+    如果 LLM 返回旧格式（classes/object_properties），自动转换为
+    新格式（object_types/link_types/action_types）。
+    """
+    if not isinstance(data, dict):
+        return data
+
+    if "object_types" in data or "link_types" in data:
+        return data
+
+    object_types = []
+    for cls in data.get("classes", []):
+        raw_name = (cls.get("id") or cls.get("name") or "").strip()
+        raw_label = (cls.get("label") or "").strip()
+        if not raw_name and raw_label:
+            raw_name = raw_label
+        props = []
+        for dp in cls.get("data_properties", []):
+            if isinstance(dp, dict):
+                props.append({
+                    "name": dp.get("name", ""),
+                    "label": dp.get("name", ""),
+                    "description": dp.get("description", ""),
+                    "data_type": dp.get("data_type", "string"),
+                })
+            elif isinstance(dp, str):
+                props.append({"name": dp, "label": dp, "description": "", "data_type": "string"})
+        ot = {
+            "name": raw_name,
+            "label": raw_label,
+            "description": cls.get("description", raw_label),
+            "properties": props,
+        }
+        if cls.get("primary_key"):
+            ot["primary_key"] = cls["primary_key"]
+        if cls.get("sub_class_of"):
+            ot["sub_class_of"] = cls["sub_class_of"]
+        object_types.append(ot)
+
+    link_types = []
+    for op in data.get("object_properties", []):
+        raw_name = (op.get("id") or op.get("name") or "").strip()
+        raw_label = (op.get("label") or "").strip()
+        if not raw_name and raw_label:
+            raw_name = raw_label
+        lt = {
+            "name": raw_name,
+            "label": raw_label,
+            "description": op.get("description", ""),
+            "source_object_type": op.get("domain", ""),
+            "target_object_type": op.get("range", ""),
+        }
+        if op.get("cardinality"):
+            lt["cardinality"] = op["cardinality"]
+        link_types.append(lt)
+
+    result = {"object_types": object_types, "link_types": link_types}
+    if data.get("action_types"):
+        result["action_types"] = data["action_types"]
+    else:
+        result["action_types"] = []
+
+    return result
+
+
+def _normalize_schema_graph(schema_graph: Dict[str, Any]) -> Tuple[List[dict], List[dict], List[dict]]:
+    """
+    将 schema_graph 归一化为 (object_types, link_types, action_types) 三元组。
+    支持新旧两种格式：
+    - 新格式：object_types / link_types / action_types
+    - 旧格式：classes / object_properties
+    """
+    if "object_types" in schema_graph:
+        object_types = schema_graph.get("object_types", [])
+        link_types = schema_graph.get("link_types", [])
+        action_types = schema_graph.get("action_types", [])
+        return object_types, link_types, action_types
+
+    classes = schema_graph.get("classes", [])
+    obj_props = schema_graph.get("object_properties", [])
+
+    object_types = []
+    for cls in classes:
+        cid = cls.get("id", "")
+        label = cls.get("label", "")
+        raw_name = cls.get("name", cid)
+        props = []
+        for dp in cls.get("data_properties", []) or []:
+            if isinstance(dp, dict):
+                props.append({
+                    "name": dp.get("name", ""),
+                    "label": dp.get("label", "") or dp.get("name", ""),
+                    "description": dp.get("description", ""),
+                    "data_type": dp.get("data_type", "string"),
+                })
+            elif isinstance(dp, str):
+                props.append({"name": dp, "label": dp, "description": "", "data_type": "string"})
+        prop_defs = cls.get("property_definitions", []) or []
+        if prop_defs and not props:
+            for pd in prop_defs:
+                props.append({
+                    "name": pd.get("name", ""),
+                    "label": pd.get("label", "") or pd.get("name", ""),
+                    "description": pd.get("description", ""),
+                    "data_type": pd.get("data_type", "string"),
+                })
+        ot = {
+            "id": cid,
+            "name": raw_name or cid,
+            "label": label,
+            "description": cls.get("description", label),
+            "properties": props,
+        }
+        if cls.get("primary_key"):
+            ot["primary_key"] = cls["primary_key"]
+        if cls.get("sub_class_of"):
+            ot["sub_class_of"] = cls["sub_class_of"]
+        if cls.get("parent_classes"):
+            ot["sub_class_of"] = cls["parent_classes"][0] if isinstance(cls["parent_classes"], list) else cls["parent_classes"]
+        object_types.append(ot)
+
+    link_types = []
+    for op in obj_props:
+        opid = op.get("id", "")
+        label = op.get("label", "")
+        raw_name = op.get("name", opid)
+        lt = {
+            "id": opid,
+            "name": raw_name or opid,
+            "label": label,
+            "description": op.get("description", ""),
+            "source_object_type": op.get("domain", op.get("source_object_type", "")),
+            "target_object_type": op.get("range", op.get("target_object_type", "")),
+        }
+        if op.get("cardinality"):
+            lt["cardinality"] = op["cardinality"]
+        link_types.append(lt)
+
+    action_types = schema_graph.get("action_types", [])
+
+    return object_types, link_types, action_types
 
 
 # ─────────────────────────────────────────────────────────────
@@ -482,65 +676,89 @@ class OntologyExtractor:
         progress_callback: Optional[Callable[[float, str], None]] = None,
     ) -> Dict[str, Any]:
         """
-        第一阶段：从文本中提取本体骨架 (Schema)。
-        
-        约束：
-        - 绝对禁止提取实例 (NamedIndividual)。
-        - 仅允许提取：OWL Class、Object Property (类与类的关系)、Data Property (属性字段)。
-        - 所有 ID 使用确定性算法生成（MD5 prefix + label slug）。
-        
+        第一阶段：从文本中提取本体骨架 (Schema)，输出 Palantir Ontology 风格。
+
         返回格式（dict）:
         {
-            "classes": [{"id": ..., "label": ..., "sub_class_of": ..., "data_properties": [...]}],
-            "object_properties": [{"id": ..., "label": ..., "domain": ..., "range": ...}],
+            "object_types": [{"name": ..., "label": ..., "description": ..., "properties": [...]}],
+            "link_types": [{"name": ..., "label": ..., "source_object_type": ..., "target_object_type": ...}],
+            "action_types": [{"name": ..., "label": ..., "target_object_type": ..., "parameters": [...]}],
         }
-        
-        参数:
-        - task_id: 任务 ID，用于支持取消操作
-        - progress_callback: 进度回调函数，签名：callback(progress: float, message: str)
         """
         logger.info(f"[API1-SchemaExtraction] 开始骨架提取，意图：{user_intent or '通用'}")
-        
-        # 进度回调辅助函数
+
         def report_progress(progress: float, message: str = ""):
             if progress_callback:
                 progress_callback(progress, message)
             if task_id:
                 task_manager.update_progress(task_id, progress=progress, message=message)
-        
-        # 检查取消
+
         def check_cancelled():
             if task_id:
                 task_manager.check_cancelled(task_id)
-        
+
         report_progress(0.0, "开始骨架提取...")
 
-        # 意图聚焦前缀
         intent_instruction = ""
         if user_intent:
             intent_instruction = (
                 f"\n【⚡ 用户意图约束】: 用户关注领域为「{user_intent}」。"
-                f"请严格聚焦该领域，提取与之直接相关的类和关系，忽略无关领域的概念。\n"
+                f"请严格聚焦该领域，提取与之直接相关的对象类型和关系，忽略无关领域的概念。\n"
             )
 
-        system_prompt = f"""你是一位精通 OWL2 DL 标准的本体架构师，正在执行「骨架提取」任务。
+        system_prompt = f"""你是一位专业的本体建模专家，擅长从文档中自动构建符合Palantir Ontology核心概念的本体结构。
+
+请从文档中提取以下本体信息：
+
+## 1. Object Types（对象类型）
+文档中出现的所有实体或事件的schema定义。
+每个Object Type需要：
+- name: 类型名称（使用中文命名，如"理财产品"、"风险事件"）
+- label: 中文标签
+- description: 类型描述（必须使用中文，与文档语言一致）
+- primary_key: 唯一标识该对象实例的字段名
+- sub_class_of: 父类名称（如有继承关系）
+- properties: 属性列表，每个属性包含：
+  - name: 属性名称（使用中文命名，如"登记编码"、"风险评级"）
+  - description: 属性描述（必须使用中文）
+  - data_type: 数据类型（string/number/boolean/date/datetime/array/object）
+
+## 2. Link Types（链接类型）
+文档中两个对象类型之间的关系。
+每个Link Type需要：
+- name: 链接名称（使用中文命名，如"购买"、"管理"）
+- label: 中文标签
+- description: 链接描述（必须使用中文）
+- source_object_type: 源对象类型
+- target_object_type: 目标对象类型
+- cardinality: 关系基数（one-to-one/one-to-many/many-to-one/many-to-many）
+
+## 3. Action Types（动作类型）
+文档中描述的对对象可执行的操作。
+每个Action Type需要：
+- name: 动作名称（使用中文命名，如"购买产品"、"赎回产品"）
+- label: 中文标签
+- description: 动作描述（必须使用中文）
+- target_object_type: 作用的对象类型
+- parameters: 参数列表（可选），每个参数包含name、data_type
+
+## 关键规则
+1. 所有description字段必须使用中文（与文档原文语言一致）
+2. 充分挖掘文档中所有实体类型，包括但不限于：核心业务对象、参与者角色、费用/费率结构、时间/期限、文件/合同、风险因素、监管要求等
+3. 每个对象类型的属性要尽可能完整，覆盖文档中提到的所有字段信息（如费率、比例、期限、金额等数值型属性不要遗漏）
+4. 链接类型要覆盖文档中所有明确的关系
+5. Action Type要与文档中描述的业务操作对应（如购买、赎回、调整、报告等）
+6. 属性name统一使用中文命名风格，保持与文档语言一致
+7. 如果文本中存在类的继承/层级关系，必须在 sub_class_of 字段中明确指出父类
+8. 鼓励抽取隐含关系：如果文本中存在明确描述或强烈暗示的关系，即使没有出现"关系名称"，也请提取为Link Type
+{intent_instruction}
 
 【严格约束 - 违反将导致任务失败】：
-1. 【禁止提取实例】: 绝对不允许提取任何具体实例 (NamedIndividual)。只提取抽象的「类」和「属性」。
-   - 错误示例：提取「张三」「产品 A」「订单 001」→ 这些是实例，禁止！
-   - 正确示例：提取「人员」「产品」「订单」→ 这些是类，允许！
-2. 【ID 不由你决定】: 你输出的 id 字段用于辅助识别，最终 ID 将由系统重新计算，请直接用英文语义名（如 "Product", "hasName"）。
-3. 【Label 必须中文】: 所有 label 字段必须是简洁中文（非英文）。
-4. 【Data Property】: 在 classes 的 data_properties 字段中列出该类的属性定义列表，每个属性包含 name（中文属性名）、description（属性描述）、data_type（数据类型：string/number/boolean/date/datetime/array/object）。
-5. 【关系基数】: 在 object_properties 的 cardinality 字段中指明关系基数（one-to-one/one-to-many/many-to-one/many-to-many）。
-5. 【鼓励抽取隐含关系】: 如果文本中存在明确描述或强烈暗示的「系统 A 依赖于系统 B / A 调用 B / A 部署在 B 上 / A 与 B 对接」等关系，
-   即使没有出现"关系名称"这个词，也请将其提取为类与类之间的 ObjectProperty，
-   关系的 label 可用简洁中文动词短语（如「依赖于」「调用」「部署于」「对接」等）。
-6. 【必须提取子类关系】: 如果文本中存在类的继承/层级关系（如"A 是 B 的一种"、"A 属于 B 类"、"A 是 B 的子类"、"A 包括 B"等），
-   必须在 sub_class_of 字段中明确指出父类。这是构建本体层级的关键！
-   - 示例：如果文本提到"量子密钥分发设备是一种量子设备"，则"量子密钥分发设备"的 sub_class_of 应该是"量子设备"的 id。
-   - 示例：如果文本提到"系统包括认证系统和审计系统"，则"认证系统"和"审计系统"的 sub_class_of 应该是"系统"的 id。
-{intent_instruction}
+1. 【禁止提取实例】: 绝对不允许提取任何具体实例。只提取抽象的「对象类型」和「属性」。
+2. 【name必须中文】: 所有 name 字段必须使用中文，禁止使用英文！例如：用"理财产品"而非"FinancialProduct"，用"登记编码"而非"registration_code"，用"购买"而非"PurchasedBy"，用"购买产品"而非"PurchaseProduct"。这是强制要求，违反将导致输出被丢弃。
+3. 【label必须中文】: 所有 label 字段必须是简洁中文。
+4. 【description必须中文】: 所有 description 字段必须使用中文详细描述。
+5. 【source_object_type/target_object_type必须中文】: 链接类型中的源和目标对象类型必须使用中文对象类型名称，如"理财产品"、"投资者"等。
 """
 
         user_prompt_template = """【当前文本片段】:
@@ -548,44 +766,56 @@ class OntologyExtractor:
 
 【输出 JSON 格式（严格遵守，不输出任何注释）】:
 {{
-  "classes": [
+  "object_types": [
     {{
-      "id": "Product",
-      "label": "产品",
+      "name": "理财产品",
+      "label": "理财产品",
+      "description": "理财产品，指金融机构接受投资者委托...",
+      "primary_key": "登记编码",
       "sub_class_of": null,
-      "data_properties": [
-        {{"name": "名称", "description": "产品名称", "data_type": "string"}},
-        {{"name": "价格", "description": "产品价格", "data_type": "number"}},
-        {{"name": "规格", "description": "产品规格", "data_type": "string"}}
+      "properties": [
+        {{"name": "登记编码", "description": "理财产品登记编码", "data_type": "string"}},
+        {{"name": "产品名称", "description": "产品名称", "data_type": "string"}},
+        {{"name": "风险评级", "description": "风险评级", "data_type": "string"}}
       ]
     }}
   ],
-  "object_properties": [
+  "link_types": [
     {{
-      "id": "belongsTo",
-      "label": "属于",
-      "description": "产品属于某个类别",
-      "domain": "Product",
-      "range": "Category",
-      "cardinality": "many-to-one"
+      "name": "购买",
+      "label": "购买",
+      "description": "投资者购买理财产品",
+      "source_object_type": "投资者",
+      "target_object_type": "理财产品",
+      "cardinality": "many-to-many"
+    }}
+  ],
+  "action_types": [
+    {{
+      "name": "购买产品",
+      "label": "购买产品",
+      "description": "投资者通过销售渠道购买理财产品",
+      "target_object_type": "理财产品",
+      "parameters": [
+        {{"name": "投资金额", "data_type": "number"}}
+      ]
     }}
   ]
 }}
 
-【约束提醒】: 不得包含 instances 字段。只输出 classes 和 object_properties。
+【约束提醒】: 不得包含 instances 字段。只输出 object_types、link_types 和 action_types。
 """
 
         chunks = self._chunk_text(text, chunk_size=chunk_size, overlap=chunk_overlap)
         total_chunks = len(chunks)
 
-        # 聚合结构：用规范化后的 Label 做 Reduce 去重
-        all_classes: Dict[str, dict] = {}
-        all_obj_props: Dict[str, dict] = {}
+        all_object_types: Dict[str, dict] = {}
+        all_link_types: Dict[str, dict] = {}
+        all_action_types: Dict[str, dict] = {}
 
         for i, chunk in enumerate(chunks):
-            # 检查取消
             check_cancelled()
-            
+
             logger.info(f"[SchemaExtraction] 处理分块 {i+1}/{total_chunks}")
             user_prompt = user_prompt_template.format(chunk=chunk)
             data = self._call_llm(system_prompt, user_prompt, task_id=task_id, json_schema=SCHEMA_EXTRACTION_JSON_SCHEMA)
@@ -593,194 +823,225 @@ class OntologyExtractor:
             if not data:
                 logger.warning(f"分块 {i+1}/{total_chunks} LLM 返回空，跳过")
                 if i < total_chunks - 1:
-                    # 在等待期间也定期检查取消标志
                     for _ in range(request_interval * 10):
                         check_cancelled()
                         time.sleep(0.1)
                 continue
 
-            # 处理 classes
-            for cls in data.get("classes", []):
-                raw_label = (cls.get("label") or "").strip()
-                raw_llm_id = (cls.get("id") or "").strip()
-                if not raw_label:
+            data = _normalize_schema_response(data)
+
+            for ot in data.get("object_types", []):
+                raw_name = (ot.get("name") or "").strip()
+                raw_label = (ot.get("label") or "").strip()
+                if not raw_name:
                     continue
                 norm_label = self._normalize_term(raw_label, user_intent=user_intent)
-                det_id = make_deterministic_id(norm_label, "Class")
-                raw_dp = cls.get("data_properties", [])
-                dp_names = []
-                dp_defs = []
-                for dp in raw_dp:
-                    if isinstance(dp, dict):
-                        dp_names.append(dp.get("name", ""))
-                        dp_defs.append({
-                            "name": dp.get("name", ""),
-                            "description": dp.get("description", ""),
-                            "data_type": dp.get("data_type", "string"),
+                det_id = make_deterministic_id(raw_name, "ObjectType")
+                raw_props = ot.get("properties", [])
+                props = []
+                for p in raw_props:
+                    if isinstance(p, dict):
+                        props.append({
+                            "name": p.get("name", ""),
+                            "label": p.get("label", p.get("name", "")),
+                            "description": p.get("description", ""),
+                            "data_type": p.get("data_type", "string"),
                         })
-                    elif isinstance(dp, str):
-                        dp_names.append(dp)
-                        dp_defs.append({"name": dp, "description": "", "data_type": "string"})
-                if det_id not in all_classes:
-                    all_classes[det_id] = {
+                    elif isinstance(p, str):
+                        props.append({"name": p, "label": p, "description": "", "data_type": "string"})
+                if det_id not in all_object_types:
+                    all_object_types[det_id] = {
                         "id": det_id,
+                        "name": raw_name,
                         "label": norm_label,
+                        "description": ot.get("description", ""),
+                        "primary_key": ot.get("primary_key"),
                         "sub_class_of": None,
-                        "data_properties": dp_names,
-                        "property_definitions": dp_defs,
-                        "_raw_llm_id": raw_llm_id,
+                        "properties": props,
                     }
                 else:
-                    existing_dp_names = set(all_classes[det_id]["data_properties"])
-                    existing_dp_defs = {d["name"]: d for d in all_classes[det_id].get("property_definitions", [])}
-                    for name in dp_names:
-                        existing_dp_names.add(name)
-                    for d in dp_defs:
-                        if d["name"] not in existing_dp_defs:
-                            existing_dp_defs[d["name"]] = d
-                    all_classes[det_id]["data_properties"] = list(existing_dp_names)
-                    all_classes[det_id]["property_definitions"] = list(existing_dp_defs.values())
+                    existing_props = {p["name"]: p for p in all_object_types[det_id].get("properties", [])}
+                    for p in props:
+                        if p["name"] not in existing_props:
+                            existing_props[p["name"]] = p
+                    all_object_types[det_id]["properties"] = list(existing_props.values())
 
-                # 处理父类关系（需在所有 classes 处理完后二次解析，这里先记录原始值）
-                if cls.get("sub_class_of"):
-                    all_classes[det_id]["_raw_sub_class_of"] = cls["sub_class_of"]
+                if ot.get("sub_class_of"):
+                    all_object_types[det_id]["_raw_sub_class_of"] = ot["sub_class_of"]
 
-            # 处理 object_properties
-            for op in data.get("object_properties", []):
-                raw_label = (op.get("label") or "").strip()
-                raw_domain = (op.get("domain") or "").strip()
-                raw_range = (op.get("range") or "").strip()
-                if not raw_label or not raw_domain or not raw_range:
+            for lt in data.get("link_types", []):
+                raw_name = (lt.get("name") or "").strip()
+                raw_label = (lt.get("label") or "").strip()
+                raw_source = (lt.get("source_object_type") or "").strip()
+                raw_target = (lt.get("target_object_type") or "").strip()
+                if not raw_name or not raw_source or not raw_target:
                     continue
                 norm_label = self._normalize_term(raw_label, user_intent=user_intent)
-                det_id = make_deterministic_id(norm_label, "ObjectProperty")
-                if det_id not in all_obj_props:
-                    all_obj_props[det_id] = {
+                det_id = make_deterministic_id(raw_name, "LinkType")
+                if det_id not in all_link_types:
+                    all_link_types[det_id] = {
                         "id": det_id,
+                        "name": raw_name,
                         "label": norm_label,
-                        "description": op.get("description", ""),
-                        "domain": raw_domain,
-                        "range": raw_range,
-                        "cardinality": op.get("cardinality"),
+                        "description": lt.get("description", ""),
+                        "source_object_type": raw_source,
+                        "target_object_type": raw_target,
+                        "cardinality": lt.get("cardinality"),
                     }
 
-            # 更新进度
-            progress = (i + 1) / total_chunks * 0.9  # 预留 10% 给后续处理
+            for at in data.get("action_types", []):
+                raw_name = (at.get("name") or "").strip()
+                raw_label = (at.get("label") or "").strip()
+                raw_target = (at.get("target_object_type") or "").strip()
+                if not raw_name or not raw_target:
+                    continue
+                norm_label = self._normalize_term(raw_label, user_intent=user_intent)
+                det_id = make_deterministic_id(raw_name, "ActionType")
+                raw_params = at.get("parameters", [])
+                params = []
+                for pm in raw_params:
+                    if isinstance(pm, dict):
+                        params.append({"name": pm.get("name", ""), "data_type": pm.get("data_type", "string")})
+                    elif isinstance(pm, str):
+                        params.append({"name": pm, "data_type": "string"})
+                if det_id not in all_action_types:
+                    all_action_types[det_id] = {
+                        "id": det_id,
+                        "name": raw_name,
+                        "label": norm_label,
+                        "description": at.get("description", ""),
+                        "target_object_type": raw_target,
+                        "parameters": params,
+                    }
+                else:
+                    existing_params = {p["name"]: p for p in all_action_types[det_id].get("parameters", [])}
+                    for p in params:
+                        if p["name"] not in existing_params:
+                            existing_params[p["name"]] = p
+                    all_action_types[det_id]["parameters"] = list(existing_params.values())
+
+            progress = (i + 1) / total_chunks * 0.9
             report_progress(progress, f"处理分块 {i+1}/{total_chunks}")
 
             if i < total_chunks - 1:
                 time.sleep(request_interval)
 
-        # ── 二次处理：将 domain/range/sub_class_of 的原始文本映射为确定性 ID ──
-        # 建立 label → det_id 的快速查找表
-        label_to_det_id: Dict[str, str] = {
-            v["label"]: k for k, v in all_classes.items()
+        # ── 二次处理：将 source_object_type/target_object_type/sub_class_of 映射为类名 ──
+        name_to_det_id: Dict[str, str] = {
+            v["name"]: k for k, v in all_object_types.items()
         }
-        # 支持 LLM 原始英文 id → det_id 的映射（核心修复：LLM 输出 domain/range 时用的是它自己给的英文 id）
-        raw_llm_id_to_det_id: Dict[str, str] = {}
-        for det_id, cls_data in all_classes.items():
-            llm_id = cls_data.get("_raw_llm_id", "")
-            if llm_id:
-                raw_llm_id_to_det_id[llm_id] = det_id
-            # 同时支持 det_id 自身作为 key（防御性）
-            raw_llm_id_to_det_id[det_id] = det_id
+        label_to_det_id: Dict[str, str] = {
+            v["label"]: k for k, v in all_object_types.items()
+        }
+        det_id_to_name: Dict[str, str] = {
+            k: v["name"] for k, v in all_object_types.items()
+        }
 
-        def resolve_class_id(raw: str) -> Optional[str]:
-            """尽力解析出一个 det_id，找不到则返回 None。
-            
-            解析优先级：
-            1. raw 本身就是 det_id（如 C_xxx）
-            2. raw 与某个类的中文 label 完全匹配
-            3. raw 与某个类的 LLM 原始英文 id 完全匹配
-            4. 模糊匹配：raw 是某个类的 label 子字符串（或反之）
-            """
+        def resolve_to_det_id(raw: str) -> Optional[str]:
             if not raw:
                 return None
-            # 1. 直接匹配 det_id
-            if raw in all_classes:
+            if raw in all_object_types:
                 return raw
-            # 2. 匹配中文 label
+            if raw in name_to_det_id:
+                return name_to_det_id[raw]
             if raw in label_to_det_id:
                 return label_to_det_id[raw]
-            # 3. 匹配 LLM 原始英文 id
-            if raw in raw_llm_id_to_det_id:
-                return raw_llm_id_to_det_id[raw]
-            # 4. 模糊匹配：不区分大小写的 LLM id 匹配
             raw_lower = raw.lower()
-            for llm_id, det_id in raw_llm_id_to_det_id.items():
-                if llm_id.lower() == raw_lower:
-                    return det_id
-            # 5. 中文 label 模糊匹配（子字符串）
+            for n, did in name_to_det_id.items():
+                if n.lower() == raw_lower:
+                    return did
             for lbl, did in label_to_det_id.items():
                 if raw in lbl or lbl in raw:
                     return did
             return None
 
-        # 修正 sub_class_of
-        for det_id, cls_data in all_classes.items():
-            raw_sco = cls_data.pop("_raw_sub_class_of", None)
-            cls_data.pop("_raw_llm_id", None)  # 清理临时字段
-            if raw_sco:
-                resolved = resolve_class_id(raw_sco)
-                if resolved and resolved != det_id:  # 防止自引用
-                    cls_data["sub_class_of"] = resolved
-                    logger.info(f"[SchemaExtraction] 子类关系解析成功：{cls_data['label']} → {all_classes[resolved]['label']}")
-                else:
-                    logger.warning(f"[SchemaExtraction] 子类关系无法解析：{cls_data['label']} 的父类 '{raw_sco}' 未找到")
+        def resolve_to_class_name(raw: str) -> Optional[str]:
+            det_id = resolve_to_det_id(raw)
+            if det_id and det_id in det_id_to_name:
+                return det_id_to_name[det_id]
+            if raw in name_to_det_id:
+                return raw
+            return None
 
-        # 修正 domain / range
-        valid_obj_props: Dict[str, dict] = {}
-        for det_id, op_data in all_obj_props.items():
-            domain_resolved = resolve_class_id(op_data["domain"])
-            range_resolved = resolve_class_id(op_data["range"])
-            if domain_resolved and range_resolved:
-                op_data["domain"] = domain_resolved
-                op_data["range"] = range_resolved
-                valid_obj_props[det_id] = op_data
-                logger.info(f"[SchemaExtraction] ObjectProperty '{op_data['label']}' 解析成功：{all_classes[domain_resolved]['label']} → {all_classes[range_resolved]['label']}")
+        # 修正 sub_class_of（使用类名）
+        for det_id, ot_data in all_object_types.items():
+            raw_sco = ot_data.pop("_raw_sub_class_of", None)
+            if raw_sco:
+                resolved = resolve_to_class_name(raw_sco)
+                resolved_det_id = resolve_to_det_id(raw_sco)
+                if resolved and resolved_det_id and resolved_det_id != det_id:
+                    ot_data["sub_class_of"] = resolved
+                    logger.info(f"[SchemaExtraction] 子类关系解析成功：{ot_data['label']} → {resolved}")
+                else:
+                    logger.warning(f"[SchemaExtraction] 子类关系无法解析：{ot_data['label']} 的父类 '{raw_sco}' 未找到")
+
+        # 修正 source_object_type / target_object_type（使用类名）
+        valid_link_types: Dict[str, dict] = {}
+        for det_id, lt_data in all_link_types.items():
+            source_resolved = resolve_to_class_name(lt_data["source_object_type"])
+            target_resolved = resolve_to_class_name(lt_data["target_object_type"])
+            if source_resolved and target_resolved:
+                lt_data["source_object_type"] = source_resolved
+                lt_data["target_object_type"] = target_resolved
+                valid_link_types[det_id] = lt_data
+                logger.info(f"[SchemaExtraction] LinkType '{lt_data['label']}' 解析成功：{source_resolved} → {target_resolved}")
             else:
                 logger.warning(
-                    f"[SchemaExtraction] ObjectProperty '{op_data['label']}' "
-                    f"domain/range 无法解析，已丢弃 "
-                    f"(domain={op_data['domain']}→{domain_resolved}, range={op_data['range']}→{range_resolved})"
+                    f"[SchemaExtraction] LinkType '{lt_data['label']}' "
+                    f"source/target 无法解析，已丢弃 "
+                    f"(source={lt_data['source_object_type']}→{source_resolved}, target={lt_data['target_object_type']}→{target_resolved})"
                 )
 
-        dedup_classes: Dict[str, dict] = {}
-        for det_id, cls_data in all_classes.items():
+        # 修正 action_types 的 target_object_type（使用类名）
+        valid_action_types: Dict[str, dict] = {}
+        for det_id, at_data in all_action_types.items():
+            target_resolved = resolve_to_class_name(at_data["target_object_type"])
+            if target_resolved:
+                at_data["target_object_type"] = target_resolved
+                valid_action_types[det_id] = at_data
+            else:
+                logger.warning(
+                    f"[SchemaExtraction] ActionType '{at_data['label']}' "
+                    f"target_object_type 无法解析，已丢弃 "
+                    f"(target={at_data['target_object_type']}→{target_resolved})"
+                )
+
+        # 语义去重
+        dedup_object_types: Dict[str, dict] = {}
+        for det_id, ot_data in all_object_types.items():
             merged = False
-            for existing_id, existing_data in dedup_classes.items():
-                if names_are_similar(cls_data["label"], existing_data["label"]):
-                    for dp_name in cls_data.get("data_properties", []):
-                        if dp_name not in existing_data["data_properties"]:
-                            existing_data["data_properties"].append(dp_name)
-                    for dp_def in cls_data.get("property_definitions", []):
-                        existing_defs = {d["name"] for d in existing_data.get("property_definitions", [])}
-                        if dp_def["name"] not in existing_defs:
-                            existing_data.setdefault("property_definitions", []).append(dp_def)
+            for existing_id, existing_data in dedup_object_types.items():
+                if names_are_similar(ot_data["label"], existing_data["label"]) or names_are_similar(ot_data["name"], existing_data["name"]):
+                    for p in ot_data.get("properties", []):
+                        existing_names = {ep["name"] for ep in existing_data.get("properties", [])}
+                        if p["name"] not in existing_names:
+                            existing_data.setdefault("properties", []).append(p)
                     merged = True
-                    logger.info(f"[SchemaExtraction] 语义去重：'{cls_data['label']}' 合并到 '{existing_data['label']}'")
+                    logger.info(f"[SchemaExtraction] 语义去重：'{ot_data['label']}' 合并到 '{existing_data['label']}'")
                     break
             if not merged:
-                dedup_classes[det_id] = cls_data
-        all_classes = dedup_classes
+                dedup_object_types[det_id] = ot_data
+        all_object_types = dedup_object_types
 
         result = {
-            "classes": list(all_classes.values()),
-            "object_properties": list(valid_obj_props.values()),
+            "object_types": list(all_object_types.values()),
+            "link_types": list(valid_link_types.values()),
+            "action_types": list(valid_action_types.values()),
             "metadata": {
                 "total_chunks": total_chunks,
                 "successful_chunks": sum(1 for i in range(total_chunks)),
                 "failed_chunks": 0,
                 "success_rate": 1.0,
-                "total_classes": len(all_classes),
-                "total_object_properties": len(valid_obj_props),
+                "total_object_types": len(all_object_types),
+                "total_link_types": len(valid_link_types),
+                "total_action_types": len(valid_action_types),
             },
         }
 
-        report_progress(1.0, f"骨架提取完成：{len(result['classes'])} 个类，{len(result['object_properties'])} 个关系")
+        report_progress(1.0, f"骨架提取完成：{len(result['object_types'])} 个对象类型，{len(result['link_types'])} 个链接类型，{len(result['action_types'])} 个动作类型")
         logger.info(
-            f"[SchemaExtraction] 完成：{len(result['classes'])} 个类，"
-            f"{len(result['object_properties'])} 个关系"
+            f"[SchemaExtraction] 完成：{len(result['object_types'])} 个对象类型，"
+            f"{len(result['link_types'])} 个链接类型，{len(result['action_types'])} 个动作类型"
         )
         return result
 
@@ -847,9 +1108,9 @@ class OntologyExtractor:
         logger.info("=" * 80)
         logger.info("[API2-InstanceExtraction] 开始实例提取")
         logger.info(f"[InstanceExtraction] 输入参数：product_code={product_code}, task_id={task_id}")
-        logger.info(f"[InstanceExtraction] Schema 包含 {len(schema_graph.get('classes', []))} 个类，{len(schema_graph.get('object_properties', []))} 个关系")
-        logger.info(f"[InstanceExtraction] Schema 详情：classes={schema_graph.get('classes', [])[:3]}... (仅显示前 3 个)")
-        logger.info(f"[InstanceExtraction] Schema 详情：object_properties={schema_graph.get('object_properties', [])[:3]}... (仅显示前 3 个)")
+        logger.info(f"[InstanceExtraction] Schema 包含 {len(schema_graph.get('object_types', schema_graph.get('classes', [])))} 个对象类型，{len(schema_graph.get('link_types', schema_graph.get('object_properties', [])))} 个链接类型")
+        logger.info(f"[InstanceExtraction] Schema 详情：object_types={schema_graph.get('object_types', schema_graph.get('classes', []))[:3]}... (仅显示前 3 个)")
+        logger.info(f"[InstanceExtraction] Schema 详情：link_types={schema_graph.get('link_types', schema_graph.get('object_properties', []))[:3]}... (仅显示前 3 个)")
         logger.info(f"[InstanceExtraction] 输入文本长度：{len(text)} 字符")
         
         # 进度回调辅助函数
@@ -866,51 +1127,60 @@ class OntologyExtractor:
         
         report_progress(0.0, "开始实例提取...")
 
-        classes: List[dict] = schema_graph.get("classes", [])
-        obj_props: List[dict] = schema_graph.get("object_properties", [])
+        object_types, link_types, action_types = _normalize_schema_graph(schema_graph)
+        classes = object_types
+        obj_props = link_types
 
         if not classes:
             return {"instances": [], "discarded_edges_count": 0}
 
-        # ── 构建约束描述给 LLM ──
-        # 首先建立 class_id → class_info 的映射，方便查找父类和子类
-        class_id_to_info: Dict[str, dict] = {c['id']: c for c in classes}
-        
-        # 找出每个类的子类（谁是我的子类）
-        class_to_subclasses: Dict[str, List[str]] = {c['id']: [] for c in classes}
+        class_id_to_info: Dict[str, dict] = {c.get("id", c.get("name", "")): c for c in classes}
+
+        class_to_subclasses: Dict[str, List[str]] = {c.get("id", c.get("name", "")): [] for c in classes}
         for c in classes:
-            # 支持 parent_classes 和 sub_class_of 两种字段
-            parent_classes = c.get('parent_classes', []) or c.get('sub_class_of', None)
+            cid = c.get("id", c.get("name", ""))
+            parent_classes = c.get('sub_class_of', None)
             if parent_classes:
                 if isinstance(parent_classes, str):
                     parent_classes = [parent_classes]
                 for parent_id in parent_classes:
                     if parent_id in class_to_subclasses:
-                        class_to_subclasses[parent_id].append(c['id'])
-        
-        # 构建类列表字符串，包含子类信息
+                        class_to_subclasses[parent_id].append(cid)
+
         class_list_items = []
         for c in classes:
-            cid = c['id']
-            label = c['label']
-            props = ', '.join(c.get('data_properties', []) or []) or '无'
-            
-            # 获取该类的子类
+            cid = c.get("id", c.get("name", ""))
+            label = c.get("label", "")
+            props_list = c.get("properties", [])
+            prop_display_parts = []
+            for p in props_list:
+                if isinstance(p, dict):
+                    pname = p.get("name", "")
+                    plabel = p.get("label", "")
+                    if plabel and plabel != pname:
+                        prop_display_parts.append(f"{plabel}({pname})")
+                    else:
+                        prop_display_parts.append(plabel or pname)
+            prop_names = ', '.join(prop_display_parts) or '无'
             subclasses = class_to_subclasses.get(cid, [])
             subclass_info = ""
             if subclasses:
                 subclass_labels = [class_id_to_info.get(sc, {}).get('label', sc) for sc in subclasses]
                 subclass_info = f" | 子类：{', '.join(subclass_labels)}"
-            
             class_list_items.append(
-                f"  - 类 ID: {cid} | 中文名：{label} | 属性字段：{props}{subclass_info}"
+                f"  - 对象类型: {c.get('name', cid)} | 中文名：{label} | 属性字段：{prop_names}{subclass_info}"
             )
         class_list_str = "\n".join(class_list_items)
-        
+
         op_list_str = "\n".join(
-            f"  - 关系 ID: {op['id']} | 名称：{op['label']} | 起点类：{op['domain']} → 终点类：{op['range']}"
+            f"  - 链接类型: {op.get('name', op.get('id', ''))} | 名称：{op.get('label', '')} | 源对象：{op.get('source_object_type', op.get('domain', ''))} → 目标对象：{op.get('target_object_type', op.get('range', ''))}"
             for op in obj_props
-        ) or "  （当前 Schema 无 ObjectProperty）"
+        ) or "  （当前 Schema 无 LinkType）"
+
+        action_list_str = "\n".join(
+            f"  - 动作类型: {at.get('name', at.get('id', ''))} | 名称：{at.get('label', '')} | 目标对象类型：{at.get('target_object_type', '')} | 参数：{', '.join(p.get('name', '') for p in at.get('parameters', []) if isinstance(p, dict)) or '无'}"
+            for at in action_types
+        ) or "  （当前 Schema 无 ActionType）"
 
         domain_code_clause = ""
         if product_code:
@@ -931,6 +1201,9 @@ class OntologyExtractor:
 
 【已审核的关系 Schema（连线只能使用这些关系，且必须符合 domain→range）】:
 {op_list_str}
+
+【已审核的动作类型 Schema（动作实例只能使用这些动作类型）】:
+{action_list_str}
 {domain_code_clause}
 {domain_context}
 【子类继承说明】:
@@ -959,12 +1232,27 @@ class OntologyExtractor:
     - source_quote 必须是原文中的完整句子，不能改写或缩写。
     - 如果无法找到直接支持的原文句子，该实例不应被提取。
     - 示例：如果原文是"人行清算模拟系统是二代支付系统的重要组成部分"，则提取"人行清算模拟系统"实例时，source_quote 应该是"人行清算模拟系统是二代支付系统的重要组成部分"。
+12. 【禁止模糊代称】: 实例的 label 绝对禁止使用模糊代称（如"本产品"、"本公司"、"该机构"、"此系统"等）。
+   必须从上下文中找到具体的专有名词替换。例如：
+   - "本产品" → 使用文档中提到的具体产品名称（如"中信理财之信盈系列"）
+   - "本公司" → 使用文档中提到的具体公司名称（如"中信银行"）
+   - "该机构" → 使用文档中提到的具体机构名称（如"国家金融监督管理总局"）
+   如果无法确定具体名称，则不应提取该实例。
+13. 【属性值留空原则】: data_props 中的属性值，如果文档中没有明确给出具体数值，则留空字符串""，不要编造或猜测不确定的数据。
+   例如：如果文档只说"费率不超过X%"但没有给出具体费率，则费率属性值应为""而非"X%"。
+14. 【🔴 data_props 键名必须使用中文】: data_props 中的键名必须使用上方属性字段中显示的中文名（label），不得使用英文名（name）。
+   例如：如果属性字段显示"风险等级(risk_level)"，则 data_props 中应使用"风险等级"作为键名，而非"risk_level"。
+15. 【🔴 必须提取动作实例】: 文本中描述的任何操作、事件、变更、交易等动作，如果其类型在上方动作类型 Schema 中有定义，则必须提取为 action_instance。
+   - 动作实例描述的是"对某个对象执行了什么操作"，例如"购买理财产品""赎回份额""到期兑付""风险评级变更"等。
+   - 即使文本只暗示了某个动作的发生（如"投资者可于开放日赎回"），也应提取为动作实例。
+   - action_type 必须严格匹配上方 Schema 中已定义的动作类型名称。
+   - target_instance_label 必须指向当前文本中已提取的某个实例。
 """
 
         user_prompt_template = """【当前文本片段】:
 "{chunk}"
 
-【输出 JSON 格式（只输出 instances 和 links 数组，不得包含 classes/object_properties 字段）】:
+【输出 JSON 格式（只输出 instances、links 和 action_instances 数组，不得包含 classes/object_properties 字段）】:
 {{
   "instances": [
     {{
@@ -990,6 +1278,16 @@ class OntologyExtractor:
       "target_type": "Department",
       "source_quote": "张三同志现任技术部经理"
     }}
+  ],
+  "action_instances": [
+    {{
+      "action_type": "购买产品",
+      "label": "张三购买理财产品A",
+      "target_instance_label": "理财产品A",
+      "target_type": "理财产品",
+      "source_quote": "张三于2024年1月购买了理财产品A",
+      "parameters": {{"金额": "10万元"}}
+    }}
   ]
 }}
 
@@ -1013,30 +1311,68 @@ class OntologyExtractor:
         total_chunks = len(chunks)
 
         # 构建防御性校验索引
-        valid_class_ids: Set[str] = {c["id"] for c in classes}
-        # op_constraints: {op_id: (domain_class_id, range_class_id)}
-        op_constraints: Dict[str, Tuple[str, str]] = {
-            op["id"]: (op["domain"], op["range"]) for op in obj_props
-        }
-        # 支持通过关系中文 label 反查 ObjectProperty ID，避免 LLM 用 label 代替 ID 时被误杀
-        op_label_to_id: Dict[str, str] = {op["label"]: op["id"] for op in obj_props}
-        # 为实例 type → class_id 的快速校验建立标签索引
-        class_label_to_id: Dict[str, str] = {c["label"]: c["id"] for c in classes}
+        valid_class_ids: Set[str] = {c.get("id", c.get("name", "")) for c in classes}
+        valid_class_ids.update({c.get("name", "") for c in classes if c.get("name")})
+        class_label_to_id: Dict[str, str] = {c.get("label", ""): c.get("id", c.get("name", "")) for c in classes}
+        class_name_to_id: Dict[str, str] = {c.get("name", ""): c.get("id", c.get("name", "")) for c in classes}
+
+        def _resolve_class_ref(ref: str) -> str:
+            if not ref:
+                return ref
+            if ref in valid_class_ids:
+                return ref
+            if ref in class_name_to_id:
+                return class_name_to_id[ref]
+            if ref in class_label_to_id:
+                return class_label_to_id[ref]
+            return ref
+
+        op_constraints: Dict[str, Tuple[str, str]] = {}
+        for op in obj_props:
+            op_id = op.get("id", op.get("name", ""))
+            src = _resolve_class_ref(op.get("source_object_type", op.get("domain", "")))
+            tgt = _resolve_class_ref(op.get("target_object_type", op.get("range", "")))
+            op_constraints[op_id] = (src, tgt)
+        op_label_to_id: Dict[str, str] = {op.get("label", ""): op.get("id", op.get("name", "")) for op in obj_props}
 
         # 构建类到所有祖先类的映射（含自身），用于 Domain/Range 继承校验
-        class_to_ancestors: Dict[str, Set[str]] = {c["id"]: {c["id"]} for c in classes}
+        # 值集合中同时包含内部ID、英文名和中文标签，确保跨格式匹配
+        class_to_ancestors: Dict[str, Set[str]] = {}
         for c in classes:
-            parent_classes = c.get('parent_classes', []) or c.get('sub_class_of', None)
+            cid = c.get("id", c.get("name", ""))
+            name = c.get("name", "")
+            label = c.get("label", "")
+            ancestors = {cid}
+            if name and name != cid:
+                ancestors.add(name)
+            if label:
+                ancestors.add(label)
+            class_to_ancestors[cid] = ancestors
+            if name and name != cid:
+                class_to_ancestors[name] = ancestors
+            if label and label != cid and label != name:
+                class_to_ancestors[label] = ancestors
+
+        for c in classes:
+            cid = c.get("id", c.get("name", ""))
+            name = c.get("name", "")
+            label = c.get("label", "")
+            parent_classes = c.get('sub_class_of', None)
             if parent_classes:
                 if isinstance(parent_classes, str):
                     parent_classes = [parent_classes]
-                for parent_id in parent_classes:
+                for parent_ref in parent_classes:
+                    parent_id = _resolve_class_ref(parent_ref)
                     if parent_id in class_to_ancestors:
-                        class_to_ancestors[c["id"]].add(parent_id)
-                        # 递归添加祖先的祖先
-                        class_to_ancestors[c["id"]].update(class_to_ancestors.get(parent_id, {parent_id}))
+                        parent_ancestors = class_to_ancestors[parent_id]
+                        class_to_ancestors[cid].update(parent_ancestors)
+                        if name and name != cid:
+                            class_to_ancestors[name] = class_to_ancestors[cid]
+                        if label and label != cid and label != name:
+                            class_to_ancestors[label] = class_to_ancestors[cid]
 
         all_instances: Dict[str, dict] = {}  # det_id → instance dict
+        all_action_instances: List[dict] = []
         discarded_count = 0
 
         for i, chunk in enumerate(chunks):
@@ -1055,7 +1391,10 @@ class OntologyExtractor:
                 chunk_index = i
             
             logger.info(f"[InstanceExtraction] 处理分块 {i+1}/{total_chunks} (file={chunk_filename}, index={chunk_index})")
-            user_prompt = user_prompt_template.format(chunk=chunk_text)
+            if chunk_filename and chunk_filename != "unknown":
+                user_prompt = f"""【文档来源】: {chunk_filename}\n""" + user_prompt_template.format(chunk=chunk_text)
+            else:
+                user_prompt = user_prompt_template.format(chunk=chunk_text)
             data = self._call_llm(system_prompt, user_prompt, task_id=task_id, json_schema=INSTANCE_EXTRACTION_JSON_SCHEMA)
 
             if not data:
@@ -1069,12 +1408,14 @@ class OntologyExtractor:
 
             raw_instances = []
             raw_links = []
+            raw_action_instances = []
             if isinstance(data, list):
                 raw_instances = data
                 logger.info(f"分块 {i+1}/{total_chunks} LLM 返回了列表格式，已自动适配")
             elif isinstance(data, dict):
                 raw_instances = data.get("instances", [])
                 raw_links = data.get("links", data.get("relationships", []))
+                raw_action_instances = data.get("action_instances", [])
             else:
                 logger.warning(f"分块 {i+1}/{total_chunks} LLM 返回格式异常 (type: {type(data)})，跳过")
                 continue
@@ -1103,12 +1444,13 @@ class OntologyExtractor:
                 if not raw_label:
                     continue
 
-                # ── 校验 type 必须在 Schema 中 ──
                 resolved_type = None
                 if raw_type in valid_class_ids:
                     resolved_type = raw_type
                 elif raw_type in class_label_to_id:
                     resolved_type = class_label_to_id[raw_type]
+                elif raw_type in class_name_to_id:
+                    resolved_type = class_name_to_id[raw_type]
                 else:
                     logger.warning(
                         f"[InstanceExtraction] 实例 '{raw_label}' 的 type '{raw_type}' "
@@ -1128,17 +1470,13 @@ class OntologyExtractor:
                 # ★ 获取该类允许的数据属性列表（包含继承属性）
                 valid_data_props_keys = set()
                 if resolved_type:
-                    # 找到 schema 中该类的定义
-                    target_cls = next((c for c in classes if c["id"] == resolved_type), None)
+                    target_cls = next((c for c in classes if c.get("id", c.get("name", "")) == resolved_type), None)
                     if target_cls:
-                        # 直接属性
-                        direct_props = set(target_cls.get("data_properties", []) or [])
-                        # 继承属性（如果 schema 中有 inherited_properties 字段）
+                        for p in target_cls.get("properties", []):
+                            if isinstance(p, dict):
+                                valid_data_props_keys.add(p.get("name", ""))
                         inherited_props = set(target_cls.get("inherited_properties", []) or [])
-                        # 合并所有属性
-                        valid_data_props_keys = direct_props | inherited_props
-                        
-                        logger.debug(f"[InstanceExtraction] 类 '{resolved_type}' 的有效属性：直接={list(direct_props)}, 继承={list(inherited_props)}")
+                        valid_data_props_keys = valid_data_props_keys | inherited_props
 
                 raw_obj_props = inst.get("object_props", {})
                 
@@ -1218,6 +1556,9 @@ class OntologyExtractor:
                         "label": raw_label,
                         "object_props": valid_obj_props,
                         "data_props": inst.get("data_props", {}),
+                        "_source_file": inst.get("_source_file", ""),
+                        "_source_chunk_index": inst.get("_source_chunk_index", 0),
+                        "_source_quote": inst.get("_source_quote", ""),
                     }
                 else:
                     # 合并同一实例的属性
@@ -1328,6 +1669,111 @@ class OntologyExtractor:
 
                 logger.debug(f"[LinkProcess] Link 补充：'{source_label}' --[{resolved_op_id}]--> '{target_label}'")
 
+            # ── 处理 action_instances 数组 ──
+            for ai in raw_action_instances:
+                action_type_name = ai.get("action_type", "").strip()
+                ai_label = ai.get("label", "").strip()
+                target_instance_label = ai.get("target_instance_label", "").strip()
+                target_type = ai.get("target_type", "").strip()
+
+                if not action_type_name or not ai_label or not target_instance_label:
+                    logger.warning(f"[ActionInstanceDiscard] 动作实例缺少必填字段，已丢弃: {ai}")
+                    continue
+
+                # ─ Action Type 模糊匹配（支持简称、同义词、包含关系）──
+                valid_action_type = False
+                matched_at_name = None
+                
+                # 策略1：精确匹配（name 或 label）
+                for at in action_types:
+                    at_name = at.get("name", "")
+                    at_label = at.get("label", "")
+                    if action_type_name == at_name or action_type_name == at_label:
+                        valid_action_type = True
+                        matched_at_name = at_name
+                        break
+                
+                # 策略2：包含关系匹配（Schema名称包含LLM返回的名称，或反之）
+                if not valid_action_type:
+                    for at in action_types:
+                        at_name = at.get("name", "")
+                        at_label = at.get("label", "")
+                        # 检查双向包含关系
+                        if (action_type_name in at_name or at_name in action_type_name or
+                            action_type_name in at_label or at_label in action_type_name):
+                            valid_action_type = True
+                            matched_at_name = at_name
+                            logger.info(f"[ActionTypeFuzzyMatch] 动作实例 '{ai_label}' 的 action_type '{action_type_name}' 通过包含关系匹配到 Schema '{at_name}'")
+                            break
+                
+                # 策略3：常见同义词映射
+                if not valid_action_type:
+                    synonym_map = {
+                        "申购": ["申购产品", "购买产品"],
+                        "赎回": ["赎回产品"],
+                        "撤单": ["撤销申请"],
+                        "撤单申请": ["撤销申请"],
+                        "调整业绩比较基准": ["变更业绩比较基准"],
+                        "调整费用": ["调整收费标准", "调整费用"],
+                        "延缓支付": ["延期清算"],
+                        "提前终止": ["提前终止产品", "终止产品"],
+                        "分配收益": ["分红"],
+                        "收取强制赎回费": ["巨额赎回处理"],
+                        "调整投资组合": ["调整投资范围"],
+                        "进行估值": ["暂停估值", "纠正估值错误"],
+                        "增设份额类别": ["调整收费标准"],
+                        "拒绝申购": ["拒绝申请"],
+                        "拒绝赎回": ["拒绝申请"],
+                        "拒绝认购": ["拒绝申请"],
+                        "发布重大事项公告": ["发布产品信息", "发布披露"],
+                    }
+                    for synonym, targets in synonym_map.items():
+                        if action_type_name == synonym or synonym in action_type_name or action_type_name in synonym:
+                            for target in targets:
+                                for at in action_types:
+                                    if at.get("name") == target or at.get("label") == target:
+                                        valid_action_type = True
+                                        matched_at_name = target
+                                        logger.info(f"[ActionTypeSynonym] 动作实例 '{ai_label}' 的 action_type '{action_type_name}' 通过同义词匹配到 Schema '{target}'")
+                                        break
+                                if valid_action_type:
+                                    break
+                        if valid_action_type:
+                            break
+                
+                if valid_action_type and matched_at_name:
+                    action_type_name = matched_at_name
+                if not valid_action_type:
+                    logger.warning(
+                        f"[ActionInstanceDiscard] 动作实例 '{ai_label}' 的 action_type '{action_type_name}' "
+                        f"不在 Schema 中，已丢弃"
+                    )
+                    continue
+
+                resolved_target_type = _resolve_class_ref(target_type)
+                if resolved_target_type not in valid_class_ids:
+                    logger.warning(
+                        f"[ActionInstanceDiscard] 动作实例 '{ai_label}' 的 target_type '{target_type}' "
+                        f"不在 Schema 中，已丢弃"
+                    )
+                    continue
+
+                ai_data = {
+                    "action_type": action_type_name,
+                    "label": ai_label,
+                    "target_instance_label": target_instance_label,
+                    "target_type": resolved_target_type,
+                    "source_quote": ai.get("source_quote", ""),
+                    "parameters": ai.get("parameters", {}),
+                    "_source_file": chunk_filename,
+                    "_source_chunk_index": chunk_index,
+                }
+                if ai.get("id"):
+                    ai_data["id"] = ai["id"]
+
+                all_action_instances.append(ai_data)
+                logger.debug(f"[ActionInstanceProcess] 动作实例：'{ai_label}' (type={action_type_name}, target={target_instance_label}, file={chunk_filename}, chunk={chunk_index})")
+
             # 更新进度
             progress = (i + 1) / total_chunks * 0.9  # 预留 10% 给后续处理
             report_progress(progress, f"处理分块 {i+1}/{total_chunks}")
@@ -1337,6 +1783,7 @@ class OntologyExtractor:
 
         result = {
             "instances": list(all_instances.values()),
+            "action_instances": all_action_instances,
             "discarded_edges_count": discarded_count,
             "metadata": {
                 "total_chunks": total_chunks,
@@ -1344,13 +1791,15 @@ class OntologyExtractor:
                 "failed_chunks": 0,
                 "success_rate": 1.0,
                 "total_instances": len(all_instances),
+                "total_action_instances": len(all_action_instances),
                 "total_edges": sum(len(inst.get("object_props", {})) for inst in all_instances.values()),
                 "discarded_edges_count": discarded_count,
             },
         }
-        report_progress(1.0, f"实例提取完成：{len(result['instances'])} 个实例")
+        report_progress(1.0, f"实例提取完成：{len(result['instances'])} 个实例，{len(all_action_instances)} 个动作实例")
         logger.info(
             f"[InstanceExtraction] 完成：{len(result['instances'])} 个实例，"
+            f"{len(all_action_instances)} 个动作实例，"
             f"{discarded_count} 条不合规连线已丢弃"
         )
         
@@ -1408,30 +1857,49 @@ class OntologyExtractor:
     @staticmethod
     def schema_to_graph_data(schema: Dict[str, Any]) -> Dict[str, Any]:
         """
-        将 Schema（classes + object_properties）转换为前端可渲染的 {nodes, edges}。
-        节点类型统一为 'owl:Class'。
-        同时处理 parent_classes/sub_class_of 关系，生成子类关系边。
+        将 Schema（object_types + link_types + action_types）转换为前端可渲染的 {nodes, edges}。
+        同时兼容旧格式（classes + object_properties）。
+        节点 ID 优先使用类名（name），兼容内部 det_id。
         """
         nodes = []
         edges = []
         processed = set()
 
-        # 首先处理所有类节点
-        for cls in schema.get("classes", []):
-            cid = cls["id"]
+        object_types, link_types, action_types = _normalize_schema_graph(schema)
+
+        name_to_node_id: Dict[str, str] = {}
+
+        for ot in object_types:
+            raw_id = ot.get("id", "")
+            name = ot.get("name", "")
+            cid = name if name else raw_id
             if cid in processed:
                 continue
-            prop_defs = cls.get("property_definitions") or []
+            if name:
+                name_to_node_id[name] = cid
+            if raw_id and raw_id != cid:
+                name_to_node_id[raw_id] = cid
+            label = ot.get("label", "")
+            if label and label not in name_to_node_id:
+                name_to_node_id[label] = cid
             props_with_type = {}
-            for dp in cls.get("data_properties", []) or []:
-                props_with_type[dp] = ""
+            prop_defs = ot.get("properties", [])
+            for p in prop_defs:
+                if isinstance(p, dict):
+                    pname = p.get("name", "")
+                    props_with_type[pname] = p.get("data_type", "")
             node_data = {
-                "label": cls["label"],
+                "label": label,
                 "type": "owl:Class",
                 "properties": props_with_type,
+                "description": ot.get("description", ""),
             }
+            if raw_id and raw_id != cid:
+                node_data["raw_id"] = raw_id
             if prop_defs:
                 node_data["property_definitions"] = prop_defs
+            if ot.get("primary_key"):
+                node_data["primary_key"] = ot["primary_key"]
             nodes.append({
                 "id": cid,
                 "type": "custom",
@@ -1440,17 +1908,24 @@ class OntologyExtractor:
             })
             processed.add(cid)
 
-        # 然后处理子类关系（parent_classes）
-        for cls in schema.get("classes", []):
-            cid = cls["id"]
-            # 支持 parent_classes 和 sub_class_of 两种字段名
-            parent_classes = cls.get("parent_classes", []) or cls.get("sub_class_of", None)
+        def _resolve_node_id(ref: str) -> Optional[str]:
+            if not ref:
+                return None
+            if ref in processed:
+                return ref
+            return name_to_node_id.get(ref)
+
+        for ot in object_types:
+            raw_id = ot.get("id", "")
+            name = ot.get("name", "")
+            cid = name if name else raw_id
+            parent_classes = ot.get("sub_class_of", None)
             if parent_classes:
-                # parent_classes 可能是字符串或列表
                 if isinstance(parent_classes, str):
                     parent_classes = [parent_classes]
-                for parent_id in parent_classes:
-                    if parent_id and parent_id in processed:
+                for parent_ref in parent_classes:
+                    parent_id = _resolve_node_id(parent_ref)
+                    if parent_id and parent_id != cid:
                         edges.append({
                             "id": f"e_subclass_{cid}_{parent_id}",
                             "source": cid,
@@ -1460,23 +1935,58 @@ class OntologyExtractor:
                             "data": {"label": "subClassOf", "relation": "subclass_of"},
                         })
 
-        # 处理 ObjectProperty 关系
-        for op in schema.get("object_properties", []):
-            src = op["domain"]
-            tgt = op["range"]
-            if src in processed and tgt in processed:
-                edge_data = {"label": op["label"], "prop_id": op["id"]}
-                if op.get("cardinality"):
-                    edge_data["cardinality"] = op["cardinality"]
-                if op.get("description"):
-                    edge_data["description"] = op["description"]
+        for lt in link_types:
+            src_ref = lt.get("source_object_type", lt.get("domain", ""))
+            tgt_ref = lt.get("target_object_type", lt.get("range", ""))
+            src = _resolve_node_id(src_ref)
+            tgt = _resolve_node_id(tgt_ref)
+            lt_id = lt.get("id", lt.get("name", ""))
+            if src and tgt:
+                edge_data = {"label": lt.get("label", ""), "prop_id": lt_id, "relation": "object_property"}
+                if lt.get("cardinality"):
+                    edge_data["cardinality"] = lt["cardinality"]
+                if lt.get("description"):
+                    edge_data["description"] = lt["description"]
                 edges.append({
-                    "id": f"e_{src}_{tgt}_{op['id']}",
+                    "id": f"e_{src}_{tgt}_{lt_id}",
                     "source": src,
                     "target": tgt,
-                    "label": op["label"],
+                    "label": lt.get("label", ""),
                     "type": "custom",
                     "data": edge_data,
+                })
+
+        for at in action_types:
+            at_id = at.get("id", at.get("name", ""))
+            target_ref = at.get("target_object_type", "")
+            target_ot = _resolve_node_id(target_ref)
+            if at_id not in processed:
+                params_info = {}
+                for pm in at.get("parameters", []):
+                    if isinstance(pm, dict):
+                        params_info[pm.get("name", "")] = pm.get("data_type", "")
+                nodes.append({
+                    "id": at_id,
+                    "type": "custom",
+                    "position": {"x": 0, "y": 0},
+                    "data": {
+                        "label": at.get("label", ""),
+                        "type": "owl:Class",
+                        "raw_id": at_id if at_id.startswith("AT_") else at.get("id", ""),
+                        "description": at.get("description", ""),
+                        "parameters": at.get("parameters", []),
+                        "properties": params_info,
+                    },
+                })
+                processed.add(at_id)
+            if target_ot and target_ot in processed:
+                edges.append({
+                    "id": f"e_action_{at_id}_{target_ot}",
+                    "source": at_id,
+                    "target": target_ot,
+                    "label": at.get("label", ""),
+                    "type": "custom",
+                    "data": {"label": at.get("label", ""), "relation": "action", "prop_id": at_id},
                 })
 
         return {"nodes": nodes, "edges": edges}
@@ -1485,6 +1995,7 @@ class OntologyExtractor:
     def merge_instances_to_graph_data(
         schema_graph_data: Dict[str, Any],
         instances: List[dict],
+        action_instances: Optional[List[dict]] = None,
     ) -> Dict[str, Any]:
         """
         将实例合并到已有的 Schema GraphData 中，生成完整图。
@@ -1492,8 +2003,9 @@ class OntologyExtractor:
         - 实例节点标记为 owl:NamedIndividual
         - instance_of 连线（虚线）+ ObjectProperty 连线（实线）
         """
-        nodes = list(schema_graph_data.get("nodes", []))
-        edges = list(schema_graph_data.get("edges", []))
+        import copy
+        nodes = copy.deepcopy(schema_graph_data.get("nodes", []))
+        edges = copy.deepcopy(schema_graph_data.get("edges", []))
         existing_ids = {n["id"] for n in nodes}
 
         # 方便通过 label 查找实例 det_id
@@ -1559,10 +2071,14 @@ class OntologyExtractor:
         # 构建 class_id → class_label 映射，用于实例节点展示
         class_id_to_label: Dict[str, str] = {}
         class_id_to_prop_defs: Dict[str, List[Dict]] = {}
+        det_id_to_node_id: Dict[str, str] = {}
         for n in nodes:
             if n.get("data", {}).get("type") == "owl:Class":
                 class_id_to_label[n["id"]] = n["data"].get("label", "")
                 class_id_to_prop_defs[n["id"]] = n["data"].get("property_definitions", [])
+                raw_id = n.get("data", {}).get("raw_id", "")
+                if raw_id and raw_id != n["id"]:
+                    det_id_to_node_id[raw_id] = n["id"]
 
         # 构建 op_id → op_label 映射，用于边的可读标签
         op_id_to_label: Dict[str, str] = {}
@@ -1575,10 +2091,31 @@ class OntologyExtractor:
         for inst in instances:
             iid = inst["id"]
             if iid not in existing_ids:
-                # 合并 data_props 和溯源信息到节点 properties
                 node_properties = dict(inst.get("data_props", {}))
                 
-                # 将溯源信息作为隐藏属性添加到 properties 中（以_开头）
+                inst_type = inst.get("type", "")
+                resolved_type_node = det_id_to_node_id.get(inst_type, inst_type)
+                if resolved_type_node not in class_id_to_label and inst_type in class_id_to_label:
+                    resolved_type_node = inst_type
+                prop_defs = class_id_to_prop_defs.get(resolved_type_node, [])
+                
+                if prop_defs:
+                    name_to_label = {}
+                    for pd in prop_defs:
+                        if isinstance(pd, dict):
+                            pname = pd.get("name", "")
+                            plabel = pd.get("label", "")
+                            if pname and plabel and pname != plabel:
+                                name_to_label[pname] = plabel
+                    if name_to_label:
+                        renamed = {}
+                        for k, v in node_properties.items():
+                            if k in name_to_label:
+                                renamed[name_to_label[k]] = v
+                            else:
+                                renamed[k] = v
+                        node_properties = renamed
+                
                 if "_source_file" in inst:
                     node_properties["_source_file"] = inst["_source_file"]
                 if "_source_chunk_index" in inst:
@@ -1588,16 +2125,14 @@ class OntologyExtractor:
                 if "_domain" in inst:
                     node_properties["_domain"] = inst["_domain"]
                 
-                # 获取所属类的中文名和属性定义
-                inst_type = inst.get("type", "")
-                class_label = class_id_to_label.get(inst_type, "")
-                prop_defs = class_id_to_prop_defs.get(inst_type, [])
+                class_label = class_id_to_label.get(resolved_type_node, "")
                 
                 inst_node_data = {
                     "label": inst["label"],
                     "type": "owl:NamedIndividual",
                     "class_label": class_label,
                     "properties": node_properties,
+                    "source_document": inst.get("_source_file", ""),
                 }
                 if prop_defs:
                     inst_node_data["property_definitions"] = prop_defs
@@ -1613,11 +2148,12 @@ class OntologyExtractor:
 
             # rdf:type 连线（实例 → 类，虚线）
             type_class = inst.get("type")
-            if type_class and type_class in existing_ids:
+            resolved_type_node = det_id_to_node_id.get(type_class, type_class)
+            if resolved_type_node and resolved_type_node in existing_ids:
                 edges.append({
-                    "id": f"e_{iid}_type_{type_class}",
+                    "id": f"e_{iid}_type_{resolved_type_node}",
                     "source": iid,
-                    "target": type_class,
+                    "target": resolved_type_node,
                     "label": "type",
                     "type": "custom",
                     "style": {"strokeDasharray": "5,5"},
@@ -1641,6 +2177,103 @@ class OntologyExtractor:
                             "label": op_label,
                             "type": "custom",
                             "data": {"label": op_label, "prop_id": op_id, "relation": "object_property"},
+                        })
+
+        # Action Type 实例处理
+        if action_instances:
+            action_type_to_node_id: Dict[str, str] = {}
+            for n in nodes:
+                if n.get("data", {}).get("type") == "owl:Class":
+                    raw_id = n.get("data", {}).get("raw_id", "")
+                    node_id = n["id"]
+                    node_label = n.get("data", {}).get("label", "")
+                    is_action = raw_id.startswith("AT_") or node_id.startswith("AT_")
+                    if is_action:
+                        action_type_to_node_id[node_id] = node_id
+                        if raw_id:
+                            action_type_to_node_id[raw_id] = node_id
+                        if node_label:
+                            action_type_to_node_id[node_label] = node_id
+                        for pd in n.get("data", {}).get("property_definitions", []):
+                            if isinstance(pd, dict):
+                                pd_name = pd.get("name", "")
+                                if pd_name:
+                                    action_type_to_node_id[pd_name] = node_id
+
+            logger.info(f"[merge_instances_to_graph_data] Action Type 映射表: {list(action_type_to_node_id.keys())}")
+            logger.info(f"[merge_instances_to_graph_data] 待处理动作实例: {len(action_instances)} 个")
+
+            for ai in action_instances:
+                action_type = ai.get("action_type", "")
+                ai_label = ai.get("label", "")
+                target_label = ai.get("target_instance_label", "")
+                target_type = ai.get("target_type", "")
+                source_quote = ai.get("source_quote", "")
+
+                ai_id = f"action_{make_deterministic_id(ai_label, 'ActionInstance')}"
+
+                if ai_id not in existing_ids:
+                    ai_props = {
+                        "动作类型": action_type,
+                        "目标实例": target_label,
+                        "目标类型": target_type,
+                    }
+                    if source_quote:
+                        ai_props["_source_quote"] = source_quote
+                    if ai.get("_source_file"):
+                        ai_props["_source_file"] = ai.get("_source_file")
+                    if ai.get("_source_chunk_index") is not None:
+                        ai_props["_source_chunk_index"] = ai.get("_source_chunk_index")
+
+                    action_class_id = action_type_to_node_id.get(action_type, "")
+                    if not action_class_id:
+                        for key, val in action_type_to_node_id.items():
+                            if action_type in key or key in action_type:
+                                action_class_id = val
+                                logger.info(f"[merge_instances_to_graph_data] 动作实例 '{ai_label}' 的 action_type '{action_type}' 通过包含关系匹配到节点 '{val}'")
+                                break
+
+                    ai_node_data = {
+                        "label": ai_label,
+                        "type": "owl:NamedIndividual",
+                        "class_label": action_type,
+                        "properties": ai_props,
+                        "source_document": ai.get("_source_file", ""),
+                        "_is_action_instance": True,
+                    }
+                    if action_class_id:
+                        action_class_node = next((n for n in nodes if n["id"] == action_class_id), None)
+                        if action_class_node:
+                            ai_node_data["raw_id"] = action_class_node.get("data", {}).get("raw_id", "")
+                            ai_node_data["class_label"] = action_class_node.get("data", {}).get("label", action_type)
+                    nodes.append({
+                        "id": ai_id,
+                        "type": "custom",
+                        "position": {"x": 0, "y": 0},
+                        "data": ai_node_data,
+                    })
+                    existing_ids.add(ai_id)
+
+                    if action_class_id and action_class_id in existing_ids:
+                        edges.append({
+                            "id": f"e_{ai_id}_type_{action_class_id}",
+                            "source": ai_id,
+                            "target": action_class_id,
+                            "label": "type",
+                            "type": "custom",
+                            "style": {"strokeDasharray": "5,5"},
+                            "data": {"label": "type"},
+                        })
+
+                    tgt_inst_id = label_to_inst_id.get(target_label)
+                    if tgt_inst_id and tgt_inst_id in existing_ids:
+                        edges.append({
+                            "id": f"e_action_{ai_id}_{tgt_inst_id}",
+                            "source": ai_id,
+                            "target": tgt_inst_id,
+                            "label": action_type,
+                            "type": "custom",
+                            "data": {"label": action_type, "relation": "action"},
                         })
 
         return {"nodes": nodes, "edges": edges}
@@ -1936,44 +2569,50 @@ class OntologyExtractor:
             return self.EX[safe_id]
 
         # 写入类相关内容（包括 DataProperty 声明）
-        for cls in schema.get("classes", []):
-            uri = self.EX[cls["id"]]  # 类 ID 已是 C_xxx 格式
+        object_types, link_types, action_types = _normalize_schema_graph(schema)
+        for ot in object_types:
+            uri = self.EX[ot.get("id", ot.get("name", ""))]
             master_g.add((uri, RDF.type, OWL.Class))
-            master_g.add((uri, RDFS.label, Literal(cls["label"], lang="zh")))
-            if cls.get("sub_class_of"):
-                parent_id = cls["sub_class_of"]
-                parent_uri = self.EX[parent_id]  # 父类 ID 已是 C_xxx 格式
+            master_g.add((uri, RDFS.label, Literal(ot.get("label", ""), lang="zh")))
+            if ot.get("description"):
+                master_g.add((uri, RDFS.comment, Literal(ot["description"], lang="zh")))
+            if ot.get("sub_class_of"):
+                parent_id = ot["sub_class_of"]
+                parent_uri = self.EX[parent_id]
                 master_g.add((uri, RDFS.subClassOf, parent_uri))
-            # 声明该类的 DataProperty 骨架
-            prop_defs = cls.get("property_definitions") or []
-            dp_name_to_def = {d["name"]: d for d in prop_defs}
-            for dp_name in cls.get("data_properties", []):
+            prop_defs = ot.get("properties", [])
+            for pd in prop_defs:
+                if not isinstance(pd, dict):
+                    continue
+                dp_name = pd.get("name", "")
                 dp_uri = get_dp_uri(dp_name)
                 master_g.add((dp_uri, RDF.type, OWL.DatatypeProperty))
-                master_g.add((dp_uri, RDFS.label, Literal(dp_name, lang="zh")))
+                dp_label = pd.get("label", dp_name)
+                master_g.add((dp_uri, RDFS.label, Literal(dp_label, lang="zh")))
                 master_g.add((dp_uri, RDFS.domain, uri))
-                dp_def = dp_name_to_def.get(dp_name)
-                if dp_def:
-                    if dp_def.get("description"):
-                        master_g.add((dp_uri, RDFS.comment, Literal(dp_def["description"], lang="zh")))
-                    if dp_def.get("data_type"):
-                        xsd_type_map = {
-                            "string": XSD.string, "number": XSD.decimal,
-                            "boolean": XSD.boolean, "date": XSD.date,
-                            "datetime": XSD.dateTime, "array": XSD.string,
-                            "object": XSD.string,
-                        }
-                        xsd_type = xsd_type_map.get(dp_def["data_type"], XSD.string)
-                        master_g.add((dp_uri, RDFS.range, xsd_type))
+                if pd.get("description"):
+                    master_g.add((dp_uri, RDFS.comment, Literal(pd["description"], lang="zh")))
+                if pd.get("data_type"):
+                    xsd_type_map = {
+                        "string": XSD.string, "number": XSD.decimal,
+                        "boolean": XSD.boolean, "date": XSD.date,
+                        "datetime": XSD.dateTime, "array": XSD.string,
+                        "object": XSD.string,
+                    }
+                    xsd_type = xsd_type_map.get(pd["data_type"], XSD.string)
+                    master_g.add((dp_uri, RDFS.range, xsd_type))
 
-        for op in schema.get("object_properties", []):
-            op_uri = self.EX[op["id"]]
+        for lt in link_types:
+            lt_id = lt.get("id", lt.get("name", ""))
+            op_uri = self.EX[lt_id]
             master_g.add((op_uri, RDF.type, OWL.ObjectProperty))
-            master_g.add((op_uri, RDFS.label, Literal(op["label"], lang="zh")))
-            master_g.add((op_uri, RDFS.domain, self.EX[op["domain"]]))
-            master_g.add((op_uri, RDFS.range, self.EX[op["range"]]))
-            if op.get("description"):
-                master_g.add((op_uri, RDFS.comment, Literal(op["description"], lang="zh")))
+            master_g.add((op_uri, RDFS.label, Literal(lt.get("label", ""), lang="zh")))
+            src_id = lt.get("source_object_type", lt.get("domain", ""))
+            tgt_id = lt.get("target_object_type", lt.get("range", ""))
+            master_g.add((op_uri, RDFS.domain, self.EX[src_id]))
+            master_g.add((op_uri, RDFS.range, self.EX[tgt_id]))
+            if lt.get("description"):
+                master_g.add((op_uri, RDFS.comment, Literal(lt["description"], lang="zh")))
 
         for inst in inst_result.get("instances", []):
             inst_uri = self.EX[inst["id"]]  # 实例 ID 已是 I_xxx 格式
@@ -2096,27 +2735,63 @@ class OntologyExtractor:
         if user_intent:
             intent_instruction = (
                 f"\n【⚡ 用户意图约束】: 用户关注领域为「{user_intent}」。"
-                f"请严格聚焦该领域，提取与之直接相关的类和关系，忽略无关领域的概念。\n"
+                f"请严格聚焦该领域，提取与之直接相关的对象类型和关系，忽略无关领域的概念。\n"
             )
 
-        system_prompt = f"""你是一位精通 OWL2 DL 标准的本体架构师，正在执行「骨架提取」任务。
+        system_prompt = f"""你是一位专业的本体建模专家，擅长从文档中自动构建符合Palantir Ontology核心概念的本体结构。
+
+请从文档中提取以下本体信息：
+
+## 1. Object Types（对象类型）
+文档中出现的所有实体或事件的schema定义。
+每个Object Type需要：
+- name: 类型名称（使用中文命名，如"理财产品"、"风险事件"）
+- label: 中文标签
+- description: 类型描述（必须使用中文，与文档语言一致）
+- primary_key: 唯一标识该对象实例的字段名
+- sub_class_of: 父类名称（如有继承关系）
+- properties: 属性列表，每个属性包含：
+  - name: 属性名称（使用中文命名，如"登记编码"、"风险评级"）
+  - label: 中文属性名
+  - description: 属性描述（必须使用中文）
+  - data_type: 数据类型（string/number/boolean/date/datetime/array/object）
+
+## 2. Link Types（链接类型）
+文档中两个对象类型之间的关系。
+每个Link Type需要：
+- name: 链接名称（使用中文命名，如"购买"、"管理"）
+- label: 中文标签
+- description: 链接描述（必须使用中文）
+- source_object_type: 源对象类型
+- target_object_type: 目标对象类型
+- cardinality: 关系基数（one-to-one/one-to-many/many-to-one/many-to-many）
+
+## 3. Action Types（动作类型）
+文档中描述的对对象可执行的操作。
+每个Action Type需要：
+- name: 动作名称（使用中文命名，如"购买产品"、"赎回产品"）
+- label: 中文标签
+- description: 动作描述（必须使用中文）
+- target_object_type: 作用的对象类型
+- parameters: 参数列表（可选），每个参数包含name、data_type
+
+## 关键规则
+1. 所有description字段必须使用中文（与文档原文语言一致）
+2. 充分挖掘文档中所有实体类型，包括但不限于：核心业务对象、参与者角色、费用/费率结构、时间/期限、文件/合同、风险因素、监管要求等
+3. 每个对象类型的属性要尽可能完整，覆盖文档中提到的所有字段信息（如费率、比例、期限、金额等数值型属性不要遗漏）
+4. 链接类型要覆盖文档中所有明确的关系
+5. Action Type要与文档中描述的业务操作对应（如购买、赎回、调整、报告等）
+6. 属性name统一使用中文命名风格，保持与文档语言一致
+7. 如果文本中存在类的继承/层级关系，必须在 sub_class_of 字段中明确指出父类
+8. 鼓励抽取隐含关系：如果文本中存在明确描述或强烈暗示的关系，即使没有出现"关系名称"，也请提取为Link Type
+{intent_instruction}
 
 【严格约束 - 违反将导致任务失败】：
-1. 【禁止提取实例】: 绝对不允许提取任何具体实例 (NamedIndividual)。只提取抽象的「类」和「属性」。
-   - 错误示例：提取「张三」「产品 A」「订单 001」→ 这些是实例，禁止！
-   - 正确示例：提取「人员」「产品」「订单」→ 这些是类，允许！
-2. 【ID 不由你决定】: 你输出的 id 字段用于辅助识别，最终 ID 将由系统重新计算，请直接用英文语义名（如 "Product", "hasName"）。
-3. 【Label 必须中文】: 所有 label 字段必须是简洁中文（非英文）。
-4. 【Data Property】: 在 classes 的 data_properties 字段中列出该类的属性定义列表，每个属性包含 name（中文属性名）、description（属性描述）、data_type（数据类型：string/number/boolean/date/datetime/array/object）。
-5. 【关系基数】: 在 object_properties 的 cardinality 字段中指明关系基数（one-to-one/one-to-many/many-to-one/many-to-many）。
-5. 【鼓励抽取隐含关系】: 如果文本中存在明确描述或强烈暗示的「系统 A 依赖于系统 B / A 调用 B / A 部署在 B 上 / A 与 B 对接」等关系，
-   即使没有出现"关系名称"这个词，也请将其提取为类与类之间的 ObjectProperty，
-   关系的 label 可用简洁中文动词短语（如「依赖于」「调用」「部署于」「对接」等）。
-6. 【必须提取子类关系】: 如果文本中存在类的继承/层级关系（如"A 是 B 的一种"、"A 属于 B 类"、"A 是 B 的子类"、"A 包括 B"等），
-   必须在 sub_class_of 字段中明确指出父类。这是构建本体层级的关键！
-   - 示例：如果文本提到"量子密钥分发设备是一种量子设备"，则"量子密钥分发设备"的 sub_class_of 应该是"量子设备"的 id。
-   - 示例：如果文本提到"系统包括认证系统和审计系统"，则"认证系统"和"审计系统"的 sub_class_of 应该是"系统"的 id。
-{intent_instruction}
+1. 【禁止提取实例】: 绝对不允许提取任何具体实例。只提取抽象的「对象类型」和「属性」。
+2. 【name必须中文】: 所有 name 字段必须使用中文，禁止使用英文！例如：用"理财产品"而非"FinancialProduct"，用"登记编码"而非"registration_code"，用"购买"而非"PurchasedBy"，用"购买产品"而非"PurchaseProduct"。这是强制要求，违反将导致输出被丢弃。
+3. 【label必须中文】: 所有 label 字段必须是简洁中文。
+4. 【description必须中文】: 所有 description 字段必须使用中文详细描述。
+5. 【source_object_type/target_object_type必须中文】: 链接类型中的源和目标对象类型必须使用中文对象类型名称，如"理财产品"、"投资者"等。
 """
 
         user_prompt_template = """【当前文本片段】:
@@ -2124,38 +2799,52 @@ class OntologyExtractor:
 
 【输出 JSON 格式（严格遵守，不输出任何注释）】:
 {{
-  "classes": [
+  "object_types": [
     {{
-      "id": "Product",
-      "label": "产品",
+      "name": "理财产品",
+      "label": "理财产品",
+      "description": "理财产品，指金融机构接受投资者委托...",
+      "primary_key": "登记编码",
       "sub_class_of": null,
-      "data_properties": [
-        {{"name": "名称", "description": "产品名称", "data_type": "string"}},
-        {{"name": "价格", "description": "产品价格", "data_type": "number"}},
-        {{"name": "规格", "description": "产品规格", "data_type": "string"}}
+      "properties": [
+        {{"name": "登记编码", "label": "登记编码", "description": "理财产品登记编码", "data_type": "string"}},
+        {{"name": "产品名称", "label": "产品名称", "description": "产品名称", "data_type": "string"}},
+        {{"name": "风险评级", "label": "风险评级", "description": "风险评级", "data_type": "string"}}
       ]
     }}
   ],
-  "object_properties": [
+  "link_types": [
     {{
-      "id": "belongsTo",
-      "label": "属于",
-      "description": "产品属于某个类别",
-      "domain": "Product",
-      "range": "Category",
-      "cardinality": "many-to-one"
+      "name": "购买",
+      "label": "购买",
+      "description": "投资者购买理财产品",
+      "source_object_type": "投资者",
+      "target_object_type": "理财产品",
+      "cardinality": "many-to-many"
+    }}
+  ],
+  "action_types": [
+    {{
+      "name": "购买产品",
+      "label": "购买产品",
+      "description": "投资者通过销售渠道购买理财产品",
+      "target_object_type": "理财产品",
+      "parameters": [
+        {{"name": "投资金额", "data_type": "number"}}
+      ]
     }}
   ]
 }}
 
-【约束提醒】: 不得包含 instances 字段。只输出 classes 和 object_properties。
+【约束提醒】: 不得包含 instances 字段。只输出 object_types、link_types 和 action_types。
 """
 
         chunks = self._chunk_text(text, chunk_size=chunk_size, overlap=chunk_overlap)
         total_chunks = len(chunks)
 
-        all_classes: Dict[str, dict] = {}
-        all_obj_props: Dict[str, dict] = {}
+        all_object_types: Dict[str, dict] = {}
+        all_link_types: Dict[str, dict] = {}
+        all_action_types: Dict[str, dict] = {}
 
         for i, chunk in enumerate(chunks):
             check_cancelled()
@@ -2171,67 +2860,97 @@ class OntologyExtractor:
                         await asyncio.sleep(0.1)
                 continue
 
-            for cls in data.get("classes", []):
-                raw_label = (cls.get("label") or "").strip()
-                raw_llm_id = (cls.get("id") or "").strip()
-                if not raw_label:
+            data = _normalize_schema_response(data)
+
+            for ot in data.get("object_types", []):
+                raw_name = (ot.get("name") or "").strip()
+                raw_label = (ot.get("label") or "").strip()
+                if not raw_name:
                     continue
                 norm_label = self._normalize_term(raw_label, user_intent=user_intent)
-                det_id = make_deterministic_id(norm_label, "Class")
-                raw_dp = cls.get("data_properties", [])
-                dp_names = []
-                dp_defs = []
-                for dp in raw_dp:
-                    if isinstance(dp, dict):
-                        dp_names.append(dp.get("name", ""))
-                        dp_defs.append({
-                            "name": dp.get("name", ""),
-                            "description": dp.get("description", ""),
-                            "data_type": dp.get("data_type", "string"),
+                det_id = make_deterministic_id(raw_name, "ObjectType")
+                raw_props = ot.get("properties", [])
+                props = []
+                for p in raw_props:
+                    if isinstance(p, dict):
+                        props.append({
+                            "name": p.get("name", ""),
+                            "label": p.get("label", p.get("name", "")),
+                            "description": p.get("description", ""),
+                            "data_type": p.get("data_type", "string"),
                         })
-                    elif isinstance(dp, str):
-                        dp_names.append(dp)
-                        dp_defs.append({"name": dp, "description": "", "data_type": "string"})
-                if det_id not in all_classes:
-                    all_classes[det_id] = {
+                    elif isinstance(p, str):
+                        props.append({"name": p, "label": p, "description": "", "data_type": "string"})
+                if det_id not in all_object_types:
+                    all_object_types[det_id] = {
                         "id": det_id,
+                        "name": raw_name,
                         "label": norm_label,
+                        "description": ot.get("description", ""),
+                        "primary_key": ot.get("primary_key"),
                         "sub_class_of": None,
-                        "data_properties": dp_names,
-                        "property_definitions": dp_defs,
-                        "_raw_llm_id": raw_llm_id,
+                        "properties": props,
                     }
                 else:
-                    existing_dp_names = set(all_classes[det_id]["data_properties"])
-                    existing_dp_defs = {d["name"]: d for d in all_classes[det_id].get("property_definitions", [])}
-                    for name in dp_names:
-                        existing_dp_names.add(name)
-                    for d in dp_defs:
-                        if d["name"] not in existing_dp_defs:
-                            existing_dp_defs[d["name"]] = d
-                    all_classes[det_id]["data_properties"] = list(existing_dp_names)
-                    all_classes[det_id]["property_definitions"] = list(existing_dp_defs.values())
+                    existing_props = {p["name"]: p for p in all_object_types[det_id].get("properties", [])}
+                    for p in props:
+                        if p["name"] not in existing_props:
+                            existing_props[p["name"]] = p
+                    all_object_types[det_id]["properties"] = list(existing_props.values())
 
-                if cls.get("sub_class_of"):
-                    all_classes[det_id]["_raw_sub_class_of"] = cls["sub_class_of"]
+                if ot.get("sub_class_of"):
+                    all_object_types[det_id]["_raw_sub_class_of"] = ot["sub_class_of"]
 
-            for op in data.get("object_properties", []):
-                raw_label = (op.get("label") or "").strip()
-                raw_domain = (op.get("domain") or "").strip()
-                raw_range = (op.get("range") or "").strip()
-                if not raw_label or not raw_domain or not raw_range:
+            for lt in data.get("link_types", []):
+                raw_name = (lt.get("name") or "").strip()
+                raw_label = (lt.get("label") or "").strip()
+                raw_source = (lt.get("source_object_type") or "").strip()
+                raw_target = (lt.get("target_object_type") or "").strip()
+                if not raw_name or not raw_source or not raw_target:
                     continue
                 norm_label = self._normalize_term(raw_label, user_intent=user_intent)
-                det_id = make_deterministic_id(norm_label, "ObjectProperty")
-                if det_id not in all_obj_props:
-                    all_obj_props[det_id] = {
+                det_id = make_deterministic_id(raw_name, "LinkType")
+                if det_id not in all_link_types:
+                    all_link_types[det_id] = {
                         "id": det_id,
+                        "name": raw_name,
                         "label": norm_label,
-                        "description": op.get("description", ""),
-                        "domain": raw_domain,
-                        "range": raw_range,
-                        "cardinality": op.get("cardinality"),
+                        "description": lt.get("description", ""),
+                        "source_object_type": raw_source,
+                        "target_object_type": raw_target,
+                        "cardinality": lt.get("cardinality"),
                     }
+
+            for at in data.get("action_types", []):
+                raw_name = (at.get("name") or "").strip()
+                raw_label = (at.get("label") or "").strip()
+                raw_target = (at.get("target_object_type") or "").strip()
+                if not raw_name or not raw_target:
+                    continue
+                norm_label = self._normalize_term(raw_label, user_intent=user_intent)
+                det_id = make_deterministic_id(raw_name, "ActionType")
+                raw_params = at.get("parameters", [])
+                params = []
+                for pm in raw_params:
+                    if isinstance(pm, dict):
+                        params.append({"name": pm.get("name", ""), "data_type": pm.get("data_type", "string")})
+                    elif isinstance(pm, str):
+                        params.append({"name": pm, "data_type": "string"})
+                if det_id not in all_action_types:
+                    all_action_types[det_id] = {
+                        "id": det_id,
+                        "name": raw_name,
+                        "label": norm_label,
+                        "description": at.get("description", ""),
+                        "target_object_type": raw_target,
+                        "parameters": params,
+                    }
+                else:
+                    existing_params = {p["name"]: p for p in all_action_types[det_id].get("parameters", [])}
+                    for p in params:
+                        if p["name"] not in existing_params:
+                            existing_params[p["name"]] = p
+                    all_action_types[det_id]["parameters"] = list(existing_params.values())
 
             progress = (i + 1) / total_chunks * 0.9
             report_progress(progress, f"处理分块 {i+1}/{total_chunks}")
@@ -2239,88 +2958,103 @@ class OntologyExtractor:
             if i < total_chunks - 1:
                 await asyncio.sleep(request_interval)
 
-        label_to_det_id: Dict[str, str] = {v["label"]: k for k, v in all_classes.items()}
-        raw_llm_id_to_det_id: Dict[str, str] = {}
-        for det_id, cls_data in all_classes.items():
-            llm_id = cls_data.get("_raw_llm_id", "")
-            if llm_id:
-                raw_llm_id_to_det_id[llm_id] = det_id
-            raw_llm_id_to_det_id[det_id] = det_id
+        name_to_det_id: Dict[str, str] = {v["name"]: k for k, v in all_object_types.items()}
+        label_to_det_id: Dict[str, str] = {v["label"]: k for k, v in all_object_types.items()}
+        det_id_to_name: Dict[str, str] = {k: v["name"] for k, v in all_object_types.items()}
 
-        def resolve_class_id(raw: str) -> Optional[str]:
+        def resolve_to_det_id(raw: str) -> Optional[str]:
             if not raw:
                 return None
-            if raw in all_classes:
+            if raw in all_object_types:
                 return raw
+            if raw in name_to_det_id:
+                return name_to_det_id[raw]
             if raw in label_to_det_id:
                 return label_to_det_id[raw]
-            if raw in raw_llm_id_to_det_id:
-                return raw_llm_id_to_det_id[raw]
             raw_lower = raw.lower()
-            for llm_id, did in raw_llm_id_to_det_id.items():
-                if llm_id.lower() == raw_lower:
+            for n, did in name_to_det_id.items():
+                if n.lower() == raw_lower:
                     return did
             for lbl, did in label_to_det_id.items():
                 if raw in lbl or lbl in raw:
                     return did
             return None
 
-        for det_id, cls_data in all_classes.items():
-            raw_sco = cls_data.pop("_raw_sub_class_of", None)
-            cls_data.pop("_raw_llm_id", None)
-            if raw_sco:
-                resolved = resolve_class_id(raw_sco)
-                if resolved and resolved != det_id:
-                    cls_data["sub_class_of"] = resolved
-                else:
-                    logger.warning(f"[AsyncSchemaExtraction] 子类关系无法解析：{cls_data['label']} 的父类 '{raw_sco}' 未找到")
+        def resolve_to_class_name(raw: str) -> Optional[str]:
+            det_id = resolve_to_det_id(raw)
+            if det_id and det_id in det_id_to_name:
+                return det_id_to_name[det_id]
+            if raw in name_to_det_id:
+                return raw
+            return None
 
-        valid_obj_props: Dict[str, dict] = {}
-        for det_id, op_data in all_obj_props.items():
-            domain_resolved = resolve_class_id(op_data["domain"])
-            range_resolved = resolve_class_id(op_data["range"])
-            if domain_resolved and range_resolved:
-                op_data["domain"] = domain_resolved
-                op_data["range"] = range_resolved
-                valid_obj_props[det_id] = op_data
+        for det_id, ot_data in all_object_types.items():
+            raw_sco = ot_data.pop("_raw_sub_class_of", None)
+            if raw_sco:
+                resolved = resolve_to_class_name(raw_sco)
+                resolved_det_id = resolve_to_det_id(raw_sco)
+                if resolved and resolved_det_id and resolved_det_id != det_id:
+                    ot_data["sub_class_of"] = resolved
+                else:
+                    logger.warning(f"[AsyncSchemaExtraction] 子类关系无法解析：{ot_data['label']} 的父类 '{raw_sco}' 未找到")
+
+        valid_link_types: Dict[str, dict] = {}
+        for det_id, lt_data in all_link_types.items():
+            source_resolved = resolve_to_class_name(lt_data["source_object_type"])
+            target_resolved = resolve_to_class_name(lt_data["target_object_type"])
+            if source_resolved and target_resolved:
+                lt_data["source_object_type"] = source_resolved
+                lt_data["target_object_type"] = target_resolved
+                valid_link_types[det_id] = lt_data
             else:
                 logger.warning(
-                    f"[AsyncSchemaExtraction] ObjectProperty '{op_data['label']}' "
-                    f"domain/range 无法解析，已丢弃"
+                    f"[AsyncSchemaExtraction] LinkType '{lt_data['label']}' "
+                    f"source/target 无法解析，已丢弃"
                 )
 
-        dedup_classes: Dict[str, dict] = {}
-        for det_id, cls_data in all_classes.items():
+        valid_action_types: Dict[str, dict] = {}
+        for det_id, at_data in all_action_types.items():
+            target_resolved = resolve_to_class_name(at_data["target_object_type"])
+            if target_resolved:
+                at_data["target_object_type"] = target_resolved
+                valid_action_types[det_id] = at_data
+            else:
+                logger.warning(
+                    f"[AsyncSchemaExtraction] ActionType '{at_data['label']}' "
+                    f"target_object_type 无法解析，已丢弃"
+                )
+
+        dedup_object_types: Dict[str, dict] = {}
+        for det_id, ot_data in all_object_types.items():
             merged = False
-            for existing_id, existing_data in dedup_classes.items():
-                if names_are_similar(cls_data["label"], existing_data["label"]):
-                    for dp_name in cls_data.get("data_properties", []):
-                        if dp_name not in existing_data["data_properties"]:
-                            existing_data["data_properties"].append(dp_name)
-                    for dp_def in cls_data.get("property_definitions", []):
-                        existing_defs = {d["name"] for d in existing_data.get("property_definitions", [])}
-                        if dp_def["name"] not in existing_defs:
-                            existing_data.setdefault("property_definitions", []).append(dp_def)
+            for existing_id, existing_data in dedup_object_types.items():
+                if names_are_similar(ot_data["label"], existing_data["label"]) or names_are_similar(ot_data["name"], existing_data["name"]):
+                    for p in ot_data.get("properties", []):
+                        existing_names = {ep["name"] for ep in existing_data.get("properties", [])}
+                        if p["name"] not in existing_names:
+                            existing_data.setdefault("properties", []).append(p)
                     merged = True
                     break
             if not merged:
-                dedup_classes[det_id] = cls_data
-        all_classes = dedup_classes
+                dedup_object_types[det_id] = ot_data
+        all_object_types = dedup_object_types
 
         result = {
-            "classes": list(all_classes.values()),
-            "object_properties": list(valid_obj_props.values()),
+            "object_types": list(all_object_types.values()),
+            "link_types": list(valid_link_types.values()),
+            "action_types": list(valid_action_types.values()),
             "metadata": {
                 "total_chunks": total_chunks,
                 "successful_chunks": total_chunks,
                 "failed_chunks": 0,
                 "success_rate": 1.0,
-                "total_classes": len(all_classes),
-                "total_object_properties": len(valid_obj_props),
+                "total_object_types": len(all_object_types),
+                "total_link_types": len(valid_link_types),
+                "total_action_types": len(valid_action_types),
             },
         }
 
-        report_progress(1.0, f"骨架提取完成：{len(result['classes'])} 个类，{len(result['object_properties'])} 个关系")
+        report_progress(1.0, f"骨架提取完成：{len(result['object_types'])} 个对象类型，{len(result['link_types'])} 个链接类型，{len(result['action_types'])} 个动作类型")
         return result
 
     async def async_extract_schema_only(
@@ -2357,7 +3091,7 @@ class OntologyExtractor:
     ) -> Dict[str, Any]:
         logger.info("=" * 80)
         logger.info(f"[AsyncAPI2-InstanceExtraction] 开始实例提取")
-        logger.info(f"[AsyncInstanceExtraction] Schema 包含 {len(schema_graph.get('classes', []))} 个类，{len(schema_graph.get('object_properties', []))} 个关系")
+        logger.info(f"[AsyncInstanceExtraction] Schema 包含 {len(schema_graph.get('object_types', schema_graph.get('classes', [])))} 个对象类型，{len(schema_graph.get('link_types', schema_graph.get('object_properties', [])))} 个链接类型")
 
         def report_progress(progress: float, message: str = ""):
             if progress_callback:
@@ -2371,42 +3105,59 @@ class OntologyExtractor:
 
         report_progress(0.0, "开始实例提取...")
 
-        classes: List[dict] = schema_graph.get("classes", [])
-        obj_props: List[dict] = schema_graph.get("object_properties", [])
+        object_types, link_types, action_types = _normalize_schema_graph(schema_graph)
+        classes = object_types
+        obj_props = link_types
 
         if not classes:
             return {"instances": [], "discarded_edges_count": 0}
 
-        class_id_to_info: Dict[str, dict] = {c['id']: c for c in classes}
-        class_to_subclasses: Dict[str, List[str]] = {c['id']: [] for c in classes}
+        class_id_to_info: Dict[str, dict] = {c.get("id", c.get("name", "")): c for c in classes}
+        class_to_subclasses: Dict[str, List[str]] = {c.get("id", c.get("name", "")): [] for c in classes}
         for c in classes:
-            parent_classes = c.get('parent_classes', []) or c.get('sub_class_of', None)
+            cid = c.get("id", c.get("name", ""))
+            parent_classes = c.get('sub_class_of', None)
             if parent_classes:
                 if isinstance(parent_classes, str):
                     parent_classes = [parent_classes]
                 for parent_id in parent_classes:
                     if parent_id in class_to_subclasses:
-                        class_to_subclasses[parent_id].append(c['id'])
+                        class_to_subclasses[parent_id].append(cid)
 
         class_list_items = []
         for c in classes:
-            cid = c['id']
-            label = c['label']
-            props = ', '.join(c.get('data_properties', []) or []) or '无'
+            cid = c.get("id", c.get("name", ""))
+            label = c.get("label", "")
+            props_list = c.get("properties", [])
+            prop_display_parts = []
+            for p in props_list:
+                if isinstance(p, dict):
+                    pname = p.get("name", "")
+                    plabel = p.get("label", "")
+                    if plabel and plabel != pname:
+                        prop_display_parts.append(f"{plabel}({pname})")
+                    else:
+                        prop_display_parts.append(plabel or pname)
+            prop_names = ', '.join(prop_display_parts) or '无'
             subclasses = class_to_subclasses.get(cid, [])
             subclass_info = ""
             if subclasses:
                 subclass_labels = [class_id_to_info.get(sc, {}).get('label', sc) for sc in subclasses]
                 subclass_info = f" | 子类：{', '.join(subclass_labels)}"
             class_list_items.append(
-                f"  - 类 ID: {cid} | 中文名：{label} | 属性字段：{props}{subclass_info}"
+                f"  - 对象类型: {c.get('name', cid)} | 中文名：{label} | 属性字段：{prop_names}{subclass_info}"
             )
         class_list_str = "\n".join(class_list_items)
 
         op_list_str = "\n".join(
-            f"  - 关系 ID: {op['id']} | 名称：{op['label']} | 起点类：{op['domain']} → 终点类：{op['range']}"
+            f"  - 链接类型: {op.get('name', op.get('id', ''))} | 名称：{op.get('label', '')} | 源对象：{op.get('source_object_type', op.get('domain', ''))} → 目标对象：{op.get('target_object_type', op.get('range', ''))}"
             for op in obj_props
-        ) or "  （当前 Schema 无 ObjectProperty）"
+        ) or "  （当前 Schema 无 LinkType）"
+
+        action_list_str = "\n".join(
+            f"  - 动作类型: {at.get('name', at.get('id', ''))} | 名称：{at.get('label', '')} | 目标对象类型：{at.get('target_object_type', '')} | 参数：{', '.join(p.get('name', '') for p in at.get('parameters', []) if isinstance(p, dict)) or '无'}"
+            for at in action_types
+        ) or "  （当前 Schema 无 ActionType）"
 
         domain_code_clause = ""
         if product_code:
@@ -2426,6 +3177,9 @@ class OntologyExtractor:
 
 【已审核的关系 Schema（连线只能使用这些关系，且必须符合 domain→range）】:
 {op_list_str}
+
+【已审核的动作类型 Schema（动作实例只能使用这些动作类型）】:
+{action_list_str}
 {domain_code_clause}
 {domain_context}
 【子类继承说明】:
@@ -2450,12 +3204,19 @@ class OntologyExtractor:
 11. 【🔴 强制溯源】: 每个实例**必须**包含 `source_quote` 字段，该字段必须一字不差地摘抄原文原句，作为提取该实例的依据。
     - source_quote 必须是原文中的完整句子，不能改写或缩写。
     - 如果无法找到直接支持的原文句子，该实例不应被提取。
+12. 【🔴 data_props 键名必须使用中文】: data_props 中的键名必须使用上方属性字段中显示的中文名（label），不得使用英文名（name）。
+    例如：如果属性字段显示"风险等级(risk_level)"，则 data_props 中应使用"风险等级"作为键名，而非"risk_level"。
+13. 【🔴 必须提取动作实例】: 文本中描述的任何操作、事件、变更、交易等动作，如果其类型在上方动作类型 Schema 中有定义，则必须提取为 action_instance。
+    - 动作实例描述的是"对某个对象执行了什么操作"，例如"购买理财产品""赎回份额""到期兑付""风险评级变更"等。
+    - 即使文本只暗示了某个动作的发生（如"投资者可于开放日赎回"），也应提取为动作实例。
+    - action_type 必须严格匹配上方 Schema 中已定义的动作类型名称。
+    - target_instance_label 必须指向当前文本中已提取的某个实例。
 """
 
         user_prompt_template = """【当前文本片段】:
 "{chunk}"
 
-【输出 JSON 格式（只输出 instances 和 links 数组，不得包含 classes/object_properties 字段）】:
+【输出 JSON 格式（只输出 instances、links 和 action_instances 数组，不得包含 classes/object_properties 字段）】:
 {{
   "instances": [
     {{
@@ -2481,6 +3242,16 @@ class OntologyExtractor:
       "target_type": "Department",
       "source_quote": "张三同志现任技术部经理"
     }}
+  ],
+  "action_instances": [
+    {{
+      "action_type": "购买产品",
+      "label": "张三购买理财产品A",
+      "target_instance_label": "理财产品A",
+      "target_type": "理财产品",
+      "source_quote": "张三于2024年1月购买了理财产品A",
+      "parameters": {{"金额": "10万元"}}
+    }}
   ]
 }}
 
@@ -2489,6 +3260,10 @@ class OntologyExtractor:
 - **links 数组**：除了在实例的 object_props 中声明关系外，还**必须**在 links 数组中显式声明每条关系，包含源和目标的类型信息。
 - links 中的 source_label/target_label 必须与对应实例的 label 完全一致。
 - links 中的 source_type/target_type 必须是上方 Schema 中定义的类 ID 或中文名。
+- **action_instances 数组**：如果文本中描述了某个动作/操作/事件作用于某个对象，且该动作类型在上方 Schema 的动作类型列表中，则必须提取为 action_instance。
+  - action_type 必须是上方 Schema 中已定义的动作类型名称。
+  - target_instance_label 必须是当前文本中已提取的某个实例的 label。
+  - target_type 必须是该实例所属的类 ID 或中文名。
 """
 
         if documents and len(documents) > 0:
@@ -2498,23 +3273,66 @@ class OntologyExtractor:
 
         total_chunks = len(chunks)
 
-        valid_class_ids: Set[str] = {c["id"] for c in classes}
-        op_constraints: Dict[str, Tuple[str, str]] = {op["id"]: (op["domain"], op["range"]) for op in obj_props}
-        op_label_to_id: Dict[str, str] = {op["label"]: op["id"] for op in obj_props}
-        class_label_to_id: Dict[str, str] = {c["label"]: c["id"] for c in classes}
+        valid_class_ids: Set[str] = {c.get("id", c.get("name", "")) for c in classes}
+        valid_class_ids.update({c.get("name", "") for c in classes if c.get("name")})
+        class_label_to_id: Dict[str, str] = {c.get("label", ""): c.get("id", c.get("name", "")) for c in classes}
+        class_name_to_id: Dict[str, str] = {c.get("name", ""): c.get("id", c.get("name", "")) for c in classes}
 
-        class_to_ancestors: Dict[str, Set[str]] = {c["id"]: {c["id"]} for c in classes}
+        def _resolve_class_ref(ref: str) -> str:
+            if not ref:
+                return ref
+            if ref in valid_class_ids:
+                return ref
+            if ref in class_name_to_id:
+                return class_name_to_id[ref]
+            if ref in class_label_to_id:
+                return class_label_to_id[ref]
+            return ref
+
+        op_constraints: Dict[str, Tuple[str, str]] = {}
+        for op in obj_props:
+            op_id = op.get("id", op.get("name", ""))
+            src = _resolve_class_ref(op.get("source_object_type", op.get("domain", "")))
+            tgt = _resolve_class_ref(op.get("target_object_type", op.get("range", "")))
+            op_constraints[op_id] = (src, tgt)
+        op_label_to_id: Dict[str, str] = {op.get("label", ""): op.get("id", op.get("name", "")) for op in obj_props}
+
+        class_to_ancestors: Dict[str, Set[str]] = {}
         for c in classes:
-            parent_classes = c.get('parent_classes', []) or c.get('sub_class_of', None)
+            cid = c.get("id", c.get("name", ""))
+            name = c.get("name", "")
+            label = c.get("label", "")
+            ancestors = {cid}
+            if name and name != cid:
+                ancestors.add(name)
+            if label:
+                ancestors.add(label)
+            class_to_ancestors[cid] = ancestors
+            if name and name != cid:
+                class_to_ancestors[name] = ancestors
+            if label and label != cid and label != name:
+                class_to_ancestors[label] = ancestors
+
+        for c in classes:
+            cid = c.get("id", c.get("name", ""))
+            name = c.get("name", "")
+            label = c.get("label", "")
+            parent_classes = c.get('sub_class_of', None)
             if parent_classes:
                 if isinstance(parent_classes, str):
                     parent_classes = [parent_classes]
-                for parent_id in parent_classes:
+                for parent_ref in parent_classes:
+                    parent_id = _resolve_class_ref(parent_ref)
                     if parent_id in class_to_ancestors:
-                        class_to_ancestors[c["id"]].add(parent_id)
-                        class_to_ancestors[c["id"]].update(class_to_ancestors.get(parent_id, {parent_id}))
+                        parent_ancestors = class_to_ancestors[parent_id]
+                        class_to_ancestors[cid].update(parent_ancestors)
+                        if name and name != cid:
+                            class_to_ancestors[name] = class_to_ancestors[cid]
+                        if label and label != cid and label != name:
+                            class_to_ancestors[label] = class_to_ancestors[cid]
 
         all_instances: Dict[str, dict] = {}
+        all_action_instances: List[dict] = []
         discarded_count = 0
 
         for i, chunk in enumerate(chunks):
@@ -2530,7 +3348,10 @@ class OntologyExtractor:
                 chunk_index = i
 
             logger.info(f"[AsyncInstanceExtraction] 处理分块 {i+1}/{total_chunks} (file={chunk_filename})")
-            user_prompt = user_prompt_template.format(chunk=chunk_text)
+            if chunk_filename and chunk_filename != "unknown":
+                user_prompt = f"""【文档来源】: {chunk_filename}\n""" + user_prompt_template.format(chunk=chunk_text)
+            else:
+                user_prompt = user_prompt_template.format(chunk=chunk_text)
             data = await self._async_call_llm(system_prompt, user_prompt, task_id=task_id, json_schema=INSTANCE_EXTRACTION_JSON_SCHEMA)
 
             if not data:
@@ -2543,11 +3364,13 @@ class OntologyExtractor:
 
             raw_instances = []
             raw_links = []
+            raw_action_instances = []
             if isinstance(data, list):
                 raw_instances = data
             elif isinstance(data, dict):
                 raw_instances = data.get("instances", [])
                 raw_links = data.get("links", data.get("relationships", []))
+                raw_action_instances = data.get("action_instances", [])
             else:
                 continue
 
@@ -2573,6 +3396,8 @@ class OntologyExtractor:
                     resolved_type = raw_type
                 elif raw_type in class_label_to_id:
                     resolved_type = class_label_to_id[raw_type]
+                elif raw_type in class_name_to_id:
+                    resolved_type = class_name_to_id[raw_type]
                 else:
                     discarded_count += 1
                     continue
@@ -2585,11 +3410,13 @@ class OntologyExtractor:
 
                 valid_data_props_keys = set()
                 if resolved_type:
-                    target_cls = next((c for c in classes if c["id"] == resolved_type), None)
+                    target_cls = next((c for c in classes if c.get("id", c.get("name", "")) == resolved_type), None)
                     if target_cls:
-                        direct_props = set(target_cls.get("data_properties", []) or [])
+                        for p in target_cls.get("properties", []):
+                            if isinstance(p, dict):
+                                valid_data_props_keys.add(p.get("name", ""))
                         inherited_props = set(target_cls.get("inherited_properties", []) or [])
-                        valid_data_props_keys = direct_props | inherited_props
+                        valid_data_props_keys = valid_data_props_keys | inherited_props
 
                 raw_obj_props = inst.get("object_props", {})
 
@@ -2647,6 +3474,9 @@ class OntologyExtractor:
                         "label": raw_label,
                         "object_props": valid_obj_props,
                         "data_props": inst.get("data_props", {}),
+                        "_source_file": inst.get("_source_file", ""),
+                        "_source_chunk_index": inst.get("_source_chunk_index", 0),
+                        "_source_quote": inst.get("_source_quote", ""),
                     }
                 else:
                     existing = all_instances[det_id]
@@ -2733,6 +3563,109 @@ class OntologyExtractor:
                 elif target_det_id not in source_inst["object_props"][resolved_op_id]:
                     source_inst["object_props"][resolved_op_id].append(target_det_id)
 
+            for ai in raw_action_instances:
+                action_type_name = ai.get("action_type", "").strip()
+                ai_label = ai.get("label", "").strip()
+                target_instance_label = ai.get("target_instance_label", "").strip()
+                target_type = ai.get("target_type", "").strip()
+
+                if not action_type_name or not ai_label or not target_instance_label:
+                    logger.warning(f"[ActionInstanceDiscard] 动作实例缺少必填字段，已丢弃: {ai}")
+                    continue
+
+                # ─ Action Type 模糊匹配（支持简称、同义词、包含关系）──
+                valid_action_type = False
+                matched_at_name = None
+                
+                # 策略1：精确匹配（name 或 label）
+                for at in action_types:
+                    at_name = at.get("name", "")
+                    at_label = at.get("label", "")
+                    if action_type_name == at_name or action_type_name == at_label:
+                        valid_action_type = True
+                        matched_at_name = at_name
+                        break
+                
+                # 策略2：包含关系匹配（Schema名称包含LLM返回的名称，或反之）
+                if not valid_action_type:
+                    for at in action_types:
+                        at_name = at.get("name", "")
+                        at_label = at.get("label", "")
+                        if (action_type_name in at_name or at_name in action_type_name or
+                            action_type_name in at_label or at_label in action_type_name):
+                            valid_action_type = True
+                            matched_at_name = at_name
+                            logger.info(f"[ActionTypeFuzzyMatch] 动作实例 '{ai_label}' 的 action_type '{action_type_name}' 通过包含关系匹配到 Schema '{at_name}'")
+                            break
+                
+                # 策略3：常见同义词映射
+                if not valid_action_type:
+                    synonym_map = {
+                        "申购": ["申购产品", "购买产品"],
+                        "赎回": ["赎回产品"],
+                        "撤单": ["撤销申请"],
+                        "撤单申请": ["撤销申请"],
+                        "调整业绩比较基准": ["变更业绩比较基准"],
+                        "调整费用": ["调整收费标准", "调整费用"],
+                        "延缓支付": ["延期清算"],
+                        "提前终止": ["提前终止产品", "终止产品"],
+                        "分配收益": ["分红"],
+                        "收取强制赎回费": ["巨额赎回处理"],
+                        "调整投资组合": ["调整投资范围"],
+                        "进行估值": ["暂停估值", "纠正估值错误"],
+                        "增设份额类别": ["调整收费标准"],
+                        "拒绝申购": ["拒绝申请"],
+                        "拒绝赎回": ["拒绝申请"],
+                        "拒绝认购": ["拒绝申请"],
+                        "发布重大事项公告": ["发布产品信息", "发布披露"],
+                    }
+                    for synonym, targets in synonym_map.items():
+                        if action_type_name == synonym or synonym in action_type_name or action_type_name in synonym:
+                            for target in targets:
+                                for at in action_types:
+                                    if at.get("name") == target or at.get("label") == target:
+                                        valid_action_type = True
+                                        matched_at_name = target
+                                        logger.info(f"[ActionTypeSynonym] 动作实例 '{ai_label}' 的 action_type '{action_type_name}' 通过同义词匹配到 Schema '{target}'")
+                                        break
+                                if valid_action_type:
+                                    break
+                        if valid_action_type:
+                            break
+                
+                if valid_action_type and matched_at_name:
+                    action_type_name = matched_at_name
+                if not valid_action_type:
+                    logger.warning(
+                        f"[ActionInstanceDiscard] 动作实例 '{ai_label}' 的 action_type '{action_type_name}' "
+                        f"不在 Schema 中，已丢弃"
+                    )
+                    continue
+
+                resolved_target_type = _resolve_class_ref(target_type)
+                if resolved_target_type not in valid_class_ids:
+                    logger.warning(
+                        f"[ActionInstanceDiscard] 动作实例 '{ai_label}' 的 target_type '{target_type}' "
+                        f"不在 Schema 中，已丢弃"
+                    )
+                    continue
+
+                ai_data = {
+                    "action_type": action_type_name,
+                    "label": ai_label,
+                    "target_instance_label": target_instance_label,
+                    "target_type": resolved_target_type,
+                    "source_quote": ai.get("source_quote", ""),
+                    "parameters": ai.get("parameters", {}),
+                    "_source_file": chunk_filename,
+                    "_source_chunk_index": chunk_index,
+                }
+                if ai.get("id"):
+                    ai_data["id"] = ai["id"]
+
+                all_action_instances.append(ai_data)
+                logger.debug(f"[ActionInstanceProcess] 动作实例：'{ai_label}' (type={action_type_name}, target={target_instance_label}, file={chunk_filename}, chunk={chunk_index})")
+
             progress = (i + 1) / total_chunks * 0.9
             report_progress(progress, f"处理分块 {i+1}/{total_chunks}")
 
@@ -2741,6 +3674,7 @@ class OntologyExtractor:
 
         result = {
             "instances": list(all_instances.values()),
+            "action_instances": all_action_instances,
             "discarded_edges_count": discarded_count,
             "metadata": {
                 "total_chunks": total_chunks,
@@ -2748,12 +3682,13 @@ class OntologyExtractor:
                 "failed_chunks": 0,
                 "success_rate": 1.0,
                 "total_instances": len(all_instances),
+                "total_action_instances": len(all_action_instances),
                 "total_edges": sum(len(inst.get("object_props", {})) for inst in all_instances.values()),
                 "discarded_edges_count": discarded_count,
             },
         }
-        report_progress(1.0, f"实例提取完成：{len(result['instances'])} 个实例")
-        logger.info(f"[AsyncInstanceExtraction] 完成：{len(result['instances'])} 个实例，{discarded_count} 条不合规连线已丢弃")
+        report_progress(1.0, f"实例提取完成：{len(result['instances'])} 个实例，{len(all_action_instances)} 个动作实例")
+        logger.info(f"[AsyncInstanceExtraction] 完成：{len(result['instances'])} 个实例，{len(all_action_instances)} 个动作实例，{discarded_count} 条不合规连线已丢弃")
         return result
 
     async def async_extract_instances_with_constraints(

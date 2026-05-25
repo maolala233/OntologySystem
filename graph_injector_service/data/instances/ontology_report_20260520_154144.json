@@ -1,0 +1,208 @@
+{
+  "timestamp": "20260520_154144",
+  "duration_seconds": 11627.482609,
+  "schema_summary": {
+    "object_types_count": 31,
+    "link_types_count": 26,
+    "action_types_count": 14,
+    "object_type_names": [
+      "WealthManagementProduct",
+      "Investor",
+      "ProductManager",
+      "SalesAgent",
+      "InvestmentAsset",
+      "RiskProfile",
+      "RegulatoryBody",
+      "InvestmentStrategy",
+      "AssetManager",
+      "Custodian",
+      "InvestmentAdvisor",
+      "Distributor",
+      "InvestmentTarget",
+      "NonStandardizedAsset",
+      "ShareClass",
+      "Regulator",
+      "Fee",
+      "Risk",
+      "RiskFactor",
+      "Asset",
+      "AssetClass",
+      "Manager",
+      "RiskRating",
+      "InvestorType",
+      "Channel",
+      "Contract",
+      "SalesDocument",
+      "InvestmentRestriction",
+      "InvestmentScope",
+      "InvestmentProhibition",
+      "LiquidityStatus"
+    ],
+    "link_type_names": [
+      "ManagedBy",
+      "SoldBy",
+      "InvestsIn",
+      "InvestsInAsset",
+      "HasRiskProfile",
+      "RegulatedBy",
+      "Advises",
+      "CustodiedBy",
+      "AdvisedBy",
+      "Holds",
+      "RelatedPartyOf",
+      "Discloses",
+      "ApplicableTo",
+      "AssociatedFee",
+      "PurchasedBy",
+      "ExposesTo",
+      "SuitableFor",
+      "HasRiskRating",
+      "AvailableIn",
+      "IncludesContract",
+      "IncludesSalesDocument",
+      "HasRestriction",
+      "HasScope",
+      "HasProhibition",
+      "BelongsToClass",
+      "HasLiquidityStatus"
+    ],
+    "action_type_names": [
+      "Purchase",
+      "Redeem",
+      "QueryInfo",
+      "ReportIssue",
+      "Subscribe",
+      "ReportNonStandardizedAsset",
+      "UpdateValuation",
+      "AdjustInvestmentScope",
+      "ReportRisk",
+      "Liquidate",
+      "UpdateProductInfo",
+      "RedeemProduct",
+      "RegisterProduct",
+      "AdjustRiskRating"
+    ]
+  },
+  "instance_summary": {
+    "total_nodes": 186,
+    "total_edges": 128,
+    "type_distribution": {
+      "WealthManagementProduct": 6,
+      "ProductManager": 2,
+      "RiskProfile": 2,
+      "Risk": 15,
+      "InvestmentAsset": 14,
+      "InvestmentRestriction": 20,
+      "RegulatoryBody": 5,
+      "Channel": 14,
+      "Contract": 6,
+      "SalesDocument": 5,
+      "RiskFactor": 18,
+      "Investor": 3,
+      "RiskRating": 2,
+      "InvestmentScope": 8,
+      "AssetClass": 6,
+      "LiquidityStatus": 2,
+      "InvestmentAdvisor": 1,
+      "Distributor": 3,
+      "NonStandardizedAsset": 1,
+      "Fee": 8,
+      "ShareClass": 12,
+      "InvestorType": 8,
+      "AssetManager": 1,
+      "SalesAgent": 11,
+      "Custodian": 1,
+      "InvestmentProhibition": 10,
+      "Asset": 1,
+      "InvestmentStrategy": 1
+    },
+    "link_type_distribution": {
+      "ManagedBy": 3,
+      "HasRiskProfile": 3,
+      "HasRiskRating": 3,
+      "InvestsInAsset": 14,
+      "HasRestriction": 16,
+      "RegulatedBy": 5,
+      "AvailableIn": 11,
+      "IncludesContract": 6,
+      "IncludesSalesDocument": 5,
+      "ExposesTo": 22,
+      "SuitableFor": 2,
+      "ApplicableTo": 2,
+      "HasScope": 7,
+      "RelatedPartyOf": 2,
+      "PurchasedBy": 3,
+      "Discloses": 1,
+      "AssociatedFee": 9,
+      "SoldBy": 6,
+      "CustodiedBy": 1,
+      "HasProhibition": 5,
+      "HasLiquidityStatus": 1,
+      "Advises": 1
+    }
+  },
+  "per_pdf_summary": {
+    "信银理财安盈象固收稳利十四个月封闭式242号理财产品-产品说明书-20260212.pdf": {
+      "status": "success",
+      "nodes_count": 82,
+      "edges_count": 65,
+      "metadata": {
+        "chunk_stats": {
+          "total_chunks": 6,
+          "successful_chunks": 6,
+          "failed_chunks": 0,
+          "success_rate": 1.0
+        },
+        "ontology_stats": {
+          "object_types": 31,
+          "link_types": 26,
+          "total_objects": 82,
+          "total_links": 65
+        }
+      }
+    },
+    "信银理财慧盈象固收增利六个月持有期108号理财产品-产品说明书-20260210.pdf": {
+      "status": "success",
+      "nodes_count": 78,
+      "edges_count": 79,
+      "metadata": {
+        "chunk_stats": {
+          "total_chunks": 5,
+          "successful_chunks": 5,
+          "failed_chunks": 0,
+          "success_rate": 1.0
+        },
+        "ontology_stats": {
+          "object_types": 31,
+          "link_types": 26,
+          "total_objects": 78,
+          "total_links": 79
+        }
+      }
+    },
+    "信银理财日盈象天天利55号现金管理型理财产品-产品说明书-20260205.pdf": {
+      "status": "success",
+      "nodes_count": 86,
+      "edges_count": 45,
+      "metadata": {
+        "chunk_stats": {
+          "total_chunks": 5,
+          "successful_chunks": 5,
+          "failed_chunks": 0,
+          "success_rate": 1.0
+        },
+        "ontology_stats": {
+          "object_types": 31,
+          "link_types": 26,
+          "total_objects": 86,
+          "total_links": 45
+        }
+      }
+    }
+  },
+  "output_files": {
+    "schema": "data/schemas/ontology_20260520_160050.json",
+    "merged_result": "/home/lenovo/Documents/PythonProject/inject_test/data/instances/ontology_merged_result_20260520_154144.json",
+    "report": "/home/lenovo/Documents/PythonProject/inject_test/data/instances/ontology_report_20260520_154144.json"
+  }
+}

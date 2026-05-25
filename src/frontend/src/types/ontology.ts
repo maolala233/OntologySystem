@@ -14,6 +14,11 @@ export interface OntologyNodeData {
     class_label?: string;
     properties?: Record<string, any>;
     property_definitions?: DataPropertyDef[];
+    description?: string;
+    source_document?: string;
+    parameters?: { name: string; data_type: string }[];
+    raw_id?: string;
+    _is_action_instance?: boolean;
     currentLang?: 'zh' | 'en';
 }
 
