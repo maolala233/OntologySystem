@@ -13,6 +13,7 @@ WebVOWL/
 src/frontend/dist/
 test/
 offline_packages/
+graph_injector_service/
 
 # files
 *.pyc

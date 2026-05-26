@@ -32,6 +32,9 @@ class Project(Base):
     # TTL 文件内容（同步到 Neo4j 之前的最终形态）
     ttl_content = Column(LONGTEXT, nullable=True)
     
+    # RAGFlow 注入配置
+    inject_config = Column(JSON, nullable=True)
+    
     is_published = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
@@ -195,6 +198,9 @@ def init_db():
     print("🔨 [Database] Creating tables...")
     Base.metadata.create_all(bind=engine)
     print("✅ [Database] All tables created")
+
+    # 自动迁移：检测并添加缺失的列
+    _auto_migrate(engine)
     
     # 创建测试用户和示例数据
     db = SessionLocal()
@@ -344,4 +350,54 @@ def _create_initial_data(db):
     except Exception as e:
         print(f"⚠️ [Database] Failed to create initial data: {e}")
         db.rollback()
+
+
+def _auto_migrate(eng):
+    """
+    自动检测并添加缺失的列到已有表中
+    SQLAlchemy 的 create_all 只创建不存在的表，不会添加新列到已存在的表
+    此函数检查模型定义与实际表结构的差异，自动执行 ALTER TABLE
+    """
+    import pymysql
+
+    MIGRATIONS = {
+        "projects": [
+            ("inject_config", "JSON", "NULL"),
+        ],
+    }
+
+    try:
+        conn = pymysql.connect(
+            host=settings.MYSQL_HOST,
+            port=settings.MYSQL_PORT,
+            user=settings.MYSQL_USER,
+            password=settings.MYSQL_PASSWORD,
+            database=settings.MYSQL_DATABASE,
+        )
+        cursor = conn.cursor()
+
+        for table_name, columns in MIGRATIONS.items():
+            try:
+                cursor.execute(f"SHOW TABLES LIKE '{table_name}'")
+                if not cursor.fetchone():
+                    continue
+
+                cursor.execute(f"SHOW COLUMNS FROM `{table_name}`")
+                existing_cols = {row[0] for row in cursor.fetchall()}
+
+                for col_name, col_type, col_extra in columns:
+                    if col_name not in existing_cols:
+                        sql = f"ALTER TABLE `{table_name}` ADD COLUMN `{col_name}` {col_type} {col_extra}"
+                        print(f"🔧 [Migration] {sql}")
+                        cursor.execute(sql)
+                        conn.commit()
+                        print(f"✅ [Migration] Added column `{col_name}` to `{table_name}`")
+            except Exception as e:
+                print(f"⚠️ [Migration] Failed to migrate table `{table_name}`: {e}")
+                conn.rollback()
+
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"⚠️ [Migration] Auto-migrate failed: {e}")
 

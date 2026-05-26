@@ -197,6 +197,12 @@ const OntologyBuilderPage: React.FC = () => {
     const [testingEmbedding, setTestingEmbedding] = useState(false);
     const [testingMilvus, setTestingMilvus] = useState(false);
 
+    // RAGFlow 注入相关状态
+    const [isInjectModalOpen, setIsInjectModalOpen] = useState(false);
+    const [injectForm] = Form.useForm();
+    const [injecting, setInjecting] = useState(false);
+    const [testingES, setTestingES] = useState(false);
+
     // 提取配置参数（从系统配置中读取）
     const [extractConfig, setExtractConfig] = useState({
         chunk_size: 15000,
@@ -1166,6 +1172,91 @@ const OntologyBuilderPage: React.FC = () => {
             message.success('TTL 文件已开始下载');
         } catch (error: any) {
             message.error(error.response?.data?.detail || '下载 TTL 文件失败');
+        }
+    };
+
+    const handleOpenInjectModal = async () => {
+        if (!projectId) return;
+        try {
+            const res = await projectsApi.getInjectConfig(Number(projectId));
+            const config = res.data || {};
+            const isMasked = (v: string) => v && (v === '******' || v.includes('****'));
+            injectForm.setFieldsValue({
+                es_host: config.es_host || 'localhost',
+                es_port: config.es_port || 9200,
+                es_user: config.es_user || 'elastic',
+                es_password: isMasked(config.es_password) ? '' : (config.es_password || ''),
+                es_use_ssl: config.es_use_ssl || false,
+                ragflow_host: config.ragflow_host || 'http://localhost:9380',
+                ragflow_api_key: isMasked(config.ragflow_api_key) ? '' : (config.ragflow_api_key || ''),
+                user_id: config.user_id || '',
+                kb_id: config.kb_id || '',
+                embedding_base_url: config.embedding_base_url || 'http://localhost:11434/v1',
+                embedding_model: config.embedding_model || 'bge-m3:latest',
+                embedding_api_key: isMasked(config.embedding_api_key) ? '' : (config.embedding_api_key || ''),
+                embedding_dim: config.embedding_dim || 1024,
+            });
+        } catch {
+            injectForm.setFieldsValue({
+                es_host: 'localhost',
+                es_port: 9200,
+                es_user: 'elastic',
+                es_password: '',
+                ragflow_host: 'http://localhost:9380',
+                embedding_base_url: 'http://localhost:11434/v1',
+                embedding_model: 'bge-m3:latest',
+                embedding_dim: 1024,
+            });
+        }
+        setIsInjectModalOpen(true);
+    };
+
+    const handleSaveInjectConfig = async () => {
+        if (!projectId) return;
+        try {
+            const values = await injectForm.validateFields();
+            await projectsApi.saveInjectConfig(Number(projectId), values);
+            message.success('注入配置已保存');
+        } catch (error: any) {
+            message.error(error.response?.data?.detail || '保存配置失败');
+        }
+    };
+
+    const handleTestESConnection = async () => {
+        if (!projectId) return;
+        setTestingES(true);
+        try {
+            await handleSaveInjectConfig();
+            const res = await projectsApi.testInjectConnection(Number(projectId));
+            if (res.status === 'success') {
+                message.success(res.message);
+            } else {
+                message.error(res.message);
+            }
+        } catch (error: any) {
+            message.error(error.response?.data?.detail || '测试连接失败');
+        } finally {
+            setTestingES(false);
+        }
+    };
+
+    const handleInjectToRagflow = async () => {
+        if (!projectId) return;
+        setInjecting(true);
+        try {
+            await handleSaveInjectConfig();
+            const res = await projectsApi.injectToRagflow(Number(projectId));
+            if (res.status === 'success') {
+                const data = res.data;
+                message.success(`注入成功！实体新增=${data.entities_created}，更新=${data.entities_updated}，关系新增=${data.relations_created}，更新=${data.relations_updated}`);
+                setIsInjectModalOpen(false);
+            } else {
+                message.error(res.message || '注入失败');
+            }
+        } catch (error: any) {
+            message.error(error.response?.data?.detail || '注入失败');
+        } finally {
+            setInjecting(false);
         }
     };
 
@@ -2473,6 +2564,9 @@ const OntologyBuilderPage: React.FC = () => {
                                     <Tooltip title="下载 TTL">
                                         <Button size="small" icon={<DownloadOutlined />} onClick={handleDownloadTTL} className="border-gray-300 hover:bg-gray-50" />
                                     </Tooltip>
+                                    <Tooltip title="注入到 RAGFlow">
+                                        <Button size="small" icon={<ThunderboltOutlined />} onClick={handleOpenInjectModal} className="border-orange-400 text-orange-600 hover:bg-orange-50" />
+                                    </Tooltip>
                                     <Tooltip title="配置知识域">
                                         <Button 
                                             size="small" 
@@ -3484,6 +3578,82 @@ const OntologyBuilderPage: React.FC = () => {
                                         <Button onClick={testEmbeddingConnectivity} loading={testingEmbedding} size="small"><ApiOutlined className="mr-1" />Embedding</Button>
                                         <Button onClick={testMilvusConnectivity} loading={testingMilvus} size="small"><ClusterOutlined className="mr-1" />Milvus</Button>
                                     </div>
+                                </div>
+                            </Form>
+                        </Modal>
+
+                        {/* RAGFlow 注入配置 Modal */}
+                        <Modal
+                            title={<div className="flex items-center gap-2"><ThunderboltOutlined className="text-orange-500" /><span>注入到 RAGFlow</span></div>}
+                            open={isInjectModalOpen}
+                            onCancel={() => setIsInjectModalOpen(false)}
+                            width={680}
+                            maskClosable={false}
+                            footer={[
+                                <Button key="cancel" onClick={() => setIsInjectModalOpen(false)}>取消</Button>,
+                                <Button key="save" onClick={handleSaveInjectConfig}>保存配置</Button>,
+                                <Button key="test" onClick={handleTestESConnection} loading={testingES}>测试ES连接</Button>,
+                                <Button key="inject" type="primary" onClick={handleInjectToRagflow} loading={injecting}
+                                    className="bg-orange-500 hover:bg-orange-600 border-none"
+                                >开始注入</Button>,
+                            ]}
+                        >
+                            <div className="bg-orange-50 p-3 mb-4 rounded border border-orange-100 flex gap-2">
+                                <InfoCircleOutlined className="text-orange-600 mt-0.5 flex-shrink-0" />
+                                <div className="text-orange-800 text-sm">将当前本体图谱注入到 RAGFlow 的 Elasticsearch 中，使其支持知识图谱检索。请先确保 RAGFlow 服务已启动且知识库已创建。</div>
+                            </div>
+                            <Form form={injectForm} layout="vertical">
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div className="col-span-2 border-b border-gray-200 pb-2 mb-1">
+                                        <span className="font-medium text-gray-700 text-sm">Elasticsearch 配置</span>
+                                    </div>
+                                    <Form.Item name="es_host" label="ES 主机" rules={[{ required: true, message: '请输入ES主机地址' }]}>
+                                        <Input placeholder="localhost" />
+                                    </Form.Item>
+                                    <Form.Item name="es_port" label="ES 端口" rules={[{ required: true, message: '请输入ES端口' }]}>
+                                        <Input type="number" placeholder="1200" />
+                                    </Form.Item>
+                                    <Form.Item name="es_user" label="ES 用户名" rules={[{ required: true, message: '请输入ES用户名' }]}>
+                                        <Input placeholder="elastic" />
+                                    </Form.Item>
+                                    <Form.Item name="es_password" label="ES 密码">
+                                        <Input.Password placeholder="infini_rag_flow" />
+                                    </Form.Item>
+                                    <Form.Item name="es_use_ssl" valuePropName="checked" label="启用SSL">
+                                        <Switch />
+                                    </Form.Item>
+
+                                    <div className="col-span-2 border-b border-gray-200 pb-2 mb-1 mt-2">
+                                        <span className="font-medium text-gray-700 text-sm">RAGFlow 配置</span>
+                                    </div>
+                                    <Form.Item name="ragflow_host" label="RAGFlow 地址" className="col-span-2" rules={[{ required: true, message: '请输入RAGFlow地址' }]}>
+                                        <Input placeholder="http://localhost:9380" />
+                                    </Form.Item>
+                                    <Form.Item name="ragflow_api_key" label="RAGFlow API Key" className="col-span-2" rules={[{ required: true, message: '请输入RAGFlow API Key' }]}>
+                                        <Input.Password placeholder="ragflow-xxxxxxxxxxxx" />
+                                    </Form.Item>
+                                    <Form.Item name="user_id" label="User ID (Tenant ID)" className="col-span-2" rules={[{ required: true, message: '请输入User ID' }]}>
+                                        <Input placeholder="RAGFlow 租户ID" />
+                                    </Form.Item>
+                                    <Form.Item name="kb_id" label="知识库 ID (KB ID)" className="col-span-2" rules={[{ required: true, message: '请输入知识库ID' }]}>
+                                        <Input placeholder="RAGFlow 知识库ID" />
+                                    </Form.Item>
+
+                                    <div className="col-span-2 border-b border-gray-200 pb-2 mb-1 mt-2">
+                                        <span className="font-medium text-gray-700 text-sm">Embedding 配置</span>
+                                    </div>
+                                    <Form.Item name="embedding_base_url" label="Embedding 地址" className="col-span-2">
+                                        <Input placeholder="http://localhost:11434/v1" />
+                                    </Form.Item>
+                                    <Form.Item name="embedding_model" label="Embedding 模型" className="col-span-2">
+                                        <Input placeholder="bge-m3:latest" />
+                                    </Form.Item>
+                                    <Form.Item name="embedding_api_key" label="Embedding API Key" className="col-span-2">
+                                        <Input.Password placeholder="留空则无需认证" />
+                                    </Form.Item>
+                                    <Form.Item name="embedding_dim" label="向量维度">
+                                        <Input type="number" placeholder="1024" />
+                                    </Form.Item>
                                 </div>
                             </Form>
                         </Modal>

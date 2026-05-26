@@ -479,4 +479,26 @@ export const projectsApi = {
         );
         return response.data;
     },
+
+    // ==================== RAGFlow 注入 API ====================
+
+    getInjectConfig: async (projectId: number): Promise<any> => {
+        const response = await apiClient.get(`/api/projects/${projectId}/inject-config`);
+        return response.data;
+    },
+
+    saveInjectConfig: async (projectId: number, config: Record<string, any>): Promise<any> => {
+        const response = await apiClient.post(`/api/projects/${projectId}/inject-config`, config);
+        return response.data;
+    },
+
+    testInjectConnection: async (projectId: number): Promise<any> => {
+        const response = await apiClient.post(`/api/projects/${projectId}/test-inject-connection`);
+        return response.data;
+    },
+
+    injectToRagflow: async (projectId: number): Promise<any> => {
+        const response = await apiClient.post(`/api/projects/${projectId}/inject-to-ragflow`);
+        return response.data;
+    },
 };

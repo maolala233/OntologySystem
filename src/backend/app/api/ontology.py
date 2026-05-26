@@ -3485,3 +3485,158 @@ async def qa_endpoint(
         "answer": answer,
         "references": references,
     }
+
+
+# ─────────────────────────────────────────────
+#  ★ RAGFlow 图谱注入接口
+# ─────────────────────────────────────────────
+
+@router.get("/{project_id}/inject-config")
+async def get_inject_config(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    if project.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="无权限访问此项目")
+
+    config = project.inject_config or {}
+    masked_config = {}
+    for k, v in config.items():
+        if k == "es_password" and v:
+            masked_config[k] = "******"
+        elif k == "ragflow_api_key" and v:
+            masked_config[k] = v[:4] + "****" + v[-4:] if len(v) > 8 else "****"
+        else:
+            masked_config[k] = v
+
+    return {"status": "success", "data": masked_config}
+
+
+@router.post("/{project_id}/inject-config")
+async def save_inject_config(
+    project_id: int,
+    config: Dict[str, Any],
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    if project.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="无权限访问此项目")
+
+    existing_config = project.inject_config or {}
+
+    for key in ["es_host", "es_port", "es_user", "es_password", "es_use_ssl",
+                "ragflow_api_key", "ragflow_host", "user_id", "kb_id",
+                "embedding_base_url", "embedding_model", "embedding_api_key", "embedding_dim"]:
+        if key in config:
+            if key == "es_password" and config[key] == "******":
+                pass
+            elif key == "ragflow_api_key" and "****" in str(config[key]):
+                pass
+            elif key == "embedding_api_key" and "****" in str(config[key]):
+                pass
+            else:
+                existing_config[key] = config[key]
+
+    project.inject_config = existing_config
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(project, "inject_config")
+    db.commit()
+
+    return {"status": "success", "message": "注入配置已保存"}
+
+
+@router.post("/{project_id}/test-inject-connection")
+async def test_inject_connection(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    if project.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="无权限访问此项目")
+
+    config = project.inject_config
+    if not config:
+        return {"status": "error", "message": "请先配置注入参数"}
+
+    es_host = config.get("es_host", "localhost")
+    es_port = int(config.get("es_port", 9200))
+    es_user = config.get("es_user", "elastic")
+    es_password = config.get("es_password", "")
+    es_use_ssl = config.get("es_use_ssl", False)
+
+    from app.infrastructure.es_client import ESClient
+    es = ESClient(host=es_host, port=es_port, user=es_user, password=es_password, use_ssl=es_use_ssl)
+    result = es.test_connection()
+    es.close()
+
+    if result.get("status") == "ok":
+        return {"status": "success", "message": f"ES连接成功 (版本: {result.get('version', 'unknown')})"}
+    else:
+        return {"status": "error", "message": f"ES连接失败: {result.get('message', '未知错误')}"}
+
+
+@router.post("/{project_id}/inject-to-ragflow")
+async def inject_to_ragflow(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    if project.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="无权限访问此项目")
+
+    config = project.inject_config
+    if not config:
+        raise HTTPException(status_code=400, detail="请先配置注入参数")
+
+    graph_data = project.graph_data
+    if not graph_data or not isinstance(graph_data, dict):
+        raise HTTPException(status_code=400, detail="项目没有图谱数据，请先构建本体")
+
+    nodes = graph_data.get("nodes", [])
+    edges = graph_data.get("edges", [])
+    if not nodes:
+        raise HTTPException(status_code=400, detail="图谱中没有节点，请先构建本体")
+
+    kb_id = config.get("kb_id", "")
+    user_id = config.get("user_id", "")
+    if not kb_id or not user_id:
+        raise HTTPException(status_code=400, detail="请配置 kb_id 和 user_id")
+
+    import uuid
+    doc_id = str(uuid.uuid4())
+
+    from app.services.inject_service import GraphInjectService
+
+    service = GraphInjectService(
+        es_host=config.get("es_host", "localhost"),
+        es_port=int(config.get("es_port", 9200)),
+        es_user=config.get("es_user", "elastic"),
+        es_password=config.get("es_password", ""),
+        es_use_ssl=config.get("es_use_ssl", False),
+        embedding_base_url=config.get("embedding_base_url", "http://localhost:11434/v1"),
+        embedding_model=config.get("embedding_model", "bge-m3:latest"),
+        embedding_api_key=config.get("embedding_api_key", ""),
+        embedding_dim=int(config.get("embedding_dim", 1024)),
+    )
+
+    try:
+        result = await service.inject_graph(nodes, edges, kb_id, user_id, doc_id)
+        return {"status": "success", "data": result}
+    except Exception as e:
+        logger.error(f"注入RAGFlow失败: {e}")
+        raise HTTPException(status_code=500, detail=f"注入失败: {str(e)}")
+    finally:
+        service.close()
