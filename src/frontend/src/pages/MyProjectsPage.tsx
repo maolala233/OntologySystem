@@ -1,17 +1,23 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { Card, Button, Empty, Spin, Modal, Form, Input, message, Tag, Space } from 'antd';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
+import { Card, Button, Empty, Spin, Modal, Form, Input, message, Tag, Space, Checkbox, Select, InputNumber } from 'antd';
 import {
     PlusOutlined,
     EditOutlined,
     DeleteOutlined,
     EyeOutlined,
     CloudUploadOutlined,
+    SearchOutlined,
+    SortAscendingOutlined,
+    DeleteFilled,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Layout/Navbar';
 import { projectsApi } from '../api/projects';
 import { ProjectData } from '../types/ontology';
 import KnowledgeDomainSelector from '../components/KnowledgeDomainSelector';
+
+type SortField = 'created_at' | 'name' | 'node_count';
+type SortOrder = 'asc' | 'desc';
 
 const MyProjectsPage: React.FC = () => {
     const navigate = useNavigate();
@@ -25,6 +31,11 @@ const MyProjectsPage: React.FC = () => {
     const [selectedDomainId, setSelectedDomainId] = useState<number | undefined>(undefined);
     const [selectedDomainName, setSelectedDomainName] = useState<string | undefined>(undefined);
     const scrollPositionRef = useRef<number>(0);
+
+    const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+    const [searchText, setSearchText] = useState('');
+    const [sortField, setSortField] = useState<SortField>('created_at');
+    const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
     useEffect(() => {
         loadProjects();
@@ -62,7 +73,6 @@ const MyProjectsPage: React.FC = () => {
             setSelectedDomainId(undefined);
             setSelectedDomainName(undefined);
 
-            // 立即跳转到该项目的编辑页面
             navigate(`/ontology-builder/${newProject.id}`);
         } catch (error: any) {
             message.error('创建失败，请稍后重试');
@@ -80,7 +90,6 @@ const MyProjectsPage: React.FC = () => {
 
     const handleUpdateProject = async (values: any) => {
         if (!editingProject) return;
-        // 保存当前滚动位置到 ref
         scrollPositionRef.current = window.scrollY;
         try {
             await projectsApi.updateProject(editingProject.id, {
@@ -90,7 +99,6 @@ const MyProjectsPage: React.FC = () => {
             message.success('项目信息更新成功！');
             setIsEditModalOpen(false);
             setEditingProject(null);
-            // 直接更新本地状态而不是重新加载整个列表
             setProjects((prevProjects) =>
                 prevProjects.map((project) =>
                     project.id === editingProject.id
@@ -98,7 +106,6 @@ const MyProjectsPage: React.FC = () => {
                         : project
                 )
             );
-            // 恢复滚动位置
             setTimeout(() => {
                 window.scrollTo(0, scrollPositionRef.current);
             }, 50);
@@ -118,6 +125,11 @@ const MyProjectsPage: React.FC = () => {
                 try {
                     await projectsApi.deleteProject(projectId);
                     message.success('删除成功');
+                    setSelectedIds(prev => {
+                        const next = new Set(prev);
+                        next.delete(projectId);
+                        return next;
+                    });
                     loadProjects();
                 } catch (error) {
                     message.error('删除失败');
@@ -125,6 +137,102 @@ const MyProjectsPage: React.FC = () => {
             },
         });
     };
+
+    const handleBatchDelete = () => {
+        if (selectedIds.size === 0) {
+            message.warning('请先选择要删除的项目');
+            return;
+        }
+        Modal.confirm({
+            title: '批量删除确认',
+            content: `确定要删除选中的 ${selectedIds.size} 个项目吗？删除后无法恢复。`,
+            okText: '确定删除',
+            cancelText: '取消',
+            okButtonProps: { danger: true },
+            onOk: async () => {
+                let successCount = 0;
+                let failCount = 0;
+                for (const projectId of selectedIds) {
+                    try {
+                        await projectsApi.deleteProject(projectId);
+                        successCount++;
+                    } catch {
+                        failCount++;
+                    }
+                }
+                if (failCount === 0) {
+                    message.success(`成功删除 ${successCount} 个项目`);
+                } else {
+                    message.warning(`成功删除 ${successCount} 个项目，${failCount} 个删除失败`);
+                }
+                setSelectedIds(new Set());
+                loadProjects();
+            },
+        });
+    };
+
+    const toggleSelect = (projectId: number) => {
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            if (next.has(projectId)) {
+                next.delete(projectId);
+            } else {
+                next.add(projectId);
+            }
+            return next;
+        });
+    };
+
+    const toggleSelectAll = () => {
+        if (selectedIds.size === filteredAndSortedProjects.length && filteredAndSortedProjects.length > 0) {
+            setSelectedIds(new Set());
+        } else {
+            setSelectedIds(new Set(filteredAndSortedProjects.map(p => p.id)));
+        }
+    };
+
+    const handleSortChange = (value: SortField) => {
+        if (value === sortField) {
+            setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+        } else {
+            setSortField(value);
+            setSortOrder('desc');
+        }
+    };
+
+    const filteredAndSortedProjects = useMemo(() => {
+        let result = [...projects];
+
+        if (searchText.trim()) {
+            const keyword = searchText.trim().toLowerCase();
+            result = result.filter(p => p.name.toLowerCase().includes(keyword));
+        }
+
+        result.sort((a, b) => {
+            let cmp = 0;
+            switch (sortField) {
+                case 'name':
+                    cmp = a.name.localeCompare(b.name, 'zh-CN');
+                    break;
+                case 'node_count':
+                    cmp = (a.graph_data?.nodes?.length || 0) - (b.graph_data?.nodes?.length || 0);
+                    break;
+                case 'created_at':
+                default:
+                    cmp = new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
+                    break;
+            }
+            return sortOrder === 'asc' ? cmp : -cmp;
+        });
+
+        return result;
+    }, [projects, searchText, sortField, sortOrder]);
+
+    const sortOptions = [
+        { label: '创建时间', value: 'created_at' },
+        { label: '项目名称', value: 'name' },
+        { label: '节点数量', value: 'node_count' },
+    ];
 
     const breadcrumbs = [
         { title: '首页', path: '/' },
@@ -140,6 +248,55 @@ const MyProjectsPage: React.FC = () => {
             />
 
             <div className="p-4 sm:p-6">
+                {projects.length > 0 && (
+                    <div className="mb-4 flex flex-wrap items-center gap-3">
+                        <Input
+                            prefix={<SearchOutlined className="text-gray-400" />}
+                            placeholder="搜索项目名称..."
+                            value={searchText}
+                            onChange={e => setSearchText(e.target.value)}
+                            allowClear
+                            style={{ width: 260 }}
+                        />
+                        <div className="flex items-center gap-2">
+                            <span className="text-gray-500 text-sm">排序：</span>
+                            <Select
+                                value={sortField}
+                                onChange={handleSortChange}
+                                options={sortOptions}
+                                style={{ width: 130 }}
+                                size="small"
+                            />
+                            <Button
+                                size="small"
+                                icon={<SortAscendingOutlined style={{ transform: sortOrder === 'desc' ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />}
+                                onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
+                                title={sortOrder === 'asc' ? '升序' : '降序'}
+                            />
+                        </div>
+                        <div className="flex-1" />
+                        {selectedIds.size > 0 && (
+                            <div className="flex items-center gap-2">
+                                <span className="text-sm text-gray-500">已选 {selectedIds.size} 项</span>
+                                <Button
+                                    danger
+                                    size="small"
+                                    icon={<DeleteFilled />}
+                                    onClick={handleBatchDelete}
+                                >
+                                    批量删除
+                                </Button>
+                                <Button
+                                    size="small"
+                                    onClick={() => setSelectedIds(new Set())}
+                                >
+                                    取消选择
+                                </Button>
+                            </div>
+                        )}
+                    </div>
+                )}
+
                 {loading ? (
                     <div className="flex justify-center items-center h-96">
                         <Spin size="large" />
@@ -160,86 +317,132 @@ const MyProjectsPage: React.FC = () => {
                             </Button>
                         </Empty>
                     </div>
-                ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
-                        {projects.map((project) => (
-                            <Card
-                                key={project.id}
-                                hoverable
-                                className="rounded-xl shadow-md hover:shadow-xl transition-shadow duration-300"
-                                cover={
-                                    <div className="h-32 sm:h-40 bg-gradient-to-br from-blue-400 via-purple-400 to-pink-400 flex items-center justify-center">
-                                        <div className="text-white text-4xl sm:text-6xl font-bold opacity-20">
-                                            {project.name.charAt(0).toUpperCase()}
-                                        </div>
-                                    </div>
-                                }
-                                actions={[
-                                    <Button
-                                        type="text"
-                                        icon={<EyeOutlined />}
-                                        onClick={() => navigate(`/ontology-builder/${project.id}`)}
-                                        className="text-xs sm:text-sm"
-                                    >
-                                        <span className="hidden sm:inline">查看</span>
-                                    </Button>,
-                                    <Button
-                                        type="text"
-                                        icon={<EditOutlined />}
-                                        onClick={() => handleEditProject(project)}
-                                        className="text-xs sm:text-sm"
-                                    >
-                                        <span className="hidden sm:inline">信息</span>
-                                    </Button>,
-                                    <Button
-                                        type="text"
-                                        icon={<EditOutlined />}
-                                        onClick={() => navigate(`/ontology-builder/${project.id}`)}
-                                        className="text-xs sm:text-sm"
-                                    >
-                                        <span className="hidden sm:inline">编辑</span>
-                                    </Button>,
-                                    <Button
-                                        type="text"
-                                        danger
-                                        icon={<DeleteOutlined />}
-                                        onClick={() => handleDeleteProject(project.id)}
-                                        className="text-xs sm:text-sm"
-                                    >
-                                        <span className="hidden sm:inline">删除</span>
-                                    </Button>,
-                                ]}
-                            >
-                                <Card.Meta
-                                    title={
-                                        <div className="flex items-center justify-between">
-                                            <span className="truncate">{project.name}</span>
-                                            {project.is_published && (
-                                                <Tag color="green" className="ml-2 flex-shrink-0">
-                                                    已发布
-                                                </Tag>
-                                            )}
-                                        </div>
-                                    }
-                                    description={
-                                        <div className="text-gray-500 text-sm">
-                                            <div className="truncate mb-2">
-                                                {project.description || '暂无描述'}
-                                            </div>
-                                            <div className="flex items-center justify-between text-xs">
-                                                <span>
-                                                    节点：{project.graph_data?.nodes?.length || 0}
-                                                </span>
-                                                <span>
-                                                    关系：{project.graph_data?.edges?.length || 0}
-                                                </span>
-                                            </div>
-                                        </div>
-                                    }
-                                />
-                            </Card>
-                        ))}
+                ) : filteredAndSortedProjects.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-96 px-4">
+                        <Empty
+                            description="没有找到匹配的项目"
+                            image={Empty.PRESENTED_IMAGE_SIMPLE}
+                        >
+                            <Button onClick={() => setSearchText('')}>清除搜索</Button>
+                        </Empty>
                     </div>
+                ) : (
+                    <>
+                        {filteredAndSortedProjects.length > 0 && (
+                            <div className="mb-3 flex items-center gap-2">
+                                <Checkbox
+                                    checked={selectedIds.size === filteredAndSortedProjects.length && filteredAndSortedProjects.length > 0}
+                                    indeterminate={selectedIds.size > 0 && selectedIds.size < filteredAndSortedProjects.length}
+                                    onChange={toggleSelectAll}
+                                >
+                                    <span className="text-sm text-gray-500">全选</span>
+                                </Checkbox>
+                                <span className="text-xs text-gray-400">共 {filteredAndSortedProjects.length} 个项目</span>
+                            </div>
+                        )}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
+                            {filteredAndSortedProjects.map((project) => {
+                                const isSelected = selectedIds.has(project.id);
+                                return (
+                                    <div key={project.id} className="relative">
+                                        <div
+                                            className={`absolute top-3 left-3 z-10 ${isSelected ? 'opacity-100' : 'opacity-0 hover:opacity-60'} transition-opacity`}
+                                            onClick={(e) => { e.stopPropagation(); toggleSelect(project.id); }}
+                                        >
+                                            <Checkbox checked={isSelected} />
+                                        </div>
+                                        <Card
+                                            hoverable
+                                            className={`rounded-xl shadow-md hover:shadow-xl transition-all duration-300 cursor-pointer ${isSelected ? 'ring-2 ring-blue-500 ring-offset-1' : ''}`}
+                                            cover={
+                                                <div
+                                                    className="h-32 sm:h-40 bg-gradient-to-br from-blue-400 via-purple-400 to-pink-400 flex items-center justify-center"
+                                                    onClick={() => navigate(`/ontology-builder/${project.id}`)}
+                                                >
+                                                    <div className="text-white text-4xl sm:text-6xl font-bold opacity-20">
+                                                        {project.name.charAt(0).toUpperCase()}
+                                                    </div>
+                                                </div>
+                                            }
+                                            actions={[
+                                                <Button
+                                                    type="text"
+                                                    icon={<EyeOutlined />}
+                                                    onClick={() => navigate(`/ontology-builder/${project.id}`)}
+                                                    className="text-xs sm:text-sm"
+                                                >
+                                                    <span className="hidden sm:inline">查看</span>
+                                                </Button>,
+                                                <Button
+                                                    type="text"
+                                                    icon={<EditOutlined />}
+                                                    onClick={() => handleEditProject(project)}
+                                                    className="text-xs sm:text-sm"
+                                                >
+                                                    <span className="hidden sm:inline">信息</span>
+                                                </Button>,
+                                                <Button
+                                                    type="text"
+                                                    icon={<EditOutlined />}
+                                                    onClick={() => navigate(`/ontology-builder/${project.id}`)}
+                                                    className="text-xs sm:text-sm"
+                                                >
+                                                    <span className="hidden sm:inline">编辑</span>
+                                                </Button>,
+                                                <Button
+                                                    type="text"
+                                                    danger
+                                                    icon={<DeleteOutlined />}
+                                                    onClick={(e) => { e.stopPropagation(); handleDeleteProject(project.id); }}
+                                                    className="text-xs sm:text-sm"
+                                                >
+                                                    <span className="hidden sm:inline">删除</span>
+                                                </Button>,
+                                            ]}
+                                        >
+                                            <Card.Meta
+                                                title={
+                                                    <div className="flex items-center justify-between">
+                                                        <span
+                                                            className="truncate cursor-pointer hover:text-blue-500 transition-colors"
+                                                            onClick={() => navigate(`/ontology-builder/${project.id}`)}
+                                                        >
+                                                            {project.name}
+                                                        </span>
+                                                        {project.is_published && (
+                                                            <Tag color="green" className="ml-2 flex-shrink-0">
+                                                                已发布
+                                                            </Tag>
+                                                        )}
+                                                    </div>
+                                                }
+                                                description={
+                                                    <div className="text-gray-500 text-sm">
+                                                        <div className="truncate mb-2">
+                                                            {project.description || '暂无描述'}
+                                                        </div>
+                                                        <div className="flex items-center justify-between text-xs">
+                                                            <span>
+                                                                节点：{project.graph_data?.nodes?.length || 0}
+                                                            </span>
+                                                            <span>
+                                                                关系：{project.graph_data?.edges?.length || 0}
+                                                            </span>
+                                                        </div>
+                                                        {project.created_at && (
+                                                            <div className="text-xs text-gray-400 mt-1">
+                                                                {new Date(project.created_at).toLocaleDateString('zh-CN')}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                }
+                                            />
+                                        </Card>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </>
                 )}
             </div>
 

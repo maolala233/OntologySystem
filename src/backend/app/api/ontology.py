@@ -1982,10 +1982,12 @@ def _build_extractor(
 
 def generate_ttl_from_graph_data(nodes: List[dict], edges: List[dict]) -> str:
     """
-    ★ 全生命周期 TTL 同步：将前端 nodes+edges 反向序列化为标准 OWL TTL。
+    全生命周期 TTL 同步：将前端 nodes+edges 反向序列化为标准 OWL TTL。
     使用 rdflib 保证 RDF 语义正确性。
+    支持 Action Type：导出为 owl:Class + ex:isActionType "true"^^xsd:boolean 标注，
+    动作参数导出为 DatatypeProperty 并标注 ex:isActionParameter。
     """
-    from rdflib import Graph, Literal, RDF, RDFS, OWL, Namespace, URIRef
+    from rdflib import Graph, Literal, RDF, RDFS, OWL, Namespace, URIRef, XSD
     import hashlib
 
     g = Graph()
@@ -2023,7 +2025,9 @@ def generate_ttl_from_graph_data(nodes: List[dict], edges: List[dict]) -> str:
         prefix = "Node"
         if node_id.startswith('C_'):
             prefix = "C"
-        elif node_id.startswith('I_'):
+        elif node_id.startswith('AT_'):
+            prefix = "AT"
+        elif node_id.startswith('I_') or node_id.startswith('action_I_'):
             prefix = "I"
         elif node_id.startswith('OP_'):
             prefix = "OP"
@@ -2054,13 +2058,23 @@ def generate_ttl_from_graph_data(nodes: List[dict], edges: List[dict]) -> str:
         node_id = str(node['id'])
         node_label = node['data'].get('label', node_id)
         node_type = node['data'].get('type', 'owl:Class')
+        raw_id = node['data'].get('raw_id', '')
+        is_action_type = (node_type == 'owl:Class') and (raw_id.startswith('AT_') or node_id.startswith('AT_'))
+        is_action_instance = node['data'].get('_is_action_instance', False)
         uri = make_uri(node_id)
         node_uris[node_id] = uri
 
         if node_type == 'owl:Class':
             g.add((uri, RDF.type, OWL.Class))
+            if is_action_type:
+                g.add((uri, ex["isActionType"], Literal("true", datatype=XSD.boolean)))
+                desc = node['data'].get('description', '')
+                if desc:
+                    g.add((uri, RDFS.comment, Literal(desc, lang="zh")))
         elif node_type == 'owl:NamedIndividual':
             g.add((uri, RDF.type, OWL.NamedIndividual))
+            if is_action_instance:
+                g.add((uri, ex["isActionInstance"], Literal("true", datatype=XSD.boolean)))
         else:
             class_uri = make_uri(node_type)
             g.add((uri, RDF.type, class_uri))
@@ -2068,20 +2082,32 @@ def generate_ttl_from_graph_data(nodes: List[dict], edges: List[dict]) -> str:
 
         g.add((uri, RDFS.label, Literal(node_label, lang="zh")))
 
+        if is_action_type and node['data'].get('parameters'):
+            for param in node['data']['parameters']:
+                if isinstance(param, dict) and param.get('name'):
+                    param_id = f"action_param_{hashlib.md5(param['name'].encode('utf-8')).hexdigest()[:8]}"
+                    param_uri = ex[param_id]
+                    g.add((param_uri, RDF.type, OWL.DatatypeProperty))
+                    g.add((param_uri, RDFS.label, Literal(param['name'], lang="zh")))
+                    g.add((param_uri, RDFS.domain, uri))
+                    g.add((param_uri, ex["isActionParameter"], Literal("true", datatype=XSD.boolean)))
+                    if param.get('data_type'):
+                        g.add((param_uri, RDFS.comment, Literal(f"参数类型: {param['data_type']}", lang="zh")))
+
         for prop_name, prop_value in node['data'].get('properties', {}).items():
+            if prop_name.startswith('_source_'):
+                continue
             dataprop_id = generate_safe_prop_id(prop_name)
-            if not dataprop_id:  # Should not happen with MD5 fallback
+            if not dataprop_id:
                 continue
             
             dataprop_uri = ex[dataprop_id]
             g.add((dataprop_uri, RDF.type, OWL.DatatypeProperty))
             g.add((dataprop_uri, RDFS.label, Literal(prop_name, lang="zh")))
             
-            # 如果是类节点，添加 rdfs:domain 关联（即使无值，也声明属性骨架）
             if node_type == 'owl:Class':
                 g.add((dataprop_uri, RDFS.domain, uri))
             
-            # 只有在有实际值时才添加三元组数据
             if prop_value:
                 g.add((uri, dataprop_uri, Literal(str(prop_value), lang="zh") if isinstance(prop_value, str) else Literal(prop_value)))
 
@@ -2131,23 +2157,21 @@ def generate_ttl_from_graph_data(nodes: List[dict], edges: List[dict]) -> str:
             if relation_label in ('rdf:type', 'type'):
                 g.add((source_uri, RDF.type, target_uri))
             elif relation_label in ('subClassOf', 'subclass_of') or relation == 'subclass_of':
-                # 使用标准的 rdfs:subClassOf
                 g.add((source_uri, RDFS.subClassOf, target_uri))
             else:
-                # 优先使用 schema 中定义的 prop_id
                 prop_info = existing_obj_properties.get(relation)
                 if prop_info:
                     prop_id, label = prop_info
                 else:
-                    # 如果没有找到，使用 relation_label 生成
                     prop_id = generate_safe_prop_id(relation_label)
                     if not prop_id:
-                        # Fallback if generate_safe_prop_id somehow fails
                         prop_id = f"prop_{abs(hash(relation_label)) % 10000}"
                 
                 objprop_uri = ex[prop_id]
                 g.add((objprop_uri, RDF.type, OWL.ObjectProperty))
                 g.add((objprop_uri, RDFS.label, Literal(relation_label, lang="zh")))
+                if relation == 'action':
+                    g.add((objprop_uri, ex["isActionProperty"], Literal("true", datatype=XSD.boolean)))
                 g.add((source_uri, objprop_uri, target_uri))
 
     return g.serialize(format="turtle")
@@ -2475,6 +2499,7 @@ def convert_ttl_to_graph_data(ttl_content: str):
     
     g = Graph()
     g.parse(data=ttl_content, format="turtle")
+    ex = Namespace("http://www.example.org/auto_ontology#")
 
     nodes = []
     edges = []
@@ -2567,48 +2592,92 @@ def convert_ttl_to_graph_data(ttl_content: str):
                 break
 
         props = {}
+        raw_id = ''
+        is_action_type = False
+        is_action_instance = False
+        parameters = []
+        description = ''
+
+        for obj in g.objects(uri, ex["isActionType"]):
+            if str(obj).lower() == 'true':
+                is_action_type = True
+                raw_id = f"AT_{node_id}" if not node_id.startswith('AT_') else node_id
+                break
+
+        for obj in g.objects(uri, ex["isActionInstance"]):
+            if str(obj).lower() == 'true':
+                is_action_instance = True
+                break
+
+        for obj in g.objects(uri, RDFS.comment):
+            desc_val = str(obj)
+            if desc_val and not desc_val.startswith('参数类型:'):
+                description = desc_val
+            break
         
-        # 1. 解析直接关联的数据属性值（通过谓词 - 对象匹配）
         for pred, obj in g.predicate_objects(uri):
             pred_uri = str(pred)
             
-            # 跳过元属性
             if pred_uri in [str(RDF.type), str(RDFS.label), str(RDFS.subClassOf),
-                            str(RDFS.domain), str(RDFS.range)]:
+                            str(RDFS.domain), str(RDFS.range),
+                            str(ex["isActionType"]), str(ex["isActionInstance"])]:
                 continue
             
-            # 检查这个谓词是否是一个 DatatypeProperty
             if pred_uri in datatype_props:
                 prop_info = datatype_props[pred_uri]
                 prop_label = prop_info['label']
-                # 只收集字面量值（非 URI）
                 if isinstance(obj, Literal) or not str(obj).startswith('http'):
                     props[prop_label] = str(obj)
-                    logger.info(f"[convert_ttl_to_graph_data] 节点 {node_id} 添加属性 {prop_label} = {str(obj)}")
             else:
-                # 对于未显式声明为 DatatypeProperty 的谓词，也尝试收集
                 p_name = str(pred).split('#')[-1]
                 if isinstance(obj, Literal) or not str(obj).startswith('http'):
                     props[p_name] = str(obj)
 
-        # 2. 如果是类节点，添加 schema 中定义的 data_properties 作为预定义属性
-        if node_type_category == "owl:Class":
+        if is_action_type:
+            for prop_uri, prop_info in datatype_props.items():
+                is_action_param = False
+                for _ in g.objects(URIRef(prop_uri), ex["isActionParameter"]):
+                    is_action_param = True
+                    break
+                if is_action_param and prop_info['domain'] == node_id:
+                    param_comment = ''
+                    for c in g.objects(URIRef(prop_uri), RDFS.comment):
+                        param_comment = str(c)
+                        break
+                    param_data_type = ''
+                    if param_comment.startswith('参数类型: '):
+                        param_data_type = param_comment[len('参数类型: '):]
+                    parameters.append({
+                        'name': prop_info['label'],
+                        'data_type': param_data_type,
+                    })
+                    continue
+                if prop_info['domain'] == node_id and prop_info['label'] not in props:
+                    props[prop_info['label']] = ""
+        elif node_type_category == "owl:Class":
             for prop_uri, prop_info in datatype_props.items():
                 domain_id = prop_info['domain']
                 if domain_id == node_id and prop_info['label'] not in props:
-                    # 将预定义属性添加到 properties 中，值为空字符串（表示待填写）
                     props[prop_info['label']] = ""
-                    logger.info(f"[convert_ttl_to_graph_data] 类 {node_id} 添加预定义属性 {prop_info['label']}")
+
+        node_data = {
+            "label": label,
+            "type": node_type_category,
+            "properties": props,
+        }
+        if is_action_type:
+            node_data["raw_id"] = raw_id
+            node_data["description"] = description
+            node_data["parameters"] = parameters
+        if is_action_instance:
+            node_data["_is_action_instance"] = True
+            node_data["raw_id"] = raw_id
 
         nodes.append({
             "id": node_id,
             "type": "custom",
             "position": {"x": 0, "y": 0},
-            "data": {
-                "label": label,
-                "type": node_type_category,
-                "properties": props,
-            },
+            "data": node_data,
         })
         processed_nodes.add(node_id)
         return node_id
@@ -2682,9 +2751,13 @@ def convert_ttl_to_graph_data(ttl_content: str):
         label_objs = list(g.objects(prop, RDFS.label))
         prop_label = str(label_objs[0]) if label_objs else str(prop).split('#')[-1]
         
-        # 获取 prop_id（从 URI 中提取）
         prop_uri_str = str(prop)
         prop_id = prop_uri_str.split('#')[-1] if '#' in prop_uri_str else prop_uri_str.split('/')[-1]
+
+        is_action_prop = False
+        for _ in g.objects(prop, ex["isActionProperty"]):
+            is_action_prop = True
+            break
 
         if domain and range_:
             source_id = add_node(domain[0], "owl:Class")
@@ -2697,11 +2770,10 @@ def convert_ttl_to_graph_data(ttl_content: str):
                 "type": "custom",
                 "data": {
                     "label": prop_label,
-                    "relation": prop_label,
-                    "prop_id": prop_id,  # 添加 prop_id 以便导出时使用
+                    "relation": "action" if is_action_prop else prop_label,
+                    "prop_id": prop_id,
                 },
             })
-            logger.info(f"[convert_ttl_to_graph_data] 添加 ObjectProperty 边：{source_id} -> {target_id} ({prop_label})")
 
     # ★ 新增：rdf:Property（对象属性）domain → range 边
     for prop in g.subjects(RDF.type, RDF.Property):

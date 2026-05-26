@@ -11,6 +11,12 @@ import { KnowledgeDomain } from '../api/domains';
 
 const { TreeNode } = Tree;
 
+const PROP_NAME_MAP: Record<string, string> = {
+    _source_file: '来源文档',
+    _source_quote: '原文内容',
+};
+const PROP_HIDDEN_SET = new Set(['_source_chunk_index']);
+
 const AssetDetailPage: React.FC = () => {
     const { projectId } = useParams<{ projectId: string }>();
     const navigate = useNavigate();
@@ -462,15 +468,15 @@ const AssetDetailPage: React.FC = () => {
                                     <Input disabled />
                                 </Form.Item>
                                 {(() => {
-                                    // 兼容多种属性字段格式
                                     const propsObj = selectedElement.data?.properties || 
                                                      selectedElement.data?.data?.properties || 
                                                      selectedElement.data?.data || {};
-                                    // 过滤掉 type 和 label 字段
                                     const filteredProps: Record<string, any> = {};
                                     Object.entries(propsObj).forEach(([key, value]) => {
+                                        if (PROP_HIDDEN_SET.has(key)) return;
                                         if (key !== 'type' && key !== 'label' && value !== undefined && value !== null && value !== '') {
-                                            filteredProps[key] = value;
+                                            const displayName = PROP_NAME_MAP[key] || key;
+                                            filteredProps[displayName] = value;
                                         }
                                     });
                                     

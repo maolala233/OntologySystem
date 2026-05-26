@@ -12,6 +12,7 @@ import {
     Spin,
     Tooltip,
     Select,
+    AutoComplete,
     Tag,
     Divider,
     Switch,
@@ -518,6 +519,35 @@ const OntologyBuilderPage: React.FC = () => {
         message.success('已添加新类，请编辑节点名称');
     };
 
+    const addNewActionType = () => {
+        const rawId = `AT_${Date.now().toString(36)}`;
+        const newNode: OntologyNode = {
+            id: rawId,
+            type: 'custom',
+            position: { x: window.innerWidth / 2 - 200, y: window.innerHeight / 2 - 200 },
+            data: {
+                label: '新动作类',
+                type: 'owl:Class',
+                raw_id: rawId,
+                description: '',
+                parameters: [],
+                properties: {}
+            },
+        };
+        setNodes((nds) => nds.concat(newNode));
+        setIsNewNode(true);
+        setHighlightNodeId(newNode.id);
+
+        setSelectedElement(newNode);
+        setIsDrawerOpen(true);
+        form.setFieldsValue({
+            label: '新动作类',
+            type: 'owl:Class',
+            properties: []
+        });
+        message.success('已添加新动作类，请编辑节点名称和参数');
+    };
+
     const addNewInstance = () => {
         const classNodes = nodes.filter(node => node.data?.type === 'owl:Class');
         if (classNodes.length === 0) {
@@ -533,14 +563,25 @@ const OntologyBuilderPage: React.FC = () => {
             const values = await addInstanceForm.validateFields();
             const { instanceLabel, parentClassId } = values;
 
+            const parentNode = nodes.find(n => n.id === parentClassId);
+            const parentRawId = parentNode?.data?.raw_id || '';
+            const isActionParent = parentRawId.startsWith('AT_') || parentClassId.startsWith('AT_');
+
             const newNode: OntologyNode = {
-                id: `node_${Date.now()}`,
+                id: isActionParent ? `action_I_${Date.now().toString(36)}` : `node_${Date.now()}`,
                 type: 'custom',
                 position: { x: Math.random() * 400 + 100, y: Math.random() * 400 + 100 },
                 data: {
                     label: instanceLabel,
                     type: 'owl:NamedIndividual',
-                    properties: {}
+                    properties: {},
+                    ...(isActionParent ? {
+                        _is_action_instance: true,
+                        raw_id: parentRawId,
+                        class_label: parentNode?.data?.label || '',
+                    } : {
+                        class_label: parentNode?.data?.label || '',
+                    }),
                 },
             };
 
@@ -560,7 +601,7 @@ const OntologyBuilderPage: React.FC = () => {
                 return newSet;
             });
 
-            message.success('已添加新实例');
+            message.success(isActionParent ? '已添加新动作实例' : '已添加新实例');
             setIsAddInstanceModalOpen(false);
             addInstanceForm.resetFields();
         } catch (error) {
@@ -2317,9 +2358,14 @@ const OntologyBuilderPage: React.FC = () => {
 
                                 {/* 节点操作组 */}
                                 <div className="flex items-center gap-1 px-2 border-r border-gray-200">
-                                    <Tooltip title="新增类">
+                                    <Tooltip title="新增对象类">
                                         <Button size="small" icon={<PlusOutlined />} onClick={addNewClass} className="border-blue-500 text-blue-600 hover:bg-blue-50">
                                             类
+                                        </Button>
+                                    </Tooltip>
+                                    <Tooltip title="新增动作类">
+                                        <Button size="small" icon={<ThunderboltOutlined />} onClick={addNewActionType} className="border-gray-500 text-gray-600 hover:bg-gray-50">
+                                            动作类
                                         </Button>
                                     </Tooltip>
                                     <Tooltip title="新增实例">
@@ -2538,9 +2584,20 @@ const OntologyBuilderPage: React.FC = () => {
 
                                             <Form.Item name="type" label="节点类型">
                                                 <Input disabled value={
-                                                    form.getFieldValue('type') === 'owl:Class' 
-                                                        ? '类 (Class)' 
-                                                        : `实例 (Individual)${selectedElement?.data?.class_label ? ' - ' + selectedElement.data.class_label : ''}`
+                                                    (() => {
+                                                        const rawId = selectedElement?.data?.raw_id || '';
+                                                        const nodeId = selectedElement?.id || '';
+                                                        const isAT = rawId.startsWith('AT_') || nodeId.startsWith('AT_');
+                                                        const isActionInst = selectedElement?.data?._is_action_instance;
+                                                        if (form.getFieldValue('type') === 'owl:Class') {
+                                                            return isAT ? '动作类 (Action Type)' : '对象类 (Object Type)';
+                                                        } else {
+                                                            if (isActionInst) {
+                                                                return `动作实例 (Action Individual)${selectedElement?.data?.class_label ? ' - ' + selectedElement.data.class_label : ''}`;
+                                                            }
+                                                            return `对象实例 (Individual)${selectedElement?.data?.class_label ? ' - ' + selectedElement.data.class_label : ''}`;
+                                                        }
+                                                    })()
                                                 } />
                                             </Form.Item>
 
@@ -2565,20 +2622,25 @@ const OntologyBuilderPage: React.FC = () => {
                                                 </div>
                                             )}
 
-                                            {selectedElement?.data?.type === 'action' && selectedElement?.data?.parameters && (
-                                                <div className="mb-4">
-                                                    <div className="flex items-center gap-2 mb-2 pb-2 border-b border-gray-100">
-                                                        <ThunderboltOutlined className="text-orange-500" />
-                                                        <span className="font-medium text-gray-700">动作参数</span>
-                                                    </div>
-                                                    {selectedElement.data.parameters.map((param: any, idx: number) => (
-                                                        <div key={idx} className="flex gap-2 mb-1 items-center">
-                                                            <Tag color="orange">{param.name}</Tag>
-                                                            <Tag color="default">{param.data_type}</Tag>
+                                            {(() => {
+                                                const rawId = selectedElement?.data?.raw_id || '';
+                                                const nodeId = selectedElement?.id || '';
+                                                const isAT = rawId.startsWith('AT_') || nodeId.startsWith('AT_');
+                                                return isAT && selectedElement?.data?.parameters && selectedElement.data.parameters.length > 0 ? (
+                                                    <div className="mb-4">
+                                                        <div className="flex items-center gap-2 mb-2 pb-2 border-b border-gray-100">
+                                                            <ThunderboltOutlined className="text-orange-500" />
+                                                            <span className="font-medium text-gray-700">动作参数</span>
                                                         </div>
-                                                    ))}
-                                                </div>
-                                            )}
+                                                        {selectedElement.data.parameters.map((param: any, idx: number) => (
+                                                            <div key={idx} className="flex gap-2 mb-1 items-center">
+                                                                <Tag color="orange">{param.name}</Tag>
+                                                                <Tag color="default">{param.data_type}</Tag>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                ) : null;
+                                            })()}
 
                                             <div className="flex items-center gap-2 mb-3 pb-3 border-b border-gray-100">
                                                 <TagsOutlined className="text-purple-500" />
@@ -2700,12 +2762,14 @@ const OntologyBuilderPage: React.FC = () => {
                                                 <div className="mb-4 text-sm text-gray-500">{(selectedElement as any).data.description}</div>
                                             )}
 
-                                            <Form.Item name="relation" label="关系类型" rules={[{ required: true, message: '请选择关系类型' }]}>
-                                                <Select
-                                                    showSearch
-                                                    placeholder="选择或输入关系类型"
-                                                    optionFilterProp="label"
+                                            <Form.Item name="relation" label="关系类型" rules={[{ required: true, message: '请输入或选择关系类型' }]}>
+                                                <AutoComplete
                                                     options={relationTypes}
+                                                    placeholder="选择预设关系或输入自定义关系"
+                                                    filterOption={(inputValue, option) =>
+                                                        option!.label.toLowerCase().includes(inputValue.toLowerCase()) ||
+                                                        option!.value.toLowerCase().includes(inputValue.toLowerCase())
+                                                    }
                                                 />
                                             </Form.Item>
                                         </>
@@ -2871,8 +2935,15 @@ const OntologyBuilderPage: React.FC = () => {
                                 <Form.Item name="targetNodeId" label="目标节点" rules={[{ required: true, message: '请选择目标节点' }]}>
                                     <Select options={nodes.map(node => ({ label: `${node.data.label} (${node.data.type})`, value: node.id }))} />
                                 </Form.Item>
-                                <Form.Item name="relationType" label="关系类型" rules={[{ required: true, message: '请选择关系类型' }]}>
-                                    <Select options={relationTypes} showSearch optionFilterProp="label" />
+                                <Form.Item name="relationType" label="关系类型" rules={[{ required: true, message: '请输入或选择关系类型' }]}>
+                                    <AutoComplete
+                                        options={relationTypes}
+                                        placeholder="选择预设关系或输入自定义关系"
+                                        filterOption={(inputValue, option) =>
+                                            option!.label.toLowerCase().includes(inputValue.toLowerCase()) ||
+                                            option!.value.toLowerCase().includes(inputValue.toLowerCase())
+                                        }
+                                    />
                                 </Form.Item>
                             </Form>
                         </Modal>
@@ -2891,7 +2962,14 @@ const OntologyBuilderPage: React.FC = () => {
                             </div>
                             <Form form={addInstanceForm} layout="vertical">
                                 <Form.Item name="parentClassId" label="选择父类" rules={[{ required: true, message: '请选择一个类' }]}>
-                                    <Select options={nodes.filter(n => n.data?.type === 'owl:Class').map(node => ({ label: node.data?.label || '未命名类', value: node.id }))} />
+                                    <Select options={nodes.filter(n => n.data?.type === 'owl:Class').map(node => {
+                                        const rawId = node.data?.raw_id || '';
+                                        const isAT = rawId.startsWith('AT_') || node.id?.startsWith('AT_');
+                                        return {
+                                            label: `${node.data?.label || '未命名类'}${isAT ? ' (动作类)' : ' (对象类)'}`,
+                                            value: node.id,
+                                        };
+                                    })} />
                                 </Form.Item>
                                 <Form.Item name="instanceLabel" label="实例名称" rules={[{ required: true, message: '请输入实例名称' }]}>
                                     <Input placeholder="请输入实例名称" />

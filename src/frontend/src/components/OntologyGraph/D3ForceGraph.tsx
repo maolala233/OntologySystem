@@ -550,6 +550,72 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             .on("click", (event: MouseEvent, d: any) => {
                 event.stopPropagation();
                 if (onEdgeClickRef.current && d.originalEdge) onEdgeClickRef.current(d.originalEdge);
+            })
+            .on("mouseenter", function(this: SVGPathElement, event: MouseEvent, d: any) {
+                event.stopPropagation();
+                const visibleLink = g.select<SVGPathElement>(`path.link[data-edge-id="${d.id}"]`);
+                visibleLink
+                    .attr("stroke", LIGHT_THEME.edgeHighlight)
+                    .attr("stroke-width", 2.5)
+                    .attr("marker-end", "url(#arrowhead-hl)");
+
+                const pathElement = this as SVGPathElement;
+                const pathLength = pathElement.getTotalLength();
+                if (pathLength === 0) return;
+                const midPoint = pathElement.getPointAtLength(pathLength / 2);
+
+                const edgeLabel = d.data?.label || d.data?.relation || '';
+                const labelGroupId = `edge-label-${d.id}`;
+                let labelGroup = svg.select<SVGGElement>(`g#${labelGroupId}`);
+                if (labelGroup.empty()) {
+                    labelGroup = svg.append("g")
+                        .attr("id", labelGroupId)
+                        .attr("class", "edge-label-group")
+                        .style("pointer-events", "none")
+                        .raise();
+                    labelGroup.append("rect")
+                        .attr("class", "edge-label-bg")
+                        .attr("fill", "#fff")
+                        .attr("stroke", "#bbb")
+                        .attr("stroke-width", 0.5)
+                        .attr("rx", 3)
+                        .attr("ry", 3)
+                        .style("opacity", 0.95);
+                    labelGroup.append("text")
+                        .attr("class", "edge-label-text")
+                        .attr("text-anchor", "middle")
+                        .attr("dominant-baseline", "central")
+                        .style("fill", "#555")
+                        .style("font-size", "10px")
+                        .style("font-weight", "500")
+                        .style("pointer-events", "none");
+                }
+
+                const labelBg = labelGroup.select<SVGRectElement>("rect.edge-label-bg");
+                const labelText = labelGroup.select<SVGTextElement>("text.edge-label-text");
+                labelText.text(edgeLabel || "关系");
+                const textNode = labelText.node();
+                if (textNode) {
+                    const textBBox = textNode.getBBox();
+                    const padding = 4;
+                    labelBg
+                        .attr("x", midPoint.x - textBBox.width / 2 - padding)
+                        .attr("y", midPoint.y - textBBox.height / 2 - padding)
+                        .attr("width", textBBox.width + padding * 2)
+                        .attr("height", textBBox.height + padding * 2)
+                        .style("display", "block");
+                    labelText.attr("x", midPoint.x).attr("y", midPoint.y);
+                }
+                labelGroup.style("display", "block").raise();
+            })
+            .on("mouseleave", function(this: SVGPathElement, event: MouseEvent, d: any) {
+                event.stopPropagation();
+                const visibleLink = g.select<SVGPathElement>(`path.link[data-edge-id="${d.id}"]`);
+                visibleLink
+                    .attr("stroke", getEdgeColor(d))
+                    .attr("stroke-width", 1.5)
+                    .attr("marker-end", getEdgeMarker(d));
+                svg.selectAll("g.edge-label-group").style("display", "none");
             });
 
         // ── Nodes: enter/update/exit ──
