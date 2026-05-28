@@ -208,6 +208,48 @@ export const projectsApi = {
         window.URL.revokeObjectURL(url);
     },
 
+    downloadJSON: async (projectId: number): Promise<void> => {
+        let projectName = `project_${projectId}`;
+        try {
+            const projectInfo = await apiClient.get(`/api/projects/${projectId}`);
+            projectName = projectInfo.data?.name || `project_${projectId}`;
+        } catch (e) {
+            console.error('[downloadJSON] 获取项目信息失败:', e);
+        }
+
+        const response = await apiClient.get(`/api/projects/${projectId}/download-json`, {
+            responseType: 'blob'
+        });
+
+        const contentDisposition = response.headers['content-disposition'];
+        let filename = `ontology_${projectName}.json`;
+
+        if (contentDisposition) {
+            const filenameStarMatch = contentDisposition.match(/filename\*\s*=\s*UTF-8''([^;\s]+)/i);
+            if (filenameStarMatch && filenameStarMatch[1]) {
+                try {
+                    filename = decodeURIComponent(filenameStarMatch[1].trim());
+                } catch {
+                    filename = filenameStarMatch[1].trim();
+                }
+            } else {
+                const filenameMatch = contentDisposition.match(/filename="([^"]+)"/i);
+                if (filenameMatch && filenameMatch[1]) {
+                    filename = filenameMatch[1];
+                }
+            }
+        }
+
+        const url = window.URL.createObjectURL(new Blob([response.data]));
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', filename);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+    },
+
     // ==================== 两阶段提取 API ====================
 
     // 阶段 1: 提取 Schema（骨架提取）- 支持多文件

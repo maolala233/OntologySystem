@@ -17,7 +17,7 @@ from app.schemas.extraction import (
     SaveGraphRequest,
 )
 from app.api.auth import get_current_user
-from app.core.config import settings
+from app.core.config import settings, ensure_dirs
 import json
 import os
 import tempfile
@@ -467,11 +467,10 @@ async def extract_schema_endpoint(
 
     # 创建永久存储目录（用于保存文档记录）
     if should_save_documents:
-        os.makedirs("src/backend/uploads", exist_ok=True)
-        os.makedirs(f"src/backend/uploads/projects/{project_id}", exist_ok=True)
+        ensure_dirs()
+        os.makedirs(f"{settings.UPLOAD_PROJECTS_DIR}/{project_id}", exist_ok=True)
     
-    # 保存临时文件（支持多文件）
-    os.makedirs("temp_uploads", exist_ok=True)
+    os.makedirs(settings.TEMP_DIR, exist_ok=True)
     temp_paths = []
     saved_docs = []
     
@@ -481,7 +480,7 @@ async def extract_schema_endpoint(
             if should_save_documents:
                 import uuid
                 unique_filename = f"{uuid.uuid4()}_{uploaded_file.filename}"
-                file_path = os.path.join(f"src/backend/uploads/projects/{project_id}", unique_filename)
+                file_path = os.path.join(f"{settings.UPLOAD_PROJECTS_DIR}/{project_id}", unique_filename)
                 
                 # 保存文件到永久目录
                 with open(file_path, "wb") as buf:
@@ -508,7 +507,7 @@ async def extract_schema_endpoint(
                 logger.info(f"[extract-schema] 已保存文档 - {uploaded_file.filename} -> {file_path}")
             else:
                 # 不保存文档记录，只保存到临时目录
-                temp_path = os.path.join("temp_uploads", uploaded_file.filename)
+                temp_path = os.path.join(settings.TEMP_DIR, uploaded_file.filename)
                 with open(temp_path, "wb") as buf:
                     buf.write(await uploaded_file.read())
                 temp_paths.append(temp_path)
@@ -653,9 +652,8 @@ async def extract_schema_endpoint(
             db.rollback()
         raise HTTPException(status_code=500, detail=f"骨架提取失败：{str(e)}")
     finally:
-        # 清理临时文件（只清理 temp_uploads 目录中的文件）
         for temp_path in temp_paths:
-            if temp_path.startswith("temp_uploads") and os.path.exists(temp_path):
+            if temp_path.startswith(settings.TEMP_DIR) and os.path.exists(temp_path):
                 os.remove(temp_path)
 
 
@@ -1293,8 +1291,8 @@ async def upload_document(
     if db_project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="No permission to upload to this project")
 
-    os.makedirs("temp_uploads", exist_ok=True)
-    temp_path = os.path.join("temp_uploads", file.filename)
+    os.makedirs(settings.TEMP_DIR, exist_ok=True)
+    temp_path = os.path.join(settings.TEMP_DIR, file.filename)
     with open(temp_path, "wb") as buf:
         buf.write(await file.read())
 
@@ -1379,19 +1377,17 @@ async def parse_files(
     if db_project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="No permission to upload to this project")
 
-    # 创建永久存储目录
-    os.makedirs("src/backend/uploads", exist_ok=True)
-    os.makedirs(f"src/backend/uploads/projects/{project_id}", exist_ok=True)
+    ensure_dirs()
+    os.makedirs(f"{settings.UPLOAD_PROJECTS_DIR}/{project_id}", exist_ok=True)
     
     temp_paths = []
     saved_docs = []
     
     try:
         for uploaded_file in files:
-            # 生成唯一文件名避免冲突
             import uuid
             unique_filename = f"{uuid.uuid4()}_{uploaded_file.filename}"
-            file_path = os.path.join(f"src/backend/uploads/projects/{project_id}", unique_filename)
+            file_path = os.path.join(f"{settings.UPLOAD_PROJECTS_DIR}/{project_id}", unique_filename)
             
             # 保存文件
             with open(file_path, "wb") as buf:
@@ -1471,13 +1467,14 @@ async def parse_files(
 @router.post("/{project_id}/parse-ttl-schema")
 async def parse_ttl_schema(
     project_id: int,
-    files: List[UploadFile] = File(..., description="TTL 文件列表"),
+    files: List[UploadFile] = File(..., description="TTL 或 JSON 文件列表"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    解析 TTL 文件提取骨架 Schema（仅包含类和 ObjectProperty）。
+    解析 TTL/JSON 文件提取骨架 Schema（仅包含类和 ObjectProperty）。
     用于 Step 1 构建类结构，之后可进行 Step 2 实例提取。
+    支持 TTL 文件和平台导出的 JSON 格式。
     """
     from app.core.logging import logger
     
@@ -1487,34 +1484,41 @@ async def parse_ttl_schema(
     if db_project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="No permission to upload to this project")
 
-    os.makedirs("temp_uploads", exist_ok=True)
+    os.makedirs(settings.TEMP_DIR, exist_ok=True)
     temp_paths = []
     try:
         for uploaded_file in files:
-            if not uploaded_file.filename.lower().endswith('.ttl'):
-                raise HTTPException(status_code=400, detail=f"只支持 TTL 文件：{uploaded_file.filename}")
-            temp_path = os.path.join("temp_uploads", uploaded_file.filename)
+            fname = uploaded_file.filename.lower()
+            if not (fname.endswith('.ttl') or fname.endswith('.json')):
+                raise HTTPException(status_code=400, detail=f"只支持 TTL/JSON 文件：{uploaded_file.filename}")
+            temp_path = os.path.join(settings.TEMP_DIR, uploaded_file.filename)
             with open(temp_path, "wb") as buf:
                 buf.write(await uploaded_file.read())
             temp_paths.append(temp_path)
         
-        logger.info(f"[parse-ttl-schema] 已保存 {len(temp_paths)} 个 TTL 文件")
+        logger.info(f"[parse-ttl-schema] 已保存 {len(temp_paths)} 个文件")
 
-        # 解析所有 TTL 文件
         all_nodes = []
         all_edges = []
         combined_ttl_content = ""
-        
+        has_json = any(p.lower().endswith('.json') for p in temp_paths)
+        has_ttl = any(p.lower().endswith('.ttl') for p in temp_paths)
+
         for temp_path in temp_paths:
-            with open(temp_path, "r", encoding='utf-8') as ttl_file:
-                ttl_content = ttl_file.read()
-                combined_ttl_content += ttl_content + "\n\n"
-                
-                nodes, edges = convert_ttl_to_graph_data(ttl_content)
+            if temp_path.lower().endswith('.json'):
+                with open(temp_path, "r", encoding='utf-8') as f:
+                    json_data = json.load(f)
+                nodes, edges = _convert_json_schema_to_graph(json_data)
                 all_nodes.extend(nodes)
                 all_edges.extend(edges)
+            else:
+                with open(temp_path, "r", encoding='utf-8') as ttl_file:
+                    ttl_content = ttl_file.read()
+                    combined_ttl_content += ttl_content + "\n\n"
+                    nodes, edges = convert_ttl_to_graph_data(ttl_content)
+                    all_nodes.extend(nodes)
+                    all_edges.extend(edges)
         
-        # 去重节点和边
         seen_node_ids = set()
         unique_nodes = []
         for node in all_nodes:
@@ -1525,41 +1529,42 @@ async def parse_ttl_schema(
         seen_edge_ids = set()
         unique_edges = []
         for edge in all_edges:
-            edge_id = f"{edge['source']}_{edge['target']}_{edge.get('label', '')}"
-            if edge_id not in seen_edge_ids:
-                seen_edge_ids.add(edge_id)
+            edge_data = edge.get('data', {})
+            edge_key = f"{edge['source']}_{edge['target']}_{edge_data.get('relation', '')}_{edge_data.get('label', '')}"
+            if edge_key not in seen_edge_ids:
+                seen_edge_ids.add(edge_key)
                 unique_edges.append(edge)
         
-        # 从 TTL 中提取 schema（仅类和 ObjectProperty）
-        schema_dict = extract_schema_from_ttl(combined_ttl_content)
-        
-        # 构建 graph_data
+        if has_ttl:
+            schema_dict = extract_schema_from_ttl(combined_ttl_content)
+        else:
+            schema_dict = _build_schema_from_json_data(unique_nodes, unique_edges)
+
         graph_data = {
             "nodes": unique_nodes,
             "edges": unique_edges,
         }
         
-        # 更新项目 graph_data
         db_project.graph_data = {
             "schema": schema_dict,
             **graph_data,
         }
-        db_project.ttl_content = combined_ttl_content
+        if combined_ttl_content:
+            db_project.ttl_content = combined_ttl_content
         db.commit()
         
-        # 仅统计类的数量
         class_count = len([n for n in unique_nodes if n['data'].get('type') == 'owl:Class'])
 
         return {
             "schema_graph": schema_dict,
             "graph_data": graph_data,
-            "message": f"TTL 骨架解析成功：{class_count} 个类",
+            "message": f"骨架解析成功：{class_count} 个类",
         }
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"[parse-ttl-schema] 错误：{e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"TTL 骨架解析失败：{str(e)}")
+        raise HTTPException(status_code=500, detail=f"骨架解析失败：{str(e)}")
     finally:
         for temp_path in temp_paths:
             if os.path.exists(temp_path):
@@ -1582,8 +1587,8 @@ async def upload_ttl_file(
     if not file.filename.lower().endswith('.ttl'):
         raise HTTPException(status_code=400, detail="Only TTL files are accepted")
 
-    os.makedirs("temp_uploads", exist_ok=True)
-    temp_path = os.path.join("temp_uploads", file.filename)
+    os.makedirs(settings.TEMP_DIR, exist_ok=True)
+    temp_path = os.path.join(settings.TEMP_DIR, file.filename)
     with open(temp_path, "wb") as buf:
         buf.write(await file.read())
 
@@ -1747,6 +1752,272 @@ def download_ttl(
     
     logger.info(f"[download-ttl] Content-Disposition: attachment; filename*=UTF-8''{encoded_filename}; filename=\"{ascii_filename}\"")
     
+    return response
+
+
+def _convert_json_schema_to_graph(json_data: dict) -> tuple:
+    """
+    将平台导出的 JSON 格式（entities + relationships）转换为 graph nodes + edges。
+    JSON 格式与 download-json 导出的格式一致。
+    支持 entity_type 为"动作类型"的实体，自动设置 AT_ 前缀的 raw_id。
+    """
+    import hashlib
+    import math
+
+    entities = json_data.get("entities", [])
+    relationships = json_data.get("relationships", [])
+
+    node_id_map = {}
+    nodes = []
+    edges = []
+
+    cols = max(1, int(math.ceil(math.sqrt(len(entities)))))
+
+    for idx, ent in enumerate(entities):
+        name = ent.get("name", "")
+        if not name:
+            continue
+        node_type = ent.get("type", "owl:Class")
+        entity_type = ent.get("entity_type", "")
+        props = ent.get("properties", {})
+        desc = ent.get("description", "")
+
+        is_action = entity_type == "动作类型" or node_type == "owl:ActionType"
+
+        if is_action:
+            raw_id = f"AT_{hashlib.md5(name.encode()).hexdigest()[:8]}"
+            node_id = raw_id
+        else:
+            raw_id = ""
+            node_id = f"node_{hashlib.md5(name.encode()).hexdigest()[:12]}"
+
+        col = idx % cols
+        row = idx // cols
+        pos_x = col * 280 + 100
+        pos_y = row * 160 + 100
+
+        node_data = {
+            "label": name,
+            "type": node_type,
+            "properties": props,
+        }
+        if desc:
+            node_data["description"] = desc
+        if raw_id:
+            node_data["raw_id"] = raw_id
+        if is_action:
+            node_data["parameters"] = ent.get("parameters", [])
+
+        node = {
+            "id": node_id,
+            "type": "custom",
+            "position": {"x": pos_x, "y": pos_y},
+            "data": node_data,
+        }
+        nodes.append(node)
+        node_id_map[name] = node_id
+
+    for rel in relationships:
+        source_name = rel.get("source_name", "")
+        target_name = rel.get("target_name", "")
+        relation = rel.get("relation", "")
+        label = rel.get("label", relation or "相关")
+        source_id = node_id_map.get(source_name)
+        target_id = node_id_map.get(target_name)
+
+        if not source_id or not target_id:
+            continue
+
+        edge = {
+            "id": f"e_{source_id}_{target_id}_{relation}_{label}",
+            "source": source_id,
+            "target": target_id,
+            "type": "smoothstep",
+            "data": {
+                "label": label,
+                "relation": relation,
+                "properties": rel.get("properties", {}),
+            },
+        }
+        edges.append(edge)
+
+    return nodes, edges
+
+
+def _build_schema_from_json_data(nodes: List[dict], edges: List[dict]) -> dict:
+    """
+    从 graph nodes 和 edges 构建 schema 字典（兼容 TTL 导入场景）。
+    用于纯 JSON 上传时生成 schema_graph 数据结构。
+    支持 AT_ 前缀的动作类识别。
+    """
+    classes = []
+    object_properties = []
+    action_types = []
+
+    class_info = {}
+    for node in nodes:
+        data = node.get("data", {})
+        label = data.get("label", "")
+        node_type = data.get("type", "owl:Class")
+        raw_id = data.get("raw_id", "")
+        is_action = raw_id.startswith('AT_') or node.get("id", "").startswith('AT_')
+        class_info[node["id"]] = {
+            "id": node["id"],
+            "label": label,
+            "type": node_type,
+            "description": data.get("description", ""),
+            "is_action": is_action,
+            "parameters": data.get("parameters", []),
+        }
+
+    for node_id, info in class_info.items():
+        if info["is_action"]:
+            action_types.append({
+                "id": info["id"],
+                "name": info["label"],
+                "label": info["label"],
+                "description": info.get("description", ""),
+                "parameters": info.get("parameters", []),
+            })
+        else:
+            classes.append({
+                "id": info["id"],
+                "label": info["label"],
+                "type": info["type"],
+                "description": info.get("description", ""),
+                "parent_classes": [],
+                "properties": [],
+            })
+
+    for edge in edges:
+        data = edge.get("data", {})
+        source_info = class_info.get(edge.get("source", ""))
+        target_info = class_info.get(edge.get("target", ""))
+        if not source_info or not target_info:
+            continue
+        object_properties.append({
+            "id": edge["id"],
+            "label": data.get("label", data.get("relation", "")),
+            "domain": source_info["label"],
+            "range": target_info["label"],
+        })
+
+    return {
+        "classes": classes,
+        "object_properties": object_properties,
+        "action_types": action_types,
+    }
+
+
+@router.get("/{project_id}/download-json")
+def download_json(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    下载 JSON 文件（ES 注入格式）。
+    与 inject_to_ragflow 使用相同的 _convert_graph_data 逻辑，
+    确保导出的 JSON 与注入到 ES 的数据格式完全一致。
+    """
+    from app.core.logging import logger
+
+    db_project = db.query(Project).filter(Project.id == project_id).first()
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if not db_project.is_published and db_project.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="No permission to download this project's JSON file")
+
+    graph_data = db_project.graph_data
+    if not graph_data or not isinstance(graph_data, dict):
+        raise HTTPException(status_code=404, detail="No graph data found for this project")
+
+    nodes = graph_data.get("nodes", [])
+    edges = graph_data.get("edges", [])
+    if not nodes and not edges:
+        raise HTTPException(status_code=404, detail="Graph data is empty")
+
+    from app.services.inject_service import GraphInjectService, _friendly_type, _build_entity_description, _build_relation_description
+
+    entities = []
+    relationships = []
+    node_id_to_label: Dict[str, str] = {}
+
+    for node in nodes:
+        data = node.get("data", {})
+        label = data.get("label", node.get("id", ""))
+        node_type = data.get("type", "Class")
+        props = data.get("properties", {})
+        desc = props.get("description", "") or data.get("description", "")
+        raw_id = data.get("raw_id", "")
+        node_id = node.get("id", "")
+        is_action = raw_id.startswith('AT_') or node_id.startswith('AT_')
+
+        if is_action and node_type == "owl:Class":
+            node_type = "owl:ActionType"
+
+        node_id_to_label[node_id] = label
+
+        ent_desc = _build_entity_description(label, node_type, props)
+        if desc and desc not in ent_desc:
+            ent_desc = desc
+
+        entity_data = {
+            "name": label,
+            "type": node_type,
+            "entity_type": _friendly_type(node_type),
+            "properties": props,
+            "description": ent_desc,
+        }
+        if is_action and data.get("parameters"):
+            entity_data["parameters"] = data["parameters"]
+
+        entities.append(entity_data)
+
+    for edge in edges:
+        data = edge.get("data", {})
+        source_id = edge.get("source", "")
+        target_id = edge.get("target", "")
+        relation = data.get("relation", "")
+        rel_label = data.get("label", relation or "相关")
+        source_name = node_id_to_label.get(source_id, source_id)
+        target_name = node_id_to_label.get(target_id, target_id)
+
+        rel_desc = _build_relation_description(source_name, rel_label, target_name)
+
+        relationships.append({
+            "source_name": source_name,
+            "target_name": target_name,
+            "relation": relation,
+            "label": rel_label,
+            "description": rel_desc,
+            "properties": data.get("properties", {}),
+        })
+
+    json_data = {
+        "entities": entities,
+        "relationships": relationships,
+    }
+
+    project_name = db_project.name
+    filename = f"ontology_{project_name}.json"
+
+    from urllib.parse import quote
+    encoded_filename = quote(filename, safe='')
+    ascii_filename = f"ontology_project_{project_id}.json"
+
+    json_content = json.dumps(json_data, ensure_ascii=False, indent=2)
+
+    response = Response(
+        content=json_content.encode('utf-8'),
+        media_type="application/json; charset=utf-8",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}; filename=\"{ascii_filename}\"",
+            "Content-Type": "application/json; charset=utf-8",
+            "Access-Control-Expose-Headers": "Content-Disposition",
+        },
+    )
+
     return response
 
 
@@ -3510,10 +3781,27 @@ async def get_inject_config(
             masked_config[k] = "******"
         elif k == "ragflow_api_key" and v:
             masked_config[k] = v[:4] + "****" + v[-4:] if len(v) > 8 else "****"
+        elif k == "embedding_api_key" and v:
+            masked_config[k] = v[:4] + "****" + v[-4:] if len(v) > 8 else "****"
         else:
             masked_config[k] = v
 
-    return {"status": "success", "data": masked_config}
+    sys_llm_config = db.query(SystemConfig).filter(SystemConfig.key == "llm_config").first()
+    sys_embedding = {}
+    if sys_llm_config and sys_llm_config.value:
+        sv = sys_llm_config.value if isinstance(sys_llm_config.value, dict) else {}
+        for ek in ["embedding_base_url", "embedding_model", "embedding_api_key", "embedding_dim"]:
+            if ek in sv and sv[ek]:
+                sys_embedding[ek] = sv[ek]
+
+    is_admin = current_user.username == "admin"
+
+    return {
+        "status": "success",
+        "data": masked_config,
+        "system_embedding": sys_embedding,
+        "is_admin": is_admin,
+    }
 
 
 @router.post("/{project_id}/inject-config")
@@ -3615,6 +3903,14 @@ async def inject_to_ragflow(
     if not kb_id or not user_id:
         raise HTTPException(status_code=400, detail="请配置 kb_id 和 user_id")
 
+    sys_llm_config = db.query(SystemConfig).filter(SystemConfig.key == "llm_config").first()
+    sys_emb = {}
+    if sys_llm_config and sys_llm_config.value:
+        sv = sys_llm_config.value if isinstance(sys_llm_config.value, dict) else {}
+        for ek in ["embedding_base_url", "embedding_model", "embedding_api_key", "embedding_dim"]:
+            if ek in sv and sv[ek]:
+                sys_emb[ek] = sv[ek]
+
     import uuid
     doc_id = str(uuid.uuid4())
 
@@ -3626,10 +3922,10 @@ async def inject_to_ragflow(
         es_user=config.get("es_user", "elastic"),
         es_password=config.get("es_password", ""),
         es_use_ssl=config.get("es_use_ssl", False),
-        embedding_base_url=config.get("embedding_base_url", "http://localhost:11434/v1"),
-        embedding_model=config.get("embedding_model", "bge-m3:latest"),
-        embedding_api_key=config.get("embedding_api_key", ""),
-        embedding_dim=int(config.get("embedding_dim", 1024)),
+        embedding_base_url=sys_emb.get("embedding_base_url", config.get("embedding_base_url", "http://localhost:11434/v1")),
+        embedding_model=sys_emb.get("embedding_model", config.get("embedding_model", "bge-m3:latest")),
+        embedding_api_key=sys_emb.get("embedding_api_key", config.get("embedding_api_key", "")),
+        embedding_dim=int(sys_emb.get("embedding_dim", config.get("embedding_dim", 1024))),
     )
 
     try:

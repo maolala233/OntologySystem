@@ -14,6 +14,11 @@ src/frontend/dist/
 test/
 offline_packages/
 graph_injector_service/
+src/backend/uploads/
+src/backend/temp/
+src/backend/temp_uploads/
+src/backend/temp_downloads/
+src/backend/src/backend/
 
 # files
 *.pyc

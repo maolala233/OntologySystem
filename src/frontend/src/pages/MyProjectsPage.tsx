@@ -274,26 +274,6 @@ const MyProjectsPage: React.FC = () => {
                                 title={sortOrder === 'asc' ? '升序' : '降序'}
                             />
                         </div>
-                        <div className="flex-1" />
-                        {selectedIds.size > 0 && (
-                            <div className="flex items-center gap-2">
-                                <span className="text-sm text-gray-500">已选 {selectedIds.size} 项</span>
-                                <Button
-                                    danger
-                                    size="small"
-                                    icon={<DeleteFilled />}
-                                    onClick={handleBatchDelete}
-                                >
-                                    批量删除
-                                </Button>
-                                <Button
-                                    size="small"
-                                    onClick={() => setSelectedIds(new Set())}
-                                >
-                                    取消选择
-                                </Button>
-                            </div>
-                        )}
                     </div>
                 )}
 
@@ -329,7 +309,7 @@ const MyProjectsPage: React.FC = () => {
                 ) : (
                     <>
                         {filteredAndSortedProjects.length > 0 && (
-                            <div className="mb-3 flex items-center gap-2">
+                            <div className="mb-3 flex items-center gap-3">
                                 <Checkbox
                                     checked={selectedIds.size === filteredAndSortedProjects.length && filteredAndSortedProjects.length > 0}
                                     indeterminate={selectedIds.size > 0 && selectedIds.size < filteredAndSortedProjects.length}
@@ -338,6 +318,26 @@ const MyProjectsPage: React.FC = () => {
                                     <span className="text-sm text-gray-500">全选</span>
                                 </Checkbox>
                                 <span className="text-xs text-gray-400">共 {filteredAndSortedProjects.length} 个项目</span>
+                                {selectedIds.size > 0 && (
+                                    <>
+                                        <div className="flex-1" />
+                                        <span className="text-sm text-blue-600 font-medium">已选 {selectedIds.size} 项</span>
+                                        <Button
+                                            danger
+                                            size="small"
+                                            icon={<DeleteFilled />}
+                                            onClick={handleBatchDelete}
+                                        >
+                                            批量删除
+                                        </Button>
+                                        <Button
+                                            size="small"
+                                            onClick={() => setSelectedIds(new Set())}
+                                        >
+                                            取消选择
+                                        </Button>
+                                    </>
+                                )}
                             </div>
                         )}
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
@@ -346,10 +346,10 @@ const MyProjectsPage: React.FC = () => {
                                 return (
                                     <div key={project.id} className="relative">
                                         <div
-                                            className={`absolute top-3 left-3 z-10 ${isSelected ? 'opacity-100' : 'opacity-0 hover:opacity-60'} transition-opacity`}
+                                            className={`absolute top-3 left-3 z-10 w-6 h-6 flex items-center justify-center rounded-full transition-all duration-200 ${isSelected ? 'bg-blue-500' : 'bg-white/70 hover:bg-white shadow-sm'}`}
                                             onClick={(e) => { e.stopPropagation(); toggleSelect(project.id); }}
                                         >
-                                            <Checkbox checked={isSelected} />
+                                            <Checkbox checked={isSelected} className="[&_.ant-checkbox-inner]:border-gray-400" />
                                         </div>
                                         <Card
                                             hoverable

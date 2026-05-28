@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Layout, Menu, Avatar, Dropdown, Button, Modal, Input, Tag, Spin } from 'antd';
+import { Layout, Menu, Avatar, Dropdown, Button, Modal, Input, Tag, Spin, Table } from 'antd';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import {
     HomeOutlined,
@@ -19,9 +19,12 @@ import {
     CheckCircleOutlined,
     ClearOutlined,
     LoadingOutlined,
+    LockOutlined,
+    TeamOutlined,
 } from '@ant-design/icons';
 import { Form, message, Switch } from 'antd';
 import { systemApi } from '../../api/system';
+import { authAPI } from '../../api/auth';
 import apiClient from '../../api/client';
 import { getDomains, KnowledgeDomain } from '../../api/domains';
 import { projectsApi } from '../../api/projects';
@@ -29,6 +32,110 @@ import type { ProjectData } from '../../types/ontology';
 
 const { Sider, Content } = Layout;
 const { TextArea } = Input;
+
+const UserManagement: React.FC = () => {
+    const [users, setUsers] = useState<any[]>([]);
+    const [loading, setLoading] = useState(false);
+    const [resetModalVisible, setResetModalVisible] = useState(false);
+    const [resetUserId, setResetUserId] = useState<number | null>(null);
+    const [resetUsername, setResetUsername] = useState('');
+    const [newPassword, setNewPassword] = useState('');
+
+    const fetchUsers = async () => {
+        setLoading(true);
+        try {
+            const data = await authAPI.getUsers();
+            setUsers(data);
+        } catch {
+            message.error('获取用户列表失败');
+        }
+        setLoading(false);
+    };
+
+    useEffect(() => {
+        fetchUsers();
+    }, []);
+
+    const handleResetPassword = async () => {
+        if (!resetUserId || !newPassword) {
+            message.error('请输入新密码');
+            return;
+        }
+        if (newPassword.length < 6) {
+            message.error('密码长度不能少于6位');
+            return;
+        }
+        try {
+            await authAPI.resetPassword(resetUserId, newPassword);
+            message.success(`用户 ${resetUsername} 密码重置成功`);
+            setResetModalVisible(false);
+            setNewPassword('');
+        } catch {
+            message.error('密码重置失败');
+        }
+    };
+
+    const columns = [
+        { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
+        { title: '用户名', dataIndex: 'username', key: 'username' },
+        {
+            title: '状态',
+            dataIndex: 'is_active',
+            key: 'is_active',
+            render: (active: boolean) => (
+                <Tag color={active ? 'green' : 'red'}>{active ? '正常' : '禁用'}</Tag>
+            ),
+        },
+        {
+            title: '操作',
+            key: 'action',
+            width: 120,
+            render: (_: any, record: any) => (
+                <Button
+                    size="small"
+                    type="link"
+                    onClick={() => {
+                        setResetUserId(record.id);
+                        setResetUsername(record.username);
+                        setNewPassword('');
+                        setResetModalVisible(true);
+                    }}
+                >
+                    重置密码
+                </Button>
+            ),
+        },
+    ];
+
+    return (
+        <div>
+            <Table
+                columns={columns}
+                dataSource={users}
+                rowKey="id"
+                loading={loading}
+                pagination={false}
+                size="small"
+            />
+            <Modal
+                title={`重置密码 - ${resetUsername}`}
+                open={resetModalVisible}
+                onCancel={() => setResetModalVisible(false)}
+                onOk={handleResetPassword}
+                okText="确认重置"
+            >
+                <div className="py-2">
+                    <div className="mb-1 text-sm font-medium">新密码</div>
+                    <Input.Password
+                        value={newPassword}
+                        onChange={e => setNewPassword(e.target.value)}
+                        placeholder="请输入新密码（至少6位）"
+                    />
+                </div>
+            </Modal>
+        </div>
+    );
+};
 
 const AppLayout: React.FC = () => {
     const navigate = useNavigate();
@@ -60,6 +167,8 @@ const AppLayout: React.FC = () => {
     };
 
     const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
+    const [passwordModalVisible, setPasswordModalVisible] = useState(false);
+    const [userManagementVisible, setUserManagementVisible] = useState(false);
     const [configLoading, setConfigLoading] = useState(false);
     const [configForm] = Form.useForm();
 
@@ -296,6 +405,12 @@ const AppLayout: React.FC = () => {
     };
 
     const userMenuItems = [
+        {
+            key: 'change-password',
+            icon: <LockOutlined />,
+            label: '修改密码',
+            onClick: () => setPasswordModalVisible(true),
+        },
         ...(user.username === 'admin' ? [{
             key: 'settings',
             icon: <SettingOutlined />,
@@ -356,6 +471,11 @@ const AppLayout: React.FC = () => {
             label: '知识域管理',
         });
         adminMenuItems.push({
+            key: 'user-management',
+            icon: <TeamOutlined />,
+            label: '用户管理',
+        });
+        adminMenuItems.push({
             key: 'system-config-trigger',
             icon: <SettingOutlined />,
             label: '系统配置',
@@ -403,6 +523,10 @@ const AppLayout: React.FC = () => {
                         selectedKeys={[location.pathname]}
                         items={allMenuItems}
                         onClick={({ key }) => {
+                            if (key === 'user-management') {
+                                setUserManagementVisible(true);
+                                return;
+                            }
                             if (key === 'system-config-trigger') {
                                 openConfigModal();
                             } else if (key === 'question') {
@@ -447,6 +571,62 @@ const AppLayout: React.FC = () => {
                     </Dropdown>
                 </div>
             </Sider>
+
+            <Modal
+                title="修改密码"
+                open={passwordModalVisible}
+                onCancel={() => setPasswordModalVisible(false)}
+                onOk={async () => {
+                    const oldPwd = (document.getElementById('old-password') as HTMLInputElement)?.value;
+                    const newPwd = (document.getElementById('new-password') as HTMLInputElement)?.value;
+                    const confirmPwd = (document.getElementById('confirm-password') as HTMLInputElement)?.value;
+                    if (!oldPwd || !newPwd || !confirmPwd) {
+                        message.error('请填写所有字段');
+                        return;
+                    }
+                    if (newPwd !== confirmPwd) {
+                        message.error('两次输入的新密码不一致');
+                        return;
+                    }
+                    if (newPwd.length < 6) {
+                        message.error('新密码长度不能少于6位');
+                        return;
+                    }
+                    try {
+                        await authAPI.changePassword({ old_password: oldPwd, new_password: newPwd });
+                        message.success('密码修改成功');
+                        setPasswordModalVisible(false);
+                    } catch (error: any) {
+                        message.error(error?.response?.data?.detail || '密码修改失败');
+                    }
+                }}
+                okText="确认修改"
+            >
+                <div className="space-y-4 py-2">
+                    <div>
+                        <div className="mb-1 text-sm font-medium">旧密码</div>
+                        <Input.Password id="old-password" placeholder="请输入旧密码" />
+                    </div>
+                    <div>
+                        <div className="mb-1 text-sm font-medium">新密码</div>
+                        <Input.Password id="new-password" placeholder="请输入新密码（至少6位）" />
+                    </div>
+                    <div>
+                        <div className="mb-1 text-sm font-medium">确认新密码</div>
+                        <Input.Password id="confirm-password" placeholder="请再次输入新密码" />
+                    </div>
+                </div>
+            </Modal>
+
+            <Modal
+                title="用户管理"
+                open={userManagementVisible}
+                onCancel={() => setUserManagementVisible(false)}
+                footer={null}
+                width={700}
+            >
+                <UserManagement />
+            </Modal>
 
             {/* 系统配置 Modal */}
             <Modal

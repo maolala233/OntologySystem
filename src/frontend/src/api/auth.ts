@@ -40,4 +40,19 @@ export const authAPI = {
         const response = await apiClient.get('/api/auth/me');
         return response.data;
     },
+
+    changePassword: async (data: { old_password: string; new_password: string }) => {
+        const response = await apiClient.put('/api/auth/change-password', data);
+        return response.data;
+    },
+
+    getUsers: async () => {
+        const response = await apiClient.get('/api/auth/users');
+        return response.data;
+    },
+
+    resetPassword: async (userId: number, new_password: string) => {
+        const response = await apiClient.put(`/api/auth/users/${userId}/reset-password`, { new_password });
+        return response.data;
+    },
 };

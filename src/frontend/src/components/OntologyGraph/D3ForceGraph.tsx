@@ -300,6 +300,11 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
     const renderGraph = useCallback(() => {
         if (!svgRef.current || nodes.length === 0) return;
 
+        if (simulationRef.current) {
+            simulationRef.current.stop();
+            simulationRef.current = null;
+        }
+
         const svg = select(svgRef.current);
         const centerX = width / 2;
         const centerY = height / 2;
@@ -795,34 +800,69 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                 svg.selectAll(`g#node-tooltip-${d.id}`).style("display", "none");
             });
 
-        // ── Tick handler ──
+        // ── Pre-compute bidirectional offset per link ──
+        const pairCount = new Map<string, number>();
+        d3Links.forEach((link: any) => {
+            const sId = typeof link.source === 'object' ? link.source.id : link.source;
+            const tId = typeof link.target === 'object' ? link.target.id : link.target;
+            const key = [sId, tId].sort().join('<->');
+            pairCount.set(key, (pairCount.get(key) || 0) + 1);
+        });
+        d3Links.forEach((link: any) => {
+            const sId = typeof link.source === 'object' ? link.source.id : link.source;
+            const tId = typeof link.target === 'object' ? link.target.id : link.target;
+            const key = [sId, tId].sort().join('<->');
+            const isBidir = (pairCount.get(key) || 0) >= 2;
+            link._bidirOffset = isBidir ? (sId > tId ? 1 : -1) : 0;
+        });
+
         simulation.on("tick", () => {
-            const updatePath = (path: any) => {
-                path.attr("d", (d: any) => {
-                    const source = d.source as any;
-                    const target = d.target as any;
-                    if (!source || !target || source.x == null || target.x == null) return "";
+            g.selectAll<SVGPathElement, any>("path.link").each(function(this: SVGPathElement, d: any) {
+                const source = d.source as any;
+                const target = d.target as any;
+                if (!source || !target || source.x == null || target.x == null) return;
 
-                    const dx = target.x - source.x;
-                    const dy = target.y - source.y;
-                    const dist = Math.sqrt(dx * dx + dy * dy);
-                    if (dist === 0) return "";
+                const dx = target.x - source.x;
+                const dy = target.y - source.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist === 0) return;
 
-                    const angle = Math.atan2(dy, dx);
-                    const sourceR = source.radius || NODE_RADII[NODE_TYPES.CLASS];
-                    const targetR = target.radius || NODE_RADII[NODE_TYPES.CLASS];
+                const nx = -dy / dist;
+                const ny = dx / dist;
+                const offset = (d._bidirOffset || 0) * 12;
 
-                    const sourceX = source.x + Math.cos(angle) * sourceR;
-                    const sourceY = source.y + Math.sin(angle) * sourceR;
-                    const targetX = target.x - Math.cos(angle) * (targetR + 6);
-                    const targetY = target.y - Math.sin(angle) * (targetR + 6);
+                const angle = Math.atan2(dy, dx);
+                const sourceR = source.radius || NODE_RADII[NODE_TYPES.CLASS];
+                const targetR = target.radius || NODE_RADII[NODE_TYPES.CLASS];
 
-                    return `M${sourceX},${sourceY}L${targetX},${targetY}`;
-                });
-            };
+                const sx = source.x + Math.cos(angle) * sourceR + nx * offset;
+                const sy = source.y + Math.sin(angle) * sourceR + ny * offset;
+                const tx = target.x - Math.cos(angle) * (targetR + 6) + nx * offset;
+                const ty = target.y - Math.sin(angle) * (targetR + 6) + ny * offset;
 
-            updatePath(linkMerge);
-            updatePath(invisibleLinkGroup.selectAll("path.invisible-link"));
+                this.setAttribute('d', `M${sx},${sy}L${tx},${ty}`);
+            });
+
+            g.selectAll<SVGPathElement, any>("path.invisible-link").each(function(this: SVGPathElement, d: any) {
+                const source = d.source as any;
+                const target = d.target as any;
+                if (!source || !target || source.x == null || target.x == null) return;
+                const dx = target.x - source.x;
+                const dy = target.y - source.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist === 0) return;
+                const nx = -dy / dist;
+                const ny = dx / dist;
+                const offset = (d._bidirOffset || 0) * 12;
+                const angle = Math.atan2(dy, dx);
+                const sourceR = source.radius || NODE_RADII[NODE_TYPES.CLASS];
+                const targetR = target.radius || NODE_RADII[NODE_TYPES.CLASS];
+                const sx = source.x + Math.cos(angle) * sourceR + nx * offset;
+                const sy = source.y + Math.sin(angle) * sourceR + ny * offset;
+                const tx = target.x - Math.cos(angle) * (targetR + 6) + nx * offset;
+                const ty = target.y - Math.sin(angle) * (targetR + 6) + ny * offset;
+                this.setAttribute('d', `M${sx},${sy}L${tx},${ty}`);
+            });
 
             g.selectAll<SVGGElement, any>("g.node-group")
                 .attr("transform", (d: any) => `translate(${d.x || 0}, ${d.y || 0})`);

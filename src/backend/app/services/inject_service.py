@@ -138,15 +138,26 @@ class GraphInjectService:
             node_type = data.get("type", "Class")
             props = data.get("properties", {})
             desc = props.get("description", "") or data.get("description", "")
+            raw_id = data.get("raw_id", "")
+            node_id = node.get("id", "")
+            is_action = raw_id.startswith('AT_') or node_id.startswith('AT_')
 
-            node_id_to_label[node.get("id", "")] = label
+            if is_action and node_type == "owl:Class":
+                node_type = "owl:ActionType"
 
-            entities.append({
+            node_id_to_label[node_id] = label
+
+            entity_data = {
                 "name": label,
                 "type": node_type,
+                "entity_type": _friendly_type(node_type),
                 "properties": props,
                 "description": desc,
-            })
+            }
+            if is_action and data.get("parameters"):
+                entity_data["parameters"] = data["parameters"]
+
+            entities.append(entity_data)
 
         for edge in edges:
             data = edge.get("data", {})
@@ -157,11 +168,14 @@ class GraphInjectService:
             source_name = node_id_to_label.get(source_id, source_id)
             target_name = node_id_to_label.get(target_id, target_id)
 
+            rel_desc = _build_relation_description(source_name, rel_label, target_name)
+
             relationships.append({
                 "source_name": source_name,
                 "target_name": target_name,
                 "relation": relation,
                 "label": rel_label,
+                "description": rel_desc,
                 "properties": data.get("properties", {}),
             })
 

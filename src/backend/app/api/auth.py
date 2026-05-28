@@ -6,7 +6,16 @@ from jose import JWTError, jwt
 from datetime import datetime, timedelta
 from app.core.config import settings
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
+import bcrypt
+
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    return bcrypt.checkpw(plain.encode('utf-8'), hashed.encode('utf-8'))
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -21,6 +30,21 @@ class UserResponse(BaseModel):
     id: int
     username: str
     
+    class Config:
+        from_attributes = True
+
+class ChangePassword(BaseModel):
+    old_password: str
+    new_password: str
+
+class ResetPassword(BaseModel):
+    new_password: str
+
+class UserListItem(BaseModel):
+    id: int
+    username: str
+    is_active: bool
+
     class Config:
         from_attributes = True
 
@@ -85,10 +109,9 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
     if existing_user:
         raise HTTPException(status_code=400, detail="Username already registered")
     
-    # 创建新用户 (实际应使用 passlib 加密密码)
     new_user = User(
         username=user_data.username,
-        hashed_password=user_data.password  # TODO: 使用 passlib.hash.bcrypt.hash()
+        hashed_password=hash_password(user_data.password)
     )
     db.add(new_user)
     db.commit()
@@ -106,7 +129,7 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
 @router.post("/login", response_model=Token)
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == form_data.username).first()
-    if not user or not (form_data.password == user.hashed_password): # 实际应使用 passlib 验证
+    if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Incorrect username or password")
     
     access_token = create_access_token(data={"sub": user.username})
@@ -120,4 +143,30 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 @router.get("/me", response_model=UserResponse)
 def get_me(current_user: User = Depends(get_current_user)):
     return UserResponse.model_validate(current_user)
+
+@router.put("/change-password")
+def change_password(data: ChangePassword, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if not verify_password(data.old_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="旧密码错误")
+    current_user.hashed_password = hash_password(data.new_password)
+    db.commit()
+    return {"message": "密码修改成功"}
+
+@router.get("/users", response_model=List[UserListItem])
+def get_users(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.username != "admin":
+        raise HTTPException(status_code=403, detail="无权限访问")
+    users = db.query(User).all()
+    return [UserListItem.model_validate(u) for u in users]
+
+@router.put("/users/{user_id}/reset-password")
+def reset_password(user_id: int, data: ResetPassword, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.username != "admin":
+        raise HTTPException(status_code=403, detail="无权限访问")
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    user.hashed_password = hash_password(data.new_password)
+    db.commit()
+    return {"message": "密码重置成功"}
 

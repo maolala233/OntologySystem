@@ -36,9 +36,37 @@ import { OntologyNode, OntologyEdge } from '../../types/ontology'; // 假设你�
 
 const { Text } = Typography;
 
-// --- 1. 自定义边组件 (Neo4j风格：灰色细线 + 路径文字) ---
-const CustomEdge = ({ id, sourceX, sourceY, targetX, targetY, data, markerEnd, style }: EdgeProps) => {
-    const edgePath = `M ${sourceX} ${sourceY} L ${targetX} ${targetY}`;
+// --- 1. 自定义边组件 (贝塞尔曲线，双向边自动偏移) ---
+const CustomEdge = ({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, markerEnd, style, source, target }: EdgeProps) => {
+    const isBidir = data?._isBidirectional;
+    let edgePath: string;
+    let labelX: number;
+    let labelY: number;
+
+    if (isBidir) {
+        const dx = targetX - sourceX;
+        const dy = targetY - sourceY;
+        const len = Math.sqrt(dx * dx + dy * dy) || 1;
+        const nx = -dy / len;
+        const ny = dx / len;
+        const isReverse = source && target && source > target;
+        const parallelOffset = 12;
+        const sign = isReverse ? 1 : -1;
+        const ox = nx * parallelOffset * sign;
+        const oy = ny * parallelOffset * sign;
+        const sx = sourceX + ox;
+        const sy = sourceY + oy;
+        const tx = targetX + ox;
+        const ty = targetY + oy;
+        edgePath = `M ${sx} ${sy} L ${tx} ${ty}`;
+        labelX = (sx + tx) / 2;
+        labelY = (sy + ty) / 2;
+    } else {
+        edgePath = `M ${sourceX} ${sourceY} L ${targetX} ${targetY}`;
+        labelX = (sourceX + targetX) / 2;
+        labelY = (sourceY + targetY) / 2;
+    }
+
     return (
         <>
             <path
@@ -48,19 +76,52 @@ const CustomEdge = ({ id, sourceX, sourceY, targetX, targetY, data, markerEnd, s
                 d={edgePath}
                 markerEnd={markerEnd}
             />
-            {/* 只有当有 label 时才渲染文字背景和文字 */}
             {data?.label && (
-                <text dy={-5} className="react-flow__edge-text" textAnchor="middle">
-                    <textPath href={`#${id}`} style={{ fontSize: 10, fill: '#666' }} startOffset="50%">
+                <g>
+                    <rect
+                        x={labelX - 35}
+                        y={labelY - 10}
+                        width={70}
+                        height={20}
+                        fill="white"
+                        fillOpacity={0.85}
+                        rx={4}
+                        stroke="#e0e0e0"
+                        strokeWidth={0.5}
+                    />
+                    <text
+                        x={labelX}
+                        y={labelY + 4}
+                        textAnchor="middle"
+                        fontSize={10}
+                        fill="#666"
+                        fontWeight={400}
+                    >
                         {data.label}
-                    </textPath>
-                </text>
+                    </text>
+                </g>
             )}
         </>
     );
 };
 
 // 定义节点和边的类型映射 (在组件外定义避免重新渲染)
+const markBidirectionalEdges = (edges: any[]): any[] => {
+    const pairCount = new Map<string, number>();
+    edges.forEach((e: any) => {
+        const key = [e.source, e.target].sort().join('<->');
+        pairCount.set(key, (pairCount.get(key) || 0) + 1);
+    });
+    return edges.map((e: any) => {
+        const key = [e.source, e.target].sort().join('<->');
+        const isBidir = (pairCount.get(key) || 0) >= 2;
+        return {
+            ...e,
+            data: { ...e.data, _isBidirectional: isBidir }
+        };
+    });
+};
+
 const nodeTypes = { custom: Neo4jNode };
 const edgeTypes = { custom: CustomEdge };
 
@@ -111,7 +172,7 @@ const OntologyCanvas: React.FC<{ projectId: number }> = ({ projectId }) => {
 
         // 3. 设置状态
         setNodes([...layoutedNodes]);
-        setEdges([...layoutedEdges]);
+        setEdges(markBidirectionalEdges([...layoutedEdges]));
 
         // 4. 强制适配视图 (延迟执行以确保 DOM 已渲染)
         setTimeout(() => {
@@ -147,12 +208,12 @@ const OntologyCanvas: React.FC<{ projectId: number }> = ({ projectId }) => {
                             type: 'custom',
                             data: { ...n.data, currentLang: lang }
                         })));
-                        setEdges(savedEdges.map((e: any) => ({
+                        setEdges(markBidirectionalEdges(savedEdges.map((e: any) => ({
                             ...e,
                             type: 'custom',
                             markerEnd: { type: MarkerType.ArrowClosed, color: '#b1b1b7' },
                             style: { stroke: '#b1b1b7', strokeWidth: 1.5 },
-                        })));
+                        }))));
                         setTimeout(() => fitView({ padding: 0.2 }), 100);
                     }
                 }
@@ -388,7 +449,7 @@ const OntologyCanvas: React.FC<{ projectId: number }> = ({ projectId }) => {
                             </Button>
                             <input
                                 type="file"
-                                accept=".txt,.pdf,.doc,.docx,.ttl"
+                                accept=".txt,.pdf,.doc,.docx,.ttl,.md"
                                 onChange={handleUpload}
                                 className="absolute inset-0 opacity-0 cursor-pointer"
                             />

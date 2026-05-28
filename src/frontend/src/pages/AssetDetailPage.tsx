@@ -242,6 +242,16 @@ const AssetDetailPage: React.FC = () => {
         }
     };
 
+    const handleDownloadJSON = async () => {
+        if (!projectId) return;
+        try {
+            await projectsApi.downloadJSON(Number(projectId));
+            message.success('JSON 文件导出成功');
+        } catch (error: any) {
+            message.error('JSON 文件导出失败');
+        }
+    };
+
     const breadcrumbs = [
         { title: '首页', path: '/' },
         { title: '资产中心', path: '/asset-center' },
@@ -376,9 +386,15 @@ const AssetDetailPage: React.FC = () => {
                                 block 
                                 onClick={() => handleDownloadTTL()} 
                                 icon={<DownloadOutlined />}
-                                type="primary"
                             >
                                 导出 TTL 文件
+                            </Button>
+                            <Button 
+                                block 
+                                onClick={() => handleDownloadJSON()} 
+                                icon={<DownloadOutlined />}
+                            >
+                                导出 JSON 文件
                             </Button>
                         </div>
                     </div>

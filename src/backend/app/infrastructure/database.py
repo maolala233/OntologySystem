@@ -4,6 +4,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy import create_engine
 import datetime
+import bcrypt
 from app.core.config import settings
 
 Base = declarative_base()
@@ -226,12 +227,12 @@ def _create_initial_data(db):
         test_users = [
             User(
                 username="admin",
-                hashed_password="cbil123456",  # TODO: 实际应使用 bcrypt 加密
+                hashed_password=bcrypt.hashpw("cbil123456".encode('utf-8'), bcrypt.gensalt()).decode('utf-8'),
                 is_active=True
             ),
             User(
                 username="testuser",
-                hashed_password="123456",
+                hashed_password=bcrypt.hashpw("123456".encode('utf-8'), bcrypt.gensalt()).decode('utf-8'),
                 is_active=True
             )
         ]
@@ -241,7 +242,7 @@ def _create_initial_data(db):
         
         db.commit()
         print("✅ [Database] Test users created:")
-        print("   - Username: admin, Password: 123456")
+        print("   - Username: admin, Password: cbil123456")
         print("   - Username: testuser, Password: 123456")
         
         # 创建示例项目

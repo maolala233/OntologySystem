@@ -202,6 +202,7 @@ const OntologyBuilderPage: React.FC = () => {
     const [injectForm] = Form.useForm();
     const [injecting, setInjecting] = useState(false);
     const [testingES, setTestingES] = useState(false);
+    const [injectIsAdmin, setInjectIsAdmin] = useState(false);
 
     // 提取配置参数（从系统配置中读取）
     const [extractConfig, setExtractConfig] = useState({
@@ -426,6 +427,7 @@ const OntologyBuilderPage: React.FC = () => {
         form.setFieldsValue({
             label: node.data?.label || '',
             type: node.data?.type || 'owl:Class',
+            description: node.data?.description || '',
             properties: directPropsArray
         });
     };
@@ -443,7 +445,7 @@ const OntologyBuilderPage: React.FC = () => {
     const handleSaveProperties = (values: any) => {
         if (!selectedElement) return;
 
-        const { label, type, properties, relation } = values;
+        const { label, type, properties, relation, description } = values;
         const isNode = 'position' in selectedElement;
 
         if (isNode) {
@@ -466,6 +468,7 @@ const OntologyBuilderPage: React.FC = () => {
                                 ...node.data,
                                 label: label,
                                 type: type,
+                                description: description || '',
                                 properties: propsObj,
                             },
                         };
@@ -829,11 +832,11 @@ const OntologyBuilderPage: React.FC = () => {
                 setNodes(layoutedNodes);
                 setEdges(layoutedEdges);
                 
-                message.success(response.data.message || 'TTL 骨架解析成功！');
+                message.success(response.data.message || '骨架解析成功！');
                 
                 // 提示用户需要上传文档进行实例提取，提供上传按钮
                 Modal.confirm({
-                    title: 'TTL 骨架解析成功',
+                    title: '骨架解析成功',
                     content: (
                         <div>
                             <p>类结构已成功解析，共 {response.data.schema_graph?.classes?.length || 0} 个类。</p>
@@ -841,7 +844,7 @@ const OntologyBuilderPage: React.FC = () => {
                                 是否现在上传文档进行实例提取？
                             </p>
                             <p className="mt-2 text-sm text-gray-500">
-                                支持格式：TXT、PDF、DOC、DOCX（可多选）
+                                支持格式：TXT、PDF、DOC、DOCX、MD（可多选）
                             </p>
                         </div>
                     ),
@@ -858,7 +861,7 @@ const OntologyBuilderPage: React.FC = () => {
             }
         } catch (error: any) {
             const errorDetail = error.response?.data?.detail || error.message || '未知错误';
-            message.error(`TTL 骨架解析失败：${errorDetail}`);
+            message.error(`骨架解析失败：${errorDetail}`);
         } finally {
             setLoading(false);
             setPendingFiles([]);
@@ -1175,6 +1178,17 @@ const OntologyBuilderPage: React.FC = () => {
         }
     };
 
+    const handleDownloadJSON = async () => {
+        if (!projectId) return;
+
+        try {
+            await projectsApi.downloadJSON(Number(projectId));
+            message.success('JSON 文件已开始下载');
+        } catch (error: any) {
+            message.error(error.response?.data?.detail || '下载 JSON 文件失败');
+        }
+    };
+
     const handleOpenInjectModal = async () => {
         if (!projectId) return;
         try {
@@ -1191,11 +1205,8 @@ const OntologyBuilderPage: React.FC = () => {
                 ragflow_api_key: isMasked(config.ragflow_api_key) ? '' : (config.ragflow_api_key || ''),
                 user_id: config.user_id || '',
                 kb_id: config.kb_id || '',
-                embedding_base_url: config.embedding_base_url || 'http://localhost:11434/v1',
-                embedding_model: config.embedding_model || 'bge-m3:latest',
-                embedding_api_key: isMasked(config.embedding_api_key) ? '' : (config.embedding_api_key || ''),
-                embedding_dim: config.embedding_dim || 1024,
             });
+            setInjectIsAdmin(res.is_admin === true);
         } catch {
             injectForm.setFieldsValue({
                 es_host: 'localhost',
@@ -1203,10 +1214,8 @@ const OntologyBuilderPage: React.FC = () => {
                 es_user: 'elastic',
                 es_password: '',
                 ragflow_host: 'http://localhost:9380',
-                embedding_base_url: 'http://localhost:11434/v1',
-                embedding_model: 'bge-m3:latest',
-                embedding_dim: 1024,
             });
+            setInjectIsAdmin(false);
         }
         setIsInjectModalOpen(true);
     };
@@ -2355,7 +2364,7 @@ const OntologyBuilderPage: React.FC = () => {
                                     <input
                                         id="llm-schema-input"
                                         type="file"
-                                        accept=".txt,.pdf,.doc,.docx"
+                                        accept=".txt,.pdf,.doc,.docx,.md"
                                         multiple
                                         style={{ display: 'none' }}
                                         onChange={async (e) => {
@@ -2397,7 +2406,7 @@ const OntologyBuilderPage: React.FC = () => {
                                     <input
                                         id="ttl-schema-input"
                                         type="file"
-                                        accept=".ttl"
+                                        accept=".ttl,.json"
                                         multiple
                                         style={{ display: 'none' }}
                                         onChange={(e) => {
@@ -2438,10 +2447,10 @@ const OntologyBuilderPage: React.FC = () => {
                                         </Button>
                                     </Tooltip>
                                     {/* 开始实例提取按钮 - 仅在文档管理 Modal 中显示 */}
-                                    <Upload accept=".ttl" showUploadList={false} beforeUpload={handleUploadTTL}>
-                                        <Tooltip title="上传 TTL 文件">
+                                    <Upload accept=".ttl,.json" showUploadList={false} beforeUpload={handleUploadTTL}>
+                                        <Tooltip title="上传 TTL/JSON 文件">
                                             <Button size="small" icon={<FileTextOutlined />} className="border-purple-500 text-purple-600 hover:bg-purple-50">
-                                                TTL
+                                                导入
                                             </Button>
                                         </Tooltip>
                                     </Upload>
@@ -2562,11 +2571,19 @@ const OntologyBuilderPage: React.FC = () => {
                                         </Button>
                                     </Tooltip>
                                     <Tooltip title="下载 TTL">
-                                        <Button size="small" icon={<DownloadOutlined />} onClick={handleDownloadTTL} className="border-gray-300 hover:bg-gray-50" />
+                                        <Button size="small" icon={<DownloadOutlined />} onClick={handleDownloadTTL} className="border-gray-300 hover:bg-gray-50">TTL</Button>
                                     </Tooltip>
-                                    <Tooltip title="注入到 RAGFlow">
-                                        <Button size="small" icon={<ThunderboltOutlined />} onClick={handleOpenInjectModal} className="border-orange-400 text-orange-600 hover:bg-orange-50" />
+                                    <Tooltip title="下载 JSON（ES注入格式）">
+                                        <Button size="small" icon={<DownloadOutlined />} onClick={handleDownloadJSON} className="border-gray-300 hover:bg-gray-50">JSON</Button>
                                     </Tooltip>
+                                    <Button
+                                        size="small"
+                                        icon={<ThunderboltOutlined />}
+                                        onClick={handleOpenInjectModal}
+                                        className="border-orange-400 text-orange-600 hover:bg-orange-50 font-medium"
+                                    >
+                                        RAG同步
+                                    </Button>
                                     <Tooltip title="配置知识域">
                                         <Button 
                                             size="small" 
@@ -2695,16 +2712,13 @@ const OntologyBuilderPage: React.FC = () => {
                                                 } />
                                             </Form.Item>
 
-                                            {selectedElement?.data?.description && (
-                                                <Form.Item label="描述">
-                                                    <Input.TextArea 
-                                                        value={selectedElement.data.description}
-                                                        autoSize={{ minRows: 2, maxRows: 6 }}
-                                                        disabled
-                                                        className="text-gray-600"
-                                                    />
-                                                </Form.Item>
-                                            )}
+                                            <Form.Item name="description" label="描述">
+                                                <Input.TextArea
+                                                    placeholder="请输入节点描述"
+                                                    autoSize={{ minRows: 2, maxRows: 6 }}
+                                                    className="text-gray-600"
+                                                />
+                                            </Form.Item>
 
                                             {selectedElement?.data?.source_document && (
                                                 <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
@@ -2922,8 +2936,8 @@ const OntologyBuilderPage: React.FC = () => {
                                                 {schemaExtractionType === 'ttl' && <div className="w-2 h-2 rounded-full bg-white" />}
                                             </div>
                                             <div>
-                                                <div className="font-medium text-gray-800">上传 TTL 文件</div>
-                                                <div className="text-sm text-gray-500">上传已有的 TTL 本体文件，解析其中的类和关系</div>
+                                                <div className="font-medium text-gray-800">上传本体文件</div>
+                                                <div className="text-sm text-gray-500">上传 TTL 或 JSON 本体文件，解析其中的类和关系</div>
                                             </div>
                                         </div>
                                     </div>
@@ -3584,7 +3598,7 @@ const OntologyBuilderPage: React.FC = () => {
 
                         {/* RAGFlow 注入配置 Modal */}
                         <Modal
-                            title={<div className="flex items-center gap-2"><ThunderboltOutlined className="text-orange-500" /><span>注入到 RAGFlow</span></div>}
+                            title={<div className="flex items-center gap-2"><ThunderboltOutlined className="text-orange-500" /><span>RAG同步</span></div>}
                             open={isInjectModalOpen}
                             onCancel={() => setIsInjectModalOpen(false)}
                             width={680}
@@ -3637,22 +3651,6 @@ const OntologyBuilderPage: React.FC = () => {
                                     </Form.Item>
                                     <Form.Item name="kb_id" label="知识库 ID (KB ID)" className="col-span-2" rules={[{ required: true, message: '请输入知识库ID' }]}>
                                         <Input placeholder="RAGFlow 知识库ID" />
-                                    </Form.Item>
-
-                                    <div className="col-span-2 border-b border-gray-200 pb-2 mb-1 mt-2">
-                                        <span className="font-medium text-gray-700 text-sm">Embedding 配置</span>
-                                    </div>
-                                    <Form.Item name="embedding_base_url" label="Embedding 地址" className="col-span-2">
-                                        <Input placeholder="http://localhost:11434/v1" />
-                                    </Form.Item>
-                                    <Form.Item name="embedding_model" label="Embedding 模型" className="col-span-2">
-                                        <Input placeholder="bge-m3:latest" />
-                                    </Form.Item>
-                                    <Form.Item name="embedding_api_key" label="Embedding API Key" className="col-span-2">
-                                        <Input.Password placeholder="留空则无需认证" />
-                                    </Form.Item>
-                                    <Form.Item name="embedding_dim" label="向量维度">
-                                        <Input type="number" placeholder="1024" />
                                     </Form.Item>
                                 </div>
                             </Form>
