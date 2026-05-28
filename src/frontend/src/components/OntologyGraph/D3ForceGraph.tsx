@@ -460,14 +460,14 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             .attr("stroke-dasharray", (d: any) => getEdgeDash(d))
             .attr("marker-end", (d: any) => getEdgeMarker(d));
 
-        linkMerge.each(function(this: SVGPathElement, d: any) {
+        linkMerge.each(function (this: SVGPathElement, d: any) {
             const edgeLabel = d.data?.label || d.data?.relation || '';
             select(this)
                 .on("click", (event: MouseEvent) => {
                     event.stopPropagation();
                     if (onEdgeClickRef.current && d.originalEdge) onEdgeClickRef.current(d.originalEdge);
                 })
-                .on("mouseenter", function(this: SVGPathElement, event: MouseEvent) {
+                .on("mouseenter", function (this: SVGPathElement, event: MouseEvent) {
                     event.stopPropagation();
                     select(this)
                         .attr("stroke", LIGHT_THEME.edgeHighlight)
@@ -522,7 +522,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                     }
                     labelGroup.style("display", "block").raise();
                 })
-                .on("mouseleave", function(this: SVGPathElement, event: MouseEvent) {
+                .on("mouseleave", function (this: SVGPathElement, event: MouseEvent) {
                     event.stopPropagation();
                     select(this)
                         .attr("stroke", getEdgeColor(d))
@@ -556,7 +556,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                 event.stopPropagation();
                 if (onEdgeClickRef.current && d.originalEdge) onEdgeClickRef.current(d.originalEdge);
             })
-            .on("mouseenter", function(this: SVGPathElement, event: MouseEvent, d: any) {
+            .on("mouseenter", function (this: SVGPathElement, event: MouseEvent, d: any) {
                 event.stopPropagation();
                 const visibleLink = g.select<SVGPathElement>(`path.link[data-edge-id="${d.id}"]`);
                 visibleLink
@@ -613,7 +613,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                 }
                 labelGroup.style("display", "block").raise();
             })
-            .on("mouseleave", function(this: SVGPathElement, event: MouseEvent, d: any) {
+            .on("mouseleave", function (this: SVGPathElement, event: MouseEvent, d: any) {
                 event.stopPropagation();
                 const visibleLink = g.select<SVGPathElement>(`path.link[data-edge-id="${d.id}"]`);
                 visibleLink
@@ -671,7 +671,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                         selectedNodeIdRef.current = d.id;
 
                         svg.selectAll<SVGElement, any>("g.node-group .node-shape")
-                            .attr("filter", function(this: SVGElement) {
+                            .attr("filter", function (this: SVGElement) {
                                 const parentG = this.parentElement;
                                 const nodeData = select(parentG).datum() as any;
                                 return nodeData?.id === d.id ? "url(#glow-selected)" : null;
@@ -695,7 +695,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                 })
             );
 
-        nodeEnter.each(function(this: SVGGElement, d: any) {
+        nodeEnter.each(function (this: SVGGElement, d: any) {
             setupNodeContent(select(this), d);
         });
 
@@ -705,7 +705,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             .style("opacity", 1);
 
         // ── Update existing nodes (e.g. highlightNodeId changed) ──
-        nodeSelection.each(function(this: SVGGElement, d: any) {
+        nodeSelection.each(function (this: SVGGElement, d: any) {
             const nodeG = select(this);
             const shape = nodeG.select(".node-shape");
             if (!shape.empty()) {
@@ -727,7 +727,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                     message.info('只有类节点支持右键展开实例');
                 }
             })
-            .on("mouseenter", function(this: SVGGElement, event: MouseEvent, d: any) {
+            .on("mouseenter", function (this: SVGGElement, event: MouseEvent, d: any) {
                 if (d.id !== selectedNodeIdRef.current) {
                     select(this).select(".node-shape").attr("filter", "url(#glow-hover)");
                 }
@@ -793,7 +793,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                     }, 0);
                 }
             })
-            .on("mouseleave", function(this: SVGGElement, event: MouseEvent, d: any) {
+            .on("mouseleave", function (this: SVGGElement, event: MouseEvent, d: any) {
                 if (d.id !== selectedNodeIdRef.current) {
                     select(this).select(".node-shape").attr("filter", null);
                 }
@@ -801,67 +801,86 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             });
 
         // ── Pre-compute bidirectional offset per link ──
-        const pairCount = new Map<string, number>();
+        // KEY INSIGHT: For a pair A<->B, edge A→B has (nx,ny) and edge B→A has (-nx,-ny).
+        // If we multiply by +1 and -1 respectively they end up on the SAME side.
+        // Fix: both edges must use the SAME canonical perpendicular direction,
+        // derived from the lexicographically-first node as "canonical source".
+        const pairIndexMap = new Map<string, number>();
         d3Links.forEach((link: any) => {
             const sId = typeof link.source === 'object' ? link.source.id : link.source;
             const tId = typeof link.target === 'object' ? link.target.id : link.target;
-            const key = [sId, tId].sort().join('<->');
-            pairCount.set(key, (pairCount.get(key) || 0) + 1);
+            const sortedPair = [sId, tId].sort();
+            const key = sortedPair.join('<->');
+            const idx = pairIndexMap.get(key) ?? 0;
+            pairIndexMap.set(key, idx + 1);
+            // idx 0 → +1 (one side), idx 1 → -1 (other side)
+            link._bidirOffset = idx === 0 ? 1 : -1;
+            link._pairKey = key;
+            // Store the canonical source id (lexicographically smaller)
+            // Both edges in the pair will compute their perpendicular based on
+            // the direction from _canonicalSourceId to the other node,
+            // ensuring they always point to opposite sides.
+            link._canonicalSourceId = sortedPair[0];
         });
+        // If only one edge exists for a pair (unidirectional), remove offset.
         d3Links.forEach((link: any) => {
-            const sId = typeof link.source === 'object' ? link.source.id : link.source;
-            const tId = typeof link.target === 'object' ? link.target.id : link.target;
-            const key = [sId, tId].sort().join('<->');
-            const isBidir = (pairCount.get(key) || 0) >= 2;
-            link._bidirOffset = isBidir ? (sId > tId ? 1 : -1) : 0;
+            const count = pairIndexMap.get(link._pairKey) ?? 1;
+            if (count < 2) link._bidirOffset = 0;
         });
+
+        // Helper to compute offset path endpoints using a canonical perpendicular.
+        const computeEdgePath = (d: any) => {
+            const source = d.source as any;
+            const target = d.target as any;
+            if (!source || !target || source.x == null || target.x == null) return null;
+
+            const dx = target.x - source.x;
+            const dy = target.y - source.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist === 0) return null;
+
+            const angle = Math.atan2(dy, dx);
+            const sourceR = source.radius || NODE_RADII[NODE_TYPES.CLASS];
+            const targetR = target.radius || NODE_RADII[NODE_TYPES.CLASS];
+
+            let offsetX = 0;
+            let offsetY = 0;
+
+            if (d._bidirOffset !== 0 && d._canonicalSourceId != null) {
+                // Always compute perpendicular from canonical source → other node.
+                // This ensures both edges in a pair share the same perpendicular axis,
+                // so +offset and -offset point to genuinely opposite sides.
+                const isCanonicalDir = source.id === d._canonicalSourceId;
+                // canonical dx/dy: from canonical source toward the other node
+                const cdx = isCanonicalDir ? dx : -dx;
+                const cdy = isCanonicalDir ? dy : -dy;
+                // perpendicular (rotate 90° CCW)
+                const cnx = -cdy / dist;
+                const cny = cdx / dist;
+                const off = d._bidirOffset * 12;
+                offsetX = cnx * off;
+                offsetY = cny * off;
+            }
+
+            const sx = source.x + Math.cos(angle) * sourceR + offsetX;
+            const sy = source.y + Math.sin(angle) * sourceR + offsetY;
+            const tx = target.x - Math.cos(angle) * (targetR + 6) + offsetX;
+            const ty = target.y - Math.sin(angle) * (targetR + 6) + offsetY;
+
+            return { sx, sy, tx, ty };
+        };
 
         simulation.on("tick", () => {
-            g.selectAll<SVGPathElement, any>("path.link").each(function(this: SVGPathElement, d: any) {
-                const source = d.source as any;
-                const target = d.target as any;
-                if (!source || !target || source.x == null || target.x == null) return;
-
-                const dx = target.x - source.x;
-                const dy = target.y - source.y;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-                if (dist === 0) return;
-
-                const nx = -dy / dist;
-                const ny = dx / dist;
-                const offset = (d._bidirOffset || 0) * 12;
-
-                const angle = Math.atan2(dy, dx);
-                const sourceR = source.radius || NODE_RADII[NODE_TYPES.CLASS];
-                const targetR = target.radius || NODE_RADII[NODE_TYPES.CLASS];
-
-                const sx = source.x + Math.cos(angle) * sourceR + nx * offset;
-                const sy = source.y + Math.sin(angle) * sourceR + ny * offset;
-                const tx = target.x - Math.cos(angle) * (targetR + 6) + nx * offset;
-                const ty = target.y - Math.sin(angle) * (targetR + 6) + ny * offset;
-
-                this.setAttribute('d', `M${sx},${sy}L${tx},${ty}`);
+            g.selectAll<SVGPathElement, any>("path.link").each(function (this: SVGPathElement, d: any) {
+                const pts = computeEdgePath(d);
+                if (!pts) return;
+                this.setAttribute('d', `M${pts.sx},${pts.sy}L${pts.tx},${pts.ty}`);
             });
 
-            g.selectAll<SVGPathElement, any>("path.invisible-link").each(function(this: SVGPathElement, d: any) {
-                const source = d.source as any;
-                const target = d.target as any;
-                if (!source || !target || source.x == null || target.x == null) return;
-                const dx = target.x - source.x;
-                const dy = target.y - source.y;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-                if (dist === 0) return;
-                const nx = -dy / dist;
-                const ny = dx / dist;
-                const offset = (d._bidirOffset || 0) * 12;
-                const angle = Math.atan2(dy, dx);
-                const sourceR = source.radius || NODE_RADII[NODE_TYPES.CLASS];
-                const targetR = target.radius || NODE_RADII[NODE_TYPES.CLASS];
-                const sx = source.x + Math.cos(angle) * sourceR + nx * offset;
-                const sy = source.y + Math.sin(angle) * sourceR + ny * offset;
-                const tx = target.x - Math.cos(angle) * (targetR + 6) + nx * offset;
-                const ty = target.y - Math.sin(angle) * (targetR + 6) + ny * offset;
-                this.setAttribute('d', `M${sx},${sy}L${tx},${ty}`);
+            g.selectAll<SVGPathElement, any>("path.invisible-link").each(function (this: SVGPathElement, d: any) {
+                const pts = computeEdgePath(d);
+                if (!pts) return;
+                this.setAttribute('d', `M${pts.sx},${pts.sy}L${pts.tx},${pts.ty}`);
             });
 
             g.selectAll<SVGGElement, any>("g.node-group")
