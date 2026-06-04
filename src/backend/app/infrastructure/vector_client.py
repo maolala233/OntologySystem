@@ -23,6 +23,12 @@ class VectorStoreManager:
         self.embedding_dim = self.embedding_dim
         self.emb_model = self.embedding_model
 
+        # 构建兼容仓颉等平台的默认 headers
+        self._emb_default_headers = {"Content-Type": "application/json"}
+        if self.embedding_api_key:
+            self._emb_default_headers["Authorization"] = f"Bearer {self.embedding_api_key}"
+            self._emb_default_headers["apikey"] = self.embedding_api_key
+
         # 判断是否为外部API
         is_external_api = self.embedding_base_url and ('openai' in self.embedding_base_url.lower() or 'api.' in self.embedding_base_url.lower() or 
                                                   'http' in self.embedding_base_url and 'localhost' not in self.embedding_base_url and 
@@ -53,7 +59,8 @@ class VectorStoreManager:
                                 self.client = OpenAI(
                                     api_key=self.embedding_api_key,
                                     base_url=self.embedding_base_url,
-                                    http_client=http_client
+                                    http_client=http_client,
+                                    default_headers=self._emb_default_headers
                                 )
                             else:
                                 # 对于非SOCKS代理，使用标准方式
@@ -61,7 +68,8 @@ class VectorStoreManager:
                                 self.client = OpenAI(
                                     api_key=self.embedding_api_key,
                                     base_url=self.embedding_base_url,
-                                    http_client=http_client
+                                    http_client=http_client,
+                                    default_headers=self._emb_default_headers
                                 )
                         except ImportError:
                             # 如果没有安装httpx_socks，记录警告并直接连接
@@ -79,7 +87,8 @@ class VectorStoreManager:
                             try:
                                 self.client = OpenAI(
                                     api_key=self.embedding_api_key,
-                                    base_url=self.embedding_base_url
+                                    base_url=self.embedding_base_url,
+                                    default_headers=self._emb_default_headers
                                 )
                             finally:
                                 # 恢复环境变量
@@ -104,7 +113,8 @@ class VectorStoreManager:
                             try:
                                 self.client = OpenAI(
                                     api_key=self.embedding_api_key,
-                                    base_url=self.embedding_base_url
+                                    base_url=self.embedding_base_url,
+                                    default_headers=self._emb_default_headers
                                 )
                             finally:
                                 # 恢复环境变量
@@ -119,19 +129,22 @@ class VectorStoreManager:
                         self.client = OpenAI(
                             api_key=self.embedding_api_key,
                             base_url=self.embedding_base_url,
-                            http_client=http_client
+                            http_client=http_client,
+                            default_headers=self._emb_default_headers
                         )
                 else:
                     # 没有代理设置，直接创建客户端
                     self.client = OpenAI(
                         api_key=self.embedding_api_key,
-                        base_url=self.embedding_base_url
+                        base_url=self.embedding_base_url,
+                        default_headers=self._emb_default_headers
                     )
             except Exception as e:
                 logger.warning(f"Embedding客户端代理配置失败: {e}，尝试直接连接")
                 self.client = OpenAI(
                     api_key=self.embedding_api_key,
-                    base_url=self.embedding_base_url
+                    base_url=self.embedding_base_url,
+                    default_headers=self._emb_default_headers
                 )
         else:
             # 对于内部服务，移除代理环境变量
@@ -147,7 +160,8 @@ class VectorStoreManager:
             try:
                 self.client = OpenAI(
                     api_key=self.embedding_api_key,
-                    base_url=self.embedding_base_url
+                    base_url=self.embedding_base_url,
+                    default_headers=self._emb_default_headers
                 )
             finally:
                 # 恢复环境变量
@@ -460,20 +474,22 @@ class VectorStoreManager:
     def _get_embedding_by_requests(self, text: str) -> List[float]:
         """
         使用 requests 直接调用 Embedding API，绕过 OpenAI SDK。
-        用于兼容非标准 OpenAI API 格式的服务。
+        用于兼容非标准 OpenAI API 格式的服务（如仓颉平台）。
         """
         headers = {
             "Content-Type": "application/json"
         }
-        
-        # 如果有 API Key，添加 Authorization 头
+
+        # 如果有 API Key，同时设置 Authorization Bearer 和 apikey header，兼容仓颉等平台
         if self.embedding_api_key:
             headers["Authorization"] = f"Bearer {self.embedding_api_key}"
-        
-        # 构建请求体
+            headers["apikey"] = self.embedding_api_key
+
+        # 构建请求体：同时包含 input 和 texts 字段，兼容 OpenAI 标准和仓颉平台
         payload = {
             "model": self.embedding_model,
-            "input": [text]
+            "input": [text],
+            "texts": [text]
         }
         
         # ★ 打印请求参数日志（用于调试）

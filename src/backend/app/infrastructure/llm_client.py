@@ -37,9 +37,12 @@ class LLMClient:
 
         headers = {}
         if self.api_key and self.api_key != "EMPTY":
+            # 同时设置 Authorization Bearer 和 apikey header，兼容仓颉等平台
             headers["Authorization"] = f"Bearer {self.api_key}"
+            headers["apikey"] = self.api_key
         else:
             headers["Authorization"] = "Bearer EMPTY"
+            headers["apikey"] = "EMPTY"
         client_kwargs["default_headers"] = headers
 
         if is_external_api:
@@ -189,10 +192,11 @@ class LLMClient:
             "stop": ["</s>", "\n\n\n"]
         }
         if self._should_disable_think():
+            # 使用 chat_template_kwargs 兼容仓颉等平台（Qwen3.5/DeepSeek-V3.2）
             if self._is_ollama:
                 api_kwargs["extra_body"] = {"reasoning_effort": "none"}
             else:
-                api_kwargs["extra_body"] = {"think": False}
+                api_kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
 
         if timeout is not None:
             api_kwargs["timeout"] = timeout

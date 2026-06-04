@@ -88,7 +88,13 @@ def _encode_image_to_base64(image_path: str) -> str:
 
 
 def _call_vl_model(image_paths: list[str], prompt: str, vl_config: dict) -> str:
-    client = OpenAI(base_url=vl_config["base_url"], api_key=vl_config["api_key"])
+    headers = {}
+    api_key = vl_config.get("api_key", "")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+        headers["apikey"] = api_key
+    client = OpenAI(base_url=vl_config["base_url"], api_key=api_key or "EMPTY",
+                    default_headers=headers)
     content = [{"type": "text", "text": prompt}]
     for img_path in image_paths:
         b64 = _encode_image_to_base64(img_path)
