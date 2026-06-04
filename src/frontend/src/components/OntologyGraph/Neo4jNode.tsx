@@ -5,10 +5,10 @@ import { Typography } from 'antd';
 const { Text } = Typography;
 
 const Neo4jNode = ({ data, selected, isConnectable, dragging }: NodeProps) => {
-    // 判断是否为 Action Type 节点（通过 raw_id 或 id 前缀识别）
+    // 判断是否为 Action Type 节点（通过 type 或 raw_id/id 前缀识别）
     const rawId = data.raw_id || '';
     const nodeId = data.id || '';
-    const isActionType = rawId.startsWith('AT_') || nodeId.startsWith('AT_');
+    const isActionType = data.type === 'owl:ActionType' || rawId.startsWith('AT_') || nodeId.startsWith('AT_');
 
     // 颜色映射
     let bgColor: string;

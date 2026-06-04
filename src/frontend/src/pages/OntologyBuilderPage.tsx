@@ -84,11 +84,8 @@ declare global {
     }
 }
 
-const PROP_NAME_MAP: Record<string, string> = {
-    _source_file: '来源文档',
-    _source_quote: '原文内容',
-};
-const PROP_HIDDEN_SET = new Set(['_source_chunk_index']);
+const PROP_NAME_MAP: Record<string, string> = {};
+const PROP_HIDDEN_SET = new Set(['_source_chunk_index', 'source_chunk_index']);
 const PROP_NAME_REVERSE_MAP: Record<string, string> = Object.fromEntries(
     Object.entries(PROP_NAME_MAP).map(([k, v]) => [v, k])
 );
@@ -196,6 +193,8 @@ const OntologyBuilderPage: React.FC = () => {
     const [testingNeo4J, setTestingNeo4J] = useState(false);
     const [testingEmbedding, setTestingEmbedding] = useState(false);
     const [testingMilvus, setTestingMilvus] = useState(false);
+    const [testingVL, setTestingVL] = useState(false);
+    const [vlConfigured, setVlConfigured] = useState(false);
 
     // RAGFlow 注入相关状态
     const [isInjectModalOpen, setIsInjectModalOpen] = useState(false);
@@ -211,6 +210,7 @@ const OntologyBuilderPage: React.FC = () => {
         request_interval: 2,
         llm_timeout: 300,
         disable_think: true,
+        vl_enabled: false,
     });
 
     useEffect(() => {
@@ -236,6 +236,7 @@ const OntologyBuilderPage: React.FC = () => {
                         request_interval: config.value.request_interval || 2,
                         llm_timeout: config.value.llm_timeout || 300,
                         disable_think: config.value.disable_think !== undefined ? config.value.disable_think : true,
+                        vl_enabled: config.value.vl_enabled || false,
                     });
                 }
             } catch (error) {
@@ -244,6 +245,7 @@ const OntologyBuilderPage: React.FC = () => {
             }
         };
         loadExtractConfig();
+        loadVlStatus();
     }, []);
 
     // 监听节点和边的变化
@@ -400,6 +402,10 @@ const OntologyBuilderPage: React.FC = () => {
                     name: PROP_NAME_MAP[key] || key,
                     value: String(value)
                 }));
+            
+            if (node.data?.source_document) {
+                directPropsArray.unshift({ name: '来源文档', value: node.data.source_document });
+            }
             
             const parentClassIds = findParentClassIds(node.id);
             for (const parentId of parentClassIds) {
@@ -558,7 +564,7 @@ const OntologyBuilderPage: React.FC = () => {
     };
 
     const addNewInstance = () => {
-        const classNodes = nodes.filter(node => node.data?.type === 'owl:Class');
+        const classNodes = nodes.filter(node => node.data?.type === 'owl:Class' || node.data?.type === 'owl:ActionType');
         if (classNodes.length === 0) {
             message.warning('请先创建至少一个类，然后才能添加实例');
             return;
@@ -886,6 +892,7 @@ const OntologyBuilderPage: React.FC = () => {
                 async_mode: true,
                 save_documents: true,
                 disable_think: extractConfig.disable_think,
+                vl_enabled: extractConfig.vl_enabled,
             });
 
             // 如果返回 task_id，说明是异步任务
@@ -1005,6 +1012,7 @@ const OntologyBuilderPage: React.FC = () => {
                 request_interval: extractConfig.request_interval,
                 async_mode: true,
                 disable_think: extractConfig.disable_think,
+                vl_enabled: extractConfig.vl_enabled,
             });
 
             // 如果返回 task_id，说明是异步任务
@@ -1077,7 +1085,7 @@ const OntologyBuilderPage: React.FC = () => {
             message.info('已保存当前画布状态，开始解析文件...');
 
             // 使用 parseFiles API 解析文件并保存到数据库
-            const parseResponse = await projectsApi.parseFiles(Number(projectId), filesToUse);
+            const parseResponse = await projectsApi.parseFiles(Number(projectId), filesToUse, { vl_enabled: extractConfig.vl_enabled });
             
             const textContent = parseResponse?.text_content || '';
             if (!textContent) {
@@ -1099,6 +1107,7 @@ const OntologyBuilderPage: React.FC = () => {
                     request_interval: extractConfig.request_interval,
                     async_mode: true,
                     disable_think: extractConfig.disable_think,
+                    vl_enabled: extractConfig.vl_enabled,
                 });
 
                 if (instanceResponse.task_id) {
@@ -1313,6 +1322,7 @@ const OntologyBuilderPage: React.FC = () => {
 
     const nodeTypes = [
         { label: '类 (Class)', value: 'owl:Class' },
+        { label: '动作类型 (ActionType)', value: 'owl:ActionType' },
         { label: '实例 (Individual)', value: 'owl:NamedIndividual' },
         { label: '属性 (Property)', value: 'owl:ObjectProperty' },
     ];
@@ -1345,8 +1355,10 @@ const OntologyBuilderPage: React.FC = () => {
             }
         });
 
+        const isClassLike = (type: string | undefined) => type === 'owl:Class' || type === 'owl:ActionType';
+
         nodes.forEach(node => {
-            if (node.data?.type === 'owl:Class') {
+            if (isClassLike(node.data?.type)) {
                 visibleNodeIds.add(node.id);
                 if (expandedNodeIds.has(node.id)) {
                     const instances = classToInstances.get(node.id) || [];
@@ -1365,7 +1377,7 @@ const OntologyBuilderPage: React.FC = () => {
         const displayNodes = nodes.filter(n => {
             if (!visibleNodeIds.has(n.id)) return false;
             if (!documentFilter) return true;
-            if (n.data?.type === 'owl:Class') return true;
+            if (n.data?.type === 'owl:Class' || n.data?.type === 'owl:ActionType') return true;
             return n.data?.source_document === documentFilter || n.data?._source_file === documentFilter;
         });
 
@@ -1410,6 +1422,17 @@ const OntologyBuilderPage: React.FC = () => {
         try {
             const config = await systemApi.getConfig('llm_config');
             configForm.setFieldsValue(config.value);
+            try {
+                const vlConfig = await systemApi.getConfig('vl_config');
+                if (vlConfig?.value) {
+                    configForm.setFieldsValue({
+                        vl_base_url: vlConfig.value.vl_base_url || '',
+                        vl_api_key: vlConfig.value.vl_api_key || '',
+                        vl_model: vlConfig.value.vl_model || '',
+                    });
+                }
+            } catch { /* vl_config not found, use empty defaults */ }
+            await loadVlStatus();
             setIsConfigModalOpen(true);
         } catch (error) {
             message.error('获取配置失败');
@@ -1426,15 +1449,28 @@ const OntologyBuilderPage: React.FC = () => {
                 streaming_enabled: values.streaming_enabled === true,
                 milvus_enabled: values.milvus_enabled === true,
                 disable_think: values.disable_think === true,
+                vl_enabled: values.vl_enabled === true,
             };
             await systemApi.updateConfig('llm_config', configValues);
+
+            const vlConfigValues = {
+                vl_base_url: values.vl_base_url || '',
+                vl_api_key: values.vl_api_key || '',
+                vl_model: values.vl_model || '',
+            };
+            await systemApi.updateConfig('vl_config', vlConfigValues);
+
             setExtractConfig({
                 chunk_size: configValues.chunk_size || 15000,
                 chunk_overlap: configValues.chunk_overlap || 10,
                 request_interval: configValues.request_interval || 2,
                 llm_timeout: configValues.llm_timeout || 300,
                 disable_think: configValues.disable_think !== undefined ? configValues.disable_think : true,
+                vl_enabled: configValues.vl_enabled || false,
             });
+
+            await loadVlStatus();
+
             message.success('系统配置已保存');
             setIsConfigModalOpen(false);
         } catch (error) {
@@ -1510,6 +1546,37 @@ const OntologyBuilderPage: React.FC = () => {
             setTestingMilvus(false);
         }
     };
+
+    const testVLConnectivity = async () => {
+        setTestingVL(true);
+        try {
+            const values = await configForm.validateFields();
+            const vlConfig = {
+                vl_base_url: values.vl_base_url,
+                vl_api_key: values.vl_api_key,
+                vl_model: values.vl_model,
+            };
+            const response = await apiClient.post('/api/system/test-connectivity/vl', vlConfig);
+            if (response.data.status === 'success') {
+                message.success(response.data.message);
+            } else {
+                message.error(response.data.message);
+            }
+        } catch (error: any) {
+            message.error(`VL 视觉模型测试失败：${error.response?.data?.message || error.message}`);
+        } finally {
+            setTestingVL(false);
+        }
+    };
+
+    const loadVlStatus = useCallback(async () => {
+        try {
+            const response = await apiClient.get('/api/system/vl-status');
+            setVlConfigured(response.data.configured);
+        } catch {
+            setVlConfigured(false);
+        }
+    }, []);
 
     // ==================== 文档管理相关函数 ====================
 
@@ -1595,7 +1662,7 @@ const OntologyBuilderPage: React.FC = () => {
         setLoading(true);
         try {
             // 使用 parseFiles API 解析文件并保存到数据库
-            const response = await projectsApi.parseFiles(Number(projectId), files);
+            const response = await projectsApi.parseFiles(Number(projectId), files, { vl_enabled: extractConfig.vl_enabled });
             
             message.success(`已上传 ${files.length} 个文档，请在文档管理界面查看`);
             
@@ -1666,8 +1733,9 @@ const OntologyBuilderPage: React.FC = () => {
                         localStorage.setItem(`project_${projectId}_text_content`, data.result.text_content);
                     }
                     
-                    // 如果是实例提取完成（结果中包含 instances），自动展开所有实例
-                    if (data.result.instances && data.result.instances.length > 0) {
+                    // 如果是实例提取完成（结果中包含 instances 或 action_instances），自动展开所有实例
+                    const hasInstances = (data.result.instances && data.result.instances.length > 0) || (data.result.action_instances && data.result.action_instances.length > 0);
+                    if (hasInstances) {
                         // 找出所有有实例的类 ID
                         const classIdsWithInstances = new Set<string>();
                         const updatedEdges = layoutedEdges || [];
@@ -1807,6 +1875,7 @@ const OntologyBuilderPage: React.FC = () => {
                 request_interval: extractConfig.request_interval,
                 async_mode: true,
                 disable_think: extractConfig.disable_think,
+                vl_enabled: extractConfig.vl_enabled,
             });
 
             // 如果返回 task_id，说明是异步任务
@@ -1882,6 +1951,7 @@ const OntologyBuilderPage: React.FC = () => {
                 request_interval: extractConfig.request_interval,
                 async_mode: true,
                 disable_think: extractConfig.disable_think,
+                vl_enabled: extractConfig.vl_enabled,
             });
 
             // 如果返回 task_id，说明是异步任务
@@ -1923,7 +1993,7 @@ const OntologyBuilderPage: React.FC = () => {
 
     // 构建树形数据（带搜索过滤）
     const buildTreeData = useCallback(() => {
-        const classNodes = nodes.filter(n => n.data?.type === 'owl:Class');
+        const classNodes = nodes.filter(n => n.data?.type === 'owl:Class' || n.data?.type === 'owl:ActionType');
         const instanceNodes = nodes.filter(n => n.data?.type === 'owl:NamedIndividual');
 
         const classToInstances: Record<string, any[]> = {};
@@ -2009,7 +2079,7 @@ const OntologyBuilderPage: React.FC = () => {
     // 更多操作菜单（已移除树形列表操作，因为左侧面板已有独立按钮）
     const moreMenuItems: MenuProps['items'] = [];
 
-    const classCount = nodes.filter(n => n.data?.type === 'owl:Class').length;
+    const classCount = nodes.filter(n => n.data?.type === 'owl:Class' || n.data?.type === 'owl:ActionType').length;
     const instanceCount = nodes.filter(n => n.data?.type === 'owl:NamedIndividual').length;
 
 
@@ -2698,9 +2768,9 @@ const OntologyBuilderPage: React.FC = () => {
                                                     (() => {
                                                         const rawId = selectedElement?.data?.raw_id || '';
                                                         const nodeId = selectedElement?.id || '';
-                                                        const isAT = rawId.startsWith('AT_') || nodeId.startsWith('AT_');
+                                                        const isAT = rawId.startsWith('AT_') || nodeId.startsWith('AT_') || selectedElement?.data?.type === 'owl:ActionType';
                                                         const isActionInst = selectedElement?.data?._is_action_instance;
-                                                        if (form.getFieldValue('type') === 'owl:Class') {
+                                                        if (form.getFieldValue('type') === 'owl:Class' || form.getFieldValue('type') === 'owl:ActionType') {
                                                             return isAT ? '动作类 (Action Type)' : '对象类 (Object Type)';
                                                         } else {
                                                             if (isActionInst) {
@@ -3031,6 +3101,36 @@ const OntologyBuilderPage: React.FC = () => {
                                 <Form.Item name="scenario" label="场景描述" tooltip="帮助 AI 理解上下文">
                                     <Input.TextArea rows={3} placeholder="例如：分析这份半导体行业研报..." />
                                 </Form.Item>
+
+                                <div className="flex items-center gap-2 mb-3 pb-2 border-b border-gray-100 mt-4">
+                                    <EyeOutlined className="text-purple-500" />
+                                    <span className="font-medium text-gray-700">视觉解析</span>
+                                </div>
+                                <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                                    <div>
+                                        <div className="text-sm font-medium text-gray-700">VL 视觉模型解析</div>
+                                        <div className="text-xs text-gray-500 mt-0.5">
+                                            {!vlConfigured
+                                                ? '未配置 VL 模型 — 请在系统设置中配置后启用'
+                                                : extractConfig.vl_enabled
+                                                    ? '已开启 — 将使用视觉模型识别文档中的图片、流程图、截图等内容'
+                                                    : '已关闭 — 仅提取文本内容，图片中的信息将被忽略'}
+                                        </div>
+                                    </div>
+                                    <Switch
+                                        checked={extractConfig.vl_enabled}
+                                        onChange={(checked) => setExtractConfig(prev => ({ ...prev, vl_enabled: checked }))}
+                                        checkedChildren="关闭"
+                                        unCheckedChildren="开启"
+                                        disabled={!vlConfigured}
+                                    />
+                                </div>
+                                {extractConfig.vl_enabled && vlConfigured && (
+                                    <div className="mt-2 p-2 bg-purple-50 border border-purple-200 rounded text-xs text-purple-700">
+                                        <EyeOutlined className="mr-1" />
+                                        VL 模式已启用：系统将把文档页面渲染为图片后使用视觉模型识别，可提取流程图、截图、表格等图片内容。解析速度会稍慢，但信息更完整。
+                                    </div>
+                                )}
                             </Form>
                         </Modal>
 
@@ -3070,7 +3170,7 @@ const OntologyBuilderPage: React.FC = () => {
                             </div>
                             <Form form={addInstanceForm} layout="vertical">
                                 <Form.Item name="parentClassId" label="选择父类" rules={[{ required: true, message: '请选择一个类' }]}>
-                                    <Select options={nodes.filter(n => n.data?.type === 'owl:Class').map(node => {
+                                    <Select options={nodes.filter(n => n.data?.type === 'owl:Class' || n.data?.type === 'owl:ActionType').map(node => {
                                         const rawId = node.data?.raw_id || '';
                                         const isAT = rawId.startsWith('AT_') || node.id?.startsWith('AT_');
                                         return {
@@ -3305,33 +3405,49 @@ const OntologyBuilderPage: React.FC = () => {
                             
                             {/* 底部操作区 */}
                             {uploadedDocuments.length > 0 && (
-                                <div className="flex justify-between items-center pt-4 border-t border-gray-200 mt-4">
-                                    <div className="text-sm text-gray-500">
-                                        共 {uploadedDocuments.length} 个文档
+                                <div className="pt-4 border-t border-gray-200 mt-4">
+                                    <div className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg mb-3">
+                                        <div className="flex items-center gap-2">
+                                            <EyeOutlined className={vlConfigured ? "text-purple-500" : "text-gray-400"} />
+                                            <span className="text-sm font-medium text-gray-700">VL 视觉解析</span>
+                                            {!vlConfigured && <Tag color="orange" className="text-xs">未配置</Tag>}
+                                        </div>
+                                        <Switch
+                                            checked={extractConfig.vl_enabled}
+                                            onChange={(checked) => setExtractConfig(prev => ({ ...prev, vl_enabled: checked }))}
+                                            checkedChildren="关闭"
+                                            unCheckedChildren="开启"
+                                            disabled={!vlConfigured}
+                                            size="small"
+                                        />
                                     </div>
-                                    <Space>
-                                        <Button onClick={() => setIsDocumentModalOpen(false)}>关闭</Button>
-                                        {/* 如果没有 schema，显示骨架提取按钮；如果有 schema，显示实例提取按钮 */}
-                                        {!localStorage.getItem(`project_${projectId}_schema_graph`) ? (
-                                            <Button 
-                                                type="primary" 
-                                                icon={<CloudUploadOutlined />} 
-                                                onClick={handleStartSchemaExtractionFromModal}
-                                                className="bg-indigo-600 hover:bg-indigo-700"
-                                            >
-                                                开始骨架提取
-                                            </Button>
-                                        ) : (
-                                            <Button 
-                                                type="primary" 
-                                                icon={<DatabaseOutlined />} 
-                                                onClick={handleStartInstanceExtractionFromModal}
-                                                className="bg-orange-500 hover:bg-orange-600"
-                                            >
-                                                开始实例提取
-                                            </Button>
-                                        )}
-                                    </Space>
+                                    <div className="flex justify-between items-center">
+                                        <div className="text-sm text-gray-500">
+                                            共 {uploadedDocuments.length} 个文档
+                                        </div>
+                                        <Space>
+                                            <Button onClick={() => setIsDocumentModalOpen(false)}>关闭</Button>
+                                            {!localStorage.getItem(`project_${projectId}_schema_graph`) ? (
+                                                <Button 
+                                                    type="primary" 
+                                                    icon={<CloudUploadOutlined />} 
+                                                    onClick={handleStartSchemaExtractionFromModal}
+                                                    className="bg-indigo-600 hover:bg-indigo-700"
+                                                >
+                                                    开始骨架提取
+                                                </Button>
+                                            ) : (
+                                                <Button 
+                                                    type="primary" 
+                                                    icon={<DatabaseOutlined />} 
+                                                    onClick={handleStartInstanceExtractionFromModal}
+                                                    className="bg-orange-500 hover:bg-orange-600"
+                                                >
+                                                    开始实例提取
+                                                </Button>
+                                            )}
+                                        </Space>
+                                    </div>
                                 </div>
                             )}
                         </Modal>
@@ -3567,23 +3683,56 @@ const OntologyBuilderPage: React.FC = () => {
                                     <Form.Item label="思考模式" name="disable_think" valuePropName="checked" tooltip="关闭可提升响应速度（Qwen3/Gemma等思考模型生效，仅Ollama）">
                                         <Switch checkedChildren="关闭" unCheckedChildren="开启" />
                                     </Form.Item>
-                                    <Form.Item name="streaming_enabled" valuePropName="checked" className="col-span-2">
-                                        <Switch checkedChildren="流式启用" unCheckedChildren="流式禁用" />
+                                    <Form.Item name="streaming_enabled" valuePropName="checked" className="col-span-2" label="流式输出">
+                                        <Switch checkedChildren="关闭" unCheckedChildren="开启" />
                                     </Form.Item>
-                                    <Form.Item name="neo4j_uri" label="Neo4j URI" className="col-span-2" rules={[{ required: true, message: '请输入 Neo4j URI' }]}>
-                                        <Input placeholder="bolt://localhost:7687" />
-                                    </Form.Item>
-                                    <Form.Item name="neo4j_username" label="Neo4j 用户名"><Input placeholder="neo4j" /></Form.Item>
-                                    <Form.Item name="neo4j_password" label="Neo4j 密码"><Input.Password placeholder="password" /></Form.Item>
-                                    <Form.Item name="milvus_enabled" valuePropName="checked" className="col-span-2">
-                                        <Switch checkedChildren="Milvus 启用" unCheckedChildren="Milvus 禁用" />
-                                    </Form.Item>
-                                    <Form.Item name="embedding_base_url" label="Embedding API 地址" className="col-span-2"><Input placeholder="http://localhost:11434/v1" /></Form.Item>
-                                    <Form.Item name="embedding_api_key" label="Embedding API Key" className="col-span-2"><Input.Password placeholder="留空则无需认证" /></Form.Item>
-                                    <Form.Item name="embedding_model" label="Embedding 模型" className="col-span-2"><Input placeholder="nomic-embed-text:latest" /></Form.Item>
-                                    <Form.Item name="milvus_host" label="Milvus 主机"><Input placeholder="127.0.0.1" /></Form.Item>
-                                    <Form.Item name="milvus_port" label="Milvus 端口"><Input placeholder="19530" /></Form.Item>
                                 </div>
+
+                                <div className="mt-4 pt-4 border-t border-gray-200">
+                                    <h4 className="font-medium text-gray-700 mb-3 text-sm flex items-center gap-2">
+                                        <EyeOutlined className="text-purple-500" />
+                                        VL 视觉模型配置
+                                        <Tag color={vlConfigured ? "green" : "orange"} className="ml-1 text-xs">
+                                            {vlConfigured ? "已配置" : "未配置"}
+                                        </Tag>
+                                    </h4>
+                                    <div className="bg-purple-50 p-2 rounded text-xs text-purple-700 mb-3">
+                                        配置支持视觉能力的模型（如 Qwen3.5-VL、GPT-4o 等），用于识别文档中的图片、流程图、截图内容。此模型独立于上方的大语言模型，专门用于文档图片解析。
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <Form.Item name="vl_base_url" label="VL API 地址" className="col-span-2"><Input placeholder="http://localhost:11434/v1" /></Form.Item>
+                                        <Form.Item name="vl_api_key" label="VL API Key" className="col-span-2"><Input.Password placeholder="留空则无需认证（如 Ollama）" /></Form.Item>
+                                        <Form.Item name="vl_model" label="VL 模型名称" className="col-span-2"><Input placeholder="qwen3.5:9b（需支持视觉能力）" /></Form.Item>
+                                        <Form.Item label="VL 视觉解析" name="vl_enabled" valuePropName="checked" tooltip="开启后使用视觉模型识别文档中的图片内容（流程图、截图、表格等）。需先配置VL模型并测试通过" className="col-span-2">
+                                            <Switch checkedChildren="关闭" unCheckedChildren="开启" disabled={!vlConfigured} />
+                                        </Form.Item>
+                                        {!vlConfigured && (
+                                            <div className="col-span-2 text-xs text-orange-600 bg-orange-50 p-2 rounded mb-2">
+                                                ⚠️ 未配置 VL 视觉模型，VL 解析功能不可用。请填写上方 VL 模型地址和名称后保存，再测试连通性。
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="mt-4 pt-4 border-t border-gray-200">
+                                    <h4 className="font-medium text-gray-700 mb-3 text-sm">图数据库 & 向量存储</h4>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <Form.Item name="neo4j_uri" label="Neo4j URI" className="col-span-2" rules={[{ required: true, message: '请输入 Neo4j URI' }]}>
+                                            <Input placeholder="bolt://localhost:7687" />
+                                        </Form.Item>
+                                        <Form.Item name="neo4j_username" label="Neo4j 用户名"><Input placeholder="neo4j" /></Form.Item>
+                                        <Form.Item name="neo4j_password" label="Neo4j 密码"><Input.Password placeholder="password" /></Form.Item>
+                                        <Form.Item name="milvus_enabled" valuePropName="checked" className="col-span-2">
+                                            <Switch checkedChildren="关闭" unCheckedChildren="开启" />
+                                        </Form.Item>
+                                        <Form.Item name="embedding_base_url" label="Embedding API 地址" className="col-span-2"><Input placeholder="http://localhost:11434/v1" /></Form.Item>
+                                        <Form.Item name="embedding_api_key" label="Embedding API Key" className="col-span-2"><Input.Password placeholder="留空则无需认证" /></Form.Item>
+                                        <Form.Item name="embedding_model" label="Embedding 模型" className="col-span-2"><Input placeholder="nomic-embed-text:latest" /></Form.Item>
+                                        <Form.Item name="milvus_host" label="Milvus 主机"><Input placeholder="127.0.0.1" /></Form.Item>
+                                        <Form.Item name="milvus_port" label="Milvus 端口"><Input placeholder="19530" /></Form.Item>
+                                    </div>
+                                </div>
+
                                 <div className="mt-4 pt-4 border-t border-gray-200">
                                     <h4 className="font-medium text-gray-700 mb-3 text-sm">连通性测试</h4>
                                     <div className="grid grid-cols-2 gap-2">
@@ -3591,6 +3740,7 @@ const OntologyBuilderPage: React.FC = () => {
                                         <Button onClick={testNeo4JConnectivity} loading={testingNeo4J} size="small"><DatabaseOutlined className="mr-1" />Neo4j</Button>
                                         <Button onClick={testEmbeddingConnectivity} loading={testingEmbedding} size="small"><ApiOutlined className="mr-1" />Embedding</Button>
                                         <Button onClick={testMilvusConnectivity} loading={testingMilvus} size="small"><ClusterOutlined className="mr-1" />Milvus</Button>
+                                        <Button onClick={testVLConnectivity} loading={testingVL} size="small" className="col-span-2"><EyeOutlined className="mr-1" />VL 视觉模型</Button>
                                     </div>
                                 </div>
                             </Form>
@@ -3633,8 +3783,8 @@ const OntologyBuilderPage: React.FC = () => {
                                     <Form.Item name="es_password" label="ES 密码">
                                         <Input.Password placeholder="infini_rag_flow" />
                                     </Form.Item>
-                                    <Form.Item name="es_use_ssl" valuePropName="checked" label="启用SSL">
-                                        <Switch />
+                                    <Form.Item name="es_use_ssl" valuePropName="checked" label="SSL">
+                                        <Switch checkedChildren="关闭" unCheckedChildren="开启" />
                                     </Form.Item>
 
                                     <div className="col-span-2 border-b border-gray-200 pb-2 mb-1 mt-2">

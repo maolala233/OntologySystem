@@ -11,11 +11,8 @@ import { KnowledgeDomain } from '../api/domains';
 
 const { TreeNode } = Tree;
 
-const PROP_NAME_MAP: Record<string, string> = {
-    _source_file: '来源文档',
-    _source_quote: '原文内容',
-};
-const PROP_HIDDEN_SET = new Set(['_source_chunk_index']);
+const PROP_NAME_MAP: Record<string, string> = {};
+const PROP_HIDDEN_SET = new Set(['_source_chunk_index', 'source_chunk_index']);
 
 const AssetDetailPage: React.FC = () => {
     const { projectId } = useParams<{ projectId: string }>();
@@ -495,6 +492,14 @@ const AssetDetailPage: React.FC = () => {
                                             filteredProps[displayName] = value;
                                         }
                                     });
+                                    
+                                    const nodeData = selectedElement.data?.data || selectedElement.data || {};
+                                    if (nodeData.source_document) {
+                                        filteredProps['来源文档'] = nodeData.source_document;
+                                    }
+                                    if (nodeData.source_quote) {
+                                        filteredProps['溯源'] = nodeData.source_quote;
+                                    }
                                     
                                     if (Object.keys(filteredProps).length === 0) {
                                         return (

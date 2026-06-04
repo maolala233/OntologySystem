@@ -175,7 +175,8 @@ class LLMClient:
         return url
 
     def _build_api_kwargs(self, system_prompt: str, user_prompt: str, stream: bool = True,
-                          timeout: Optional[float] = None, json_schema: Optional[Dict[str, Any]] = None) -> dict:
+                          timeout: Optional[float] = None, json_schema: Optional[Dict[str, Any]] = None,
+                          max_tokens: int = 16000) -> dict:
         api_kwargs = {
             "model": self.model,
             "messages": [
@@ -184,7 +185,7 @@ class LLMClient:
             ],
             "temperature": 0.1,
             "stream": stream,
-            "max_tokens": 50000,
+            "max_tokens": max_tokens,
             "stop": ["</s>", "\n\n\n"]
         }
         if self._should_disable_think():
@@ -647,9 +648,14 @@ class LLMClient:
 
     def _continue_generation(self, system_prompt: str, user_prompt: str, partial_content: str,
                              timeout: Optional[float] = None, task_id: Optional[str] = None,
-                             json_schema: Optional[Dict[str, Any]] = None, max_recursion: int = 5) -> str:
+                             json_schema: Optional[Dict[str, Any]] = None, max_recursion: int = 2) -> str:
         if max_recursion <= 0:
             logger.warning(f"[ContinueGeneration] 达到最大递归深度，停止续写")
+            return ""
+
+        # 如果已生成内容超过30000字符，不再续写，防止无限膨胀
+        if len(partial_content) > 30000:
+            logger.warning(f"[ContinueGeneration] 已生成内容过长({len(partial_content)}字符)，停止续写")
             return ""
 
         logger.info(f"[ContinueGeneration] 开始续写，已生成内容长度={len(partial_content)} 字符，剩余递归次数={max_recursion}")
@@ -665,7 +671,7 @@ class LLMClient:
             "messages": messages,
             "temperature": 0.1,
             "stream": False,
-            "max_tokens": 50000,
+            "max_tokens": 8000,
             "stop": ["</s>", "\n\n\n"]
         }
 
@@ -720,9 +726,14 @@ class LLMClient:
 
     async def _async_continue_generation(self, system_prompt: str, user_prompt: str, partial_content: str,
                                           timeout: Optional[float] = None, task_id: Optional[str] = None,
-                                          json_schema: Optional[Dict[str, Any]] = None, max_recursion: int = 5) -> str:
+                                          json_schema: Optional[Dict[str, Any]] = None, max_recursion: int = 2) -> str:
         if max_recursion <= 0:
             logger.warning(f"[AsyncContinueGeneration] 达到最大递归深度，停止续写")
+            return ""
+
+        # 如果已生成内容超过30000字符，不再续写，防止无限膨胀
+        if len(partial_content) > 30000:
+            logger.warning(f"[AsyncContinueGeneration] 已生成内容过长({len(partial_content)}字符)，停止续写")
             return ""
 
         logger.info(f"[AsyncContinueGeneration] 开始续写，已生成内容长度={len(partial_content)} 字符，剩余递归次数={max_recursion}")
@@ -738,7 +749,7 @@ class LLMClient:
             "messages": messages,
             "temperature": 0.1,
             "stream": False,
-            "max_tokens": 50000,
+            "max_tokens": 8000,
             "stop": ["</s>", "\n\n\n"]
         }
 
@@ -854,7 +865,7 @@ class LLMClient:
                     ],
                     "temperature": 0.1,
                     "stream": stream,
-                    "max_tokens": 50000,
+                    "max_tokens": 16000,
                     "stop": ["</s>", "\n\n\n"]
                 }
 
@@ -978,7 +989,7 @@ class LLMClient:
                     ],
                     "temperature": 0.1,
                     "stream": stream,
-                    "max_tokens": 50000,
+                    "max_tokens": 16000,
                     "stop": ["</s>", "\n\n\n"]
                 }
 

@@ -263,6 +263,7 @@ async def extract_schema_from_documents(
     request_interval: int = Form(2),
     async_mode: str = Form("true", description="是否异步执行（支持取消）"),
     disable_think: bool = Form(True, description="是否禁用思考模式（Qwen3等思考模型）"),
+    vl_enabled: bool = Form(False, description="是否启用VL视觉模型解析文档图片"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -279,7 +280,7 @@ async def extract_schema_from_documents(
     if not doc_ids:
         raise HTTPException(status_code=400, detail="请提供至少一个文档 ID")
 
-    logger.info(f"[extract-schema-from-documents] 收到请求 - project_id={project_id}, doc_ids={doc_ids}")
+    logger.info(f"[extract-schema-from-documents] 收到请求 - project_id={project_id}, doc_ids={doc_ids}, vl_enabled={vl_enabled}")
 
     db_project = db.query(Project).filter(Project.id == project_id).first()
     if not db_project:
@@ -303,13 +304,16 @@ async def extract_schema_from_documents(
     temp_paths = [doc.file_path for doc in documents if doc.file_path]
     logger.info(f"[extract-schema-from-documents] 共 {len(temp_paths)} 个文件")
 
-    # 解析文件文本（支持多文件合并）
     from app.services.parser import FileParser
-    parser = FileParser()
+    parser = FileParser(vl_enabled=vl_enabled)
+    logger.info(f"[extract-schema-from-documents] FileParser vl_enabled={parser.vl_enabled}")
     text_contents = []
     for temp_path in temp_paths:
         if os.path.exists(temp_path):
-            text_content = parser.parse_file(temp_path) or ""
+            if vl_enabled:
+                text_content = await parser.async_parse_file(temp_path) or ""
+            else:
+                text_content = parser.parse_file(temp_path) or ""
             text_contents.append(text_content)
             logger.info(f"[extract-schema-from-documents] 文件解析完成 - file={temp_path}, text_length={len(text_content)}")
         else:
@@ -434,6 +438,7 @@ async def extract_schema_endpoint(
     async_mode: str = Form("false", description="是否异步执行（支持取消）"),
     save_documents: bool = Form("true", description="是否保存文档记录到数据库"),
     disable_think: bool = Form(True, description="是否禁用思考模式（Qwen3等思考模型）"),
+    vl_enabled: bool = Form(False, description="是否启用VL视觉模型解析文档图片"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -519,12 +524,14 @@ async def extract_schema_endpoint(
         
         logger.info(f"[extract-schema] 共保存 {len(temp_paths)} 个文件")
 
-        # 解析文件文本（支持多文件合并）
         from app.services.parser import FileParser
-        parser = FileParser()
+        parser = FileParser(vl_enabled=vl_enabled)
         text_contents = []
         for temp_path in temp_paths:
-            text_content = parser.parse_file(temp_path) or ""
+            if vl_enabled:
+                text_content = await parser.async_parse_file(temp_path) or ""
+            else:
+                text_content = parser.parse_file(temp_path) or ""
             text_contents.append(text_content)
             logger.info(f"[extract-schema] 文件解析完成 - file={temp_path}, text_length={len(text_content)}")
             
@@ -670,6 +677,7 @@ async def extract_instances_from_documents(
     request_interval: int = Form(2),
     async_mode: str = Form("true", description="是否异步执行（支持取消）"),
     disable_think: bool = Form(True, description="是否禁用思考模式（Qwen3等思考模型）"),
+    vl_enabled: bool = Form(False, description="是否启用VL视觉模型解析文档图片"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -716,9 +724,8 @@ async def extract_instances_from_documents(
     temp_paths = [doc.file_path for doc in documents if doc.file_path]
     logger.info(f"[extract-instances-from-documents] 共 {len(temp_paths)} 个文件")
 
-    # 解析文件文本（支持多文件合并，保持文件名元数据）
     from app.services.parser import FileParser
-    parser = FileParser()
+    parser = FileParser(vl_enabled=vl_enabled)
     documents_list = []  # [{"text": str, "filename": str}]
     
     # 同时从数据库记录中获取原始文件名
@@ -727,7 +734,10 @@ async def extract_instances_from_documents(
     
     for doc_idx, temp_path in enumerate(temp_paths):
         if os.path.exists(temp_path):
-            text_content = parser.parse_file(temp_path) or ""
+            if vl_enabled:
+                text_content = await parser.async_parse_file(temp_path) or ""
+            else:
+                text_content = parser.parse_file(temp_path) or ""
             # ★ 关键修复：优先使用数据库记录中的原始文件名
             original_filename = doc_id_to_filename.get(documents[doc_idx].id, documents[doc_idx].filename)
             
@@ -868,36 +878,8 @@ async def extract_instances_from_documents(
                     finally:
                         _schema_db.close()
                     
-                    class_node_ids = set()
-                    schema_nodes = []
-                    
-                    for node in existing_nodes:
-                        node_type = node.get('data', {}).get('type', '')
-                        if node_type == 'owl:Class':
-                            class_node_ids.add(node['id'])
-                            schema_nodes.append(node)
-                    
-                    schema_edges = []
-                    for edge in existing_edges:
-                        edge_data = edge.get('data', {})
-                        relation = edge_data.get('relation', '')
-                        label = edge.get('label', '')
-                        src = edge.get('source', '')
-                        tgt = edge.get('target', '')
-                        if relation == 'subclass_of' or label in ('subClassOf', 'subclass_of'):
-                            if src in class_node_ids and tgt in class_node_ids:
-                                schema_edges.append(edge)
-                        elif relation == 'action':
-                            if src in class_node_ids and tgt in class_node_ids:
-                                schema_edges.append(edge)
-                        elif relation == 'object_property' or edge_data.get('prop_id'):
-                            if src in class_node_ids and tgt in class_node_ids:
-                                schema_edges.append(edge)
-                        elif relation and relation not in ('rdf:type', 'type'):
-                            if src in class_node_ids and tgt in class_node_ids:
-                                schema_edges.append(edge)
-                    
-                    schema_graph_data = {"nodes": schema_nodes, "edges": schema_edges}
+                    # ★ 关键修复：直接使用所有原始节点和边作为schema，避免过滤导致类和关系丢失
+                    schema_graph_data = {"nodes": existing_nodes, "edges": existing_edges}
                     
                     full_graph_data = OntologyExtractor.merge_instances_to_graph_data(
                         schema_graph_data=schema_graph_data,
@@ -999,40 +981,12 @@ async def extract_instances_from_documents(
             documents=documents_list,
         )
 
+        # ★ 关键修复：直接使用所有原始节点和边作为schema，避免过滤导致类和关系丢失
         existing_nodes = (db_project.graph_data or {}).get("nodes", [])
         existing_edges = (db_project.graph_data or {}).get("edges", [])
         
-        class_node_ids = set()
-        schema_nodes = []
-        
-        for node in existing_nodes:
-            node_type = node.get('data', {}).get('type', '')
-            if node_type == 'owl:Class':
-                class_node_ids.add(node['id'])
-                schema_nodes.append(node)
-        
-        schema_edges = []
-        for edge in existing_edges:
-            edge_data = edge.get('data', {})
-            relation = edge_data.get('relation', '')
-            label = edge.get('label', '')
-            src = edge.get('source', '')
-            tgt = edge.get('target', '')
-            if relation == 'subclass_of' or label in ('subClassOf', 'subclass_of'):
-                if src in class_node_ids and tgt in class_node_ids:
-                    schema_edges.append(edge)
-            elif relation == 'action':
-                if src in class_node_ids and tgt in class_node_ids:
-                    schema_edges.append(edge)
-            elif relation == 'object_property' or edge_data.get('prop_id'):
-                if src in class_node_ids and tgt in class_node_ids:
-                    schema_edges.append(edge)
-            elif relation and relation not in ('rdf:type', 'type'):
-                if src in class_node_ids and tgt in class_node_ids:
-                    schema_edges.append(edge)
-        
-        schema_graph_data = {"nodes": schema_nodes, "edges": schema_edges}
-        logger.info(f"[extract-instances-from-documents] 同步模式：使用现有骨架图 - {len(schema_nodes)} 个类节点，{len(schema_edges)} 条边")
+        schema_graph_data = {"nodes": existing_nodes, "edges": existing_edges}
+        logger.info(f"[extract-instances-from-documents] 同步模式：使用现有骨架图 - {len(existing_nodes)} 个类节点，{len(existing_edges)} 条边")
         
         # 合并实例到完整图
         full_graph_data = OntologyExtractor.merge_instances_to_graph_data(
@@ -1313,7 +1267,7 @@ async def upload_document(
             }
         else:
             from app.services.parser import FileParser
-            parser = FileParser()
+            parser = FileParser(vl_enabled=False)
             text_content = parser.parse_file(temp_path) or ""
 
             extractor = _build_extractor(db, chunk_size, chunk_overlap, request_interval, disable_think=True)
@@ -1356,6 +1310,7 @@ async def parse_files(
     project_id: int,
     files: List[UploadFile] = File(..., description="文件列表（支持 PDF/DOC/DOCX/TXT）"),
     save_documents: bool = Form(True, description="是否保存文档记录到数据库"),
+    vl_enabled: bool = Form(False, description="是否启用VL视觉模型解析文档图片"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -1420,11 +1375,13 @@ async def parse_files(
         
         logger.info(f"[parse-files] 共保存 {len(temp_paths)} 个文件")
 
-        # 解析文件文本（支持多文件合并）
-        parser = FileParser()
+        parser = FileParser(vl_enabled=vl_enabled)
         text_contents = []
         for temp_path in temp_paths:
-            text_content = parser.parse_file(temp_path) or ""
+            if vl_enabled:
+                text_content = await parser.async_parse_file(temp_path) or ""
+            else:
+                text_content = parser.parse_file(temp_path) or ""
             text_contents.append(text_content)
             logger.info(f"[parse-files] 文件解析完成 - file={temp_path}, text_length={len(text_content)}")
             
@@ -1948,6 +1905,9 @@ def download_json(
         label = data.get("label", node.get("id", ""))
         node_type = data.get("type", "Class")
         props = data.get("properties", {})
+        # 过滤内部元数据字段，不导出给用户
+        _internal_keys = {"_source_file", "_source_quote", "_source_chunk_index", "_domain"}
+        props = {k: v for k, v in props.items() if k not in _internal_keys}
         desc = props.get("description", "") or data.get("description", "")
         raw_id = data.get("raw_id", "")
         node_id = node.get("id", "")
@@ -1971,6 +1931,16 @@ def download_json(
         }
         if is_action and data.get("parameters"):
             entity_data["parameters"] = data["parameters"]
+        # ActionType节点：从action边中提取target_object_type
+        if node_type == "owl:ActionType" or is_action:
+            for edge in edges:
+                edge_data = edge.get("data", {})
+                if edge_data.get("relation") == "action" and edge.get("source") == node_id:
+                    target_id = edge.get("target", "")
+                    target_label = node_id_to_label.get(target_id, target_id)
+                    if target_label:
+                        entity_data["target_object_type"] = target_label
+                    break
 
         entities.append(entity_data)
 

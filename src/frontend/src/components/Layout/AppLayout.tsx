@@ -21,6 +21,7 @@ import {
     LoadingOutlined,
     LockOutlined,
     TeamOutlined,
+    EyeOutlined,
 } from '@ant-design/icons';
 import { Form, message, Switch } from 'antd';
 import { systemApi } from '../../api/system';
@@ -177,6 +178,8 @@ const AppLayout: React.FC = () => {
     const [testingNeo4J, setTestingNeo4J] = useState(false);
     const [testingEmbedding, setTestingEmbedding] = useState(false);
     const [testingMilvus, setTestingMilvus] = useState(false);
+    const [testingVL, setTestingVL] = useState(false);
+    const [vlConfigured, setVlConfigured] = useState(false);
 
     // GraphRAG 问答相关状态
     const [isQAModalOpen, setIsQAModalOpen] = useState(false);
@@ -197,6 +200,21 @@ const AppLayout: React.FC = () => {
         try {
             const config = await systemApi.getConfig('llm_config');
             configForm.setFieldsValue(config.value);
+            try {
+                const vlConfig = await systemApi.getConfig('vl_config');
+                if (vlConfig?.value) {
+                    configForm.setFieldsValue({
+                        vl_base_url: vlConfig.value.vl_base_url || '',
+                        vl_api_key: vlConfig.value.vl_api_key || '',
+                        vl_model: vlConfig.value.vl_model || '',
+                        vl_disable_think: vlConfig.value.vl_disable_think !== undefined ? vlConfig.value.vl_disable_think : true,
+                    });
+                }
+            } catch { /* vl_config not found */ }
+            try {
+                const vlStatus = await apiClient.get('/api/system/vl-status');
+                setVlConfigured(vlStatus.data.configured);
+            } catch { setVlConfigured(false); }
             setIsConfigModalOpen(true);
         } catch (error) {
             message.error('获取配置失败');
@@ -213,9 +231,24 @@ const AppLayout: React.FC = () => {
                 streaming_enabled: values.streaming_enabled === true,
                 milvus_enabled: values.milvus_enabled === true,
                 disable_think: values.disable_think === true,
+                vl_enabled: values.vl_enabled === true,
                 chunk_overlap: Number(values.chunk_overlap) || 10,
             };
             await systemApi.updateConfig('llm_config', configValues);
+
+            const vlConfigValues = {
+                vl_base_url: values.vl_base_url || '',
+                vl_api_key: values.vl_api_key || '',
+                vl_model: values.vl_model || '',
+                vl_disable_think: values.vl_disable_think === true,
+            };
+            await systemApi.updateConfig('vl_config', vlConfigValues);
+
+            try {
+                const vlStatus = await apiClient.get('/api/system/vl-status');
+                setVlConfigured(vlStatus.data.configured);
+            } catch { setVlConfigured(false); }
+
             message.success('系统配置已保存');
             setIsConfigModalOpen(false);
         } catch (error) {
@@ -289,6 +322,28 @@ const AppLayout: React.FC = () => {
             message.error(`Milvus 连通性测试失败：${error.response?.data?.message || error.message}`);
         } finally {
             setTestingMilvus(false);
+        }
+    };
+
+    const testVLConnectivity = async () => {
+        setTestingVL(true);
+        try {
+            const values = await configForm.validateFields();
+            const vlConfig = {
+                vl_base_url: values.vl_base_url,
+                vl_api_key: values.vl_api_key,
+                vl_model: values.vl_model,
+            };
+            const response = await apiClient.post('/api/system/test-connectivity/vl', vlConfig);
+            if (response.data.status === 'success') {
+                message.success(response.data.message);
+            } else {
+                message.error(response.data.message);
+            }
+        } catch (error: any) {
+            message.error(`VL 视觉模型测试失败：${error.response?.data?.message || error.message}`);
+        } finally {
+            setTestingVL(false);
         }
     };
 
@@ -672,9 +727,22 @@ const AppLayout: React.FC = () => {
                         embedding_base_url: 'http://localhost:11434/v1',
                         embedding_model: 'nomic-embed-text:latest',
                         milvus_host: '127.0.0.1',
-                        milvus_port: '19530'
+                        milvus_port: '19530',
+                        vl_base_url: '',
+                        vl_api_key: '',
+                        vl_model: '',
+                        vl_disable_think: true,
+                        vl_enabled: false,
                     }}
                 >
+                    {/* 大语言模型配置 */}
+                    <div className="mb-2">
+                        <h4 className="font-medium text-blue-700 mb-3 text-sm flex items-center gap-2">
+                            <CloudServerOutlined />
+                            大语言模型 (LLM)
+                            <span className="text-xs text-gray-400 font-normal">— 用于骨架/实例提取</span>
+                        </h4>
+                    </div>
                     <div className="grid grid-cols-2 gap-4">
                         <Form.Item
                             name="base_url"
@@ -689,7 +757,7 @@ const AppLayout: React.FC = () => {
                             name="api_key"
                             label="API Key"
                             className="col-span-2"
-                            rules={[{ required: true, message: '请输入 API Key' }]}
+                            rules={[{ required: false, message: '请输入 API Key' }]}
                         >
                             <Input.Password placeholder="sk-..." />
                         </Form.Item>
@@ -737,8 +805,9 @@ const AppLayout: React.FC = () => {
                             name="streaming_enabled"
                             valuePropName="checked"
                             className="col-span-2"
+                            label="流式输出"
                         >
-                            <Switch checkedChildren="流式启用" unCheckedChildren="流式禁用" />
+                            <Switch checkedChildren="关闭" unCheckedChildren="开启" />
                         </Form.Item>
                         <Form.Item
                             name="disable_think"
@@ -749,7 +818,81 @@ const AppLayout: React.FC = () => {
                         >
                             <Switch checkedChildren="关闭" unCheckedChildren="开启" />
                         </Form.Item>
+                    </div>
 
+                    {/* VL 视觉模型配置 */}
+                    <div className="mt-4 pt-4 border-t border-gray-200">
+                        <h4 className="font-medium text-purple-700 mb-3 text-sm flex items-center gap-2">
+                            <EyeOutlined />
+                            VL 视觉模型
+                            <Tag color={vlConfigured ? "green" : "orange"} className="text-xs">
+                                {vlConfigured ? "已配置" : "未配置"}
+                            </Tag>
+                            <span className="text-xs text-gray-400 font-normal">— 用于文档图片解析</span>
+                        </h4>
+                        <div className="bg-purple-50 p-2 rounded text-xs text-purple-700 mb-3">
+                            配置支持视觉能力的模型（如 Qwen3.5、GPT-4o 等），独立于上方 LLM，专门用于识别文档中的流程图、截图、表格等图片内容。
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <Form.Item
+                                name="vl_base_url"
+                                label="VL API 地址"
+                                className="col-span-2"
+                            >
+                                <Input placeholder="例如：http://localhost:11434/v1" />
+                            </Form.Item>
+
+                            <Form.Item
+                                name="vl_api_key"
+                                label="VL API Key"
+                                className="col-span-2"
+                            >
+                                <Input.Password placeholder="留空则无需认证（如 Ollama）" />
+                            </Form.Item>
+
+                            <Form.Item
+                                name="vl_model"
+                                label="VL 模型名称"
+                                className="col-span-2"
+                            >
+                                <Input placeholder="例如：qwen3.5:9b（需支持视觉能力）" />
+                            </Form.Item>
+
+                            <Form.Item
+                                name="vl_disable_think"
+                                valuePropName="checked"
+                                className="col-span-2"
+                                label="VL 思考模式"
+                                tooltip="关闭可提升 VL 模型响应速度（Qwen3/Gemma等思考模型生效，仅Ollama）"
+                            >
+                                <Switch checkedChildren="关闭" unCheckedChildren="开启" />
+                            </Form.Item>
+
+                            <Form.Item
+                                name="vl_enabled"
+                                valuePropName="checked"
+                                className="col-span-2"
+                                label="VL 视觉解析"
+                                tooltip="开启后使用视觉模型识别文档中的图片内容。需先配置 VL 模型并测试通过"
+                            >
+                                <Switch checkedChildren="关闭" unCheckedChildren="开启" disabled={!vlConfigured} />
+                            </Form.Item>
+                            {!vlConfigured && (
+                                <div className="col-span-2 text-xs text-orange-600 bg-orange-50 p-2 rounded mb-2">
+                                    ⚠️ 未配置 VL 视觉模型，VL 解析功能不可用。请填写上方 VL 模型地址和名称后保存，再测试连通性。
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* 图数据库 & 向量存储 */}
+                    <div className="mt-4 pt-4 border-t border-gray-200">
+                        <h4 className="font-medium text-gray-700 mb-3 text-sm flex items-center gap-2">
+                            <DatabaseOutlined />
+                            图数据库 & 向量存储
+                        </h4>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
                         <Form.Item
                             name="neo4j_uri"
                             label="Neo4j URI"
@@ -782,7 +925,7 @@ const AppLayout: React.FC = () => {
                             valuePropName="checked"
                             className="col-span-2"
                         >
-                            <Switch checkedChildren="Milvus 启用" unCheckedChildren="Milvus 禁用" />
+                            <Switch checkedChildren="关闭" unCheckedChildren="开启" />
                         </Form.Item>
 
                         <Form.Item
@@ -865,6 +1008,15 @@ const AppLayout: React.FC = () => {
                                 icon={<ClusterOutlined />}
                             >
                                 测试 Milvus 连通性
+                            </Button>
+                            <Button
+                                type="default"
+                                onClick={testVLConnectivity}
+                                loading={testingVL}
+                                icon={<EyeOutlined />}
+                                className="col-span-2"
+                            >
+                                测试 VL 视觉模型连通性
                             </Button>
                         </div>
                     </div>

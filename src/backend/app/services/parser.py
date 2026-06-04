@@ -4,6 +4,7 @@
 import os
 import re
 import time
+import asyncio
 import pymupdf4llm
 import docx
 from pptx import Presentation
@@ -44,14 +45,21 @@ def clean_surrogate_characters(text: str) -> str:
     return cleaned_text
 
 
-def process_files(file_list: Union[List, str]) -> str:
+def process_files(file_list: Union[List, str], vl_enabled: bool = False) -> str:
     """
     解析文件列表，提取文本内容。
     支持 PDF, DOCX, DOC, PPTX, XLSX, XLS, TXT, MD, CSV。
+    
+    Args:
+        file_list: 文件路径列表
+        vl_enabled: 是否启用 VL 视觉模型解析（针对 PDF/DOCX 中的图片内容）
     """
     if not file_list:
         logger.info("[文件解析] 文件列表为空，跳过解析")
         return ""
+    
+    if vl_enabled:
+        return _process_files_with_vl(file_list)
     
     text_accumulated = ""
     # 兼容 Gradio 的文件列表和普通路径列表
@@ -256,14 +264,134 @@ class FileParser:
     """
     文件解析类，负责多种文件格式的加载与文本提取
     """
+    def __init__(self, vl_enabled: bool = False):
+        self.vl_enabled = vl_enabled
+
     def parse_file(self, file_path: str) -> str:
         """
         解析单个文件并返回其文本内容
         """
-        return process_files(file_path)
+        return process_files(file_path, vl_enabled=self.vl_enabled)
 
     def parse_files(self, file_paths: Union[List[str], str]) -> str:
         """
         解析多个文件并合并其文本内容
         """
-        return process_files(file_paths)
+        return process_files(file_paths, vl_enabled=self.vl_enabled)
+
+    async def async_parse_file(self, file_path: str) -> str:
+        """
+        异步解析单个文件（VL 模式下使用 VL 解析）
+        """
+        if self.vl_enabled:
+            from app.services.vl_parser import parse_file_with_vl
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, parse_file_with_vl, file_path)
+        return process_files(file_path, vl_enabled=False)
+
+    async def async_parse_files(self, file_paths: Union[List[str], str]) -> str:
+        """
+        异步解析多个文件（VL 模式下使用 VL 解析）
+        """
+        if self.vl_enabled:
+            from app.services.vl_parser import parse_file_with_vl
+            files = file_paths if isinstance(file_paths, list) else [file_paths]
+            loop = asyncio.get_event_loop()
+            results = await asyncio.gather(*[
+                loop.run_in_executor(None, parse_file_with_vl, f) for f in files
+            ])
+            parts = []
+            for result, f in zip(results, files):
+                if result.strip():
+                    base_name = os.path.basename(f)
+                    cleaned = clean_surrogate_characters(result)
+                    parts.append(f"\n\n<<<<<< 文件开始：{base_name} >>>>>>\n{cleaned}\n<<<<<< 文件结束：{base_name} >>>>>>\n")
+            return "".join(parts)
+        return process_files(file_paths, vl_enabled=False)
+
+
+def _process_files_with_vl(file_list: Union[List, str]) -> str:
+    """
+    使用 VL 视觉模型解析文件列表。
+    对于 PDF/DOCX 文件，使用视觉模型识别页面内容（包括图片）；
+    对于其他文件类型，回退到传统文本解析。
+    """
+    from app.services.vl_parser import parse_file_with_vl
+
+    files = file_list if isinstance(file_list, list) else [file_list]
+    logger.info(f"[VL解析] 开始处理 {len(files)} 个文件")
+
+    vl_tasks = []
+    non_vl_files = []
+    file_order = []
+
+    for idx, f in enumerate(files):
+        fname = f.name if hasattr(f, 'name') else str(f)
+        fname_lower = fname.lower()
+        try:
+            mime_result = subprocess.run(['file', '--mime-type', '-b', fname], capture_output=True, text=True, check=True)
+            mime_type = mime_result.stdout.strip()
+        except Exception:
+            mime_type = ""
+
+        is_visual = (
+            mime_type == "application/pdf" or fname_lower.endswith(".pdf")
+            or mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            or fname_lower.endswith(".docx")
+        )
+
+        if is_visual:
+            vl_tasks.append((idx, fname))
+            file_order.append(("vl", idx))
+        else:
+            non_vl_files.append((idx, fname, f))
+            file_order.append(("text", idx))
+
+    vl_results = {}
+
+    if vl_tasks:
+        for idx, fname in vl_tasks:
+            try:
+                result = parse_file_with_vl(fname)
+                vl_results[idx] = result
+            except Exception as e:
+                logger.error(f"[VL解析] 文件 {os.path.basename(fname)} 失败: {e}")
+                vl_results[idx] = ""
+
+    text_results = {}
+    if non_vl_files:
+        for idx, fname, f in non_vl_files:
+            text_results[idx] = ""
+
+        non_vl_paths = [f for _, _, f in non_vl_files]
+        text_content = process_files(non_vl_paths, vl_enabled=False)
+
+        if text_content.strip():
+            file_blocks = text_content.split("<<<<<< 文件开始：")
+            for block in file_blocks:
+                if not block.strip():
+                    continue
+                for idx, fname, _ in non_vl_files:
+                    base_name = os.path.basename(fname)
+                    if block.startswith(base_name):
+                        end_marker = f"<<<<<< 文件结束：{base_name} >>>>>>"
+                        content = block.replace(f"{base_name} >>>>>>\n", "", 1).replace(end_marker, "").strip()
+                        text_results[idx] = content
+                        break
+
+    ordered_parts = []
+    for file_type, idx in file_order:
+        if file_type == "vl":
+            content = vl_results.get(idx, "")
+        else:
+            content = text_results.get(idx, "")
+
+        if content.strip():
+            fname = files[idx].name if hasattr(files[idx], 'name') else str(files[idx])
+            base_name = os.path.basename(fname)
+            content = clean_surrogate_characters(content)
+            ordered_parts.append(f"\n\n<<<<<< 文件开始：{base_name} >>>>>>\n{content}\n<<<<<< 文件结束：{base_name} >>>>>>\n")
+
+    result = "".join(ordered_parts)
+    logger.info(f"[VL解析] 所有文件处理完成，累计内容长度={len(result)} 字符")
+    return result

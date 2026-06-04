@@ -9,12 +9,14 @@ import { OntologyNode, OntologyEdge } from '../../types/ontology';
 
 const NODE_TYPES = {
     CLASS: 'owl:Class',
+    ACTION_TYPE: 'owl:ActionType',
     INDIVIDUAL: 'owl:NamedIndividual',
     PROPERTY: 'owl:ObjectProperty'
 };
 
 const NODE_COLORS = {
     [NODE_TYPES.CLASS]: { fill: '#4a90d9', stroke: '#2d6cb4', text: '#ffffff' },
+    [NODE_TYPES.ACTION_TYPE]: { fill: '#555555', stroke: '#3a3a3a', text: '#ffffff' },
     [NODE_TYPES.INDIVIDUAL]: { fill: '#f79767', stroke: '#d4703f', text: '#ffffff' },
     [NODE_TYPES.PROPERTY]: { fill: '#c990c0', stroke: '#9e6b96', text: '#ffffff' },
     DEFAULT: { fill: '#666', stroke: '#444', text: '#ffffff' }
@@ -22,6 +24,7 @@ const NODE_COLORS = {
 
 const NODE_RADII = {
     [NODE_TYPES.CLASS]: 32,
+    [NODE_TYPES.ACTION_TYPE]: 27,
     [NODE_TYPES.INDIVIDUAL]: 22,
     [NODE_TYPES.PROPERTY]: 20
 };
@@ -117,10 +120,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
     const height = propHeight || containerSize.height;
 
     const getNodeRadius = useCallback((node: OntologyNode) => {
-        const rawId = node.data?.raw_id || '';
-        const isAction = rawId.startsWith('AT_') || node.id?.startsWith('AT_');
-        const baseRadius = NODE_RADII[node.data?.type || NODE_TYPES.CLASS] || NODE_RADII[NODE_TYPES.CLASS];
-        return isAction ? baseRadius * 0.85 : baseRadius;
+        return NODE_RADII[node.data?.type || NODE_TYPES.CLASS] || NODE_RADII[NODE_TYPES.CLASS];
     }, []);
 
     const isInstanceEdge = useCallback((edge: any) => {
@@ -194,14 +194,10 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
     };
 
     const getNodeColors = useCallback((d: any) => {
-        const isClass = d.type === NODE_TYPES.CLASS;
         const isInstance = d.type === NODE_TYPES.INDIVIDUAL;
         const rawId = d.originalNode?.data?.raw_id || '';
-        const nodeId = d.originalNode?.id || '';
         const isActionInstance = isInstance && (d.originalNode?.data?._is_action_instance || rawId.startsWith('AT_'));
-        const isActionType = isClass && (rawId.startsWith('AT_') || nodeId.startsWith('AT_'));
 
-        if (isActionType) return { fill: '#555555', stroke: '#3a3a3a', text: '#ffffff' };
         if (isActionInstance) return { fill: '#8a8a8a', stroke: '#6a6a6a', text: '#ffffff' };
         return NODE_COLORS[d.type] || NODE_COLORS.DEFAULT;
     }, []);
@@ -224,12 +220,11 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
     const setupNodeContent = useCallback((nodeG: any, d: any) => {
         nodeG.selectAll("*").remove();
 
-        const isClass = d.type === NODE_TYPES.CLASS;
+        const isClass = d.type === NODE_TYPES.CLASS || d.type === NODE_TYPES.ACTION_TYPE;
         const isInstance = d.type === NODE_TYPES.INDIVIDUAL;
+        const isActionType = d.type === NODE_TYPES.ACTION_TYPE;
         const rawId = d.originalNode?.data?.raw_id || '';
-        const nodeId = d.originalNode?.id || '';
         const isActionInstance = isInstance && (d.originalNode?.data?._is_action_instance || rawId.startsWith('AT_'));
-        const isActionType = isClass && (rawId.startsWith('AT_') || nodeId.startsWith('AT_'));
         const isActionNode = isActionType || isActionInstance;
 
         const colors = getNodeColors(d);
@@ -721,9 +716,9 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             .on("contextmenu", (event: MouseEvent, d: any) => {
                 event.preventDefault();
                 event.stopPropagation();
-                if (d.data?.type === NODE_TYPES.CLASS && onNodeRightClickRef.current) {
+                if ((d.data?.type === NODE_TYPES.CLASS || d.data?.type === NODE_TYPES.ACTION_TYPE) && onNodeRightClickRef.current) {
                     onNodeRightClickRef.current(d.originalNode);
-                } else if (d.data?.type !== NODE_TYPES.CLASS) {
+                } else if (d.data?.type !== NODE_TYPES.CLASS && d.data?.type !== NODE_TYPES.ACTION_TYPE) {
                     message.info('只有类节点支持右键展开实例');
                 }
             })

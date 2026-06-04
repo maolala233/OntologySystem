@@ -110,17 +110,16 @@ INSTANCE_EXTRACTION_JSON_SCHEMA = {
                     "id": {"type": "string", "description": "英文语义名"},
                     "type": {"type": "string", "description": "所属类的id或中文名"},
                     "label": {"type": "string", "description": "中文标签"},
-                    "source_quote": {"type": "string", "description": "原文引用，必须一字不差地摘抄"},
                     "object_props": {
                         "type": "object",
-                        "description": "对象属性，键为关系id或中文名，值为目标实例label或id列表"
+                        "description": "对象属性，键为关系id，值为目标实例label列表"
                     },
                     "data_props": {
                         "type": "object",
-                        "description": "数据属性，键为属性名，值为属性值"
+                        "description": "数据属性，键为属性中文名，值为属性值"
                     }
                 },
-                "required": ["id", "type", "label", "source_quote"]
+                "required": ["id", "type", "label"]
             }
         },
         "links": {
@@ -128,12 +127,11 @@ INSTANCE_EXTRACTION_JSON_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "link_type": {"type": "string", "description": "关系id或中文名"},
-                    "source_label": {"type": "string", "description": "源实例的label"},
-                    "source_type": {"type": "string", "description": "源实例所属类的id或中文名"},
-                    "target_label": {"type": "string", "description": "目标实例的label"},
-                    "target_type": {"type": "string", "description": "目标实例所属类的id或中文名"},
-                    "source_quote": {"type": "string", "description": "该关系在文档中的来源位置或原文引用"}
+                    "link_type": {"type": "string", "description": "关系id"},
+                    "source_label": {"type": "string", "description": "源实例label"},
+                    "source_type": {"type": "string", "description": "源实例类id"},
+                    "target_label": {"type": "string", "description": "目标实例label"},
+                    "target_type": {"type": "string", "description": "目标实例类id"}
                 },
                 "required": ["link_type", "source_label", "source_type", "target_label", "target_type"]
             }
@@ -143,22 +141,20 @@ INSTANCE_EXTRACTION_JSON_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "id": {"type": "string", "description": "动作实例标识"},
-                    "action_type": {"type": "string", "description": "所属动作类型的name或label"},
-                    "label": {"type": "string", "description": "动作实例的中文标签"},
-                    "target_instance_label": {"type": "string", "description": "作用的目标实例label"},
-                    "target_type": {"type": "string", "description": "目标实例所属类型"},
-                    "source_quote": {"type": "string", "description": "原文引用"},
+                    "action_type": {"type": "string", "description": "动作类型name"},
+                    "label": {"type": "string", "description": "动作实例中文标签"},
+                    "target_instance_label": {"type": "string", "description": "目标实例label"},
+                    "target_type": {"type": "string", "description": "目标类型"},
                     "parameters": {
                         "type": "object",
-                        "description": "动作参数，键为参数名，值为参数值"
+                        "description": "动作参数"
                     }
                 },
                 "required": ["action_type", "label", "target_instance_label", "target_type"]
             }
         }
     },
-    "required": ["instances"]
+    "required": ["instances", "action_instances"]
 }
 
 
@@ -1152,35 +1148,27 @@ class OntologyExtractor:
             cid = c.get("id", c.get("name", ""))
             label = c.get("label", "")
             props_list = c.get("properties", [])
-            prop_display_parts = []
+            prop_names_list = []
             for p in props_list:
                 if isinstance(p, dict):
-                    pname = p.get("name", "")
-                    plabel = p.get("label", "")
-                    if plabel and plabel != pname:
-                        prop_display_parts.append(f"{plabel}({pname})")
-                    else:
-                        prop_display_parts.append(plabel or pname)
-            prop_names = ', '.join(prop_display_parts) or '无'
-            subclasses = class_to_subclasses.get(cid, [])
-            subclass_info = ""
-            if subclasses:
-                subclass_labels = [class_id_to_info.get(sc, {}).get('label', sc) for sc in subclasses]
-                subclass_info = f" | 子类：{', '.join(subclass_labels)}"
+                    prop_names_list.append(p.get("label", "") or p.get("name", ""))
+                elif isinstance(p, str):
+                    prop_names_list.append(p)
+            props_str = ','.join(prop_names_list) if prop_names_list else ''
             class_list_items.append(
-                f"  - 对象类型: {c.get('name', cid)} | 中文名：{label} | 属性字段：{prop_names}{subclass_info}"
+                f"  {cid}|{label}|{props_str}"
             )
         class_list_str = "\n".join(class_list_items)
 
         op_list_str = "\n".join(
-            f"  - 链接类型: {op.get('name', op.get('id', ''))} | 名称：{op.get('label', '')} | 源对象：{op.get('source_object_type', op.get('domain', ''))} → 目标对象：{op.get('target_object_type', op.get('range', ''))}"
+            f"  {op.get('name', op.get('id', ''))}|{op.get('label', '')}|{op.get('source_object_type', op.get('domain', ''))}->{op.get('target_object_type', op.get('range', ''))}"
             for op in obj_props
-        ) or "  （当前 Schema 无 LinkType）"
+        ) or "  （无LinkType）"
 
         action_list_str = "\n".join(
-            f"  - 动作类型: {at.get('name', at.get('id', ''))} | 名称：{at.get('label', '')} | 目标对象类型：{at.get('target_object_type', '')} | 参数：{', '.join(p.get('name', '') for p in at.get('parameters', []) if isinstance(p, dict)) or '无'}"
+            f"  {at.get('name', at.get('id', ''))}|{at.get('label', '')}|{at.get('target_object_type', '')}"
             for at in action_types
-        ) or "  （当前 Schema 无 ActionType）"
+        ) or "  （无ActionType）"
 
         domain_code_clause = ""
         if product_code:
@@ -1194,79 +1182,49 @@ class OntologyExtractor:
         if product_code:
             domain_context = f"\n【📚 知识域上下文】当前提取任务属于【{product_code}】知识域。请确保提取的实例与该知识域相关。\n"
 
-        system_prompt = f"""你是一位精通 OWL2 DL 的本体工程师，正在执行「实例提取」任务。
+        system_prompt = f"""你是本体工程师，执行实例提取任务。根据文本提取符合Schema的实例。
 
-【已审核的类 Schema（你只能实例化这些类）】:
+【类 Schema】(格式: id|中文名|属性列表):
 {class_list_str}
 
-【已审核的关系 Schema（连线只能使用这些关系，且必须符合 domain→range）】:
+【关系 Schema】(格式: id|名称|源类->目标类):
 {op_list_str}
 
-【已审核的动作类型 Schema（动作实例只能使用这些动作类型）】:
+【动作类型 Schema】(格式: id|名称|目标类):
 {action_list_str}
-{domain_code_clause}
-{domain_context}
-【子类继承说明】:
-- 如果某个类有子类，你可以将实例分配给该类或其任意子类。
-- 例如：如果"设备"有子类"量子设备"，而文档中提到"量子密钥分发设备"，则应该将其实例化为"量子设备"类（更具体的子类），而不是"设备"类（父类）。
-- 优先将实例分配给最具体的子类（叶子类），而不是父类。
-
-【严格约束】:
-1. 【区分属性与关系】: 
-   - 如果是文本值（如 "1.0 版", "高性能"），放入 data_props。
-   - 如果是指向另一个**实体**（如指向 "算法 A"），放入 object_props。
-   - 不要把 "平台名称"、"版本" 等属性放到 object_props 里！
-2. 【仅实例化已定义的类】: type 字段的值必须是上方某个「类 ID」。绝对不能创建 Schema 以外的类型。
-3. 【连线必须符合 domain→range】: object_props 中使用的关系 ID 必须是上方已定义的，且起点/终点类型必须匹配。
-4. 【禁止重新定义类】: 不要输出 classes 或 object_properties 字段。
-5. 【ID 使用语义英文名】: 你输出的 id 用于辅助，系统将重新计算确定性 ID。
-6. 【Label 必须中文】: label 字段必须是中文。
-7. 【不遗漏】: 文本中出现的所有符合上述类定义的实体都必须提取，不得只举例代表。
-8. 【具体化命名原则】: 实例的 label 必须是文档中出现的最具体的专有名词或实体名称，例如"人行清算模拟系统""二代支付系统"等。
-   绝对禁止直接照抄所属类的名称作为实例的 label（例如 type 为"清算系统"时，不允许实例 label 也叫"清算系统"）。
-9. 【消除同名冗余】: 如果提取出的实例 label 与它的 type（类的 ID 对应的中文标签）完全一样，说明你提取错了，必须回到上下文中寻找更具体的限定词，
-   例如不要提取出 label 为"监管机构"的实例，而应该提取出 label 为"国家金融监督管理总局"等更具体的机构名称。
-10. 【属性防冗余】: 如果某个专有名词（如"二代支付系统""人行清算模拟系统"）已经作为实例的 label 出现，就不要再把同样的字符串重复放入 data_props 的"名称""系统名称"等字段中；
-    data_props 应主要用于存放该实例的版本号、金额、日期、状态等真正的数据字段，而不是简单重复 label。
-11. 【🔴 强制溯源】: 每个实例**必须**包含 `source_quote` 字段，该字段必须一字不差地摘抄原文原句，作为提取该实例的依据。
-    - source_quote 必须是原文中的完整句子，不能改写或缩写。
-    - 如果无法找到直接支持的原文句子，该实例不应被提取。
-    - 示例：如果原文是"人行清算模拟系统是二代支付系统的重要组成部分"，则提取"人行清算模拟系统"实例时，source_quote 应该是"人行清算模拟系统是二代支付系统的重要组成部分"。
-12. 【禁止模糊代称】: 实例的 label 绝对禁止使用模糊代称（如"本产品"、"本公司"、"该机构"、"此系统"等）。
-   必须从上下文中找到具体的专有名词替换。例如：
-   - "本产品" → 使用文档中提到的具体产品名称（如"中信理财之信盈系列"）
-   - "本公司" → 使用文档中提到的具体公司名称（如"中信银行"）
-   - "该机构" → 使用文档中提到的具体机构名称（如"国家金融监督管理总局"）
-   如果无法确定具体名称，则不应提取该实例。
-13. 【属性值留空原则】: data_props 中的属性值，如果文档中没有明确给出具体数值，则留空字符串""，不要编造或猜测不确定的数据。
-   例如：如果文档只说"费率不超过X%"但没有给出具体费率，则费率属性值应为""而非"X%"。
-14. 【🔴 data_props 键名必须使用中文】: data_props 中的键名必须使用上方属性字段中显示的中文名（label），不得使用英文名（name）。
-   例如：如果属性字段显示"风险等级(risk_level)"，则 data_props 中应使用"风险等级"作为键名，而非"risk_level"。
-15. 【🔴 必须提取动作实例】: 文本中描述的任何操作、事件、变更、交易等动作，如果其类型在上方动作类型 Schema 中有定义，则必须提取为 action_instance。
-   - 动作实例描述的是"对某个对象执行了什么操作"，例如"购买理财产品""赎回份额""到期兑付""风险评级变更"等。
-   - 即使文本只暗示了某个动作的发生（如"投资者可于开放日赎回"），也应提取为动作实例。
-   - action_type 必须严格匹配上方 Schema 中已定义的动作类型名称。
-   - target_instance_label 必须指向当前文本中已提取的某个实例。
+{domain_code_clause}{domain_context}
+【约束】:
+1. 仅实例化文本中明确提到的实体，type必须是类ID。禁止创建文本未提及的实例。
+2. object_props的关系ID必须已定义，且domain/range匹配。文本值放data_props，实体引用放object_props。
+3. Label必须中文且具体（禁止用类名作label，禁止模糊代称如"本产品"）。
+4. data_props键名用中文label，仅输出文档中明确提到的属性值。文档未提及的属性不要输出（不要输出空字符串key）。
+5. 优先将实例分配给最具体的子类。
+6. 必须提取动作实例（action_instances），action_type须匹配Schema。
+7. 禁止输出classes/object_properties字段。
+8. 【🔴 关键】只提取文本中明确提到的实例和动作！不要凭空创造、不要推测、不要重复。每个chunk最多提取15个实例和5个动作实例。
 """
 
-        user_prompt_template = """【当前文本片段】:
+        user_prompt_template = """【文本片段】:
 "{chunk}"
 
-【输出 JSON 格式（只输出 instances、links 和 action_instances 数组，不得包含 classes/object_properties 字段）】:
+输出JSON（仅action_instances/instances/links，按此顺序）:
 {{
+  "action_instances": [
+    {{
+      "action_type": "购买产品",
+      "label": "张三购买理财A",
+      "target_instance_label": "理财A",
+      "target_type": "理财产品",
+      "parameters": {{ "金额": "10万元" }}
+    }}
+  ],
   "instances": [
     {{
       "id": "ZhangSan",
       "type": "Employee",
       "label": "张三",
-      "source_quote": "张三同志现任技术部经理，工号 001，职级 P6。",
-      "object_props": {{
-        "worksIn": ["DeptA"]
-      }},
-      "data_props": {{
-        "工号": "001",
-        "职级": "P6"
-      }}
+      "object_props": {{ "worksIn": ["DeptA"] }},
+      "data_props": {{ "工号": "001", "职级": "P6", "部门": "技术部", "描述": "负责系统维护的技术人员" }}
     }}
   ],
   "links": [
@@ -1275,29 +1233,12 @@ class OntologyExtractor:
       "source_label": "张三",
       "source_type": "Employee",
       "target_label": "DeptA",
-      "target_type": "Department",
-      "source_quote": "张三同志现任技术部经理"
-    }}
-  ],
-  "action_instances": [
-    {{
-      "action_type": "购买产品",
-      "label": "张三购买理财产品A",
-      "target_instance_label": "理财产品A",
-      "target_type": "理财产品",
-      "source_quote": "张三于2024年1月购买了理财产品A",
-      "parameters": {{"金额": "10万元"}}
+      "target_type": "Department"
     }}
   ]
 }}
 
-【重要提醒】:
-- 每个实例**必须**包含 `source_quote` 字段，必须一字不差地摘抄上方文本片段中的原句。
-- source_quote 是提取该实例的唯一依据，不能编造或改写。
-- **links 数组**：除了在实例的 object_props 中声明关系外，还**必须**在 links 数组中显式声明每条关系，包含源和目标的类型信息。这有助于准确建立实例间的关系连线。
-- links 中的 source_label/target_label 必须与对应实例的 label 完全一致。
-- links 中的 source_type/target_type 必须是上方 Schema 中定义的类 ID 或中文名。
-"""
+提醒: 仔细扫描文本，把与实例相关的所有信息都填入data_props对应属性；links必须声明每条关系含源/目标类型。"""
 
         # ★ 关键修复：如果传入了 documents 数组，使用它来保持文件名溯源信息
         # 否则 fallback 到旧的 _chunk_text 方法
@@ -1421,19 +1362,9 @@ class OntologyExtractor:
                 continue
 
             for inst in raw_instances:
-                # ── 埋点入图：从 LLM 返回中提取 source_quote，并添加溯源信息 ──
-                source_quote = inst.get("source_quote", "")
-                
-                # 如果 LLM 没有返回 source_quote，尝试从 chunk 中 fallback
-                if not source_quote:
-                    # 尝试使用实例 label 作为 fallback
-                    source_quote = inst.get("label", "")
-                
-                # 将溯源信息以隐藏属性形式存入实例
                 inst["_source_file"] = chunk_filename
                 inst["_source_chunk_index"] = chunk_index
-                inst["_source_quote"] = source_quote
-                # 如果传入了 product_code，也存储 domain 信息
+                inst["_source_quote"] = chunk_text[:200] if chunk_text else ""
                 if product_code:
                     inst["_domain"] = product_code
                 
@@ -1479,9 +1410,11 @@ class OntologyExtractor:
                         valid_data_props_keys = valid_data_props_keys | inherited_props
 
                 raw_obj_props = inst.get("object_props", {})
+                if not isinstance(raw_obj_props, dict):
+                    raw_obj_props = {}
                 
-                # 确保 data_props 初始化
-                if "data_props" not in inst:
+                # 确保 data_props 初始化且为 dict
+                if "data_props" not in inst or not isinstance(inst["data_props"], dict):
                     inst["data_props"] = {}
 
                 for op_key, targets in raw_obj_props.items():
@@ -1971,7 +1904,7 @@ class OntologyExtractor:
                     "position": {"x": 0, "y": 0},
                     "data": {
                         "label": at.get("label", ""),
-                        "type": "owl:Class",
+                        "type": "owl:ActionType",
                         "raw_id": at_id if at_id.startswith("AT_") else at.get("id", ""),
                         "description": at.get("description", ""),
                         "parameters": at.get("parameters", []),
@@ -1989,7 +1922,19 @@ class OntologyExtractor:
                     "data": {"label": at.get("label", ""), "relation": "action", "prop_id": at_id},
                 })
 
-        return {"nodes": nodes, "edges": edges}
+        # 边去重：相同source+target+relation的边只保留一条
+        seen_edges = set()
+        deduped_edges = []
+        for e in edges:
+            e_key = (e.get("source", ""), e.get("target", ""),
+                     e.get("data", {}).get("relation", ""), e.get("label", ""))
+            if e_key not in seen_edges:
+                seen_edges.add(e_key)
+                deduped_edges.append(e)
+        if len(deduped_edges) < len(edges):
+            logger.info(f"[merge_instances_to_graph_data] 边去重: {len(edges)} → {len(deduped_edges)}")
+
+        return {"nodes": nodes, "edges": deduped_edges}
 
     @staticmethod
     def merge_instances_to_graph_data(
@@ -2072,10 +2017,16 @@ class OntologyExtractor:
         class_id_to_label: Dict[str, str] = {}
         class_id_to_prop_defs: Dict[str, List[Dict]] = {}
         det_id_to_node_id: Dict[str, str] = {}
+        # 构建类节点label集合，用于过滤与类同名的空实例
+        class_labels: Set[str] = set()
         for n in nodes:
-            if n.get("data", {}).get("type") == "owl:Class":
+            n_type = n.get("data", {}).get("type", "")
+            if n_type in ("owl:Class", "owl:ActionType"):
                 class_id_to_label[n["id"]] = n["data"].get("label", "")
                 class_id_to_prop_defs[n["id"]] = n["data"].get("property_definitions", [])
+                n_label = n["data"].get("label", "")
+                if n_label:
+                    class_labels.add(n_label)
                 raw_id = n.get("data", {}).get("raw_id", "")
                 if raw_id and raw_id != n["id"]:
                     det_id_to_node_id[raw_id] = n["id"]
@@ -2087,11 +2038,48 @@ class OntologyExtractor:
             elabel = e.get("data", {}).get("label", "")
             if eid and elabel:
                 op_id_to_label[eid] = elabel
+                # 同时用边ID和label本身作为key，增加匹配率
+                edge_id = e.get("id", "")
+                if edge_id:
+                    op_id_to_label[edge_id] = elabel
+        
+        def _extract_readable_op_label(op_id: str) -> str:
+            """从op_id中提取可读的关系名称。
+            处理 e_node_xxx_object_property_关联目录 等格式，提取最后的中文部分。
+            """
+            if not op_id:
+                return op_id
+            # 如果已经是纯中文/可读名称，直接返回
+            if not any(c in op_id for c in '_-'):
+                return op_id
+            # 尝试提取 _object_property_ 后面的部分
+            if '_object_property_' in op_id:
+                parts = op_id.split('_object_property_')
+                if len(parts) > 1 and parts[-1]:
+                    return parts[-1]
+            # 尝试提取最后一个下划线后的部分（如果是中文）
+            last_part = op_id.rsplit('_', 1)[-1] if '_' in op_id else op_id
+            if last_part and any('\u4e00' <= c <= '\u9fff' for c in last_part):
+                return last_part
+            return op_id
         
         for inst in instances:
             iid = inst["id"]
             if iid not in existing_ids:
+                inst_label = inst.get("label", "")
                 node_properties = dict(inst.get("data_props", {}))
+                # 过滤空字符串属性值，减少无意义输出
+                node_properties = {k: v for k, v in node_properties.items() if v is not None and v != ""}
+                
+                # 过滤与类/动作类型同名的实例（LLM误将类名/动作类型名当作实例）
+                # 条件：实例label与某个类/动作类型label相同，且实例没有有意义的data_props
+                # （排除仅有"动作类型"、"目标实例"等模板属性的实例）
+                if inst_label in class_labels:
+                    meaningful_props = {k: v for k, v in node_properties.items()
+                                       if k not in ("动作类型", "目标实例", "目标类型") and v}
+                    if not meaningful_props and not inst.get("object_props"):
+                        logger.info(f"[merge_instances_to_graph_data] 跳过与类/动作类型同名的空实例: '{inst_label}'")
+                        continue
                 
                 inst_type = inst.get("type", "")
                 resolved_type_node = det_id_to_node_id.get(inst_type, inst_type)
@@ -2116,16 +2104,20 @@ class OntologyExtractor:
                                 renamed[k] = v
                         node_properties = renamed
                 
-                if "_source_file" in inst:
-                    node_properties["_source_file"] = inst["_source_file"]
-                if "_source_chunk_index" in inst:
-                    node_properties["_source_chunk_index"] = inst["_source_chunk_index"]
-                if "_source_quote" in inst:
-                    node_properties["_source_quote"] = inst["_source_quote"]
-                if "_domain" in inst:
-                    node_properties["_domain"] = inst["_domain"]
-                
                 class_label = class_id_to_label.get(resolved_type_node, "")
+                
+                # 构建实例描述
+                desc_parts = [f"{inst['label']}是一个{class_label or '实例'}"]
+                prop_desc_parts = []
+                for k, v in node_properties.items():
+                    if k in ("description", "_source_file", "_source_quote", "_source_chunk_index"):
+                        continue
+                    if v is None or v == "":
+                        continue
+                    prop_desc_parts.append(f"{k}: {v}")
+                if prop_desc_parts:
+                    desc_parts.append("，属性包括" + "，".join(prop_desc_parts))
+                inst_description = "".join(desc_parts)
                 
                 inst_node_data = {
                     "label": inst["label"],
@@ -2133,7 +2125,14 @@ class OntologyExtractor:
                     "class_label": class_label,
                     "properties": node_properties,
                     "source_document": inst.get("_source_file", ""),
+                    "description": inst_description,
                 }
+                if inst.get("_source_quote"):
+                    inst_node_data["source_quote"] = inst["_source_quote"]
+                if inst.get("_source_chunk_index") is not None:
+                    inst_node_data["source_chunk_index"] = inst["_source_chunk_index"]
+                if inst.get("_domain"):
+                    inst_node_data["domain"] = inst["_domain"]
                 if prop_defs:
                     inst_node_data["property_definitions"] = prop_defs
                 nodes.append({
@@ -2157,15 +2156,15 @@ class OntologyExtractor:
                     "label": "type",
                     "type": "custom",
                     "style": {"strokeDasharray": "5,5"},
-                    "data": {"label": "type"},
+                    "data": {"label": "type", "relation": "type"},
                 })
 
         # 实例间的 ObjectProperty 连线（实线）
         for inst in instances:
             src_id = inst["id"]
             for op_id, targets in inst.get("object_props", {}).items():
-                # 使用可读的关系标签
-                op_label = op_id_to_label.get(op_id, op_id)
+                # 使用可读的关系标签：优先映射表，回退到提取可读名称
+                op_label = op_id_to_label.get(op_id, _extract_readable_op_label(op_id))
                 for t_raw in targets:
                     # 先按确定性 ID 查，再按 label 查
                     tgt_id = label_to_inst_id.get(t_raw)
@@ -2183,11 +2182,12 @@ class OntologyExtractor:
         if action_instances:
             action_type_to_node_id: Dict[str, str] = {}
             for n in nodes:
-                if n.get("data", {}).get("type") == "owl:Class":
+                n_type = n.get("data", {}).get("type", "")
+                if n_type in ("owl:Class", "owl:ActionType"):
                     raw_id = n.get("data", {}).get("raw_id", "")
                     node_id = n["id"]
                     node_label = n.get("data", {}).get("label", "")
-                    is_action = raw_id.startswith("AT_") or node_id.startswith("AT_")
+                    is_action = raw_id.startswith("AT_") or node_id.startswith("AT_") or n_type == "owl:ActionType"
                     if is_action:
                         action_type_to_node_id[node_id] = node_id
                         if raw_id:
@@ -2210,20 +2210,27 @@ class OntologyExtractor:
                 target_type = ai.get("target_type", "")
                 source_quote = ai.get("source_quote", "")
 
+                # 将target_type解析为可读的类名
+                resolved_target_type = det_id_to_node_id.get(target_type, target_type)
+                target_type_label = class_id_to_label.get(resolved_target_type, target_type)
+                if target_type_label == resolved_target_type and target_type != resolved_target_type:
+                    # det_id_to_node_id解析成功但class_id_to_label中没有，尝试用原始值
+                    target_type_label = class_id_to_label.get(target_type, target_type)
+
                 ai_id = f"action_{make_deterministic_id(ai_label, 'ActionInstance')}"
 
                 if ai_id not in existing_ids:
                     ai_props = {
                         "动作类型": action_type,
                         "目标实例": target_label,
-                        "目标类型": target_type,
+                        "目标类型": target_type_label,
                     }
-                    if source_quote:
-                        ai_props["_source_quote"] = source_quote
-                    if ai.get("_source_file"):
-                        ai_props["_source_file"] = ai.get("_source_file")
-                    if ai.get("_source_chunk_index") is not None:
-                        ai_props["_source_chunk_index"] = ai.get("_source_chunk_index")
+                    # 保留 parameters 信息
+                    params = ai.get("parameters", {})
+                    if params and isinstance(params, dict):
+                        for pk, pv in params.items():
+                            if pk and pv:
+                                ai_props[pk] = pv
 
                     action_class_id = action_type_to_node_id.get(action_type, "")
                     if not action_class_id:
@@ -2233,6 +2240,29 @@ class OntologyExtractor:
                                 logger.info(f"[merge_instances_to_graph_data] 动作实例 '{ai_label}' 的 action_type '{action_type}' 通过包含关系匹配到节点 '{val}'")
                                 break
 
+                    # 构建动作实例描述
+                    # 获取动作类型的label（更友好的描述）
+                    action_type_label = action_type
+                    if action_class_id:
+                        action_class_node = next((n for n in nodes if n["id"] == action_class_id), None)
+                        if action_class_node:
+                            action_type_label = action_class_node.get("data", {}).get("label", action_type)
+                    ai_desc_parts = [f"{ai_label}（{action_type_label}）"]
+                    if target_label:
+                        ai_desc_parts.append(f"，目标：{target_label}")
+                    # 添加parameters信息
+                    param_parts = []
+                    for k, v in ai_props.items():
+                        if k in ("description", "_source_file", "_source_quote", "_source_chunk_index",
+                                 "动作类型", "目标实例", "目标类型"):
+                            continue
+                        if v is None or v == "":
+                            continue
+                        param_parts.append(f"{k}: {v}")
+                    if param_parts:
+                        ai_desc_parts.append("，参数：" + "，".join(param_parts))
+                    ai_description = "".join(ai_desc_parts)
+
                     ai_node_data = {
                         "label": ai_label,
                         "type": "owl:NamedIndividual",
@@ -2240,7 +2270,12 @@ class OntologyExtractor:
                         "properties": ai_props,
                         "source_document": ai.get("_source_file", ""),
                         "_is_action_instance": True,
+                        "description": ai_description,
                     }
+                    if source_quote:
+                        ai_node_data["source_quote"] = source_quote
+                    if ai.get("_source_chunk_index") is not None:
+                        ai_node_data["source_chunk_index"] = ai["_source_chunk_index"]
                     if action_class_id:
                         action_class_node = next((n for n in nodes if n["id"] == action_class_id), None)
                         if action_class_node:
@@ -2262,7 +2297,7 @@ class OntologyExtractor:
                             "label": "type",
                             "type": "custom",
                             "style": {"strokeDasharray": "5,5"},
-                            "data": {"label": "type"},
+                            "data": {"label": "type", "relation": "type"},
                         })
 
                     tgt_inst_id = label_to_inst_id.get(target_label)
@@ -3129,35 +3164,27 @@ class OntologyExtractor:
             cid = c.get("id", c.get("name", ""))
             label = c.get("label", "")
             props_list = c.get("properties", [])
-            prop_display_parts = []
+            prop_names_list = []
             for p in props_list:
                 if isinstance(p, dict):
-                    pname = p.get("name", "")
-                    plabel = p.get("label", "")
-                    if plabel and plabel != pname:
-                        prop_display_parts.append(f"{plabel}({pname})")
-                    else:
-                        prop_display_parts.append(plabel or pname)
-            prop_names = ', '.join(prop_display_parts) or '无'
-            subclasses = class_to_subclasses.get(cid, [])
-            subclass_info = ""
-            if subclasses:
-                subclass_labels = [class_id_to_info.get(sc, {}).get('label', sc) for sc in subclasses]
-                subclass_info = f" | 子类：{', '.join(subclass_labels)}"
+                    prop_names_list.append(p.get("label", "") or p.get("name", ""))
+                elif isinstance(p, str):
+                    prop_names_list.append(p)
+            props_str = ','.join(prop_names_list) if prop_names_list else ''
             class_list_items.append(
-                f"  - 对象类型: {c.get('name', cid)} | 中文名：{label} | 属性字段：{prop_names}{subclass_info}"
+                f"  {cid}|{label}|{props_str}"
             )
         class_list_str = "\n".join(class_list_items)
 
         op_list_str = "\n".join(
-            f"  - 链接类型: {op.get('name', op.get('id', ''))} | 名称：{op.get('label', '')} | 源对象：{op.get('source_object_type', op.get('domain', ''))} → 目标对象：{op.get('target_object_type', op.get('range', ''))}"
+            f"  {op.get('name', op.get('id', ''))}|{op.get('label', '')}|{op.get('source_object_type', op.get('domain', ''))}->{op.get('target_object_type', op.get('range', ''))}"
             for op in obj_props
-        ) or "  （当前 Schema 无 LinkType）"
+        ) or "  （无LinkType）"
 
         action_list_str = "\n".join(
-            f"  - 动作类型: {at.get('name', at.get('id', ''))} | 名称：{at.get('label', '')} | 目标对象类型：{at.get('target_object_type', '')} | 参数：{', '.join(p.get('name', '') for p in at.get('parameters', []) if isinstance(p, dict)) or '无'}"
+            f"  {at.get('name', at.get('id', ''))}|{at.get('label', '')}|{at.get('target_object_type', '')}"
             for at in action_types
-        ) or "  （当前 Schema 无 ActionType）"
+        ) or "  （无ActionType）"
 
         domain_code_clause = ""
         if product_code:
@@ -3170,67 +3197,49 @@ class OntologyExtractor:
         if product_code:
             domain_context = f"\n【📚 知识域上下文】当前提取任务属于【{product_code}】知识域。请确保提取的实例与该知识域相关。\n"
 
-        system_prompt = f"""你是一位精通 OWL2 DL 的本体工程师，正在执行「实例提取」任务。
+        system_prompt = f"""你是本体工程师，执行实例提取任务。根据文本提取符合Schema的实例。
 
-【已审核的类 Schema（你只能实例化这些类）】:
+【类 Schema】(格式: id|中文名|属性列表):
 {class_list_str}
 
-【已审核的关系 Schema（连线只能使用这些关系，且必须符合 domain→range）】:
+【关系 Schema】(格式: id|名称|源类->目标类):
 {op_list_str}
 
-【已审核的动作类型 Schema（动作实例只能使用这些动作类型）】:
+【动作类型 Schema】(格式: id|名称|目标类):
 {action_list_str}
-{domain_code_clause}
-{domain_context}
-【子类继承说明】:
-- 如果某个类有子类，你可以将实例分配给该类或其任意子类。
-- 优先将实例分配给最具体的子类（叶子类），而不是父类。
-
-【严格约束】:
-1. 【区分属性与关系】:
-   - 如果是文本值（如 "1.0 版", "高性能"），放入 data_props。
-   - 如果是指向另一个**实体**（如指向 "算法 A"），放入 object_props。
-   - 不要把 "平台名称"、"版本" 等属性放到 object_props 里！
-2. 【仅实例化已定义的类】: type 字段的值必须是上方某个「类 ID」。绝对不能创建 Schema 以外的类型。
-3. 【连线必须符合 domain→range】: object_props 中使用的关系 ID 必须是上方已定义的，且起点/终点类型必须匹配。
-4. 【禁止重新定义类】: 不要输出 classes 或 object_properties 字段。
-5. 【ID 使用语义英文名】: 你输出的 id 用于辅助，系统将重新计算确定性 ID。
-6. 【Label 必须中文】: label 字段必须是中文。
-7. 【不遗漏】: 文本中出现的所有符合上述类定义的实体都必须提取，不得只举例代表。
-8. 【具体化命名原则】: 实例的 label 必须是文档中出现的最具体的专有名词或实体名称。
-   绝对禁止直接照抄所属类的名称作为实例的 label。
-9. 【消除同名冗余】: 如果提取出的实例 label 与它的 type（类的 ID 对应的中文标签）完全一样，说明你提取错了，必须回到上下文中寻找更具体的限定词。
-10. 【属性防冗余】: 如果某个专有名词已经作为实例的 label 出现，就不要再把同样的字符串重复放入 data_props 的"名称""系统名称"等字段中。
-11. 【🔴 强制溯源】: 每个实例**必须**包含 `source_quote` 字段，该字段必须一字不差地摘抄原文原句，作为提取该实例的依据。
-    - source_quote 必须是原文中的完整句子，不能改写或缩写。
-    - 如果无法找到直接支持的原文句子，该实例不应被提取。
-12. 【🔴 data_props 键名必须使用中文】: data_props 中的键名必须使用上方属性字段中显示的中文名（label），不得使用英文名（name）。
-    例如：如果属性字段显示"风险等级(risk_level)"，则 data_props 中应使用"风险等级"作为键名，而非"risk_level"。
-13. 【🔴 必须提取动作实例】: 文本中描述的任何操作、事件、变更、交易等动作，如果其类型在上方动作类型 Schema 中有定义，则必须提取为 action_instance。
-    - 动作实例描述的是"对某个对象执行了什么操作"，例如"购买理财产品""赎回份额""到期兑付""风险评级变更"等。
-    - 即使文本只暗示了某个动作的发生（如"投资者可于开放日赎回"），也应提取为动作实例。
-    - action_type 必须严格匹配上方 Schema 中已定义的动作类型名称。
-    - target_instance_label 必须指向当前文本中已提取的某个实例。
+{domain_code_clause}{domain_context}
+【约束】:
+1. 仅实例化文本中明确提到的实体，type必须是类ID。禁止创建文本未提及的实例。
+2. object_props的关系ID必须已定义，且domain/range匹配。文本值放data_props，实体引用放object_props。
+3. Label必须中文且具体（禁止用类名作label，禁止模糊代称如"本产品"）。
+4. data_props键名用中文label，仅输出文档中明确提到的属性值。文档未提及的属性不要输出（不要输出空字符串key）。
+5. 优先将实例分配给最具体的子类。
+6. 必须提取动作实例（action_instances），action_type须匹配Schema。
+7. 禁止输出classes/object_properties字段。
+8. 【🔴 关键】只提取文本中明确提到的实例和动作！不要凭空创造、不要推测、不要重复。每个chunk最多提取15个实例和5个动作实例。
 """
 
-        user_prompt_template = """【当前文本片段】:
+        user_prompt_template = """【文本片段】:
 "{chunk}"
 
-【输出 JSON 格式（只输出 instances、links 和 action_instances 数组，不得包含 classes/object_properties 字段）】:
+输出JSON（仅action_instances/instances/links，按此顺序）:
 {{
+  "action_instances": [
+    {{
+      "action_type": "购买产品",
+      "label": "张三购买理财A",
+      "target_instance_label": "理财A",
+      "target_type": "理财产品",
+      "parameters": {{ "金额": "10万元" }}
+    }}
+  ],
   "instances": [
     {{
       "id": "ZhangSan",
       "type": "Employee",
       "label": "张三",
-      "source_quote": "张三同志现任技术部经理，工号 001，职级 P6。",
-      "object_props": {{
-        "worksIn": ["DeptA"]
-      }},
-      "data_props": {{
-        "工号": "001",
-        "职级": "P6"
-      }}
+      "object_props": {{ "worksIn": ["DeptA"] }},
+      "data_props": {{ "工号": "001", "职级": "P6", "部门": "技术部", "描述": "负责系统维护的技术人员" }}
     }}
   ],
   "links": [
@@ -3239,32 +3248,12 @@ class OntologyExtractor:
       "source_label": "张三",
       "source_type": "Employee",
       "target_label": "DeptA",
-      "target_type": "Department",
-      "source_quote": "张三同志现任技术部经理"
-    }}
-  ],
-  "action_instances": [
-    {{
-      "action_type": "购买产品",
-      "label": "张三购买理财产品A",
-      "target_instance_label": "理财产品A",
-      "target_type": "理财产品",
-      "source_quote": "张三于2024年1月购买了理财产品A",
-      "parameters": {{"金额": "10万元"}}
+      "target_type": "Department"
     }}
   ]
 }}
 
-【重要提醒】:
-- 每个实例**必须**包含 `source_quote` 字段，必须一字不差地摘抄上方文本片段中的原句。
-- **links 数组**：除了在实例的 object_props 中声明关系外，还**必须**在 links 数组中显式声明每条关系，包含源和目标的类型信息。
-- links 中的 source_label/target_label 必须与对应实例的 label 完全一致。
-- links 中的 source_type/target_type 必须是上方 Schema 中定义的类 ID 或中文名。
-- **action_instances 数组**：如果文本中描述了某个动作/操作/事件作用于某个对象，且该动作类型在上方 Schema 的动作类型列表中，则必须提取为 action_instance。
-  - action_type 必须是上方 Schema 中已定义的动作类型名称。
-  - target_instance_label 必须是当前文本中已提取的某个实例的 label。
-  - target_type 必须是该实例所属的类 ID 或中文名。
-"""
+提醒: 仔细扫描文本，把与实例相关的所有信息都填入data_props对应属性；links必须声明每条关系含源/目标类型。"""
 
         if documents and len(documents) > 0:
             chunks = self._chunk_documents(documents, chunk_size=chunk_size, overlap=chunk_overlap)
@@ -3375,13 +3364,9 @@ class OntologyExtractor:
                 continue
 
             for inst in raw_instances:
-                source_quote = inst.get("source_quote", "")
-                if not source_quote:
-                    source_quote = inst.get("label", "")
-
                 inst["_source_file"] = chunk_filename
                 inst["_source_chunk_index"] = chunk_index
-                inst["_source_quote"] = source_quote
+                inst["_source_quote"] = chunk_text[:200] if chunk_text else ""
                 if product_code:
                     inst["_domain"] = product_code
 
@@ -3419,8 +3404,10 @@ class OntologyExtractor:
                         valid_data_props_keys = valid_data_props_keys | inherited_props
 
                 raw_obj_props = inst.get("object_props", {})
+                if not isinstance(raw_obj_props, dict):
+                    raw_obj_props = {}
 
-                if "data_props" not in inst:
+                if "data_props" not in inst or not isinstance(inst["data_props"], dict):
                     inst["data_props"] = {}
 
                 for op_key, targets in raw_obj_props.items():

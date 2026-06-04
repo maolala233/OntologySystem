@@ -264,6 +264,7 @@ export const projectsApi = {
             async_mode?: boolean;
             save_documents?: boolean;
             disable_think?: boolean;
+            vl_enabled?: boolean;
         }
     ): Promise<any> => {
         const formData = new FormData();
@@ -294,6 +295,9 @@ export const projectsApi = {
         }
         if (options?.disable_think !== undefined) {
             formData.append('disable_think', String(options.disable_think));
+        }
+        if (options?.vl_enabled !== undefined) {
+            formData.append('vl_enabled', String(options.vl_enabled));
         }
 
         const response = await apiClient.post(
@@ -362,7 +366,8 @@ export const projectsApi = {
     // 解析文件获取文本内容（不提取 schema）- 支持多文件
     parseFiles: async (
         projectId: number,
-        files: File | File[]
+        files: File | File[],
+        options?: { vl_enabled?: boolean }
     ): Promise<any> => {
         const formData = new FormData();
         
@@ -371,6 +376,9 @@ export const projectsApi = {
         fileArray.forEach((file) => {
             formData.append('files', file);
         });
+        if (options?.vl_enabled !== undefined) {
+            formData.append('vl_enabled', String(options.vl_enabled));
+        }
 
         const response = await apiClient.post(
             `/api/projects/${projectId}/parse-files`,
@@ -412,6 +420,7 @@ export const projectsApi = {
             request_interval?: number;
             async_mode?: boolean;
             disable_think?: boolean;
+            vl_enabled?: boolean;
         }
     ): Promise<any> => {
         const formData = new FormData();
@@ -437,6 +446,9 @@ export const projectsApi = {
         if (options?.disable_think !== undefined) {
             formData.append('disable_think', String(options.disable_think));
         }
+        if (options?.vl_enabled !== undefined) {
+            formData.append('vl_enabled', String(options.vl_enabled));
+        }
 
         const response = await apiClient.post(
             `/api/projects/${projectId}/extract-schema-from-documents`,
@@ -458,6 +470,7 @@ export const projectsApi = {
             request_interval?: number;
             async_mode?: boolean;
             disable_think?: boolean;
+            vl_enabled?: boolean;
         }
     ): Promise<any> => {
         const formData = new FormData();
@@ -479,6 +492,9 @@ export const projectsApi = {
         }
         if (options?.disable_think !== undefined) {
             formData.append('disable_think', String(options.disable_think));
+        }
+        if (options?.vl_enabled !== undefined) {
+            formData.append('vl_enabled', String(options.vl_enabled));
         }
 
         const response = await apiClient.post(
