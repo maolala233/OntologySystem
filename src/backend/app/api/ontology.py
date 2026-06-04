@@ -1541,8 +1541,9 @@ async def upload_ttl_file(
         raise HTTPException(status_code=404, detail="Project not found")
     if db_project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="No permission to upload to this project")
-    if not file.filename.lower().endswith('.ttl'):
-        raise HTTPException(status_code=400, detail="Only TTL files are accepted")
+    is_json = file.filename.lower().endswith('.json')
+    if not file.filename.lower().endswith('.ttl') and not is_json:
+        raise HTTPException(status_code=400, detail="Only TTL and JSON files are accepted")
 
     os.makedirs(settings.TEMP_DIR, exist_ok=True)
     temp_path = os.path.join(settings.TEMP_DIR, file.filename)
@@ -1550,19 +1551,59 @@ async def upload_ttl_file(
         buf.write(await file.read())
 
     try:
-        with open(temp_path, "r", encoding='utf-8') as ttl_file:
-            ttl_content = ttl_file.read()
+        if is_json:
+            with open(temp_path, "r", encoding='utf-8') as json_file:
+                json_data = json.load(json_file)
+            nodes, edges = _convert_json_schema_to_graph(json_data)
 
-        nodes, edges = convert_ttl_to_graph_data(ttl_content)
-        db_project.ttl_content = ttl_content
-        db.commit()
+            # 构建 schema 并保存 graph_data，确保前端能展示实例框架
+            schema_dict = _build_schema_from_json_data(nodes, edges)
+            db_project.graph_data = {
+                "schema": schema_dict,
+                "nodes": nodes,
+                "edges": edges,
+            }
 
-        return {
-            "nodes": nodes,
-            "edges": edges,
-            "ttl_filename": file.filename,
-            "message": f"成功解析 TTL 文件，包含 {len(nodes)} 个实体和 {len(edges)} 个关系",
-        }
+            # 从 nodes+edges 生成 TTL，保持 ttl_content 一致
+            try:
+                ttl_content = generate_ttl_from_graph_data(nodes, edges)
+                db_project.ttl_content = ttl_content
+            except Exception as ttl_err:
+                from app.core.logging import logger
+                logger.warning(f"JSON导入后生成TTL失败: {ttl_err}")
+                db_project.ttl_content = ""
+
+            db.commit()
+
+            return {
+                "nodes": nodes,
+                "edges": edges,
+                "ttl_filename": file.filename,
+                "message": f"成功解析 JSON 文件，包含 {len(nodes)} 个实体和 {len(edges)} 个关系",
+            }
+        else:
+            with open(temp_path, "r", encoding='utf-8') as ttl_file:
+                ttl_content = ttl_file.read()
+
+            nodes, edges = convert_ttl_to_graph_data(ttl_content)
+            db_project.ttl_content = ttl_content
+
+            # 同时保存 graph_data，确保前端能展示实例框架
+            schema_dict = build_schema_from_graph_data(nodes, edges)
+            db_project.graph_data = {
+                "schema": schema_dict,
+                "nodes": nodes,
+                "edges": edges,
+            }
+
+            db.commit()
+
+            return {
+                "nodes": nodes,
+                "edges": edges,
+                "ttl_filename": file.filename,
+                "message": f"成功解析 TTL 文件，包含 {len(nodes)} 个实体和 {len(edges)} 个关系",
+            }
     except Exception as e:
         from app.core.logging import logger
         logger.error(f"TTL parsing error: {str(e)}")
@@ -1717,6 +1758,11 @@ def _convert_json_schema_to_graph(json_data: dict) -> tuple:
     将平台导出的 JSON 格式（entities + relationships）转换为 graph nodes + edges。
     JSON 格式与 download-json 导出的格式一致。
     支持 entity_type 为"动作类型"的实体，自动设置 AT_ 前缀的 raw_id。
+
+    ★ 实例处理：实例（owl:NamedIndividual）创建为独立节点，
+    通过 relationships 中的 type 关系找到所属类/动作类型，
+    通过 action 关系找到动作实例的目标类。
+    前端通过 expandedNodeIds 控制实例的显示/隐藏。
     """
     import hashlib
     import math
@@ -1724,13 +1770,26 @@ def _convert_json_schema_to_graph(json_data: dict) -> tuple:
     entities = json_data.get("entities", [])
     relationships = json_data.get("relationships", [])
 
-    node_id_map = {}
+    # 先处理 schema 实体（类 + 动作类型），再处理实例
+    schema_entities = []
+    instance_entities = []
+
+    for ent in entities:
+        entity_type = ent.get("entity_type", "")
+        node_type = ent.get("type", "")
+        if entity_type == "实例" or node_type == "owl:NamedIndividual":
+            instance_entities.append(ent)
+        else:
+            schema_entities.append(ent)
+
+    node_id_map = {}  # name -> node_id (仅 schema 实体)
     nodes = []
     edges = []
 
-    cols = max(1, int(math.ceil(math.sqrt(len(entities)))))
+    cols = max(1, int(math.ceil(math.sqrt(len(schema_entities)))))
 
-    for idx, ent in enumerate(entities):
+    # 1. 创建 schema 节点（类 + 动作类型）
+    for idx, ent in enumerate(schema_entities):
         name = ent.get("name", "")
         if not name:
             continue
@@ -1774,29 +1833,152 @@ def _convert_json_schema_to_graph(json_data: dict) -> tuple:
         nodes.append(node)
         node_id_map[name] = node_id
 
+    # 2. 创建实例节点（owl:NamedIndividual）
+    # 通过 relationships 中的 type 关系找到实例所属的类/动作类型
+    instance_name_to_id = {}  # 实例 name -> instance node_id
+    instance_counter = 0
+
+    # 先收集哪些实例是动作实例（type 关系指向动作类型）
+    action_instance_names = set()
+    for rel in relationships:
+        if rel.get("relation") == "type":
+            source_name = rel.get("source_name", "")
+            target_name = rel.get("target_name", "")
+            # 如果 target 是动作类型节点，则 source 是动作实例
+            if target_name in node_id_map and node_id_map[target_name].startswith('AT_'):
+                action_instance_names.add(source_name)
+
+    for ent in instance_entities:
+        name = ent.get("name", "")
+        if not name:
+            continue
+
+        instance_counter += 1
+        instance_id = f"inst_{hashlib.md5(name.encode()).hexdigest()[:12]}_{instance_counter}"
+        props = ent.get("properties", {})
+        desc = ent.get("description", "")
+        target_obj_type = ent.get("target_object_type", "")
+
+        is_action_instance = name in action_instance_names
+
+        node_data = {
+            "label": name,
+            "type": "owl:NamedIndividual",
+            "properties": props,
+        }
+        if desc:
+            node_data["description"] = desc
+        if target_obj_type:
+            node_data["target_object_type"] = target_obj_type
+        if is_action_instance:
+            node_data["_is_action_instance"] = True
+
+        node = {
+            "id": instance_id,
+            "type": "custom",
+            "position": {"x": 0, "y": 0},  # 实例位置由前端布局
+            "data": node_data,
+        }
+        nodes.append(node)
+        instance_name_to_id[name] = instance_id
+
+    # 3. 处理 relationships 中的边
+    # 先处理 schema 实体之间的 action 边（target_object_type）
+    existing_action_edges = set()
+    for rel in relationships:
+        if rel.get("relation") == "action":
+            source_name = rel.get("source_name", "")
+            target_name = rel.get("target_name", "")
+            existing_action_edges.add((source_name, target_name))
+
+    # 为有 target_object_type 的动作类型实体生成 action 边（仅当 relationships 中不存在时）
+    for ent in schema_entities:
+        name = ent.get("name", "")
+        if not name:
+            continue
+        target_obj_type = ent.get("target_object_type", "")
+        if not target_obj_type:
+            continue
+        if (name, target_obj_type) in existing_action_edges:
+            continue
+        source_id = node_id_map.get(name)
+        target_id = node_id_map.get(target_obj_type)
+        if not source_id or not target_id:
+            continue
+        edge = {
+            "id": f"e_{source_id}_{target_id}_action_{name}",
+            "source": source_id,
+            "target": target_id,
+            "type": "smoothstep",
+            "data": {
+                "label": name,
+                "relation": "action",
+                "properties": {},
+            },
+        }
+        edges.append(edge)
+
+    # 处理所有 relationships
+    # ★ 关键：当实例名和类名相同时，需要根据 relation 类型判断 source/target 是实例还是类
+    # - type 关系：source 一定是实例，target 一定是类/动作类型
+    # - action 关系：如果 source 在 instance_name_to_id 中，则是动作实例
+    # - 其他关系：source/target 优先查类，如果不存在则查实例
     for rel in relationships:
         source_name = rel.get("source_name", "")
         target_name = rel.get("target_name", "")
         relation = rel.get("relation", "")
         label = rel.get("label", relation or "相关")
-        source_id = node_id_map.get(source_name)
-        target_id = node_id_map.get(target_name)
+
+        if relation == "type":
+            # type 关系：source 是实例，target 是类/动作类型
+            source_id = instance_name_to_id.get(source_name)
+            target_id = node_id_map.get(target_name)
+        elif relation == "action":
+            # action 关系：需要判断 source 是动作类型还是动作实例
+            # 如果 source_name 同时是动作类型名和实例名，优先使用动作类型（schema）
+            if source_name in node_id_map:
+                source_id = node_id_map.get(source_name)
+            elif source_name in instance_name_to_id:
+                source_id = instance_name_to_id.get(source_name)
+            else:
+                source_id = None
+            # target 可能是类，也可能是实例（如动作实例指向目标实例）
+            target_id = node_id_map.get(target_name) or instance_name_to_id.get(target_name)
+        else:
+            # 其他关系：优先查类，不存在则查实例
+            source_id = node_id_map.get(source_name) or instance_name_to_id.get(source_name)
+            target_id = node_id_map.get(target_name) or instance_name_to_id.get(target_name)
 
         if not source_id or not target_id:
             continue
 
-        edge = {
-            "id": f"e_{source_id}_{target_id}_{relation}_{label}",
-            "source": source_id,
-            "target": target_id,
-            "type": "smoothstep",
-            "data": {
-                "label": label,
-                "relation": relation,
-                "properties": rel.get("properties", {}),
-            },
-        }
-        edges.append(edge)
+        # type 关系：实例 -> 类/动作类型，转为 instance_of 边
+        if relation == "type":
+            edge = {
+                "id": f"e_{source_id}_{target_id}_instance_of_rdf:type",
+                "source": source_id,
+                "target": target_id,
+                "type": "smoothstep",
+                "data": {
+                    "label": "rdf:type",
+                    "relation": "instance_of",
+                    "properties": rel.get("properties", {}),
+                },
+            }
+            edges.append(edge)
+        else:
+            edge = {
+                "id": f"e_{source_id}_{target_id}_{relation}_{label}",
+                "source": source_id,
+                "target": target_id,
+                "type": "smoothstep",
+                "data": {
+                    "label": label,
+                    "relation": relation,
+                    "properties": rel.get("properties", {}),
+                },
+            }
+            edges.append(edge)
 
     return nodes, edges
 
@@ -1805,11 +1987,18 @@ def _build_schema_from_json_data(nodes: List[dict], edges: List[dict]) -> dict:
     """
     从 graph nodes 和 edges 构建 schema 字典（兼容 TTL 导入场景）。
     用于纯 JSON 上传时生成 schema_graph 数据结构。
-    支持 AT_ 前缀的动作类识别。
+    支持 AT_ 前缀的动作类识别，从 action 边提取 target_object_type。
     """
     classes = []
     object_properties = []
     action_types = []
+
+    # 先构建 node_id -> label 映射
+    node_id_to_label = {}
+    for node in nodes:
+        data = node.get("data", {})
+        label = data.get("label", "")
+        node_id_to_label[node.get("id", "")] = label
 
     class_info = {}
     for node in nodes:
@@ -1825,36 +2014,67 @@ def _build_schema_from_json_data(nodes: List[dict], edges: List[dict]) -> dict:
             "description": data.get("description", ""),
             "is_action": is_action,
             "parameters": data.get("parameters", []),
+            "properties": data.get("properties", {}),
         }
 
     for node_id, info in class_info.items():
         if info["is_action"]:
+            # 从 action 边中提取 target_object_type
+            target_object_type = ""
+            for edge in edges:
+                edge_data = edge.get("data", {})
+                if edge_data.get("relation") == "action" and edge.get("source") == node_id:
+                    target_id = edge.get("target", "")
+                    target_object_type = node_id_to_label.get(target_id, target_id)
+                    break
+
             action_types.append({
                 "id": info["id"],
                 "name": info["label"],
                 "label": info["label"],
                 "description": info.get("description", ""),
+                "target_object_type": target_object_type,
                 "parameters": info.get("parameters", []),
             })
         else:
+            # 从 properties dict 提取属性列表
+            prop_defs = []
+            for prop_name, prop_type in info.get("properties", {}).items():
+                prop_defs.append({
+                    "name": prop_name,
+                    "data_type": prop_type if isinstance(prop_type, str) else "string",
+                    "description": "",
+                })
+
             classes.append({
                 "id": info["id"],
                 "label": info["label"],
                 "type": info["type"],
                 "description": info.get("description", ""),
                 "parent_classes": [],
-                "properties": [],
+                "properties": list(info.get("properties", {}).keys()),
+                "data_properties": list(info.get("properties", {}).keys()),
+                "direct_properties": list(info.get("properties", {}).keys()),
+                "property_definitions": prop_defs,
             })
 
     for edge in edges:
         data = edge.get("data", {})
+        relation = data.get("relation", "")
+
+        # 跳过 action 边（已在 action_types 中处理）和内部边
+        if relation == "action":
+            continue
+        if relation in ("rdf:type", "type", "subClassOf", "subclass_of"):
+            continue
+
         source_info = class_info.get(edge.get("source", ""))
         target_info = class_info.get(edge.get("target", ""))
         if not source_info or not target_info:
             continue
         object_properties.append({
             "id": edge["id"],
-            "label": data.get("label", data.get("relation", "")),
+            "label": data.get("label", relation),
             "domain": source_info["label"],
             "range": target_info["label"],
         })
@@ -1900,6 +2120,12 @@ def download_json(
     relationships = []
     node_id_to_label: Dict[str, str] = {}
 
+    # 先构建完整的 node_id -> label 映射
+    for node in nodes:
+        data = node.get("data", {})
+        label = data.get("label", node.get("id", ""))
+        node_id_to_label[node.get("id", "")] = label
+
     for node in nodes:
         data = node.get("data", {})
         label = data.get("label", node.get("id", ""))
@@ -1908,7 +2134,10 @@ def download_json(
         # 过滤内部元数据字段，不导出给用户
         _internal_keys = {"_source_file", "_source_quote", "_source_chunk_index", "_domain"}
         props = {k: v for k, v in props.items() if k not in _internal_keys}
-        desc = props.get("description", "") or data.get("description", "")
+        # description 单独存储在 data.description，不在 properties 中
+        desc = data.get("description", "")
+        # 清理 properties 中可能混入的 description
+        props = {k: v for k, v in props.items() if k != "description"}
         raw_id = data.get("raw_id", "")
         node_id = node.get("id", "")
         is_action = raw_id.startswith('AT_') or node_id.startswith('AT_')
@@ -1916,11 +2145,10 @@ def download_json(
         if is_action and node_type == "owl:Class":
             node_type = "owl:ActionType"
 
-        node_id_to_label[node_id] = label
-
-        ent_desc = _build_entity_description(label, node_type, props)
-        if desc and desc not in ent_desc:
-            ent_desc = desc
+        # 优先使用原始 description，仅在无 description 时才用自动生成的
+        ent_desc = desc
+        if not ent_desc:
+            ent_desc = _build_entity_description(label, node_type, props)
 
         entity_data = {
             "name": label,
@@ -1941,6 +2169,9 @@ def download_json(
                     if target_label:
                         entity_data["target_object_type"] = target_label
                     break
+        # 实例节点：从 data.target_object_type 提取（动作实例）
+        if node_type == "owl:NamedIndividual" and data.get("target_object_type"):
+            entity_data["target_object_type"] = data["target_object_type"]
 
         entities.append(entity_data)
 
@@ -1953,13 +2184,17 @@ def download_json(
         source_name = node_id_to_label.get(source_id, source_id)
         target_name = node_id_to_label.get(target_id, target_id)
 
-        rel_desc = _build_relation_description(source_name, rel_label, target_name)
+        # instance_of 边导出为 type 关系（与原始 JSON 格式一致）
+        export_relation = "type" if relation == "instance_of" else relation
+        export_label = "type" if relation == "instance_of" else rel_label
+
+        rel_desc = _build_relation_description(source_name, export_label, target_name)
 
         relationships.append({
             "source_name": source_name,
             "target_name": target_name,
-            "relation": relation,
-            "label": rel_label,
+            "relation": export_relation,
+            "label": export_label,
             "description": rel_desc,
             "properties": data.get("properties", {}),
         })

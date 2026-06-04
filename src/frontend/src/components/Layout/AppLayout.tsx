@@ -504,16 +504,17 @@ const AppLayout: React.FC = () => {
             icon: <DatabaseOutlined />,
             label: '资产中心',
         },
-        {
-            key: 'question',
-            icon: <QuestionCircleOutlined />,
-            label: '问答',
-        },
-        {
-            key: 'question-test',
-            icon: <MessageOutlined />,
-            label: '问答测试',
-        },
+        // 暂时隐藏
+        // {
+        //     key: 'question',
+        //     icon: <QuestionCircleOutlined />,
+        //     label: '问答',
+        // },
+        // {
+        //     key: 'question-test',
+        //     icon: <MessageOutlined />,
+        //     label: '问答测试',
+        // },
     ];
 
     // 管理员专属菜单项

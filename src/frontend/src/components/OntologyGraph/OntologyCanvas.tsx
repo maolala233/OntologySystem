@@ -332,7 +332,7 @@ const OntologyCanvas: React.FC<{ projectId: number }> = ({ projectId }) => {
         try {
             setLoading(true);
             let result;
-            if (file.name.endsWith('.ttl')) {
+            if (file.name.endsWith('.ttl') || file.name.endsWith('.json')) {
                 result = await projectsApi.uploadTTLFile(projectId, file);
             } else {
                 result = await projectsApi.uploadDocument(projectId, file);
@@ -449,7 +449,7 @@ const OntologyCanvas: React.FC<{ projectId: number }> = ({ projectId }) => {
                             </Button>
                             <input
                                 type="file"
-                                accept=".txt,.pdf,.doc,.docx,.ttl,.md"
+                                accept=".txt,.pdf,.doc,.docx,.ttl,.json,.md"
                                 onChange={handleUpload}
                                 className="absolute inset-0 opacity-0 cursor-pointer"
                             />
