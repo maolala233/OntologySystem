@@ -21,6 +21,7 @@ from app.core.config import settings, ensure_dirs
 import json
 import os
 import tempfile
+import requests as req
 from app.services.extractor import OntologyExtractor
 from app.infrastructure.neo4j_client import neo4j_client
 import pandas as pd
@@ -4076,6 +4077,60 @@ async def test_inject_connection(
         return {"status": "success", "message": f"ES连接成功 (版本: {result.get('version', 'unknown')})"}
     else:
         return {"status": "error", "message": f"ES连接失败: {result.get('message', '未知错误')}"}
+
+
+@router.post("/{project_id}/ragflow-fetch-info")
+async def ragflow_fetch_info(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    body: dict = None
+):
+    """通过 RAGFlow API Key 自动获取用户ID和知识库列表"""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    if project.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="无权限访问此项目")
+
+    # 优先使用请求体中的参数，其次使用已保存的配置
+    body = body or {}
+    ragflow_api_key = body.get("ragflow_api_key", "") or (project.inject_config or {}).get("ragflow_api_key", "")
+    ragflow_host = body.get("ragflow_host", "") or (project.inject_config or {}).get("ragflow_host", "")
+
+    if not ragflow_api_key or not ragflow_host:
+        return {"status": "error", "message": "请先配置 RAGFlow API Key 和 Host"}
+
+    # 去除末尾斜杠
+    ragflow_host = ragflow_host.rstrip("/")
+
+    try:
+        headers = {"Authorization": f"Bearer {ragflow_api_key}"}
+
+        # 获取知识库列表（RAGFlow v0.17+ 无 user/info 接口，tenant_id 从 datasets 中提取）
+        kb_resp = req.get(f"{ragflow_host}/api/v1/datasets", headers=headers, timeout=10)
+        if kb_resp.status_code != 200:
+            return {"status": "error", "message": f"RAGFlow API 返回错误: HTTP {kb_resp.status_code}"}
+
+        kb_json = kb_resp.json()
+        if kb_json.get("code") != 0:
+            return {"status": "error", "message": f"RAGFlow API 返回错误: {kb_json.get('message', '未知错误')}"}
+
+        kb_list = kb_json.get("data", [])
+
+        # 从第一个 dataset 的 tenant_id 提取 user_id
+        user_id = ""
+        if kb_list:
+            user_id = kb_list[0].get("tenant_id", "")
+
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "datasets": [{"id": ds.get("id", ""), "name": ds.get("name", "")} for ds in kb_list]
+        }
+    except Exception as e:
+        logger.error(f"获取RAGFlow信息失败: {e}")
+        return {"status": "error", "message": f"获取RAGFlow信息失败: {str(e)}"}
 
 
 @router.post("/{project_id}/inject-to-ragflow")

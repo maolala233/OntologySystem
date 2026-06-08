@@ -202,6 +202,8 @@ const OntologyBuilderPage: React.FC = () => {
     const [injecting, setInjecting] = useState(false);
     const [testingES, setTestingES] = useState(false);
     const [injectIsAdmin, setInjectIsAdmin] = useState(false);
+    const [fetchingRagflow, setFetchingRagflow] = useState(false);
+    const [ragflowDatasets, setRagflowDatasets] = useState<{id: string; name: string}[]>([]);
 
     // 提取配置参数（从系统配置中读取）
     const [extractConfig, setExtractConfig] = useState({
@@ -1275,6 +1277,50 @@ const OntologyBuilderPage: React.FC = () => {
             message.error(error.response?.data?.detail || '注入失败');
         } finally {
             setInjecting(false);
+        }
+    };
+
+    const handleFetchRagflowInfo = async () => {
+        if (!projectId) return;
+        // 直接从表单获取 ragflow_host 和 ragflow_api_key，不需要先保存全部配置
+        const ragflowHost = injectForm.getFieldValue('ragflow_host')?.trim();
+        const ragflowApiKey = injectForm.getFieldValue('ragflow_api_key')?.trim();
+        if (!ragflowHost || !ragflowApiKey) {
+            message.warning('请先填写 RAGFlow 地址和 API Key');
+            return;
+        }
+        setFetchingRagflow(true);
+        try {
+            const res = await projectsApi.ragflowFetchInfo(Number(projectId), ragflowHost, ragflowApiKey);
+            if (res.status === 'success') {
+                const userId = res.user_id || '';
+                const datasets = res.datasets || [];
+
+                // 自动填充 user_id
+                if (userId) {
+                    injectForm.setFieldsValue({ user_id: userId });
+                }
+
+                // 填充知识库下拉列表
+                const dsList = datasets.map((ds: any) => ({
+                    id: ds.id,
+                    name: ds.name || ds.id,
+                }));
+                setRagflowDatasets(dsList);
+
+                // 如果只有一个知识库，自动选中
+                if (dsList.length === 1) {
+                    injectForm.setFieldsValue({ kb_id: dsList[0].id });
+                }
+
+                message.success(`获取成功！用户ID: ${userId || '未获取到'}，知识库: ${dsList.length}个`);
+            } else {
+                message.error(res.message || '获取RAGFlow信息失败');
+            }
+        } catch (error: any) {
+            message.error(error.response?.data?.detail || '获取RAGFlow信息失败');
+        } finally {
+            setFetchingRagflow(false);
         }
     };
 
@@ -3681,10 +3727,10 @@ const OntologyBuilderPage: React.FC = () => {
                                     <Form.Item name="request_interval" label="请求间隔"><Input type="number" suffix="秒" /></Form.Item>
                                     <Form.Item name="llm_timeout" label="LLM超时时间" tooltip="大模型调用超时时间，单位：秒"><Input type="number" suffix="秒" placeholder="300" /></Form.Item>
                                     <Form.Item label="思考模式" name="disable_think" valuePropName="checked" tooltip="关闭可提升响应速度（Qwen3/Gemma等思考模型生效，仅Ollama）">
-                                        <Switch checkedChildren="关闭" unCheckedChildren="开启" />
+                                        <Switch />
                                     </Form.Item>
                                     <Form.Item name="streaming_enabled" valuePropName="checked" className="col-span-2" label="流式输出">
-                                        <Switch checkedChildren="关闭" unCheckedChildren="开启" />
+                                        <Switch />
                                     </Form.Item>
                                 </div>
 
@@ -3704,7 +3750,7 @@ const OntologyBuilderPage: React.FC = () => {
                                         <Form.Item name="vl_api_key" label="VL API Key" className="col-span-2"><Input.Password placeholder="留空则无需认证（如 Ollama）" /></Form.Item>
                                         <Form.Item name="vl_model" label="VL 模型名称" className="col-span-2"><Input placeholder="qwen3.5:9b（需支持视觉能力）" /></Form.Item>
                                         <Form.Item label="VL 视觉解析" name="vl_enabled" valuePropName="checked" tooltip="开启后使用视觉模型识别文档中的图片内容（流程图、截图、表格等）。需先配置VL模型并测试通过" className="col-span-2">
-                                            <Switch checkedChildren="关闭" unCheckedChildren="开启" disabled={!vlConfigured} />
+                                            <Switch checkedChildren="开启" unCheckedChildren="关闭" disabled={!vlConfigured} />
                                         </Form.Item>
                                         {!vlConfigured && (
                                             <div className="col-span-2 text-xs text-orange-600 bg-orange-50 p-2 rounded mb-2">
@@ -3723,7 +3769,7 @@ const OntologyBuilderPage: React.FC = () => {
                                         <Form.Item name="neo4j_username" label="Neo4j 用户名"><Input placeholder="neo4j" /></Form.Item>
                                         <Form.Item name="neo4j_password" label="Neo4j 密码"><Input.Password placeholder="password" /></Form.Item>
                                         <Form.Item name="milvus_enabled" valuePropName="checked" className="col-span-2">
-                                            <Switch checkedChildren="关闭" unCheckedChildren="开启" />
+                                            <Switch />
                                         </Form.Item>
                                         <Form.Item name="embedding_base_url" label="Embedding API 地址" className="col-span-2"><Input placeholder="http://localhost:11434/v1" /></Form.Item>
                                         <Form.Item name="embedding_api_key" label="Embedding API Key" className="col-span-2"><Input.Password placeholder="留空则无需认证" /></Form.Item>
@@ -3783,8 +3829,8 @@ const OntologyBuilderPage: React.FC = () => {
                                     <Form.Item name="es_password" label="ES 密码">
                                         <Input.Password placeholder="infini_rag_flow" />
                                     </Form.Item>
-                                    <Form.Item name="es_use_ssl" valuePropName="checked" label="SSL">
-                                        <Switch checkedChildren="关闭" unCheckedChildren="开启" />
+                                    <Form.Item name="es_use_ssl" valuePropName="checked" label="启用SSL">
+                                        <Switch />
                                     </Form.Item>
 
                                     <div className="col-span-2 border-b border-gray-200 pb-2 mb-1 mt-2">
@@ -3796,11 +3842,30 @@ const OntologyBuilderPage: React.FC = () => {
                                     <Form.Item name="ragflow_api_key" label="RAGFlow API Key" className="col-span-2" rules={[{ required: true, message: '请输入RAGFlow API Key' }]}>
                                         <Input.Password placeholder="ragflow-xxxxxxxxxxxx" />
                                     </Form.Item>
+                                    <div className="col-span-2 mb-1">
+                                        <Button size="small" onClick={handleFetchRagflowInfo} loading={fetchingRagflow}
+                                            className="bg-blue-500 hover:bg-blue-600 text-white border-none"
+                                        >
+                                            获取RAGFlow信息
+                                        </Button>
+                                        <span className="text-gray-400 text-xs ml-2">填写地址和API Key后点击，自动获取用户ID和知识库列表</span>
+                                    </div>
                                     <Form.Item name="user_id" label="User ID (Tenant ID)" className="col-span-2" rules={[{ required: true, message: '请输入User ID' }]}>
-                                        <Input placeholder="RAGFlow 租户ID" />
+                                        <Input placeholder="点击上方按钮自动获取，或手动输入" />
                                     </Form.Item>
-                                    <Form.Item name="kb_id" label="知识库 ID (KB ID)" className="col-span-2" rules={[{ required: true, message: '请输入知识库ID' }]}>
-                                        <Input placeholder="RAGFlow 知识库ID" />
+                                    <Form.Item name="kb_id" label="知识库 ID (KB ID)" className="col-span-2" rules={[{ required: true, message: '请选择知识库ID' }]}>
+                                        <Select placeholder="点击上方按钮获取知识库列表" showSearch optionFilterProp="label"
+                                            notFoundContent={ragflowDatasets.length === 0 ? '请先获取RAGFlow信息' : '无知识库'}
+                                        >
+                                            {ragflowDatasets.map(ds => (
+                                                <Select.Option key={ds.id} value={ds.id} label={ds.name}>
+                                                    <div className="flex justify-between">
+                                                        <span>{ds.name}</span>
+                                                        <span className="text-gray-400 text-xs">{ds.id}</span>
+                                                    </div>
+                                                </Select.Option>
+                                            ))}
+                                        </Select>
                                     </Form.Item>
                                 </div>
                             </Form>

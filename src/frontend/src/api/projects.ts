@@ -559,4 +559,12 @@ export const projectsApi = {
         const response = await apiClient.post(`/api/projects/${projectId}/inject-to-ragflow`);
         return response.data;
     },
+
+    ragflowFetchInfo: async (projectId: number, ragflowHost: string, ragflowApiKey: string): Promise<any> => {
+        const response = await apiClient.post(`/api/projects/${projectId}/ragflow-fetch-info`, {
+            ragflow_host: ragflowHost,
+            ragflow_api_key: ragflowApiKey,
+        });
+        return response.data;
+    },
 };
