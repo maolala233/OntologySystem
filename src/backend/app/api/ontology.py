@@ -4159,40 +4159,57 @@ async def inject_to_ragflow(
         raise HTTPException(status_code=400, detail="图谱中没有节点，请先构建本体")
 
     kb_id = config.get("kb_id", "")
-    user_id = config.get("user_id", "")
-    if not kb_id or not user_id:
-        raise HTTPException(status_code=400, detail="请配置 kb_id 和 user_id")
+    if not kb_id:
+        raise HTTPException(status_code=400, detail="请配置知识库(kb_id)")
 
-    sys_llm_config = db.query(SystemConfig).filter(SystemConfig.key == "llm_config").first()
-    sys_emb = {}
-    if sys_llm_config and sys_llm_config.value:
-        sv = sys_llm_config.value if isinstance(sys_llm_config.value, dict) else {}
-        for ek in ["embedding_base_url", "embedding_model", "embedding_api_key", "embedding_dim"]:
-            if ek in sv and sv[ek]:
-                sys_emb[ek] = sv[ek]
+    ragflow_host = config.get("ragflow_host", "http://localhost:9380").rstrip("/")
+    ragflow_api_key = config.get("ragflow_api_key", "")
+    if not ragflow_api_key:
+        raise HTTPException(status_code=400, detail="请配置 RAGFlow API Key")
 
-    import uuid
-    doc_id = str(uuid.uuid4())
+    import httpx
 
-    from app.services.inject_service import GraphInjectService
-
-    service = GraphInjectService(
-        es_host=config.get("es_host", "localhost"),
-        es_port=int(config.get("es_port", 9200)),
-        es_user=config.get("es_user", "elastic"),
-        es_password=config.get("es_password", ""),
-        es_use_ssl=config.get("es_use_ssl", False),
-        embedding_base_url=sys_emb.get("embedding_base_url", config.get("embedding_base_url", "http://localhost:11434/v1")),
-        embedding_model=sys_emb.get("embedding_model", config.get("embedding_model", "bge-m3:latest")),
-        embedding_api_key=sys_emb.get("embedding_api_key", config.get("embedding_api_key", "")),
-        embedding_dim=int(sys_emb.get("embedding_dim", config.get("embedding_dim", 1024))),
-    )
+    # 调用 RAGFlow 图谱注入 API
+    inject_url = f"{ragflow_host}/api/v1/datasets/{kb_id}/knowledge_graph/inject/ontology"
+    payload = {
+        "nodes": nodes,
+        "edges": edges,
+        "merge_mode": "replace",
+    }
 
     try:
-        result = await service.inject_graph(nodes, edges, kb_id, user_id, doc_id)
-        return {"status": "success", "data": result}
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(
+                inject_url,
+                json=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {ragflow_api_key}",
+                },
+            )
+
+        if resp.status_code != 200:
+            raise Exception(f"RAGFlow API 返回 HTTP {resp.status_code}: {resp.text}")
+
+        result = resp.json()
+        if result.get("code") != 0:
+            raise Exception(f"RAGFlow API 错误: {result.get('message', '未知错误')}")
+
+        data = result.get("data", {})
+        return {
+            "status": "success",
+            "data": {
+                "success": True,
+                "entities_created": data.get("entities_created", 0),
+                "relations_created": data.get("relations_created", 0),
+                "graph_updated": data.get("graph_updated", False),
+                "ty2ents_updated": data.get("ty2ents_updated", False),
+                "has_vectors": data.get("has_vectors", False),
+            },
+        }
+    except httpx.HTTPError as e:
+        logger.error(f"调用RAGFlow图谱注入API失败: {e}")
+        raise HTTPException(status_code=500, detail=f"注入失败: 网络错误 - {str(e)}")
     except Exception as e:
         logger.error(f"注入RAGFlow失败: {e}")
         raise HTTPException(status_code=500, detail=f"注入失败: {str(e)}")
-    finally:
-        service.close()
