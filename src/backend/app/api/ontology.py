@@ -1309,7 +1309,7 @@ async def upload_document(
 @router.post("/{project_id}/parse-files")
 async def parse_files(
     project_id: int,
-    files: List[UploadFile] = File(..., description="文件列表（支持 PDF/DOC/DOCX/TXT）"),
+    files: List[UploadFile] = File(..., description="文件列表（支持 PDF/DOC/DOCX/TXT/XLSX/XLS/CSV/MD）"),
     save_documents: bool = Form(True, description="是否保存文档记录到数据库"),
     vl_enabled: bool = Form(False, description="是否启用VL视觉模型解析文档图片"),
     current_user: User = Depends(get_current_user),

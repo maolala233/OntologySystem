@@ -80,7 +80,7 @@ class UploadedDocument(Base):
     filename = Column(String(255), nullable=False)  # 原始文件名
     file_path = Column(String(500), nullable=False)  # 文件存储路径
     file_size = Column(Integer, nullable=True)  # 文件大小（字节）
-    file_type = Column(String(50), nullable=True)  # 文件类型：txt, pdf, doc, docx
+    file_type = Column(String(50), nullable=True)  # 文件类型：txt, pdf, doc, docx, xlsx, xls, csv, pptx, md
     text_content = Column(LONGTEXT, nullable=True)  # 解析后的文本内容
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)

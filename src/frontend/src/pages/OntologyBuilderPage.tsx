@@ -2462,7 +2462,7 @@ const OntologyBuilderPage: React.FC = () => {
                                     <input
                                         id="llm-schema-input"
                                         type="file"
-                                        accept=".txt,.pdf,.doc,.docx,.md"
+                                        accept=".txt,.pdf,.doc,.docx,.md,.xlsx,.xls,.csv"
                                         multiple
                                         style={{ display: 'none' }}
                                         onChange={async (e) => {

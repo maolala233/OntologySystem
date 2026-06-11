@@ -449,7 +449,7 @@ const OntologyCanvas: React.FC<{ projectId: number }> = ({ projectId }) => {
                             </Button>
                             <input
                                 type="file"
-                                accept=".txt,.pdf,.doc,.docx,.ttl,.json,.md"
+                                accept=".txt,.pdf,.doc,.docx,.ttl,.json,.md,.xlsx,.xls,.csv"
                                 onChange={handleUpload}
                                 className="absolute inset-0 opacity-0 cursor-pointer"
                             />

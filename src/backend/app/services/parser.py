@@ -45,6 +45,225 @@ def clean_surrogate_characters(text: str) -> str:
     return cleaned_text
 
 
+def _parse_excel(fname: str) -> str:
+    """
+    高质量 Excel 文件解析，支持 .xlsx 和 .xls 格式。
+    
+    特性：
+    - 使用 openpyxl 直接解析 .xlsx，保留合并单元格、表头等结构信息
+    - 使用 xlrd 解析 .xls（旧格式）
+    - 输出 Markdown 表格格式，对 LLM 友好
+    - 自动处理合并单元格（填充展开值）
+    - 智能检测表头行
+    - 多 Sheet 分别输出
+    - Fallback 到 pandas 解析
+    """
+    fname_lower = fname.lower()
+    excel_parts = []
+
+    # ========== .xlsx 格式：使用 openpyxl 直接解析 ==========
+    if fname_lower.endswith('.xlsx'):
+        try:
+            from openpyxl import load_workbook
+            # 注意：read_only=True 模式不支持 merged_cells，因此使用普通模式以保留合并单元格信息
+            wb = load_workbook(fname, data_only=True)
+            
+            for sheet_idx, sheet_name in enumerate(wb.sheetnames):
+                ws = wb[sheet_name]
+                rows_data = []
+                
+                # 收集合并单元格信息
+                merged_map = {}
+                for merged_range in ws.merged_cells.ranges:
+                    min_row, min_col, max_row, max_col = (
+                        merged_range.min_row, merged_range.min_col,
+                        merged_range.max_row, merged_range.max_col
+                    )
+                    # 获取合并区域左上角的值
+                    cell_value = ws.cell(row=min_row, column=min_col).value
+                    # 将合并区域的所有单元格映射到左上角的值
+                    for r in range(min_row, max_row + 1):
+                        for c in range(min_col, max_col + 1):
+                            if r != min_row or c != min_col:
+                                merged_map[(r, c)] = cell_value
+                
+                # 逐行读取数据
+                for row in ws.iter_rows():
+                    row_values = []
+                    for cell in row:
+                        # 优先使用合并单元格映射的值
+                        if (cell.row, cell.column) in merged_map:
+                            val = merged_map[(cell.row, cell.column)]
+                        else:
+                            val = cell.value
+                        
+                        if val is None:
+                            row_values.append("")
+                        elif isinstance(val, (int, float)):
+                            # 保留数值精度，避免科学计数法
+                            if isinstance(val, float) and val == int(val):
+                                row_values.append(str(int(val)))
+                            else:
+                                row_values.append(str(val))
+                        else:
+                            row_values.append(str(val).strip())
+                    
+                    # 跳过完全空行
+                    if any(v for v in row_values):
+                        rows_data.append(row_values)
+                
+                wb.close()
+                
+                if not rows_data:
+                    continue
+                
+                # 智能检测表头行：第一行如果包含非数字、非空内容，视为表头
+                header_row = rows_data[0] if rows_data else []
+                data_rows = rows_data[1:] if len(rows_data) > 1 else []
+                
+                # 过滤掉全空的数据行
+                data_rows = [r for r in data_rows if any(v for v in r)]
+                
+                if not any(v for v in header_row):
+                    # 表头全空，跳过此 Sheet
+                    continue
+                
+                # 构建 Markdown 表格
+                col_count = len(header_row)
+                md_lines = []
+                md_lines.append("| " + " | ".join(header_row) + " |")
+                md_lines.append("| " + " | ".join(["---"] * col_count) + " |")
+                
+                for row in data_rows:
+                    # 补齐列数
+                    while len(row) < col_count:
+                        row.append("")
+                    md_lines.append("| " + " | ".join(row[:col_count]) + " |")
+                
+                sheet_content = f"\n### Sheet: {sheet_name}\n\n" + "\n".join(md_lines) + "\n"
+                excel_parts.append(sheet_content)
+                logger.info(f"[Excel解析] 已处理 Sheet {sheet_idx+1}/{len(wb.sheetnames)}: {sheet_name}, "
+                           f"表头列数={col_count}, 数据行数={len(data_rows)}")
+            
+            if excel_parts:
+                return "\n".join(excel_parts)
+            
+        except Exception as e:
+            logger.warning(f"[Excel解析] openpyxl 解析 .xlsx 失败: {e}，尝试 pandas fallback...")
+    
+    # ========== .xls 格式：使用 xlrd 解析 ==========
+    elif fname_lower.endswith('.xls'):
+        try:
+            import xlrd
+            wb = xlrd.open_workbook(fname)
+            
+            for sheet_idx in range(wb.nsheets):
+                sheet = wb.sheet_by_index(sheet_idx)
+                sheet_name = sheet.name
+                
+                if sheet.nrows == 0 or sheet.ncols == 0:
+                    continue
+                
+                rows_data = []
+                for row_idx in range(sheet.nrows):
+                    row_values = []
+                    for col_idx in range(sheet.ncols):
+                        cell = sheet.cell(row_idx, col_idx)
+                        if cell.ctype == xlrd.XL_CELL_TEXT:
+                            row_values.append(cell.value.strip())
+                        elif cell.ctype == xlrd.XL_CELL_NUMBER:
+                            val = cell.value
+                            if val == int(val):
+                                row_values.append(str(int(val)))
+                            else:
+                                row_values.append(str(val))
+                        elif cell.ctype == xlrd.XL_CELL_DATE:
+                            # 尝试格式化日期
+                            try:
+                                date_val = xlrd.xldate_as_tuple(cell.value, wb.datemode)
+                                row_values.append(f"{date_val[0]}-{date_val[1]:02d}-{date_val[2]:02d}")
+                            except Exception:
+                                row_values.append(str(cell.value))
+                        elif cell.ctype == xlrd.XL_CELL_BOOLEAN:
+                            row_values.append("是" if cell.value else "否")
+                        elif cell.ctype == xlrd.XL_CELL_EMPTY:
+                            row_values.append("")
+                        else:
+                            row_values.append(str(cell.value).strip())
+                    
+                    if any(v for v in row_values):
+                        rows_data.append(row_values)
+                
+                if not rows_data:
+                    continue
+                
+                header_row = rows_data[0]
+                data_rows = rows_data[1:]
+                data_rows = [r for r in data_rows if any(v for v in r)]
+                
+                if not any(v for v in header_row):
+                    continue
+                
+                col_count = len(header_row)
+                md_lines = []
+                md_lines.append("| " + " | ".join(header_row) + " |")
+                md_lines.append("| " + " | ".join(["---"] * col_count) + " |")
+                
+                for row in data_rows:
+                    while len(row) < col_count:
+                        row.append("")
+                    md_lines.append("| " + " | ".join(row[:col_count]) + " |")
+                
+                sheet_content = f"\n### Sheet: {sheet_name}\n\n" + "\n".join(md_lines) + "\n"
+                excel_parts.append(sheet_content)
+                logger.info(f"[Excel解析] 已处理 Sheet {sheet_idx+1}/{wb.nsheets}: {sheet_name}, "
+                           f"表头列数={col_count}, 数据行数={len(data_rows)}")
+            
+            if excel_parts:
+                return "\n".join(excel_parts)
+            
+        except ImportError:
+            logger.warning("[Excel解析] xlrd 未安装，尝试 pandas fallback...")
+        except Exception as e:
+            logger.warning(f"[Excel解析] xlrd 解析 .xls 失败: {e}，尝试 pandas fallback...")
+    
+    # ========== Fallback: 使用 pandas 解析 ==========
+    try:
+        engine = 'openpyxl' if fname_lower.endswith('.xlsx') else None
+        dfs = pd.read_excel(fname, sheet_name=None, engine=engine)
+        
+        for sheet_idx, (sheet_name, df) in enumerate(dfs.items()):
+            if df.empty:
+                continue
+            
+            # 填充空值，转为字符串
+            df = df.fillna("").astype(str)
+            # 清理 pandas 产生的浮点数显示
+            for col in df.columns:
+                df[col] = df[col].apply(lambda x: str(int(float(x))) if x.endswith('.0') and x.replace('.', '', 1).replace('-', '', 1).isdigit() else x)
+            
+            # 构建 Markdown 表格
+            header_row = [str(col) for col in df.columns]
+            col_count = len(header_row)
+            md_lines = []
+            md_lines.append("| " + " | ".join(header_row) + " |")
+            md_lines.append("| " + " | ".join(["---"] * col_count) + " |")
+            
+            for _, row in df.iterrows():
+                row_values = [str(v).strip() for v in row.values]
+                md_lines.append("| " + " | ".join(row_values) + " |")
+            
+            sheet_content = f"\n### Sheet: {sheet_name}\n\n" + "\n".join(md_lines) + "\n"
+            excel_parts.append(sheet_content)
+            logger.info(f"[Excel解析] pandas fallback 已处理 Sheet {sheet_idx+1}/{len(dfs)}: {sheet_name}")
+        
+        return "\n".join(excel_parts)
+    
+    except Exception as e:
+        logger.error(f"[Excel解析] pandas fallback 也失败: {e}")
+        return ""
+
+
 def process_files(file_list: Union[List, str], vl_enabled: bool = False) -> str:
     """
     解析文件列表，提取文本内容。
@@ -224,16 +443,7 @@ def process_files(file_list: Union[List, str], vl_enabled: bool = False) -> str:
                 logger.info(f"[文件解析] [{idx+1}/{len(files)}] 识别为 Excel 文件，开始提取文本...")
                 excel_start_time = time.time()
                 try:
-                    # 使用 openpyxl 引擎读取
-                    dfs = pd.read_excel(fname, sheet_name=None, engine='openpyxl' if fname_lower.endswith('.xlsx') else None)
-                    excel_parts = []
-                    for sheet_idx, (sheet_name, df) in enumerate(dfs.items()):
-                        if not df.empty:
-                            # 使用 to_string 代替 to_markdown，避免依赖 tabulate 库
-                            df_str = df.fillna("").astype(str).to_string(index=False)
-                            excel_parts.append(f"\n-- Sheet: {sheet_name} --\n{df_str}\n")
-                            logger.info(f"[文件解析] [{idx+1}/{len(files)}] 已处理 Sheet {sheet_idx+1}/{len(dfs)}: {sheet_name}")
-                    file_content = "\n".join(excel_parts)
+                    file_content = _parse_excel(fname)
                     logger.info(f"[文件解析] [{idx+1}/{len(files)}] Excel 文本提取完成，耗时={time.time()-excel_start_time:.2f}s, 内容长度={len(file_content)} 字符")
                 except Exception as e:
                     logger.warning(f"Excel 解析出错 ({base_name}): {str(e)}")
