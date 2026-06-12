@@ -4208,8 +4208,10 @@ async def inject_to_ragflow(
             },
         }
     except httpx.HTTPError as e:
+        from app.core.logging import logger
         logger.error(f"调用RAGFlow图谱注入API失败: {e}")
         raise HTTPException(status_code=500, detail=f"注入失败: 网络错误 - {str(e)}")
     except Exception as e:
+        from app.core.logging import logger
         logger.error(f"注入RAGFlow失败: {e}")
         raise HTTPException(status_code=500, detail=f"注入失败: {str(e)}")
