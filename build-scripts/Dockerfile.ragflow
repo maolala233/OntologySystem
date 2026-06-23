@@ -1,0 +1,15 @@
+FROM infiniflow/ragflow:v0.26.0
+
+# 复制自定义的图谱注入 API
+COPY graph_inject_api.py /ragflow/api/apps/restful_apis/graph_inject_api.py
+
+# 复制修复后的 Ollama embedding（NaN 兜底）
+COPY embedding_model.py /ragflow/rag/llm/embedding_model.py
+
+# 复制优化后的 KGSearch（async await、模糊匹配、relation 兜底）
+COPY search.py /ragflow/rag/graphrag/search.py
+
+# 确保文件权限正确
+RUN chmod 644 /ragflow/api/apps/restful_apis/graph_inject_api.py \
+    && chmod 644 /ragflow/rag/llm/embedding_model.py \
+    && chmod 644 /ragflow/rag/graphrag/search.py

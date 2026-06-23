@@ -544,6 +544,22 @@ class LLMClient:
             logger.warning(f"检测到 JSON 解析错误，原始内容：{clean[:200]}..., 正在尝试自动修复...")
             logger.debug(f"JSON 解析错误详情：{e}")
 
+            # ★ 优先尝试：转义字符串内的控制字符（LLM 输出最常见的"结构完整但非法"问题）
+            try:
+                escaped_json = self._escape_control_chars_in_json(clean)
+                if escaped_json != clean:
+                    parsed = json.loads(escaped_json)
+                    for key in ["classes", "object_types"]:
+                        if key not in parsed:
+                            parsed[key] = []
+                    for key in ["instances", "link_types", "action_types", "links"]:
+                        if key not in parsed:
+                            parsed[key] = []
+                    logger.info(f"[JSON 修复成功] 方法：转义字符串内控制字符，原始 {len(clean)} 字符 → 修复后 {len(escaped_json)} 字符")
+                    return parsed
+            except Exception as esc_e:
+                logger.debug(f"[JSON 修复] 转义控制字符失败：{esc_e}")
+
             fix_attempts = 0
             try:
                 fix_attempts += 1
@@ -813,6 +829,59 @@ class LLMClient:
         except Exception as e:
             logger.error(f"[AsyncContinueGeneration] 续写失败：{e}")
             return ""
+
+    def _escape_control_chars_in_json(self, json_str: str) -> str:
+        """
+        ★ 转义 JSON 字符串值内的控制字符（换行、制表符等）。
+        LLM 输出常在字符串值中包含原始换行符，导致 json.loads 失败。
+        策略：逐字符扫描，跟踪 in_string 状态，在字符串内遇到控制字符时转义。
+        """
+        if not json_str:
+            return json_str
+
+        json_start = json_str.find('{')
+        if json_start == -1:
+            return json_str
+
+        result = []
+        in_string = False
+        escape = False
+        changed = False
+
+        for ch in json_str:
+            if escape:
+                escape = False
+                result.append(ch)
+                continue
+            if ch == '\\' and in_string:
+                escape = True
+                result.append(ch)
+                continue
+            if ch == '"':
+                in_string = not in_string
+                result.append(ch)
+                continue
+            if in_string:
+                if ch == '\n':
+                    result.append('\\n')
+                    changed = True
+                elif ch == '\r':
+                    result.append('\\r')
+                    changed = True
+                elif ch == '\t':
+                    result.append('\\t')
+                    changed = True
+                elif ord(ch) < 0x20:
+                    result.append(f'\\u{ord(ch):04x}')
+                    changed = True
+                else:
+                    result.append(ch)
+            else:
+                result.append(ch)
+
+        if not changed:
+            return json_str
+        return ''.join(result)
 
     def _try_fix_json_structure(self, json_str: str) -> str:
         balance = 0

@@ -700,6 +700,11 @@ class OntologyExtractor:
             intent_instruction = (
                 f"\n【⚡ 用户意图约束】: 用户关注领域为「{user_intent}」。"
                 f"请严格聚焦该领域，提取与之直接相关的对象类型和关系，忽略无关领域的概念。\n"
+                f"【⚡ 场景增强指令】: 针对「{user_intent}」场景，请特别关注：\n"
+                f"  - 该场景下的准入条件、资格要求、数值限制等规则\n"
+                f"  - 该场景下可能出现的异常情况及解决方案\n"
+                f"  - 该场景下操作的前置条件、依赖关系和互斥约束\n"
+                f"  - 文档中「注意」「要点」「说明」「提示」等段落中的关键约束\n"
             )
 
         system_prompt = f"""你是一位专业的本体建模专家，擅长从文档中自动构建符合Palantir Ontology核心概念的本体结构。
@@ -724,7 +729,7 @@ class OntologyExtractor:
 每个Link Type需要：
 - name: 链接名称（使用中文命名，如"购买"、"管理"）
 - label: 中文标签
-- description: 链接描述（必须使用中文）
+- description: 链接描述（必须使用中文，必须包含关系的业务含义、触发条件或适用场景、方向性）
 - source_object_type: 源对象类型
 - target_object_type: 目标对象类型
 - cardinality: 关系基数（one-to-one/one-to-many/many-to-one/many-to-many）
@@ -738,6 +743,35 @@ class OntologyExtractor:
 - target_object_type: 作用的对象类型
 - parameters: 参数列表（可选），每个参数包含name、data_type
 
+## ★ 规则与约束条件提取（极其重要）
+文档中大量关键信息以"规则"、"条件"、"限制"、"要求"、"规范"等形式存在，必须作为独立对象类型提取：
+### 必须提取的规则类对象类型：
+- **准入条件/资格要求**：文档中描述的参与门槛、资质要求等
+- **数值约束**：文档中出现的范围限制、额度上下限、数量约束等
+- **前置条件**：执行某操作前必须满足的前提条件
+- **业务规则**：文档中明确描述的规则、流程限制、时效约束等
+- **异常/错误场景**：系统错误码、异常情况及其原因和解决方案
+- **操作要点/注意事项**：文档中「注意」「要点」「说明」「提示」等段落中的关键约束
+### 规则类对象类型的属性必须包含：
+- 规则内容/约束值（具体的限制值或条件描述）
+- 适用对象（该规则约束哪个实体）
+- 规则来源（文档中的章节/页面引用）
+- 违反后果/异常处理方式（如有）
+
+## ★ 关系语义增强（极其重要）
+链接类型不应只有"动作触发"语义，必须覆盖以下关系类型：
+### 必须抽取的关系语义：
+- **约束/校验关系**：某规则对某对象的限制作用
+- **前置条件关系**：某条件是某操作/流程的前提
+- **异常处理关系**：异常场景与解决方案之间的对应关系
+- **依赖关系**：某对象/功能的运作依赖另一对象/功能
+- **互斥/排斥关系**：两者不能同时成立或不能同时执行
+- **触发/导致关系**：某事件导致某结果发生
+### 关系描述必须包含：
+- 关系的业务含义（不要只写"A关联B"）
+- 触发条件或适用场景（何时此关系成立）
+- 方向性（谁是施加方，谁是承受方）
+
 ## 关键规则
 1. 所有description字段必须使用中文（与文档原文语言一致）
 2. 充分挖掘文档中所有实体类型，包括但不限于：核心业务对象、参与者角色、费用/费率结构、时间/期限、文件/合同、风险因素、监管要求等
@@ -747,6 +781,9 @@ class OntologyExtractor:
 6. 属性name统一使用中文命名风格，保持与文档语言一致
 7. 如果文本中存在类的继承/层级关系，必须在 sub_class_of 字段中明确指出父类
 8. 鼓励抽取隐含关系：如果文本中存在明确描述或强烈暗示的关系，即使没有出现"关系名称"，也请提取为Link Type
+9. 【去重约束】语义相同或高度相似的对象类型必须合并或建立继承关系（sub_class_of），禁止创建重复概念（如语义相同的两个类应合并为一个，或建立继承关系）
+10. 【禁止遗漏规则类对象】文档中的"条件"、"限制"、"要求"、"规则"、"错误码"等必须作为独立对象类型提取，不得遗漏
+11. 【禁止只提取动作关系】链接类型必须包含约束、前置条件、依赖、互斥等非动作语义的关系，不能只有"触发""发起"类关系
 {intent_instruction}
 
 【严格约束 - 违反将导致任务失败】：
@@ -774,6 +811,31 @@ class OntologyExtractor:
         {{"name": "产品名称", "description": "产品名称", "data_type": "string"}},
         {{"name": "风险评级", "description": "风险评级", "data_type": "string"}}
       ]
+    }},
+    {{
+      "name": "准入条件",
+      "label": "准入条件",
+      "description": "参与某业务或执行某操作需满足的资格要求和限制",
+      "primary_key": "条件名称",
+      "sub_class_of": null,
+      "properties": [
+        {{"name": "条件名称", "description": "准入条件名称", "data_type": "string"}},
+        {{"name": "约束值", "description": "具体的约束值或范围", "data_type": "string"}},
+        {{"name": "适用对象", "description": "该条件约束的对象", "data_type": "string"}},
+        {{"name": "违反后果", "description": "不满足条件的后果", "data_type": "string"}}
+      ]
+    }},
+    {{
+      "name": "异常场景",
+      "label": "异常场景",
+      "description": "业务办理中可能出现的异常情况和错误信息",
+      "primary_key": "异常标识",
+      "sub_class_of": null,
+      "properties": [
+        {{"name": "异常标识", "description": "异常编码或标识", "data_type": "string"}},
+        {{"name": "异常原因", "description": "异常产生的原因", "data_type": "string"}},
+        {{"name": "解决方案", "description": "异常的处理方式", "data_type": "string"}}
+      ]
     }}
   ],
   "link_types": [
@@ -783,6 +845,22 @@ class OntologyExtractor:
       "description": "投资者购买理财产品",
       "source_object_type": "投资者",
       "target_object_type": "理财产品",
+      "cardinality": "many-to-many"
+    }},
+    {{
+      "name": "前置条件",
+      "label": "前置条件",
+      "description": "完成某操作前必须满足的条件，如身份认证是购买产品的前置条件",
+      "source_object_type": "准入条件",
+      "target_object_type": "理财产品",
+      "cardinality": "many-to-many"
+    }},
+    {{
+      "name": "约束",
+      "label": "约束",
+      "description": "某规则对业务对象的限制作用，如风险评级约束投资额度",
+      "source_object_type": "准入条件",
+      "target_object_type": "投资者",
       "cardinality": "many-to-many"
     }}
   ],
@@ -799,7 +877,7 @@ class OntologyExtractor:
   ]
 }}
 
-【约束提醒】: 不得包含 instances 字段。只输出 object_types、link_types 和 action_types。
+【约束提醒】: 不得包含 instances 字段。只输出 object_types、link_types 和 action_types。特别注意：必须提取文档中的规则、约束、条件、异常等作为对象类型；链接类型必须包含约束、前置条件、依赖等非动作语义的关系。
 """
 
         chunks = self._chunk_text(text, chunk_size=chunk_size, overlap=chunk_overlap)
@@ -1081,6 +1159,7 @@ class OntologyExtractor:
         task_id: Optional[str] = None,
         progress_callback: Optional[Callable[[float, str], None]] = None,
         documents: Optional[List[Dict[str, Any]]] = None,  # ★ 新增：支持传入文档数组 [{"text": str, "filename": str}]
+        user_intent: Optional[str] = None,  # ★ 新增：场景描述传递到实例提取阶段
     ) -> Dict[str, Any]:
         """
         第二阶段：在 Schema 约束下提取实例 (NamedIndividual)。
@@ -1103,11 +1182,14 @@ class OntologyExtractor:
         """
         logger.info("=" * 80)
         logger.info("[API2-InstanceExtraction] 开始实例提取")
-        logger.info(f"[InstanceExtraction] 输入参数：product_code={product_code}, task_id={task_id}")
+        logger.info(f"[InstanceExtraction] 输入参数：product_code={product_code}, task_id={task_id}, user_intent={user_intent[:50] if user_intent else 'None'}...")
         logger.info(f"[InstanceExtraction] Schema 包含 {len(schema_graph.get('object_types', schema_graph.get('classes', [])))} 个对象类型，{len(schema_graph.get('link_types', schema_graph.get('object_properties', [])))} 个链接类型")
         logger.info(f"[InstanceExtraction] Schema 详情：object_types={schema_graph.get('object_types', schema_graph.get('classes', []))[:3]}... (仅显示前 3 个)")
         logger.info(f"[InstanceExtraction] Schema 详情：link_types={schema_graph.get('link_types', schema_graph.get('object_properties', []))[:3]}... (仅显示前 3 个)")
         logger.info(f"[InstanceExtraction] 输入文本长度：{len(text)} 字符")
+
+        # ★ 关键修复：将 user_intent 注入到实例变量，供 system_prompt 模板使用
+        self._current_user_intent = user_intent
         
         # 进度回调辅助函数
         def report_progress(progress: float, message: str = ""):
@@ -1182,6 +1264,15 @@ class OntologyExtractor:
         if product_code:
             domain_context = f"\n【📚 知识域上下文】当前提取任务属于【{product_code}】知识域。请确保提取的实例与该知识域相关。\n"
 
+        # ★ 场景描述注入（从 user_intent 传递到实例提取阶段）
+        instance_intent_instruction = ""
+        if hasattr(self, '_current_user_intent') and self._current_user_intent:
+            instance_intent_instruction = (
+                f"\n【⚡ 场景聚焦约束】: 当前用户关注场景为「{self._current_user_intent}」。\n"
+                f"请优先提取与该场景直接相关的实例（规则、约束、数值限制等），\n"
+                f"同时确保文档中所有关键业务规则都被实例化，不遗漏任何规则值或条件。\n"
+            )
+
         system_prompt = f"""你是本体工程师，执行实例提取任务。根据文本提取符合Schema的实例。
 
 【类 Schema】(格式: id|中文名|属性列表):
@@ -1192,7 +1283,7 @@ class OntologyExtractor:
 
 【动作类型 Schema】(格式: id|名称|目标类):
 {action_list_str}
-{domain_code_clause}{domain_context}
+{domain_code_clause}{domain_context}{instance_intent_instruction}
 【约束】:
 1. 仅实例化文本中明确提到的实体，type必须是类ID。禁止创建文本未提及的实例。
 2. object_props的关系ID必须已定义，且domain/range匹配。文本值放data_props，实体引用放object_props。
@@ -1202,6 +1293,14 @@ class OntologyExtractor:
 6. 必须提取动作实例（action_instances），action_type须匹配Schema。
 7. 禁止输出classes/object_properties字段。
 8. 【🔴 关键】只提取文本中明确提到的实例和动作！不要凭空创造、不要推测、不要重复。每个chunk最多提取15个实例和5个动作实例。
+
+【★ 规则与约束实例提取（极其重要）】:
+文档中的业务规则、约束条件、异常场景、操作要点必须实例化：
+1. **准入条件实例**：如文本提到某条件要求，提取为准入条件实例，data_props包含约束值、适用对象
+2. **数值约束实例**：如文本提到具体的数量限制、范围约束，提取为规则实例
+3. **异常场景实例**：如文本提到错误码或异常情况，提取为异常场景实例，data_props包含异常标识、原因、解决方案
+4. **操作要点实例**：文档「注意」「要点」「说明」「提示」段落中的关键约束，提取为规则实例
+5. **约束/前置条件关系**：规则实例与业务对象之间必须建立links，link_type使用Schema中定义的约束/前置条件/异常处理等关系类型
 """
 
         user_prompt_template = """【文本片段】:
@@ -1764,6 +1863,7 @@ class OntologyExtractor:
         task_id: Optional[str] = None,
         progress_callback: Optional[Callable[[float, str], None]] = None,
         documents: Optional[List[Dict[str, Any]]] = None,  # ★ 新增：支持传入文档数组
+        user_intent: Optional[str] = None,  # ★ 新增：场景描述传递
     ) -> Dict[str, Any]:
         """
         对外暴露的「带 Schema 约束的实例提取」方法。
@@ -1781,6 +1881,7 @@ class OntologyExtractor:
             task_id=task_id,
             progress_callback=progress_callback,
             documents=documents,  # ★ 传递 documents 数组
+            user_intent=user_intent,  # ★ 传递场景描述
         )
 
     # ──────────────────────────────────────────
@@ -2544,6 +2645,7 @@ class OntologyExtractor:
             product_code=product_code,
             task_id=task_id,
             progress_callback=lambda p, m: progress(p, desc=m) if progress else None,
+            user_intent=scenario_desc,  # ★ 关键修复：将场景描述传递到实例提取阶段
         )
 
         if progress:
@@ -2771,6 +2873,11 @@ class OntologyExtractor:
             intent_instruction = (
                 f"\n【⚡ 用户意图约束】: 用户关注领域为「{user_intent}」。"
                 f"请严格聚焦该领域，提取与之直接相关的对象类型和关系，忽略无关领域的概念。\n"
+                f"【⚡ 场景增强指令】: 针对「{user_intent}」场景，请特别关注：\n"
+                f"  - 该场景下的准入条件、资格要求、数值限制等规则\n"
+                f"  - 该场景下可能出现的异常情况及解决方案\n"
+                f"  - 该场景下操作的前置条件、依赖关系和互斥约束\n"
+                f"  - 文档中「注意」「要点」「说明」「提示」等段落中的关键约束\n"
             )
 
         system_prompt = f"""你是一位专业的本体建模专家，擅长从文档中自动构建符合Palantir Ontology核心概念的本体结构。
@@ -2796,7 +2903,7 @@ class OntologyExtractor:
 每个Link Type需要：
 - name: 链接名称（使用中文命名，如"购买"、"管理"）
 - label: 中文标签
-- description: 链接描述（必须使用中文）
+- description: 链接描述（必须使用中文，必须包含关系的业务含义、触发条件或适用场景、方向性）
 - source_object_type: 源对象类型
 - target_object_type: 目标对象类型
 - cardinality: 关系基数（one-to-one/one-to-many/many-to-one/many-to-many）
@@ -2810,6 +2917,35 @@ class OntologyExtractor:
 - target_object_type: 作用的对象类型
 - parameters: 参数列表（可选），每个参数包含name、data_type
 
+## ★ 规则与约束条件提取（极其重要）
+文档中大量关键信息以"规则"、"条件"、"限制"、"要求"、"规范"等形式存在，必须作为独立对象类型提取：
+### 必须提取的规则类对象类型：
+- **准入条件/资格要求**：文档中描述的参与门槛、资质要求等
+- **数值约束**：文档中出现的范围限制、额度上下限、数量约束等
+- **前置条件**：执行某操作前必须满足的前提条件
+- **业务规则**：文档中明确描述的规则、流程限制、时效约束等
+- **异常/错误场景**：系统错误码、异常情况及其原因和解决方案
+- **操作要点/注意事项**：文档中「注意」「要点」「说明」「提示」等段落中的关键约束
+### 规则类对象类型的属性必须包含：
+- 规则内容/约束值（具体的限制值或条件描述）
+- 适用对象（该规则约束哪个实体）
+- 规则来源（文档中的章节/页面引用）
+- 违反后果/异常处理方式（如有）
+
+## ★ 关系语义增强（极其重要）
+链接类型不应只有"动作触发"语义，必须覆盖以下关系类型：
+### 必须抽取的关系语义：
+- **约束/校验关系**：某规则对某对象的限制作用
+- **前置条件关系**：某条件是某操作/流程的前提
+- **异常处理关系**：异常场景与解决方案之间的对应关系
+- **依赖关系**：某对象/功能的运作依赖另一对象/功能
+- **互斥/排斥关系**：两者不能同时成立或不能同时执行
+- **触发/导致关系**：某事件导致某结果发生
+### 关系描述必须包含：
+- 关系的业务含义（不要只写"A关联B"）
+- 触发条件或适用场景（何时此关系成立）
+- 方向性（谁是施加方，谁是承受方）
+
 ## 关键规则
 1. 所有description字段必须使用中文（与文档原文语言一致）
 2. 充分挖掘文档中所有实体类型，包括但不限于：核心业务对象、参与者角色、费用/费率结构、时间/期限、文件/合同、风险因素、监管要求等
@@ -2819,6 +2955,9 @@ class OntologyExtractor:
 6. 属性name统一使用中文命名风格，保持与文档语言一致
 7. 如果文本中存在类的继承/层级关系，必须在 sub_class_of 字段中明确指出父类
 8. 鼓励抽取隐含关系：如果文本中存在明确描述或强烈暗示的关系，即使没有出现"关系名称"，也请提取为Link Type
+9. 【去重约束】语义相同或高度相似的对象类型必须合并或建立继承关系（sub_class_of），禁止创建重复概念（如语义相同的两个类应合并为一个，或建立继承关系）
+10. 【禁止遗漏规则类对象】文档中的"条件"、"限制"、"要求"、"规则"、"错误码"等必须作为独立对象类型提取，不得遗漏
+11. 【禁止只提取动作关系】链接类型必须包含约束、前置条件、依赖、互斥等非动作语义的关系，不能只有"触发""发起"类关系
 {intent_instruction}
 
 【严格约束 - 违反将导致任务失败】：
@@ -2846,6 +2985,31 @@ class OntologyExtractor:
         {{"name": "产品名称", "label": "产品名称", "description": "产品名称", "data_type": "string"}},
         {{"name": "风险评级", "label": "风险评级", "description": "风险评级", "data_type": "string"}}
       ]
+    }},
+    {{
+      "name": "准入条件",
+      "label": "准入条件",
+      "description": "参与某业务或执行某操作需满足的资格要求和限制",
+      "primary_key": "条件名称",
+      "sub_class_of": null,
+      "properties": [
+        {{"name": "条件名称", "label": "条件名称", "description": "准入条件名称", "data_type": "string"}},
+        {{"name": "约束值", "label": "约束值", "description": "具体的约束值或范围", "data_type": "string"}},
+        {{"name": "适用对象", "label": "适用对象", "description": "该条件约束的对象", "data_type": "string"}},
+        {{"name": "违反后果", "label": "违反后果", "description": "不满足条件的后果", "data_type": "string"}}
+      ]
+    }},
+    {{
+      "name": "异常场景",
+      "label": "异常场景",
+      "description": "业务办理中可能出现的异常情况和错误信息",
+      "primary_key": "异常标识",
+      "sub_class_of": null,
+      "properties": [
+        {{"name": "异常标识", "label": "异常标识", "description": "异常编码或标识", "data_type": "string"}},
+        {{"name": "异常原因", "label": "异常原因", "description": "异常产生的原因", "data_type": "string"}},
+        {{"name": "解决方案", "label": "解决方案", "description": "异常的处理方式", "data_type": "string"}}
+      ]
     }}
   ],
   "link_types": [
@@ -2855,6 +3019,22 @@ class OntologyExtractor:
       "description": "投资者购买理财产品",
       "source_object_type": "投资者",
       "target_object_type": "理财产品",
+      "cardinality": "many-to-many"
+    }},
+    {{
+      "name": "前置条件",
+      "label": "前置条件",
+      "description": "完成某操作前必须满足的条件，如身份认证是购买产品的前置条件",
+      "source_object_type": "准入条件",
+      "target_object_type": "理财产品",
+      "cardinality": "many-to-many"
+    }},
+    {{
+      "name": "约束",
+      "label": "约束",
+      "description": "某规则对业务对象的限制作用，如风险评级约束投资额度",
+      "source_object_type": "准入条件",
+      "target_object_type": "投资者",
       "cardinality": "many-to-many"
     }}
   ],
@@ -2871,7 +3051,7 @@ class OntologyExtractor:
   ]
 }}
 
-【约束提醒】: 不得包含 instances 字段。只输出 object_types、link_types 和 action_types。
+【约束提醒】: 不得包含 instances 字段。只输出 object_types、link_types 和 action_types。特别注意：必须提取文档中的规则、约束、条件、异常等作为对象类型；链接类型必须包含约束、前置条件、依赖等非动作语义的关系。
 """
 
         chunks = self._chunk_text(text, chunk_size=chunk_size, overlap=chunk_overlap)
@@ -3123,10 +3303,15 @@ class OntologyExtractor:
         task_id: Optional[str] = None,
         progress_callback: Optional[Callable[[float, str], None]] = None,
         documents: Optional[List[Dict[str, Any]]] = None,
+        user_intent: Optional[str] = None,  # ★ 新增：场景描述传递到实例提取阶段
     ) -> Dict[str, Any]:
         logger.info("=" * 80)
         logger.info(f"[AsyncAPI2-InstanceExtraction] 开始实例提取")
+        logger.info(f"[AsyncInstanceExtraction] 输入参数：product_code={product_code}, task_id={task_id}, user_intent={user_intent[:50] if user_intent else 'None'}...")
         logger.info(f"[AsyncInstanceExtraction] Schema 包含 {len(schema_graph.get('object_types', schema_graph.get('classes', [])))} 个对象类型，{len(schema_graph.get('link_types', schema_graph.get('object_properties', [])))} 个链接类型")
+
+        # ★ 关键修复：将 user_intent 注入到实例变量，供 system_prompt 模板使用
+        self._current_user_intent = user_intent
 
         def report_progress(progress: float, message: str = ""):
             if progress_callback:
@@ -3197,6 +3382,15 @@ class OntologyExtractor:
         if product_code:
             domain_context = f"\n【📚 知识域上下文】当前提取任务属于【{product_code}】知识域。请确保提取的实例与该知识域相关。\n"
 
+        # ★ 场景描述注入（从 user_intent 传递到实例提取阶段）
+        instance_intent_instruction = ""
+        if hasattr(self, '_current_user_intent') and self._current_user_intent:
+            instance_intent_instruction = (
+                f"\n【⚡ 场景聚焦约束】: 当前用户关注场景为「{self._current_user_intent}」。\n"
+                f"请优先提取与该场景直接相关的实例（规则、约束、数值限制等），\n"
+                f"同时确保文档中所有关键业务规则都被实例化，不遗漏任何规则值或条件。\n"
+            )
+
         system_prompt = f"""你是本体工程师，执行实例提取任务。根据文本提取符合Schema的实例。
 
 【类 Schema】(格式: id|中文名|属性列表):
@@ -3207,7 +3401,7 @@ class OntologyExtractor:
 
 【动作类型 Schema】(格式: id|名称|目标类):
 {action_list_str}
-{domain_code_clause}{domain_context}
+{domain_code_clause}{domain_context}{instance_intent_instruction}
 【约束】:
 1. 仅实例化文本中明确提到的实体，type必须是类ID。禁止创建文本未提及的实例。
 2. object_props的关系ID必须已定义，且domain/range匹配。文本值放data_props，实体引用放object_props。
@@ -3217,6 +3411,14 @@ class OntologyExtractor:
 6. 必须提取动作实例（action_instances），action_type须匹配Schema。
 7. 禁止输出classes/object_properties字段。
 8. 【🔴 关键】只提取文本中明确提到的实例和动作！不要凭空创造、不要推测、不要重复。每个chunk最多提取15个实例和5个动作实例。
+
+【★ 规则与约束实例提取（极其重要）】:
+文档中的业务规则、约束条件、异常场景、操作要点必须实例化：
+1. **准入条件实例**：如文本提到某条件要求，提取为准入条件实例，data_props包含约束值、适用对象
+2. **数值约束实例**：如文本提到具体的数量限制、范围约束，提取为规则实例
+3. **异常场景实例**：如文本提到错误码或异常情况，提取为异常场景实例，data_props包含异常标识、原因、解决方案
+4. **操作要点实例**：文档「注意」「要点」「说明」「提示」段落中的关键约束，提取为规则实例
+5. **约束/前置条件关系**：规则实例与业务对象之间必须建立links，link_type使用Schema中定义的约束/前置条件/异常处理等关系类型
 """
 
         user_prompt_template = """【文本片段】:
@@ -3689,6 +3891,7 @@ class OntologyExtractor:
         task_id: Optional[str] = None,
         progress_callback: Optional[Callable[[float, str], None]] = None,
         documents: Optional[List[Dict[str, Any]]] = None,
+        user_intent: Optional[str] = None,  # ★ 新增：场景描述传递
     ) -> Dict[str, Any]:
         return await self.async_extract_instances(
             text=text,
@@ -3700,4 +3903,5 @@ class OntologyExtractor:
             task_id=task_id,
             progress_callback=progress_callback,
             documents=documents,
+            user_intent=user_intent,  # ★ 传递场景描述
         )

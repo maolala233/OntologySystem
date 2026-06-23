@@ -868,6 +868,7 @@ async def extract_instances_from_documents(
                             task_id=task_id,
                             progress_callback=progress_callback,
                             documents=documents_list,
+                            user_intent=db_project.description,  # ★ 传递场景描述到实例提取
                         )
 
                     # 在异步上下文中重新获取graph_data
@@ -980,6 +981,7 @@ async def extract_instances_from_documents(
             product_code=domains_str,
             task_id=None,
             documents=documents_list,
+            user_intent=db_project.description,  # ★ 传递场景描述到实例提取
         )
 
         # ★ 关键修复：直接使用所有原始节点和边作为schema，避免过滤导致类和关系丢失
@@ -1131,6 +1133,7 @@ async def extract_instances_endpoint(
                                 task_id=task_id,
                                 progress_callback=progress_callback,
                                 documents=documents_list,
+                                user_intent=db_project.description,  # ★ 传递场景描述到实例提取
                             )
 
                         schema_graph_data = OntologyExtractor.schema_to_graph_data(schema_dict)
@@ -1184,6 +1187,7 @@ async def extract_instances_endpoint(
                 request_interval=request_data.get("request_interval", 2),
                 product_code=request_data.get("product_code"),
                 documents=documents_list,
+                user_intent=db_project.description,  # ★ 传递场景描述到实例提取
             )
 
             schema_graph_data = OntologyExtractor.schema_to_graph_data(schema_dict)
