@@ -22,13 +22,15 @@ import {
     LockOutlined,
     TeamOutlined,
     EyeOutlined,
+    SafetyOutlined,
 } from '@ant-design/icons';
 import { Form, message, Switch } from 'antd';
-import { systemApi } from '../../api/system';
 import { authAPI } from '../../api/auth';
 import apiClient from '../../api/client';
 import { getDomains, KnowledgeDomain } from '../../api/domains';
+import { CONNECTIVITY_FIELDS, describeConnectivityError } from '../../utils/connectivity';
 import { projectsApi } from '../../api/projects';
+import { useAuthStore } from '../../shared/auth/authStore';
 import type { ProjectData } from '../../types/ontology';
 
 const { Sider, Content } = Layout;
@@ -159,27 +161,34 @@ const AppLayout: React.FC = () => {
         return () => window.removeEventListener('resize', checkMobile);
     }, []);
 
-    const user = JSON.parse(localStorage.getItem('user') || '{}');
+    // M1：用户与模块授权状态（authStore 为源，localStorage 兜底供旧组件读取）
+    const { user: storeUser, modules, loaded, hydrate, clear: clearAuth } = useAuthStore();
+    const user = (storeUser || JSON.parse(localStorage.getItem('user') || '{}')) as {
+        id?: number;
+        username: string;
+        role?: 'admin' | 'user';
+        display_name?: string | null;
+    };
+
+    useEffect(() => {
+        if (!loaded && localStorage.getItem('access_token')) {
+            hydrate();
+        }
+    }, [loaded, hydrate]);
+
+    // 菜单可见性：admin 全量；普通用户按授权矩阵；矩阵未加载完成前放行基础项（避免闪烁）
+    const hasModule = (code: string) =>
+        user.role === 'admin' ? true : modules.length > 0 ? modules.includes(code) : true;
 
     const handleLogout = () => {
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('user');
+        clearAuth();
         navigate('/login');
     };
 
-    const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
     const [passwordModalVisible, setPasswordModalVisible] = useState(false);
     const [userManagementVisible, setUserManagementVisible] = useState(false);
-    const [configLoading, setConfigLoading] = useState(false);
-    const [configForm] = Form.useForm();
 
     // 测试连通性状态
-    const [testingLLM, setTestingLLM] = useState(false);
-    const [testingNeo4J, setTestingNeo4J] = useState(false);
-    const [testingEmbedding, setTestingEmbedding] = useState(false);
-    const [testingMilvus, setTestingMilvus] = useState(false);
-    const [testingVL, setTestingVL] = useState(false);
-    const [vlConfigured, setVlConfigured] = useState(false);
 
     // GraphRAG 问答相关状态
     const [isQAModalOpen, setIsQAModalOpen] = useState(false);
@@ -195,161 +204,6 @@ const AppLayout: React.FC = () => {
     const [isQaProjectsLoading, setIsQaProjectsLoading] = useState(false);
     const [showProjectSelector, setShowProjectSelector] = useState(false);
 
-    const openConfigModal = async () => {
-        setConfigLoading(true);
-        try {
-            const config = await systemApi.getConfig('llm_config');
-            configForm.setFieldsValue(config.value);
-            try {
-                const vlConfig = await systemApi.getConfig('vl_config');
-                if (vlConfig?.value) {
-                    configForm.setFieldsValue({
-                        vl_base_url: vlConfig.value.vl_base_url || '',
-                        vl_api_key: vlConfig.value.vl_api_key || '',
-                        vl_model: vlConfig.value.vl_model || '',
-                        vl_disable_think: vlConfig.value.vl_disable_think !== undefined ? vlConfig.value.vl_disable_think : true,
-                    });
-                }
-            } catch { /* vl_config not found */ }
-            try {
-                const vlStatus = await apiClient.get('/api/system/vl-status');
-                setVlConfigured(vlStatus.data.configured);
-            } catch { setVlConfigured(false); }
-            setIsConfigModalOpen(true);
-        } catch (error) {
-            message.error('获取配置失败');
-        } finally {
-            setConfigLoading(false);
-        }
-    };
-
-    const handleSaveConfig = async () => {
-        try {
-            const values = await configForm.validateFields();
-            const configValues = {
-                ...values,
-                streaming_enabled: values.streaming_enabled === true,
-                milvus_enabled: values.milvus_enabled === true,
-                disable_think: values.disable_think === true,
-                vl_enabled: values.vl_enabled === true,
-                chunk_overlap: Number(values.chunk_overlap) || 10,
-            };
-            await systemApi.updateConfig('llm_config', configValues);
-
-            const vlConfigValues = {
-                vl_base_url: values.vl_base_url || '',
-                vl_api_key: values.vl_api_key || '',
-                vl_model: values.vl_model || '',
-                vl_disable_think: values.vl_disable_think === true,
-            };
-            await systemApi.updateConfig('vl_config', vlConfigValues);
-
-            try {
-                const vlStatus = await apiClient.get('/api/system/vl-status');
-                setVlConfigured(vlStatus.data.configured);
-            } catch { setVlConfigured(false); }
-
-            message.success('系统配置已保存');
-            setIsConfigModalOpen(false);
-        } catch (error) {
-            console.error('保存配置失败:', error);
-            message.error('保存配置失败，请检查输入');
-        }
-    };
-
-    const testLLMConnectivity = async () => {
-        setTestingLLM(true);
-        try {
-            const values = await configForm.validateFields();
-            const response = await apiClient.post('/api/system/test-connectivity/llm', values);
-            if (response.data.status === 'success') {
-                message.success(response.data.message);
-            } else {
-                message.error(response.data.message);
-            }
-        } catch (error: any) {
-            message.error(`大模型连通性测试失败：${error.response?.data?.message || error.message}`);
-        } finally {
-            setTestingLLM(false);
-        }
-    };
-
-    const testNeo4JConnectivity = async () => {
-        setTestingNeo4J(true);
-        try {
-            const values = await configForm.validateFields();
-            const response = await apiClient.post('/api/system/test-connectivity/neo4j', values);
-            if (response.data.status === 'success') {
-                message.success(response.data.message);
-            } else {
-                message.error(response.data.message);
-            }
-        } catch (error: any) {
-            message.error(`Neo4j 连通性测试失败：${error.response?.data?.message || error.message}`);
-        } finally {
-            setTestingNeo4J(false);
-        }
-    };
-
-    const testEmbeddingConnectivity = async () => {
-        setTestingEmbedding(true);
-        try {
-            const values = await configForm.validateFields();
-            const response = await apiClient.post('/api/system/test-connectivity/embedding', values);
-            if (response.data.status === 'success') {
-                message.success(response.data.message);
-            } else {
-                message.error(response.data.message);
-            }
-        } catch (error: any) {
-            message.error(`Embedding 连通性测试失败：${error.response?.data?.message || error.message}`);
-        } finally {
-            setTestingEmbedding(false);
-        }
-    };
-
-    const testMilvusConnectivity = async () => {
-        setTestingMilvus(true);
-        try {
-            const values = await configForm.validateFields();
-            const response = await apiClient.post('/api/system/test-connectivity/milvus', values);
-            if (response.data.status === 'success') {
-                message.success(response.data.message);
-            } else {
-                message.error(response.data.message);
-            }
-        } catch (error: any) {
-            message.error(`Milvus 连通性测试失败：${error.response?.data?.message || error.message}`);
-        } finally {
-            setTestingMilvus(false);
-        }
-    };
-
-    const testVLConnectivity = async () => {
-        setTestingVL(true);
-        try {
-            const values = await configForm.validateFields();
-            const vlConfig = {
-                vl_base_url: values.vl_base_url,
-                vl_api_key: values.vl_api_key,
-                vl_model: values.vl_model,
-            };
-            const response = await apiClient.post('/api/system/test-connectivity/vl', vlConfig);
-            if (response.data.status === 'success') {
-                message.success(response.data.message);
-            } else {
-                message.error(response.data.message);
-            }
-        } catch (error: any) {
-            message.error(`VL 视觉模型测试失败：${error.response?.data?.message || error.message}`);
-        } finally {
-            setTestingVL(false);
-        }
-    };
-
-    // ==================== GraphRAG 问答相关函数 ====================
-
-    // 加载知识域列表（用于问答多选）
     const loadAvailableDomains = async () => {
         setIsDomainsLoading(true);
         try {
@@ -466,11 +320,11 @@ const AppLayout: React.FC = () => {
             label: '修改密码',
             onClick: () => setPasswordModalVisible(true),
         },
-        ...(user.username === 'admin' ? [{
+        ...(user.role === 'admin' ? [{
             key: 'settings',
             icon: <SettingOutlined />,
             label: '设置',
-            onClick: openConfigModal,
+            onClick: () => navigate('/admin/model-configs'),
         }] : []),
         {
             type: 'divider' as const,
@@ -483,53 +337,52 @@ const AppLayout: React.FC = () => {
         },
     ];
 
+    // M1：菜单按授权矩阵过滤（模块码见 docs/design/README §4.1）
     const menuItems = [
         {
             key: '/',
             icon: <HomeOutlined />,
-            label: '首页',
+            label: '工作台',
+            module: 'dashboard',
         },
         {
             key: '/ontology-builder',
             icon: <AppstoreOutlined />,
             label: '本体构建',
+            module: 'projects',
         },
         {
             key: '/my-projects',
             icon: <UserOutlined />,
             label: '我的项目',
+            module: 'projects',
         },
         {
             key: '/asset-center',
             icon: <DatabaseOutlined />,
             label: '资产中心',
+            module: 'asset_center',
         },
-        // 暂时隐藏
-        // {
-        //     key: 'question',
-        //     icon: <QuestionCircleOutlined />,
-        //     label: '问答',
-        // },
-        // {
-        //     key: 'question-test',
-        //     icon: <MessageOutlined />,
-        //     label: '问答测试',
-        // },
-    ];
+    ].filter((item) => hasModule(item.module));
 
-    // 管理员专属菜单项
+    // 管理员专属菜单项（03 §3–4：用户管理/模块授权为 /admin/* 页面）
     const adminMenuItems = [];
-    
-    if (user.username === 'admin') {
+
+    if (user.role === 'admin') {
         adminMenuItems.push({
             key: '/domain-management',
             icon: <ClusterOutlined />,
             label: '知识域管理',
         });
         adminMenuItems.push({
-            key: 'user-management',
+            key: '/admin/users',
             icon: <TeamOutlined />,
             label: '用户管理',
+        });
+        adminMenuItems.push({
+            key: '/admin/modules',
+            icon: <SafetyOutlined />,
+            label: '模块授权',
         });
         adminMenuItems.push({
             key: 'system-config-trigger',
@@ -584,7 +437,7 @@ const AppLayout: React.FC = () => {
                                 return;
                             }
                             if (key === 'system-config-trigger') {
-                                openConfigModal();
+                                navigate('/admin/model-configs');
                             } else if (key === 'question') {
                                 // 打开外部问答系统
                                 window.open('http://28.4.185.69:7861', '_blank');
@@ -684,345 +537,6 @@ const AppLayout: React.FC = () => {
                 <UserManagement />
             </Modal>
 
-            {/* 系统配置 Modal */}
-            <Modal
-                title={
-                    <div className="flex items-center space-x-2">
-                        <CloudServerOutlined style={{ color: '#1890ff' }} />
-                        <span>模型服务配置 (仅管理员)</span>
-                    </div>
-                }
-                open={isConfigModalOpen}
-                onOk={handleSaveConfig}
-                onCancel={() => setIsConfigModalOpen(false)}
-                width={600}
-                okText="保存配置"
-                cancelText="取消"
-                maskClosable={false}
-                confirmLoading={configLoading}
-            >
-                <div className="bg-yellow-50 p-3 mb-4 rounded border border-yellow-100 flex items-start space-x-2">
-                    <InfoCircleOutlined className="mt-1 text-yellow-600" />
-                    <div className="text-yellow-800 text-sm">
-                        此处的配置将覆盖环境变量中的默认设置。修改后将立即在自动提取和构建任务中生效。
-                    </div>
-                </div>
-
-                <Form
-                    form={configForm}
-                    layout="vertical"
-                    initialValues={{
-                        api_key: '',
-                        base_url: '',
-                        model: '',
-                        chunk_size: 15000,
-                        chunk_overlap: 10,
-                        request_interval: 2,
-                        llm_timeout: 300,
-                        streaming_enabled: false,
-                        milvus_enabled: false,
-                        disable_think: true,
-                        neo4j_uri: 'bolt://localhost:7687',
-                        neo4j_username: 'neo4j',
-                        neo4j_password: 'password',
-                        embedding_base_url: 'http://localhost:11434/v1',
-                        embedding_model: 'nomic-embed-text:latest',
-                        milvus_host: '127.0.0.1',
-                        milvus_port: '19530',
-                        vl_base_url: '',
-                        vl_api_key: '',
-                        vl_model: '',
-                        vl_disable_think: true,
-                        vl_enabled: false,
-                    }}
-                >
-                    {/* 大语言模型配置 */}
-                    <div className="mb-2">
-                        <h4 className="font-medium text-blue-700 mb-3 text-sm flex items-center gap-2">
-                            <CloudServerOutlined />
-                            大语言模型 (LLM)
-                            <span className="text-xs text-gray-400 font-normal">— 用于骨架/实例提取</span>
-                        </h4>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                        <Form.Item
-                            name="base_url"
-                            label="API Endpoint (Base URL)"
-                            className="col-span-2"
-                            rules={[{ required: true, message: '请输入 API 端点' }]}
-                        >
-                            <Input placeholder="例如：https://api.openai.com/v1" />
-                        </Form.Item>
-
-                        <Form.Item
-                            name="api_key"
-                            label="API Key"
-                            className="col-span-2"
-                            rules={[{ required: false, message: '请输入 API Key' }]}
-                        >
-                            <Input.Password placeholder="sk-..." />
-                        </Form.Item>
-
-                        <Form.Item
-                            name="model"
-                            label="模型名称"
-                            className="col-span-2"
-                            rules={[{ required: true, message: '请输入模型名称' }]}
-                        >
-                            <Input placeholder="例如：gpt-3.5-turbo 或 gpt-4" />
-                        </Form.Item>
-
-                        <Form.Item
-                            name="chunk_size"
-                            label="提取分块大小 (Chunk Size)"
-                        >
-                            <Input type="number" suffix="字符" />
-                        </Form.Item>
-
-                        <Form.Item
-                            name="chunk_overlap"
-                            label="分块重叠 (Overlap)"
-                            tooltip="相邻分块间的重叠百分比，0-50%"
-                        >
-                            <Input type="number" suffix="%" min={0} max={50} />
-                        </Form.Item>
-
-                        <Form.Item
-                            name="request_interval"
-                            label="请求间隔 (Interval)"
-                        >
-                            <Input type="number" suffix="秒" />
-                        </Form.Item>
-
-                        <Form.Item
-                            name="llm_timeout"
-                            label="LLM 调用超时 (Timeout)"
-                            tooltip="设置 LLM API 调用的超时时间，超过该时间将自动终止请求"
-                        >
-                            <Input type="number" suffix="秒" placeholder="300" />
-                        </Form.Item>
-
-                        <Form.Item
-                            name="streaming_enabled"
-                            valuePropName="checked"
-                            className="col-span-2"
-                            label="流式输出"
-                        >
-                            <Switch checkedChildren="关闭" unCheckedChildren="开启" />
-                        </Form.Item>
-                        <Form.Item
-                            name="disable_think"
-                            valuePropName="checked"
-                            className="col-span-2"
-                            label="思考模式"
-                            tooltip="关闭可提升响应速度（Qwen3/Gemma等思考模型生效，仅Ollama）"
-                        >
-                            <Switch checkedChildren="关闭" unCheckedChildren="开启" />
-                        </Form.Item>
-                    </div>
-
-                    {/* VL 视觉模型配置 */}
-                    <div className="mt-4 pt-4 border-t border-gray-200">
-                        <h4 className="font-medium text-purple-700 mb-3 text-sm flex items-center gap-2">
-                            <EyeOutlined />
-                            VL 视觉模型
-                            <Tag color={vlConfigured ? "green" : "orange"} className="text-xs">
-                                {vlConfigured ? "已配置" : "未配置"}
-                            </Tag>
-                            <span className="text-xs text-gray-400 font-normal">— 用于文档图片解析</span>
-                        </h4>
-                        <div className="bg-purple-50 p-2 rounded text-xs text-purple-700 mb-3">
-                            配置支持视觉能力的模型（如 Qwen3.5、GPT-4o 等），独立于上方 LLM，专门用于识别文档中的流程图、截图、表格等图片内容。
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                            <Form.Item
-                                name="vl_base_url"
-                                label="VL API 地址"
-                                className="col-span-2"
-                            >
-                                <Input placeholder="例如：http://localhost:11434/v1" />
-                            </Form.Item>
-
-                            <Form.Item
-                                name="vl_api_key"
-                                label="VL API Key"
-                                className="col-span-2"
-                            >
-                                <Input.Password placeholder="留空则无需认证（如 Ollama）" />
-                            </Form.Item>
-
-                            <Form.Item
-                                name="vl_model"
-                                label="VL 模型名称"
-                                className="col-span-2"
-                            >
-                                <Input placeholder="例如：qwen3.5:9b（需支持视觉能力）" />
-                            </Form.Item>
-
-                            <Form.Item
-                                name="vl_disable_think"
-                                valuePropName="checked"
-                                className="col-span-2"
-                                label="VL 思考模式"
-                                tooltip="关闭可提升 VL 模型响应速度（Qwen3/Gemma等思考模型生效，仅Ollama）"
-                            >
-                                <Switch checkedChildren="关闭" unCheckedChildren="开启" />
-                            </Form.Item>
-
-                            <Form.Item
-                                name="vl_enabled"
-                                valuePropName="checked"
-                                className="col-span-2"
-                                label="VL 视觉解析"
-                                tooltip="开启后使用视觉模型识别文档中的图片内容。需先配置 VL 模型并测试通过"
-                            >
-                                <Switch checkedChildren="关闭" unCheckedChildren="开启" disabled={!vlConfigured} />
-                            </Form.Item>
-                            {!vlConfigured && (
-                                <div className="col-span-2 text-xs text-orange-600 bg-orange-50 p-2 rounded mb-2">
-                                    ⚠️ 未配置 VL 视觉模型，VL 解析功能不可用。请填写上方 VL 模型地址和名称后保存，再测试连通性。
-                                </div>
-                            )}
-                        </div>
-                    </div>
-
-                    {/* 图数据库 & 向量存储 */}
-                    <div className="mt-4 pt-4 border-t border-gray-200">
-                        <h4 className="font-medium text-gray-700 mb-3 text-sm flex items-center gap-2">
-                            <DatabaseOutlined />
-                            图数据库 & 向量存储
-                        </h4>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                        <Form.Item
-                            name="neo4j_uri"
-                            label="Neo4j URI"
-                            className="col-span-2"
-                            rules={[{ required: true, message: '请输入 Neo4j URI' }]}
-                        >
-                            <Input placeholder="例如：bolt://localhost:7687" />
-                        </Form.Item>
-
-                        <Form.Item
-                            name="neo4j_username"
-                            label="Neo4j 用户名"
-                            className="col-span-1"
-                            rules={[{ required: true, message: '请输入 Neo4j 用户名' }]}
-                        >
-                            <Input placeholder="neo4j" />
-                        </Form.Item>
-
-                        <Form.Item
-                            name="neo4j_password"
-                            label="Neo4j 密码"
-                            className="col-span-1"
-                            rules={[{ required: true, message: '请输入 Neo4j 密码' }]}
-                        >
-                            <Input.Password placeholder="password" />
-                        </Form.Item>
-
-                        <Form.Item
-                            name="milvus_enabled"
-                            valuePropName="checked"
-                            className="col-span-2"
-                        >
-                            <Switch checkedChildren="关闭" unCheckedChildren="开启" />
-                        </Form.Item>
-
-                        <Form.Item
-                            name="embedding_base_url"
-                            label="Embedding API 地址"
-                            className="col-span-2"
-                            rules={[{ required: true, message: '请输入 Embedding API 地址' }]}
-                        >
-                            <Input placeholder="例如：http://localhost:11434/v1" />
-                        </Form.Item>
-
-                        <Form.Item
-                            name="embedding_api_key"
-                            label="Embedding API Key"
-                            className="col-span-2"
-                        >
-                            <Input.Password placeholder="留空则无需认证" />
-                        </Form.Item>
-
-                        <Form.Item
-                            name="embedding_model"
-                            label="Embedding 模型"
-                            className="col-span-2"
-                            rules={[{ required: true, message: '请输入 Embedding 模型名称' }]}
-                        >
-                            <Input placeholder="例如：nomic-embed-text:latest" />
-                        </Form.Item>
-
-                        <Form.Item
-                            name="milvus_host"
-                            label="Milvus 主机"
-                            className="col-span-1"
-                            rules={[{ required: true, message: '请输入 Milvus 主机地址' }]}
-                        >
-                            <Input placeholder="127.0.0.1" />
-                        </Form.Item>
-
-                        <Form.Item
-                            name="milvus_port"
-                            label="Milvus 端口"
-                            className="col-span-1"
-                            rules={[{ required: true, message: '请输入 Milvus 端口' }]}
-                        >
-                            <Input placeholder="19530" />
-                        </Form.Item>
-                    </div>
-
-                    {/* 测试连通性区域 */}
-                    <div className="mt-6 pt-4 border-t border-gray-200">
-                        <h3 className="font-medium text-gray-700 mb-3">连通性测试</h3>
-                        <div className="grid grid-cols-2 gap-3">
-                            <Button
-                                type="default"
-                                onClick={testLLMConnectivity}
-                                loading={testingLLM}
-                                icon={<CloudServerOutlined />}
-                            >
-                                测试大模型连通性
-                            </Button>
-                            <Button
-                                type="default"
-                                onClick={testNeo4JConnectivity}
-                                loading={testingNeo4J}
-                                icon={<DatabaseOutlined />}
-                            >
-                                测试 Neo4j 连通性
-                            </Button>
-                            <Button
-                                type="default"
-                                onClick={testEmbeddingConnectivity}
-                                loading={testingEmbedding}
-                                icon={<ApiOutlined />}
-                            >
-                                测试 Embedding 连通性
-                            </Button>
-                            <Button
-                                type="default"
-                                onClick={testMilvusConnectivity}
-                                loading={testingMilvus}
-                                icon={<ClusterOutlined />}
-                            >
-                                测试 Milvus 连通性
-                            </Button>
-                            <Button
-                                type="default"
-                                onClick={testVLConnectivity}
-                                loading={testingVL}
-                                icon={<EyeOutlined />}
-                                className="col-span-2"
-                            >
-                                测试 VL 视觉模型连通性
-                            </Button>
-                        </div>
-                    </div>
-                </Form>
-            </Modal>
 
             {/* GraphRAG 问答 Modal */}
             <Modal

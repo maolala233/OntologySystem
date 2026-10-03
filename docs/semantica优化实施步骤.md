@@ -5,7 +5,9 @@
 > 前置阅读：`抽取优化方案.md`（4 个 P0 正确性缺陷必须先修）
 >
 > **配套文档**
-> - `docs/docker-compose.middleware.yml` —— 中间件编排（必装 8 个镜像 + 4 个可选 profile，含健康检查/依赖顺序/数据卷）
+> - `docker-compose.yml`（项目根）—— **中间件层**，`docker compose up -d` 直接起 9 个容器，全是现成镜像、零自研代码。前后端已从中移除（本地调试）。
+> - `docker-compose.app.yml`（项目根）—— **应用层（可选）**，backend / frontend / Celery worker-* / beat / flower 的定义保留在这里，将来要容器化部署时用 `-f` 合并。
+> - `docs/docker-compose.middleware.yml` —— 扩展参考版，在中间件层基础上多 4 个可选 profile（Elasticsearch+Kibana / Ollama / Adminer / Oxigraph HTTP）
 > - `docs/图谱展示重构方案.md` —— 需求 5 的图谱展示部分（Step 5.1 的展开）
 
 ---
@@ -27,7 +29,7 @@
 | Neo4j / Milvus 集成 | **保留** | 已在用 |
 | 抽取引擎（消解/冲突/溯源/导出/版本） | **替换** | 接 Semantica |
 | 数据模型 | **扩展** | 5 张表 → 15 张表 |
-| 中间件 | **加 3 个** | Redis（队列）+ 业务 MinIO（对象存储）+ 嵌入式 Oxigraph（RDF）；详见 `docs/docker-compose.middleware.yml` |
+| 中间件 | **加 3 个** | Redis（队列）+ 业务 MinIO（对象存储）+ 嵌入式 Oxigraph（RDF）；编排见项目根 `docker-compose.yml`（中间件层） |
 | 图谱渲染 | **新增查看态** | 保留 ReactFlow 做编辑，新增 Sigma 做探索 |
 
 ### 0.3 ⚠️ 12 个 Semantica 缺陷速查（必读）

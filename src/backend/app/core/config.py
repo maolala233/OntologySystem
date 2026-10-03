@@ -1,8 +1,9 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import Optional
 import os
-import time
 import threading
+import time
+from typing import Optional
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -21,7 +22,8 @@ class Settings(BaseSettings):
 
     JWT_SECRET_KEY: str = "your_super_secret_jwt_key_here"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 120   # M1：2h（01 §8），refresh 负责续期
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     LLM_API_KEY: str = ""
     LLM_MODEL_NAME: str = "z-ai/glm-4.5-air:free"
@@ -45,6 +47,46 @@ class Settings(BaseSettings):
     UPLOAD_PROJECTS_DIR: str = "uploads/projects"
     TEMP_DIR: str = "temp"
     UPLOAD_MAX_SIZE_MB: int = 100
+
+    # ===== M0 新增（docs/design/01 §4.2 / 02 §3.8 / 03 §2）=====
+    # 队列：Celery broker/backend 缺省回落 Redis
+    REDIS_URL: str = "redis://localhost:6379/0"
+    CELERY_BROKER_URL: Optional[str] = None
+    CELERY_RESULT_BACKEND: Optional[str] = None
+
+    # 业务对象存储（健康检查 M0；文件链路 M3 起使用）
+    MINIO_ENDPOINT: str = "localhost:9010"
+    MINIO_ACCESS_KEY: str = "minioadmin"
+    MINIO_SECRET_KEY: str = "minioadmin"
+    MINIO_SECURE: bool = False
+    MINIO_BUCKET_UPLOADS: str = "ontology-uploads"
+    MINIO_BUCKET_PARSED: str = "ontology-parsed"
+    MINIO_BUCKET_EXPORTS: str = "ontology-exports"
+
+    # 模型密钥加密主密钥（model_configs.api_key 落库加密，M2 起使用）。
+    # 未配置时回退派生自 JWT_SECRET_KEY（仅限开发，生产必须显式设置）。
+    SECRET_MASTER_KEY: str = ""
+
+    # CORS 白名单（替代以前的 "*"）
+    CORS_ORIGINS: str = (
+        "http://localhost:5173,http://127.0.0.1:5173,"
+        "http://localhost:3080,http://127.0.0.1:3080"
+    )
+
+    # 嵌入式 RDF 存储（M4 接入；RocksDB 独占锁 → 仅 worker-rdf 写）
+    OXIGRAPH_PATH: str = "./data/oxigraph"
+
+    @property
+    def cors_origins_list(self) -> list:
+        return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+
+    @property
+    def celery_broker(self) -> str:
+        return self.CELERY_BROKER_URL or self.REDIS_URL
+
+    @property
+    def celery_backend(self) -> str:
+        return self.CELERY_RESULT_BACKEND or self.REDIS_URL
 
     @property
     def DATABASE_URL(self) -> str:

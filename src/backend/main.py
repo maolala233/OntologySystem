@@ -1,13 +1,14 @@
+import os
+
+import bcrypt
+import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import os
-import uvicorn
-from app.api.v1.api import api_router
 
-from app.api import auth, ontology, system, domains
-from app.infrastructure.database import init_db, SessionLocal, UploadedDocument, User
-from app.core.config import ensure_dirs, cleanup_dir_if_exceeded, settings, start_periodic_cleanup
-import bcrypt
+from app.api import auth, documents, domains, extraction, model_configs, modules, ontology, system, users
+from app.api.v1.api import api_router
+from app.core.config import cleanup_dir_if_exceeded, ensure_dirs, settings, start_periodic_cleanup
+from app.infrastructure.database import SessionLocal, UploadedDocument, User, init_db
 
 init_db()
 
@@ -45,18 +46,37 @@ start_periodic_cleanup(interval_seconds=600)
 
 app = FastAPI(title="AI 本体构建系统 API", version="1.0.0")
 
+# M0 安全收口：CORS 由 "*" 改白名单（docs/design/01 §8），来源列表经 .env CORS_ORIGINS 配置
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# M0：统一错误码响应包络（docs/design/03 §2.3）
+from fastapi.responses import JSONResponse  # noqa: E402
+
+from app.core.exceptions import APIError  # noqa: E402
+
+
+@app.exception_handler(APIError)
+async def api_error_handler(request, exc: APIError):
+    return JSONResponse(
+        status_code=exc.http_status,
+        content=exc.to_payload(trace_id=request.headers.get("x-request-id")),
+    )
+
 app.include_router(auth.router)
 app.include_router(ontology.router)
 app.include_router(system.router)
 app.include_router(domains.router)
+app.include_router(users.router)    # M1：用户管理（admin）
+app.include_router(modules.router)  # M1：模块授权矩阵（admin）
+app.include_router(model_configs.router)  # M2：模型配置
+app.include_router(documents.router)  # M3-1：文档上传/秒传/预签名（03 §7）
+app.include_router(extraction.router)  # M3-4：Schema 抽取 + 任务进度/SSE/取消（03 §8）
 app.include_router(api_router, prefix="/api/v1")
 
 

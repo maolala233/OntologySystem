@@ -1,31 +1,26 @@
 import asyncio
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Response, Form, Request
-from fastapi.responses import StreamingResponse, JSONResponse
-from sse_starlette.sse import EventSourceResponse
-from sqlalchemy.orm import Session
-from typing import List, Optional, Dict, Any
-from urllib.parse import quote
-from app.infrastructure.database import get_db, Project, User, SystemConfig, UploadedDocument
-from app.schemas.ontology import ProjectCreate, ProjectUpdate, ProjectResponse
-from app.schemas.domain import KnowledgeDomainCreate
-from app.infrastructure.database import KnowledgeDomain
-from app.schemas.extraction import (
-    SchemaExtractionRequest, SchemaExtractionResponse,
-    InstanceExtractionRequest, InstanceExtractionResponse,
-    SchemaGraph, OntologyClass, OntologyObjectProperty,
-    GraphData, GraphNode, GraphEdge, NodeData, EdgeData,
-    SaveGraphRequest,
-)
-from app.api.auth import get_current_user
-from app.core.config import settings, ensure_dirs
 import json
 import os
 import tempfile
-import requests as req
-from app.services.extractor import OntologyExtractor
-from app.infrastructure.neo4j_client import neo4j_client
+from typing import Any, Optional
+from urllib.parse import quote
+
 import pandas as pd
-from rdflib import Graph, RDF, OWL, RDFS
+import requests as req
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
+from rdflib import OWL, RDF, RDFS, Graph
+from sqlalchemy.orm import Session
+from sse_starlette.sse import EventSourceResponse
+
+from app.api.auth import get_current_user
+from app.core.config import ensure_dirs, settings
+from app.infrastructure.database import KnowledgeDomain, Project, UploadedDocument, User, get_db
+from app.infrastructure.neo4j_client import neo4j_client
+from app.schemas.extraction import (
+    SaveGraphRequest,
+)
+from app.schemas.ontology import ProjectCreate, ProjectResponse, ProjectUpdate
+from app.services.extractor import OntologyExtractor
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -36,13 +31,13 @@ EXTRACTION_SEMAPHORE = asyncio.Semaphore(3)
 # ─────────────────────────────────────────────
 
 # 获取我的项目列表
-@router.get("/my", response_model=List[ProjectResponse])
+@router.get("/my", response_model=list[ProjectResponse])
 def get_my_projects(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     projects = db.query(Project).filter(Project.owner_id == current_user.id).all()
     return projects
 
 # 获取公共已发布项目
-@router.get("/public", response_model=List[ProjectResponse])
+@router.get("/public", response_model=list[ProjectResponse])
 def get_public_projects(db: Session = Depends(get_db)):
     projects = db.query(Project).filter(Project.is_published == True).all()
     return projects
@@ -51,13 +46,13 @@ def get_public_projects(db: Session = Depends(get_db)):
 @router.get("/{project_id}", response_model=ProjectResponse)
 def get_project(project_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     from sqlalchemy.orm import joinedload
-    
+
     # 使用 joinedload 预加载 domain 和 owner 信息
     project = db.query(Project).options(
         joinedload(Project.domain),
         joinedload(Project.owner)
     ).filter(Project.id == project_id).first()
-    
+
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     if not project.is_published and project.owner_id != current_user.id:
@@ -75,7 +70,7 @@ def create_project(
 ):
     # 处理知识域关联
     resolved_domain_id = domain_id
-    
+
     # 如果提供了 domain_name，查找或创建知识域
     if domain_name:
         domain = db.query(KnowledgeDomain).filter(
@@ -90,7 +85,7 @@ def create_project(
             resolved_domain_id = new_domain.id
         else:
             resolved_domain_id = domain.id
-    
+
     new_project = Project(
         name=project_data.name,
         description=project_data.description,
@@ -194,7 +189,7 @@ def publish_project(
     # ★ 发布前必须配置知识域
     if not db_project.domain_id:
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail="发布失败：请先配置知识域。点击工具栏「知识域」按钮进行配置。"
         )
 
@@ -274,7 +269,7 @@ async def extract_schema_from_documents(
     适用于文档管理 Modal 中点击"开始骨架提取"的场景。
     """
     from app.core.logging import logger
-    from app.infrastructure.task_manager import task_manager, TaskCancelledError
+    from app.infrastructure.task_manager import TaskCancelledError, task_manager
 
     # 解析文档 ID 列表
     doc_ids = [int(id.strip()) for id in document_ids.split(',') if id.strip()]
@@ -319,7 +314,7 @@ async def extract_schema_from_documents(
             logger.info(f"[extract-schema-from-documents] 文件解析完成 - file={temp_path}, text_length={len(text_content)}")
         else:
             logger.warning(f"[extract-schema-from-documents] 文件不存在 - {temp_path}")
-    
+
     # 合并所有文件内容
     combined_text = "\n\n".join(text_contents)
     logger.info(f"[extract-schema-from-documents] 合并后总文本长度={len(combined_text)}")
@@ -329,20 +324,20 @@ async def extract_schema_from_documents(
 
     # 异步模式
     is_async_mode = async_mode == "true" if isinstance(async_mode, str) else bool(async_mode)
-    
+
     if is_async_mode:
         # 异步模式：创建任务并后台执行
         task_id = task_manager.create_task(message="开始骨架提取...")
         logger.info(f"[extract-schema-from-documents] 任务已创建 - task_id={task_id}")
         task_manager.start_task(task_id, message="开始骨架提取...", detail=f"正在解析 {len(documents)} 个文档...")
-        
+
         # 后台执行提取任务
         async def run_extraction():
             async with EXTRACTION_SEMAPHORE:
                 try:
                     def progress_callback(progress: float, message: str):
                         task_manager.update_progress(task_id, progress=progress, message=message)
-                    
+
                     schema = await extractor.async_extract_schema_only(
                             text=combined_text,
                             user_intent=user_intent,
@@ -352,10 +347,10 @@ async def extract_schema_from_documents(
                             task_id=task_id,
                             progress_callback=progress_callback,
                         )
-                    
+
                     # 转换为前端渲染格式
                     graph_data = OntologyExtractor.schema_to_graph_data(schema)
-                    
+
                     # 将骨架 schema 临时存到 project graph_data
                     merged_graph = {
                         "schema": schema,
@@ -377,7 +372,7 @@ async def extract_schema_from_documents(
                         logger.error(f"[extract-schema-from-documents] 保存schema到数据库失败: {db_err}")
                     finally:
                         _db.close()
-                    
+
                     task_manager.complete_task(
                         task_id,
                         result={"schema_graph": schema, "graph_data": graph_data, "text_content": combined_text, "metadata": schema.get("metadata")},
@@ -388,10 +383,10 @@ async def extract_schema_from_documents(
                 except Exception as e:
                     logger.error(f"[extract-schema-from-documents] 错误：{e}", exc_info=True)
                     task_manager.fail_task(task_id, str(e), "骨架提取失败")
-        
+
         # 启动后台任务
         asyncio.create_task(run_extraction())
-        
+
         return {
             "task_id": task_id,
             "message": "任务已启动，请使用 task_id 查询进度",
@@ -431,7 +426,7 @@ async def extract_schema_from_documents(
 @router.post("/{project_id}/extract-schema")
 async def extract_schema_endpoint(
     project_id: int,
-    files: List[UploadFile] = File(..., description="支持多文件上传"),
+    files: list[UploadFile] = File(..., description="支持多文件上传"),
     user_intent: Optional[str] = Form(None, description="用户意图/关注领域（可选）"),
     chunk_size: int = Form(15000),
     chunk_overlap: int = Form(10, description="分块重叠百分比(0-50)"),
@@ -446,7 +441,7 @@ async def extract_schema_endpoint(
     # 正确解析布尔值：只有 "true" (不区分大小写) 才为 True
     is_async_mode = async_mode == "true" if isinstance(async_mode, str) else bool(async_mode)
     should_save_documents = save_documents == "true" if isinstance(save_documents, str) else bool(save_documents)
-    
+
     """
     【API 1 - 骨架提取】
     上传文档 → 提取 OWL Class + ObjectProperty + DataProperty 骨架 Schema。
@@ -461,7 +456,7 @@ async def extract_schema_endpoint(
     - saved_documents: 保存的文档记录列表（当 save_documents=true 时）
     """
     from app.core.logging import logger
-    from app.infrastructure.task_manager import task_manager, TaskCancelledError
+    from app.infrastructure.task_manager import TaskCancelledError, task_manager
 
     logger.info(f"[extract-schema] 收到请求 - project_id={project_id}, async_mode={async_mode}, is_async_mode={is_async_mode}, file_count={len(files)}, save_documents={should_save_documents}")
 
@@ -475,11 +470,11 @@ async def extract_schema_endpoint(
     if should_save_documents:
         ensure_dirs()
         os.makedirs(f"{settings.UPLOAD_PROJECTS_DIR}/{project_id}", exist_ok=True)
-    
+
     os.makedirs(settings.TEMP_DIR, exist_ok=True)
     temp_paths = []
     saved_docs = []
-    
+
     try:
         for uploaded_file in files:
             # 如果需要保存文档记录，创建永久存储
@@ -487,17 +482,17 @@ async def extract_schema_endpoint(
                 import uuid
                 unique_filename = f"{uuid.uuid4()}_{uploaded_file.filename}"
                 file_path = os.path.join(f"{settings.UPLOAD_PROJECTS_DIR}/{project_id}", unique_filename)
-                
+
                 # 保存文件到永久目录
                 with open(file_path, "wb") as buf:
                     buf.write(await uploaded_file.read())
-                
+
                 # 获取文件大小
                 file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
-                
+
                 # 获取文件类型
                 file_ext = uploaded_file.filename.split('.')[-1].lower() if '.' in uploaded_file.filename else ''
-                
+
                 # 创建数据库记录
                 doc_record = UploadedDocument(
                     project_id=project_id,
@@ -509,7 +504,7 @@ async def extract_schema_endpoint(
                 db.add(doc_record)
                 saved_docs.append(doc_record)
                 temp_paths.append(file_path)
-                
+
                 logger.info(f"[extract-schema] 已保存文档 - {uploaded_file.filename} -> {file_path}")
             else:
                 # 不保存文档记录，只保存到临时目录
@@ -517,12 +512,12 @@ async def extract_schema_endpoint(
                 with open(temp_path, "wb") as buf:
                     buf.write(await uploaded_file.read())
                 temp_paths.append(temp_path)
-        
+
         # 如果需要保存文档记录，提交数据库事务
         if should_save_documents and saved_docs:
             db.commit()
             logger.info(f"[extract-schema] 已保存 {len(saved_docs)} 个文档记录到数据库")
-        
+
         logger.info(f"[extract-schema] 共保存 {len(temp_paths)} 个文件")
 
         from app.services.parser import FileParser
@@ -535,17 +530,17 @@ async def extract_schema_endpoint(
                 text_content = parser.parse_file(temp_path) or ""
             text_contents.append(text_content)
             logger.info(f"[extract-schema] 文件解析完成 - file={temp_path}, text_length={len(text_content)}")
-            
+
             # 如果保存了文档记录，同时更新文本内容
             if saved_docs:
                 for doc in saved_docs:
                     if doc.file_path == temp_path:
                         doc.text_content = text_content
                         break
-        
+
         if saved_docs:
             db.commit()
-        
+
         # 合并所有文件内容
         combined_text = "\n\n".join(text_contents)
         logger.info(f"[extract-schema] 合并后总文本长度={len(combined_text)}")
@@ -558,14 +553,14 @@ async def extract_schema_endpoint(
             task_id = task_manager.create_task(message="开始骨架提取...")
             logger.info(f"[extract-schema] 任务已创建 - task_id={task_id}")
             task_manager.start_task(task_id, message="开始骨架提取...", detail=f"正在解析 {len(temp_paths)} 个文件...")
-            
+
             # 后台执行提取任务
             async def run_extraction():
                 async with EXTRACTION_SEMAPHORE:
                     try:
                         def progress_callback(progress: float, message: str):
                             task_manager.update_progress(task_id, progress=progress, message=message)
-                        
+
                         schema = await extractor.async_extract_schema_only(
                                 text=combined_text,
                                 user_intent=user_intent,
@@ -575,10 +570,10 @@ async def extract_schema_endpoint(
                                 task_id=task_id,
                                 progress_callback=progress_callback,
                             )
-                        
+
                         # 转换为前端渲染格式
                         graph_data = OntologyExtractor.schema_to_graph_data(schema)
-                        
+
                         # 将骨架 schema 临时存到 project graph_data
                         merged_graph = {
                             "schema": schema,
@@ -586,7 +581,7 @@ async def extract_schema_endpoint(
                         }
                         db_project.graph_data = merged_graph
                         db.commit()
-                        
+
                         task_manager.complete_task(
                             task_id,
                             result={"schema_graph": schema, "graph_data": graph_data, "text_content": combined_text, "metadata": schema.get("metadata")},
@@ -597,10 +592,10 @@ async def extract_schema_endpoint(
                     except Exception as e:
                         logger.error(f"[extract-schema] 错误：{e}", exc_info=True)
                         task_manager.fail_task(task_id, str(e), "骨架提取失败")
-            
+
             # 启动后台任务
             asyncio.create_task(run_extraction())
-            
+
             return {
                 "task_id": task_id,
                 "message": "任务已启动，请使用 task_id 查询进度",
@@ -694,7 +689,7 @@ async def extract_instances_from_documents(
     4. 使用 schema 约束进行实例提取，传递知识域信息
     """
     from app.core.logging import logger
-    from app.infrastructure.task_manager import task_manager, TaskCancelledError
+    from app.infrastructure.task_manager import TaskCancelledError, task_manager
 
     # 解析文档 ID 列表
     doc_ids = [int(id.strip()) for id in document_ids.split(',') if id.strip()]
@@ -728,11 +723,11 @@ async def extract_instances_from_documents(
     from app.services.parser import FileParser
     parser = FileParser(vl_enabled=vl_enabled)
     documents_list = []  # [{"text": str, "filename": str}]
-    
+
     # 同时从数据库记录中获取原始文件名
     doc_id_to_filename = {doc.id: doc.filename for doc in documents}
     logger.info(f"[extract-instances-from-documents] 数据库中的文件名映射：{doc_id_to_filename}")
-    
+
     for doc_idx, temp_path in enumerate(temp_paths):
         if os.path.exists(temp_path):
             if vl_enabled:
@@ -741,7 +736,7 @@ async def extract_instances_from_documents(
                 text_content = parser.parse_file(temp_path) or ""
             # ★ 关键修复：优先使用数据库记录中的原始文件名
             original_filename = doc_id_to_filename.get(documents[doc_idx].id, documents[doc_idx].filename)
-            
+
             # 如果数据库记录中的文件名不可用，从路径中提取
             if not original_filename or original_filename == temp_path:
                 original_filename = os.path.basename(temp_path)
@@ -750,19 +745,19 @@ async def extract_instances_from_documents(
                     parts = original_filename.split('_', 1)
                     if len(parts) == 2:
                         original_filename = parts[1]
-            
+
             documents_list.append({"text": text_content, "filename": original_filename})
             logger.info(f"[extract-instances-from-documents] 文件解析完成 - file={temp_path}, original_filename={original_filename}, text_length={len(text_content)}")
         else:
             logger.warning(f"[extract-instances-from-documents] 文件不存在 - {temp_path}")
-    
+
     # 合并所有文件内容
     combined_text = "\n\n".join([doc["text"] for doc in documents_list])
     logger.info(f"[extract-instances-from-documents] 合并后总文本长度={len(combined_text)}")
 
     # 从项目 graph_data 中获取 schema（用户已审核的版本）
     schema_dict = (db_project.graph_data or {}).get("schema", {})
-    
+
     # 如果没有 schema 字段，尝试从 nodes 和 edges 动态构建（兼容 TTL 导入场景）
     if not schema_dict or not (schema_dict.get("classes") or schema_dict.get("object_types")):
         nodes = (db_project.graph_data or {}).get("nodes", [])
@@ -775,10 +770,10 @@ async def extract_instances_from_documents(
         # 需要从 graph_data 的节点中检查是否有 AT_ 前缀的节点
         existing_action_types = schema_dict.get("action_types", [])
         existing_at_names = {at.get("name", "") for at in existing_action_types} | {at.get("label", "") for at in existing_action_types}
-        
+
         nodes = (db_project.graph_data or {}).get("nodes", [])
         edges = (db_project.graph_data or {}).get("edges", [])
-        
+
         missing_action_types = []
         for node in nodes:
             node_type = node.get('data', {}).get('type', '')
@@ -799,12 +794,12 @@ async def extract_instances_from_documents(
                                     target_object_type = n2.get('data', {}).get('label', tgt_id)
                                     break
                             break
-                    
+
                     parameters = node.get('data', {}).get('parameters', [])
                     if not parameters:
                         prop_defs = node.get('data', {}).get('property_definitions', [])
                         parameters = [{"name": p.get("name", ""), "data_type": p.get("data_type", "string")} for p in prop_defs if isinstance(p, dict)]
-                    
+
                     missing_action_types.append({
                         "id": raw_id or node_id,
                         "name": node_label,
@@ -813,13 +808,13 @@ async def extract_instances_from_documents(
                         "target_object_type": target_object_type,
                         "parameters": parameters,
                     })
-        
+
         if missing_action_types:
             if "action_types" not in schema_dict:
                 schema_dict["action_types"] = []
             schema_dict["action_types"].extend(missing_action_types)
             logger.info(f"[extract-instances-from-documents] 从 graph_data 补充了 {len(missing_action_types)} 个缺失的 ActionType 到 schema_dict")
-    
+
     if not schema_dict or not (schema_dict.get("classes") or schema_dict.get("object_types")):
         raise HTTPException(status_code=400, detail="请先提取骨架再进行实例提取")
 
@@ -837,19 +832,19 @@ async def extract_instances_from_documents(
             domain_name = domain.name
     # 同时支持 domains 字段（多知识域逗号分隔）
     domains_str = db_project.domains or domain_name
-    
+
     # 获取 LLM 配置
     extractor = _build_extractor(db, disable_think=disable_think)
 
     # 异步模式
     is_async_mode = async_mode == "true" if isinstance(async_mode, str) else bool(async_mode)
-    
+
     if is_async_mode:
         # 异步模式：创建任务并后台执行
         task_id = task_manager.create_task(message="开始实例提取...")
         logger.info(f"[extract-instances-from-documents] 任务已创建 - task_id={task_id}")
         task_manager.start_task(task_id, message="开始实例提取...", detail=f"正在解析 {len(documents)} 个文档...")
-        
+
         # 后台执行提取任务
         async def run_extraction():
             from app.infrastructure.database import SessionLocal as InstSessionLocal
@@ -857,7 +852,7 @@ async def extract_instances_from_documents(
                 try:
                     def progress_callback(progress: float, message: str):
                         task_manager.update_progress(task_id, progress=progress, message=message)
-                    
+
                     inst_result = await extractor.async_extract_instances_with_constraints(
                             text=combined_text,
                             schema_graph=schema_dict,
@@ -879,10 +874,10 @@ async def extract_instances_from_documents(
                         existing_edges = (_schema_proj.graph_data or {}).get("edges", []) if _schema_proj else []
                     finally:
                         _schema_db.close()
-                    
+
                     # ★ 关键修复：直接使用所有原始节点和边作为schema，避免过滤导致类和关系丢失
                     schema_graph_data = {"nodes": existing_nodes, "edges": existing_edges}
-                    
+
                     full_graph_data = OntologyExtractor.merge_instances_to_graph_data(
                         schema_graph_data=schema_graph_data,
                         instances=inst_result["instances"],
@@ -920,13 +915,13 @@ async def extract_instances_from_documents(
                                     domain_name = domain.name
                         finally:
                             _vdb.close()
-                        
+
                         ttl_content = generate_ttl_from_graph_data(full_graph_data["nodes"], full_graph_data["edges"])
-                        
+
                         with tempfile.NamedTemporaryFile(mode='w', suffix='.ttl', delete=False, encoding='utf-8') as f:
                             f.write(ttl_content)
                             temp_ttl_path = f.name
-                        
+
                         try:
                             collection_name = f"project_{project_id}"
                             extractor.sync_ttl_to_vector_store(
@@ -954,7 +949,7 @@ async def extract_instances_from_documents(
                             "metadata": inst_result.get("metadata"),
                         },
                         message=f"实例提取完成：{len(inst_result['instances'])} 个实例" + (
-                            f" ({inst_result.get('discarded_edges_count', 0)} 条不合规连线已自动丢弃)" 
+                            f" ({inst_result.get('discarded_edges_count', 0)} 条不合规连线已自动丢弃)"
                             if inst_result.get('discarded_edges_count', 0) > 0 else ""
                         )
                     )
@@ -963,10 +958,10 @@ async def extract_instances_from_documents(
                 except Exception as e:
                     logger.error(f"[extract-instances-from-documents] 错误：{e}", exc_info=True)
                     task_manager.fail_task(task_id, str(e), "实例提取失败")
-        
+
         # 启动后台任务
         asyncio.create_task(run_extraction())
-        
+
         return {
             "task_id": task_id,
             "message": "任务已启动，请使用 task_id 查询进度",
@@ -987,10 +982,10 @@ async def extract_instances_from_documents(
         # ★ 关键修复：直接使用所有原始节点和边作为schema，避免过滤导致类和关系丢失
         existing_nodes = (db_project.graph_data or {}).get("nodes", [])
         existing_edges = (db_project.graph_data or {}).get("edges", [])
-        
+
         schema_graph_data = {"nodes": existing_nodes, "edges": existing_edges}
         logger.info(f"[extract-instances-from-documents] 同步模式：使用现有骨架图 - {len(existing_nodes)} 个类节点，{len(existing_edges)} 条边")
-        
+
         # 合并实例到完整图
         full_graph_data = OntologyExtractor.merge_instances_to_graph_data(
             schema_graph_data=schema_graph_data,
@@ -1013,16 +1008,16 @@ async def extract_instances_from_documents(
                 domain = db.query(KnowledgeDomain).filter(KnowledgeDomain.id == db_project.domain_id).first()
                 if domain:
                     domain_name = domain.name
-            
+
             # 构建 TTL 内容用于向量入库
             ttl_content = generate_ttl_from_graph_data(full_graph_data["nodes"], full_graph_data["edges"])
-            
+
             # 保存临时 TTL 文件
             temp_ttl_path = None
             with tempfile.NamedTemporaryFile(mode='w', suffix='.ttl', delete=False, encoding='utf-8') as f:
                 f.write(ttl_content)
                 temp_ttl_path = f.name
-            
+
             try:
                 # 同步到向量库
                 extractor.sync_ttl_to_vector_store(
@@ -1081,9 +1076,10 @@ async def extract_instances_endpoint(
     - graph_data: 前端可渲染的 {nodes, edges}
     - task_id: 任务 ID（仅当 async_mode=True 时返回）
     """
-    from app.core.logging import logger
-    from app.infrastructure.task_manager import task_manager, TaskCancelledError
     import json as json_module
+
+    from app.core.logging import logger
+    from app.infrastructure.task_manager import TaskCancelledError, task_manager
 
     db_project = db.query(Project).filter(Project.id == project_id).first()
     if not db_project:
@@ -1097,12 +1093,12 @@ async def extract_instances_endpoint(
             request_data = json_module.loads(request_body)
         except json_module.JSONDecodeError as e:
             raise HTTPException(status_code=400, detail=f"Invalid JSON in request_body: {str(e)}")
-        
+
         extractor = _build_extractor(db)
 
         # schema_graph 来自请求体（用户已审核版本）
         schema_dict = request_data.get("schema_graph", {})
-        
+
         # 构造 documents 列表以传递溯源信息
         text_content = request_data.get("text_content", "")
         source_name = request_data.get("source_name", "") or request_data.get("document_name", "")
@@ -1115,14 +1111,14 @@ async def extract_instances_endpoint(
             # 异步模式：创建任务并后台执行
             task_id = task_manager.create_task(message="开始实例提取...")
             task_manager.start_task(task_id, message="开始实例提取...", detail="正在解析文件...")
-            
+
             # 后台执行提取任务
             async def run_extraction():
                 async with EXTRACTION_SEMAPHORE:
                     try:
                         def progress_callback(progress: float, message: str):
                             task_manager.update_progress(task_id, progress=progress, message=message)
-                        
+
                         inst_result = await extractor.async_extract_instances_with_constraints(
                                 text=text_content,
                                 schema_graph=schema_dict,
@@ -1137,7 +1133,7 @@ async def extract_instances_endpoint(
                             )
 
                         schema_graph_data = OntologyExtractor.schema_to_graph_data(schema_dict)
-                        
+
                         full_graph_data = OntologyExtractor.merge_instances_to_graph_data(
                             schema_graph_data=schema_graph_data,
                             instances=inst_result["instances"],
@@ -1161,7 +1157,7 @@ async def extract_instances_endpoint(
                                 "metadata": inst_result.get("metadata"),
                             },
                             message=f"实例提取完成：{len(inst_result['instances'])} 个实例" + (
-                                f" ({inst_result.get('discarded_edges_count', 0)} 条不合规连线已自动丢弃)" 
+                                f" ({inst_result.get('discarded_edges_count', 0)} 条不合规连线已自动丢弃)"
                                 if inst_result.get("discarded_edges_count", 0) > 0 else ""
                             )
                         )
@@ -1170,10 +1166,10 @@ async def extract_instances_endpoint(
                     except Exception as e:
                         logger.error(f"[extract-instances] 错误：{e}", exc_info=True)
                         task_manager.fail_task(task_id, str(e), "实例提取失败")
-            
+
             # 启动后台任务
             asyncio.create_task(run_extraction())
-            
+
             return {
                 "task_id": task_id,
                 "message": "任务已启动，请使用 task_id 查询进度",
@@ -1191,7 +1187,7 @@ async def extract_instances_endpoint(
             )
 
             schema_graph_data = OntologyExtractor.schema_to_graph_data(schema_dict)
-            
+
             full_graph_data = OntologyExtractor.merge_instances_to_graph_data(
                 schema_graph_data=schema_graph_data,
                 instances=inst_result["instances"],
@@ -1259,7 +1255,7 @@ async def upload_document(
         filename_lower = file.filename.lower()
 
         if filename_lower.endswith('.ttl'):
-            with open(temp_path, "r", encoding='utf-8') as ttl_file:
+            with open(temp_path, encoding='utf-8') as ttl_file:
                 ttl_content = ttl_file.read()
             nodes, edges = convert_ttl_to_graph_data(ttl_content)
             db_project.ttl_content = ttl_content
@@ -1288,7 +1284,7 @@ async def upload_document(
                 product_code=product_code,
             )
 
-            with open(ttl_filename, 'r', encoding='utf-8') as f:
+            with open(ttl_filename, encoding='utf-8') as f:
                 ttl_content = f.read()
 
             db_project.ttl_content = ttl_content
@@ -1313,23 +1309,19 @@ async def upload_document(
 @router.post("/{project_id}/parse-files")
 async def parse_files(
     project_id: int,
-    files: List[UploadFile] = File(..., description="文件列表（支持 PDF/DOC/DOCX/TXT/XLSX/XLS/CSV/MD）"),
+    files: list[UploadFile] = File(..., description="文件列表（支持 PDF/DOC/DOCX/TXT/XLSX/XLS/CSV/MD）"),
     save_documents: bool = Form(True, description="是否保存文档记录到数据库"),
-    vl_enabled: bool = Form(False, description="是否启用VL视觉模型解析文档图片"),
+    vl_enabled: bool = Form(False, description="兼容参数，已忽略（VL 后端 M3 总验收接入）"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    解析文件获取文本内容（不提取 schema）。
-    用于 TTL 导入骨架后，上传文档进行实例提取的场景。
-    只解析文件获取文本，不修改任何 schema 数据。
-    
-    参数:
-    - save_documents: 是否保存文档记录到数据库（默认 True）
+    【M3-2 兼容 shim，M3-7 删除】旧前端同步解析入口（03 §18：parse-files → §7 parse）。
+    内部走新管道：MinIO 落桶 → parse_document → 中文切片 → text_key/text_content 回填；
+    同步执行以维持旧契约（响应含合并 text_content）。失败隔离：单文档失败不影响同批。
+    新前端一律使用 POST /api/projects/{id}/documents/upload（auto_parse）+ parse-events。
     """
     from app.core.logging import logger
-    from app.services.parser import FileParser
-    import shutil
 
     db_project = db.query(Project).filter(Project.id == project_id).first()
     if not db_project:
@@ -1337,99 +1329,90 @@ async def parse_files(
     if db_project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="No permission to upload to this project")
 
-    ensure_dirs()
-    os.makedirs(f"{settings.UPLOAD_PROJECTS_DIR}/{project_id}", exist_ok=True)
-    
-    temp_paths = []
+    import hashlib
+
+    from app.infrastructure.minio_client import get_minio_client
+    from app.services.document_pipeline import run_parse
+
+    minio = get_minio_client()
     saved_docs = []
-    
-    try:
-        for uploaded_file in files:
-            import uuid
-            unique_filename = f"{uuid.uuid4()}_{uploaded_file.filename}"
-            file_path = os.path.join(f"{settings.UPLOAD_PROJECTS_DIR}/{project_id}", unique_filename)
-            
-            # 保存文件
-            with open(file_path, "wb") as buf:
-                buf.write(await uploaded_file.read())
-            temp_paths.append(file_path)
-            
-            # 获取文件大小
-            file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
-            
-            # 获取文件类型
-            file_ext = uploaded_file.filename.split('.')[-1].lower() if '.' in uploaded_file.filename else ''
-            
-            logger.info(f"[parse-files] 已保存文件 - {uploaded_file.filename} -> {file_path}")
-            
-            # 如果要求保存文档记录，创建数据库记录
-            if save_documents:
-                doc_record = UploadedDocument(
-                    project_id=project_id,
-                    filename=uploaded_file.filename,
-                    file_path=file_path,
-                    file_size=file_size,
-                    file_type=file_ext,
-                )
-                db.add(doc_record)
-                saved_docs.append(doc_record)
-        
-        if save_documents and saved_docs:
-            db.commit()
-            logger.info(f"[parse-files] 已保存 {len(saved_docs)} 个文档记录到数据库")
-        
-        logger.info(f"[parse-files] 共保存 {len(temp_paths)} 个文件")
+    text_contents = []
+    failed_files = []
 
-        parser = FileParser(vl_enabled=vl_enabled)
-        text_contents = []
-        for temp_path in temp_paths:
-            if vl_enabled:
-                text_content = await parser.async_parse_file(temp_path) or ""
+    for uploaded_file in files:
+        content = await uploaded_file.read()
+        sha = hashlib.sha256(content).hexdigest()
+        filename = uploaded_file.filename
+        # 同项目同 sha 未删文档复用（秒传语义；已 parsed 直接用其文本）
+        existing = (db.query(UploadedDocument)
+                    .filter(UploadedDocument.project_id == project_id,
+                            UploadedDocument.sha256 == sha,
+                            UploadedDocument.deleted_at.is_(None))
+                    .first())
+        try:
+            if existing is not None:
+                doc = existing
+                if doc.parse_status != "parsed":
+                    run_parse(doc.id, backend="auto", task_id=f"legacy-{doc.id}")
+                    db.commit()  # 结束快照再刷新，否则读不到 run_parse 会话的更新
+                    db.refresh(doc)
             else:
-                text_content = parser.parse_file(temp_path) or ""
-            text_contents.append(text_content)
-            logger.info(f"[parse-files] 文件解析完成 - file={temp_path}, text_length={len(text_content)}")
-            
-            # 如果保存了文档记录，同时更新文本内容
-            if saved_docs:
-                for doc in saved_docs:
-                    if doc.file_path == temp_path:
-                        doc.text_content = text_content
-                        break
-        
-        if saved_docs:
-            db.commit()
-        
-        # 合并所有文件内容
-        combined_text = "\n\n".join(text_contents)
-        logger.info(f"[parse-files] 合并后总文本长度={len(combined_text)}")
+                if not save_documents:
+                    # 不落库场景（旧契约允许）：仅解析内容不建记录
+                    parsed = parse_document_sync(content, filename)
+                    text_contents.append(parsed)
+                    continue
+                ext = filename.rsplit(".", 1)[1].lower() if "." in filename else ""
+                key = minio.build_key(project_id, filename)
+                minio.put_bytes(settings.MINIO_BUCKET_UPLOADS, key, content)
+                doc = UploadedDocument(
+                    project_id=project_id, filename=filename, file_path=key,
+                    file_size=len(content), file_type=ext, sha256=sha,
+                    storage_key=key, parse_status="uploaded")
+                db.add(doc)
+                db.commit()
+                db.refresh(doc)
+                run_parse(doc.id, backend="auto", task_id=f"legacy-{doc.id}")
+                db.commit()  # 同上：REPEATABLE_READ 快照
+                db.refresh(doc)
+            saved_docs.append(doc)
+            text_contents.append(doc.text_content or "")
+            logger.info(f"[parse-files] 文档解析完成 - id={doc.id}, file={doc.filename}, "
+                        f"text_length={len(doc.text_content or '')}")
+        except Exception as e:  # noqa: BLE001 —— 失败隔离（04 §2.4）
+            logger.error(f"[parse-files] 文档解析失败 - file={filename}: {e}")
+            failed_files.append({"filename": filename, "error": str(e)[:300]})
 
-        return {
-            "text_content": combined_text,
-            "message": f"文件解析完成：{len(files)} 个文件，总文本长度={len(combined_text)} 字符",
-            "saved_documents": [
-                {
-                    "id": doc.id,
-                    "filename": doc.filename,
-                    "file_size": doc.file_size,
-                    "file_type": doc.file_type,
-                }
-                for doc in saved_docs
-            ] if saved_docs else [],
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"[parse-files] 错误：{e}", exc_info=True)
-        if save_documents:
-            db.rollback()
-        raise HTTPException(status_code=500, detail=f"文件解析失败：{str(e)}")
+    if not saved_docs and not text_contents:
+        raise HTTPException(status_code=500, detail=f"文件解析失败：{failed_files}")
+
+    combined_text = "\n\n".join(t for t in text_contents if t)
+    logger.info(f"[parse-files] 合并后总文本长度={len(combined_text)}")
+
+    return {
+        "text_content": combined_text,
+        "message": (f"文件解析完成：{len(files)} 个文件，总文本长度={len(combined_text)} 字符"
+                    + (f"；{len(failed_files)} 个失败" if failed_files else "")),
+        "saved_documents": [
+            {"id": doc.id, "filename": doc.filename,
+             "file_size": doc.file_size, "file_type": doc.file_type}
+            for doc in saved_docs
+        ],
+        "failed_files": failed_files,
+    }
+
+
+def parse_document_sync(content: bytes, filename: str) -> str:
+    """不落库场景的同步解析（save_documents=false，旧契约兼容）。"""
+    from app.adapters.parsing import ParseBackend, parse_document
+
+    return parse_document(content, filename, backend=ParseBackend.AUTO).full_text_md
 
 
 @router.post("/{project_id}/parse-ttl-schema")
 async def parse_ttl_schema(
     project_id: int,
-    files: List[UploadFile] = File(..., description="TTL 或 JSON 文件列表"),
+    files: list[UploadFile] = File(..., description="TTL 或 JSON 文件列表"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -1439,7 +1422,7 @@ async def parse_ttl_schema(
     支持 TTL 文件和平台导出的 JSON 格式。
     """
     from app.core.logging import logger
-    
+
     db_project = db.query(Project).filter(Project.id == project_id).first()
     if not db_project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -1457,7 +1440,7 @@ async def parse_ttl_schema(
             with open(temp_path, "wb") as buf:
                 buf.write(await uploaded_file.read())
             temp_paths.append(temp_path)
-        
+
         logger.info(f"[parse-ttl-schema] 已保存 {len(temp_paths)} 个文件")
 
         all_nodes = []
@@ -1468,26 +1451,26 @@ async def parse_ttl_schema(
 
         for temp_path in temp_paths:
             if temp_path.lower().endswith('.json'):
-                with open(temp_path, "r", encoding='utf-8') as f:
+                with open(temp_path, encoding='utf-8') as f:
                     json_data = json.load(f)
                 nodes, edges = _convert_json_schema_to_graph(json_data)
                 all_nodes.extend(nodes)
                 all_edges.extend(edges)
             else:
-                with open(temp_path, "r", encoding='utf-8') as ttl_file:
+                with open(temp_path, encoding='utf-8') as ttl_file:
                     ttl_content = ttl_file.read()
                     combined_ttl_content += ttl_content + "\n\n"
                     nodes, edges = convert_ttl_to_graph_data(ttl_content)
                     all_nodes.extend(nodes)
                     all_edges.extend(edges)
-        
+
         seen_node_ids = set()
         unique_nodes = []
         for node in all_nodes:
             if node['id'] not in seen_node_ids:
                 seen_node_ids.add(node['id'])
                 unique_nodes.append(node)
-        
+
         seen_edge_ids = set()
         unique_edges = []
         for edge in all_edges:
@@ -1496,7 +1479,7 @@ async def parse_ttl_schema(
             if edge_key not in seen_edge_ids:
                 seen_edge_ids.add(edge_key)
                 unique_edges.append(edge)
-        
+
         if has_ttl:
             schema_dict = extract_schema_from_ttl(combined_ttl_content)
         else:
@@ -1506,7 +1489,7 @@ async def parse_ttl_schema(
             "nodes": unique_nodes,
             "edges": unique_edges,
         }
-        
+
         db_project.graph_data = {
             "schema": schema_dict,
             **graph_data,
@@ -1514,7 +1497,7 @@ async def parse_ttl_schema(
         if combined_ttl_content:
             db_project.ttl_content = combined_ttl_content
         db.commit()
-        
+
         class_count = len([n for n in unique_nodes if n['data'].get('type') == 'owl:Class'])
 
         return {
@@ -1557,7 +1540,7 @@ async def upload_ttl_file(
 
     try:
         if is_json:
-            with open(temp_path, "r", encoding='utf-8') as json_file:
+            with open(temp_path, encoding='utf-8') as json_file:
                 json_data = json.load(json_file)
             nodes, edges = _convert_json_schema_to_graph(json_data)
 
@@ -1587,7 +1570,7 @@ async def upload_ttl_file(
                 "message": f"成功解析 JSON 文件，包含 {len(nodes)} 个实体和 {len(edges)} 个关系",
             }
         else:
-            with open(temp_path, "r", encoding='utf-8') as ttl_file:
+            with open(temp_path, encoding='utf-8') as ttl_file:
                 ttl_content = ttl_file.read()
 
             nodes, edges = convert_ttl_to_graph_data(ttl_content)
@@ -1694,7 +1677,7 @@ def download_ttl(
     直接使用中文项目名称（URL 编码）。
     """
     from app.core.logging import logger
-    
+
     db_project = db.query(Project).filter(Project.id == project_id).first()
     if not db_project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -1703,7 +1686,7 @@ def download_ttl(
 
     # 始终基于最新 graph_data 重新生成，保证下载内容是最新快照
     latest_ttl_content = ""
-    
+
     # 优先从 graph_data 生成
     if db_project.graph_data:
         nodes = db_project.graph_data.get("nodes", [])
@@ -1713,7 +1696,7 @@ def download_ttl(
                 latest_ttl_content = generate_ttl_from_graph_data(nodes, edges)
             except Exception as e:
                 logger.error(f"generate_ttl_from_graph_data 失败：{e}")
-    
+
     # 如果 graph_data 为空或生成失败，使用 ttl_content
     if not latest_ttl_content:
         latest_ttl_content = db_project.ttl_content or ""
@@ -1724,25 +1707,24 @@ def download_ttl(
     # 生成文件名：ontology_[项目名称].ttl
     project_name = db_project.name
     filename = f"ontology_{project_name}.ttl"
-    
+
     logger.info(f"[download-ttl] 项目名称：{project_name}, 文件名：{filename}")
-    
+
     # 使用 quote 进行 URL 编码，确保中文文件名正确传递
     # safe='' 表示所有特殊字符都要编码
-    from urllib.parse import quote
     encoded_filename = quote(filename, safe='')
-    
+
     logger.info(f"[download-ttl] 编码后文件名：{encoded_filename}")
-    
+
     # 直接返回内容，不创建临时文件
     # 注意：Starlette 的 Response 默认使用 latin-1 编码 headers
     # 所以 Content-Disposition 必须只包含 ASCII 字符
     # filename* 使用 RFC 5987 格式，已经是 URL 编码的 ASCII 字符串
     # filename 参数使用 ASCII 兼容的替代名称
-    
+
     # 创建一个 ASCII 兼容的 filename（用于不支持 filename* 的浏览器）
     ascii_filename = f"ontology_project_{project_id}.ttl"
-    
+
     response = Response(
         content=latest_ttl_content.encode('utf-8'),
         media_type="text/turtle; charset=utf-8",
@@ -1752,9 +1734,9 @@ def download_ttl(
             "Access-Control-Expose-Headers": "Content-Disposition",
         },
     )
-    
+
     logger.info(f"[download-ttl] Content-Disposition: attachment; filename*=UTF-8''{encoded_filename}; filename=\"{ascii_filename}\"")
-    
+
     return response
 
 
@@ -1988,7 +1970,7 @@ def _convert_json_schema_to_graph(json_data: dict) -> tuple:
     return nodes, edges
 
 
-def _build_schema_from_json_data(nodes: List[dict], edges: List[dict]) -> dict:
+def _build_schema_from_json_data(nodes: list[dict], edges: list[dict]) -> dict:
     """
     从 graph nodes 和 edges 构建 schema 字典（兼容 TTL 导入场景）。
     用于纯 JSON 上传时生成 schema_graph 数据结构。
@@ -2102,7 +2084,6 @@ def download_json(
     与 inject_to_ragflow 使用相同的 _convert_graph_data 逻辑，
     确保导出的 JSON 与注入到 ES 的数据格式完全一致。
     """
-    from app.core.logging import logger
 
     db_project = db.query(Project).filter(Project.id == project_id).first()
     if not db_project:
@@ -2119,11 +2100,15 @@ def download_json(
     if not nodes and not edges:
         raise HTTPException(status_code=404, detail="Graph data is empty")
 
-    from app.services.inject_service import GraphInjectService, _friendly_type, _build_entity_description, _build_relation_description
+    from app.services.inject_service import (
+        _build_entity_description,
+        _build_relation_description,
+        _friendly_type,
+    )
 
     entities = []
     relationships = []
-    node_id_to_label: Dict[str, str] = {}
+    node_id_to_label: dict[str, str] = {}
 
     # 先构建完整的 node_id -> label 映射
     for node in nodes:
@@ -2212,7 +2197,6 @@ def download_json(
     project_name = db_project.name
     filename = f"ontology_{project_name}.json"
 
-    from urllib.parse import quote
     encoded_filename = quote(filename, safe='')
     ascii_filename = f"ontology_project_{project_id}.json"
 
@@ -2235,7 +2219,7 @@ def download_json(
 #  内部辅助函数
 # ─────────────────────────────────────────────
 
-def build_schema_from_graph_data(nodes: List[dict], edges: List[dict]) -> dict:
+def build_schema_from_graph_data(nodes: list[dict], edges: list[dict]) -> dict:
     """
     从 nodes 和 edges 动态构建 schema（兼容 TTL 导入场景）。
     当 TTL 文件导入骨架时，graph_data 中可能没有 schema 字段，
@@ -2245,17 +2229,17 @@ def build_schema_from_graph_data(nodes: List[dict], edges: List[dict]) -> dict:
     ★ Action Types：从 raw_id 以 AT_ 开头的 owl:Class 节点中提取动作类型。
     """
     from app.core.logging import logger
-    
+
     classes = []
     object_properties = []
     action_types = []
-    
+
     logger.info(f"[build_schema_from_graph_data] 开始从 {len(nodes)} 个节点和 {len(edges)} 个边构建 schema")
-    
+
     class_info = {}
     action_type_info = {}
     node_id_to_label = {}
-    
+
     for node in nodes:
         node_type = node.get('data', {}).get('type', '')
         if node_type == 'owl:Class':
@@ -2265,16 +2249,16 @@ def build_schema_from_graph_data(nodes: List[dict], edges: List[dict]) -> dict:
             node_id_to_label[node_id] = node_label
             if raw_id:
                 node_id_to_label[raw_id] = node_label
-    
+
     for node in nodes:
         node_type = node.get('data', {}).get('type', '')
         if node_type == 'owl:Class':
             node_id = str(node['id'])
             node_label = node.get('data', {}).get('label', node_id)
             raw_id = node.get('data', {}).get('raw_id', '')
-            
+
             is_action_type = raw_id.startswith('AT_') or node_id.startswith('AT_')
-            
+
             if is_action_type:
                 target_object_type = ""
                 for edge in edges:
@@ -2284,12 +2268,12 @@ def build_schema_from_graph_data(nodes: List[dict], edges: List[dict]) -> dict:
                         target_node_id = edge.get('target', '')
                         target_object_type = node_id_to_label.get(target_node_id, target_node_id)
                         break
-                
+
                 parameters = node.get('data', {}).get('parameters', [])
                 if not parameters:
                     prop_defs = node.get('data', {}).get('property_definitions', [])
                     parameters = [{"name": p.get("name", ""), "data_type": p.get("data_type", "string")} for p in prop_defs if isinstance(p, dict)]
-                
+
                 action_type_info[node_id] = {
                     'label': node_label,
                     'name': node_label,
@@ -2299,7 +2283,7 @@ def build_schema_from_graph_data(nodes: List[dict], edges: List[dict]) -> dict:
                 }
                 logger.info(f"[build_schema_from_graph_data] 发现 ActionType: node_id={node_id}, label={node_label}, raw_id={raw_id}, target_object_type={target_object_type}")
                 continue
-            
+
             parent_classes = []
             for edge in edges:
                 edge_data = edge.get('data', {})
@@ -2308,19 +2292,19 @@ def build_schema_from_graph_data(nodes: List[dict], edges: List[dict]) -> dict:
                 if edge_relation == 'subclass_of' or edge_label in ('subClassOf', 'subclass_of'):
                     if edge.get('source') == node_id:
                         parent_classes.append(edge.get('target'))
-            
+
             direct_properties = []
             node_data = node.get('data', {})
             properties = node_data.get('properties', {})
             if isinstance(properties, dict):
                 direct_properties = list(properties.keys())
-            
+
             class_info[node_id] = {
                 'label': node_label,
                 'parent_classes': parent_classes,
                 'direct_properties': direct_properties,
             }
-    
+
     def get_inherited_properties(class_id: str, visited: set = None) -> list:
         if visited is None:
             visited = set()
@@ -2336,14 +2320,14 @@ def build_schema_from_graph_data(nodes: List[dict], edges: List[dict]) -> dict:
                 parent_inherited_props = get_inherited_properties(parent_id, visited)
                 inherited_props.extend(parent_inherited_props)
         return inherited_props
-    
+
     for node_id, info in class_info.items():
         direct_props = info['direct_properties']
         inherited_props = get_inherited_properties(node_id)
         all_properties = list(set(direct_props + inherited_props))
         inherited_props_set = set(inherited_props)
         direct_props_set = set(direct_props)
-        
+
         properties_with_source = []
         for prop in all_properties:
             if prop in direct_props_set:
@@ -2355,9 +2339,9 @@ def build_schema_from_graph_data(nodes: List[dict], edges: List[dict]) -> dict:
                         source_class = class_info[parent_id]['label']
                         break
                 properties_with_source.append({'name': prop, 'source': 'inherited', 'from': source_class})
-        
+
         logger.info(f"[build_schema_from_graph_data] 添加类：{node_id}, label={info['label']}, parent_classes={info['parent_classes']}, direct_properties={direct_props}, inherited_properties={inherited_props}")
-        
+
         classes.append({
             "id": node_id,
             "label": info['label'],
@@ -2367,7 +2351,7 @@ def build_schema_from_graph_data(nodes: List[dict], edges: List[dict]) -> dict:
             "inherited_properties": inherited_props,
             "properties_with_source": properties_with_source,
         })
-    
+
     for node in nodes:
         node_type = node.get('data', {}).get('type', '')
         if node_type == 'owl:Class':
@@ -2384,30 +2368,30 @@ def build_schema_from_graph_data(nodes: List[dict], edges: List[dict]) -> dict:
                         prop_defs = [{"name": p, "description": "", "data_type": "string"} for p in all_properties]
                     cls["property_definitions"] = prop_defs
                     break
-    
+
     for edge in edges:
         edge_data = edge.get('data', {})
         relation = edge_data.get('relation', '')
         label = edge.get('label', '') or edge_data.get('label', '')
-        
+
         if relation == 'action':
             continue
-        
+
         if relation and relation not in ('rdf:type', 'type', 'subClassOf', 'subclass_of'):
             if label in ('subClassOf', 'subclass_of'):
                 continue
-            
+
             prop_id = edge_data.get('prop_id', '')
             if not prop_id or prop_id in ('', '_', '__', '___'):
                 prop_id = label if label else relation
-            
+
             src_node_id = edge.get('source', '')
             tgt_node_id = edge.get('target', '')
             src_label = node_id_to_label.get(src_node_id, src_node_id)
             tgt_label = node_id_to_label.get(tgt_node_id, tgt_node_id)
-            
+
             logger.info(f"[build_schema_from_graph_data] 添加 ObjectProperty: {prop_id}, label={label}, domain={src_label}({src_node_id}), range={tgt_label}({tgt_node_id})")
-            
+
             object_properties.append({
                 "id": prop_id,
                 "label": label,
@@ -2418,7 +2402,7 @@ def build_schema_from_graph_data(nodes: List[dict], edges: List[dict]) -> dict:
                 object_properties[-1]["cardinality"] = edge_data['cardinality']
             if edge_data.get('description'):
                 object_properties[-1]["description"] = edge_data['description']
-    
+
     for at_id, at_info in action_type_info.items():
         action_types.append({
             "id": at_id,
@@ -2429,9 +2413,9 @@ def build_schema_from_graph_data(nodes: List[dict], edges: List[dict]) -> dict:
             "parameters": at_info['parameters'],
         })
         logger.info(f"[build_schema_from_graph_data] 添加 ActionType: {at_id}, label={at_info['label']}, target={at_info['target_object_type']}")
-    
+
     logger.info(f"[build_schema_from_graph_data] 构建完成：{len(classes)} 个类，{len(object_properties)} 个 ObjectProperty，{len(action_types)} 个 ActionType")
-    
+
     return {
         "classes": classes,
         "object_properties": object_properties,
@@ -2446,8 +2430,10 @@ def _build_extractor(
     request_interval: int = 2,
     disable_think: bool = True,
 ) -> OntologyExtractor:
-    db_config = db.query(SystemConfig).filter(SystemConfig.key == "llm_config").first()
-    llm_config = db_config.value if db_config else {}
+    # M2：模型配置改读 model_configs 表（adapters/provider 兼容层保持旧 llm_config 形状）
+    from app.adapters.provider import build_legacy_llm_config
+
+    llm_config = build_legacy_llm_config(db)
 
     api_key = llm_config.get("api_key") or settings.VLLM_API_KEY
     base_url = llm_config.get("base_url") or settings.VLLM_BASE_URL
@@ -2461,15 +2447,16 @@ def _build_extractor(
     return extractor
 
 
-def generate_ttl_from_graph_data(nodes: List[dict], edges: List[dict]) -> str:
+def generate_ttl_from_graph_data(nodes: list[dict], edges: list[dict]) -> str:
     """
     全生命周期 TTL 同步：将前端 nodes+edges 反向序列化为标准 OWL TTL。
     使用 rdflib 保证 RDF 语义正确性。
     支持 Action Type：导出为 owl:Class + ex:isActionType "true"^^xsd:boolean 标注，
     动作参数导出为 DatatypeProperty 并标注 ex:isActionParameter。
     """
-    from rdflib import Graph, Literal, RDF, RDFS, OWL, Namespace, URIRef, XSD
     import hashlib
+
+    from rdflib import XSD, Literal, Namespace, URIRef
 
     g = Graph()
     ex = Namespace("http://www.example.org/auto_ontology#")
@@ -2492,14 +2479,14 @@ def generate_ttl_from_graph_data(nodes: List[dict], edges: List[dict]) -> str:
         """
         if '#' in node_id or node_id.startswith('http'):
             return URIRef(node_id)
-        
+
         # 首先去除首尾空白
         node_id = node_id.strip()
-        
+
         # 检查是否是有效的 ID 格式（如 C_xxx, I_xxx, OP_xxx）
         if re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', node_id):
             return ex[node_id]
-        
+
         # 对于包含特殊字符的 ID，使用 MD5 哈希生成安全 URI
         md5_hash = hashlib.md5(node_id.encode('utf-8')).hexdigest()[:8]
         # 根据 ID 前缀确定类型
@@ -2514,7 +2501,7 @@ def generate_ttl_from_graph_data(nodes: List[dict], edges: List[dict]) -> str:
             prefix = "OP"
         elif node_id.startswith('DP_'):
             prefix = "DP"
-        
+
         return ex[f"{prefix}_{md5_hash}"]
 
     def generate_safe_prop_id(original_name: str) -> str:
@@ -2529,12 +2516,12 @@ def generate_ttl_from_graph_data(nodes: List[dict], edges: List[dict]) -> str:
         """
         if not original_name:
             return "prop_empty"
-        
+
         # 始终使用 MD5 哈希保证唯一性（区分同音词如"使用"和"实用"）
         md5_hash = hashlib.md5(original_name.encode('utf-8')).hexdigest()
         return f"prop_{md5_hash[:8]}"
 
-    node_uris: Dict[str, URIRef] = {}
+    node_uris: dict[str, URIRef] = {}
     for node in nodes:
         node_id = str(node['id'])
         node_label = node['data'].get('label', node_id)
@@ -2581,31 +2568,31 @@ def generate_ttl_from_graph_data(nodes: List[dict], edges: List[dict]) -> str:
             dataprop_id = generate_safe_prop_id(prop_name)
             if not dataprop_id:
                 continue
-            
+
             dataprop_uri = ex[dataprop_id]
             g.add((dataprop_uri, RDF.type, OWL.DatatypeProperty))
             g.add((dataprop_uri, RDFS.label, Literal(prop_name, lang="zh")))
-            
+
             if node_type == 'owl:Class':
                 g.add((dataprop_uri, RDFS.domain, uri))
-            
+
             if prop_value:
                 g.add((uri, dataprop_uri, Literal(str(prop_value), lang="zh") if isinstance(prop_value, str) else Literal(prop_value)))
 
     # 首先收集所有已定义的 ObjectProperty（从 schema 中）
     # 这样可以避免重复创建 ObjectProperty，也能保持正确的标签
     existing_obj_properties = {}  # relation -> (prop_id, label)
-    
+
     # 定义无效的 prop_id 集合
     INVALID_PROP_IDS = {'', '_', '__', '___', '____', '_____', '______', '_______', '________'}
-    
+
     # 遍历边，先收集所有 ObjectProperty 关系及其 prop_id
     for edge in edges:
         edge_data = edge.get('data', {})
         relation = edge_data.get('relation', '')
         prop_id = edge_data.get('prop_id', '')
         label = edge_data.get('label', relation)
-        
+
         # 只收集 ObjectProperty 关系（排除 subClassOf 和 type）
         if relation and relation not in ('rdf:type', 'type', 'subClassOf', 'subclass_of'):
             # 检查 prop_id 是否有效
@@ -2623,7 +2610,7 @@ def generate_ttl_from_graph_data(nodes: List[dict], edges: List[dict]) -> str:
         source_id = str(edge['source'])
         target_id = str(edge['target'])
         edge_data = edge.get('data', {})
-        
+
         relation_label = (
             edge.get('label')
             or edge_data.get('label')
@@ -2647,7 +2634,7 @@ def generate_ttl_from_graph_data(nodes: List[dict], edges: List[dict]) -> str:
                     prop_id = generate_safe_prop_id(relation_label)
                     if not prop_id:
                         prop_id = f"prop_{abs(hash(relation_label)) % 10000}"
-                
+
                 objprop_uri = ex[prop_id]
                 g.add((objprop_uri, RDF.type, OWL.ObjectProperty))
                 g.add((objprop_uri, RDFS.label, Literal(relation_label, lang="zh")))
@@ -2672,16 +2659,17 @@ def extract_schema_from_ttl(ttl_content: str) -> dict:
     
     ★ 属性继承：子类自动继承父类的所有属性，无需重复定义。
     """
-    from rdflib import Graph, RDF, RDFS, OWL, Namespace, URIRef
+    from rdflib import URIRef
+
     from app.core.logging import logger
-    
+
     g = Graph()
     g.parse(data=ttl_content, format="turtle")
-    
+
     classes = []
     object_properties = []
     datatype_properties = []
-    
+
     # 首先收集所有 DatatypeProperty 及其 domain 信息
     datatype_prop_domains = {}  # prop_uri -> [domain_classes]
     for prop in g.subjects(RDF.type, OWL.DatatypeProperty):
@@ -2691,48 +2679,48 @@ def extract_schema_from_ttl(ttl_content: str) -> dict:
             label = str(obj)
             if hasattr(obj, 'language') and obj.language == 'zh':
                 break
-        
+
         # 获取 domain（可能是一个类或多个类）
         domains = []
         for domain in g.objects(prop, RDFS.domain):
             domain_id = str(domain).split('#')[-1] if '#' in str(domain) else str(domain).split('/')[-1]
             domains.append(domain_id)
-        
+
         datatype_prop_domains[str(prop)] = {
             'id': prop_id,
             'label': label,
             'domains': domains,
         }
-    
+
     # ★ 新增：收集 rdf:Property（根据 rdfs:range 判断是数据属性还是对象属性）
     xsd_namespace = "http://www.w3.org/2001/XMLSchema#"
-    xsd_datatypes = ['string', 'integer', 'decimal', 'float', 'double', 'boolean', 
-                     'date', 'dateTime', 'time', 'duration', 'anyURI', 'byte', 
+    xsd_datatypes = ['string', 'integer', 'decimal', 'float', 'double', 'boolean',
+                     'date', 'dateTime', 'time', 'duration', 'anyURI', 'byte',
                      'short', 'long', 'unsignedByte', 'unsignedShort', 'unsignedLong']
-    
+
     for prop in g.subjects(RDF.type, RDF.Property):
         prop_uri = str(prop)
         # 跳过已经作为 owl:DatatypeProperty 处理的属性
         if prop_uri in datatype_prop_domains:
             continue
-        
+
         prop_id = str(prop).split('#')[-1] if '#' in str(prop) else str(prop).split('/')[-1]
         label = prop_id
         for obj in g.objects(prop, RDFS.label):
             label = str(obj)
             if hasattr(obj, 'language') and obj.language == 'zh':
                 break
-        
+
         # 获取 domain
         domains = []
         for domain in g.objects(prop, RDFS.domain):
             domain_id = str(domain).split('#')[-1] if '#' in str(domain) else str(domain).split('/')[-1]
             domains.append(domain_id)
-        
+
         # 获取 range
         ranges = list(g.objects(prop, RDFS.range))
         range_uri = str(ranges[0]) if ranges else None
-        
+
         # 判断是否是数据属性：range 是 XSD 数据类型
         is_datatype = False
         if range_uri:
@@ -2742,7 +2730,7 @@ def extract_schema_from_ttl(ttl_content: str) -> dict:
                     is_datatype = True
             if range_uri == str(RDFS.Literal):
                 is_datatype = True
-        
+
         if is_datatype:
             datatype_prop_domains[prop_uri] = {
                 'id': prop_id,
@@ -2750,31 +2738,31 @@ def extract_schema_from_ttl(ttl_content: str) -> dict:
                 'domains': domains,
             }
             logger.info(f"[extract_schema_from_ttl] rdf:Property '{prop_id}' 被识别为数据属性（range={range_uri}）")
-    
+
     logger.info(f"[extract_schema_from_ttl] 找到 {len(datatype_prop_domains)} 个数据属性")
-    
+
     # 收集所有类 URI（包括显式和隐式声明的类）
     class_uris = set()
-    
+
     # 1. 显式声明为 owl:Class 的节点
     for subj in g.subjects(RDF.type, OWL.Class):
         class_uris.add(subj)
-    
+
     # 2. 通过 rdfs:subClassOf 关系隐式成为类的节点（作为子类或父类）
     for subj, obj in g.subject_objects(RDFS.subClassOf):
         class_uris.add(subj)  # 子类
         class_uris.add(obj)   # 父类
-    
+
     # 3. 作为 ObjectProperty 的 domain 或 range 的节点（也是类）
     for prop in g.subjects(RDF.type, OWL.ObjectProperty):
         for domain in g.objects(prop, RDFS.domain):
             class_uris.add(domain)
         for range_ in g.objects(prop, RDFS.range):
             class_uris.add(range_)
-    
+
     # ★ 第一步：先收集所有类的直接属性和父类关系
     class_info = {}  # cls_id -> {'label': str, 'parent_classes': list, 'direct_properties': list}
-    
+
     for cls in class_uris:
         cls_uri = str(cls)
         cls_id = str(cls).split('#')[-1] if '#' in str(cls) else str(cls).split('/')[-1]
@@ -2783,25 +2771,25 @@ def extract_schema_from_ttl(ttl_content: str) -> dict:
             label = str(obj)
             if hasattr(obj, 'language') and obj.language == 'zh':
                 break
-        
+
         # 获取父类
         parent_classes = []
         for parent in g.objects(cls, RDFS.subClassOf):
             parent_id = str(parent).split('#')[-1] if '#' in str(parent) else str(parent).split('/')[-1]
             parent_classes.append(parent_id)
-        
+
         # 获取数据属性 - 通过 rdfs:domain 关联
         direct_properties = []
         for prop_uri, prop_info in datatype_prop_domains.items():
             if cls_id in prop_info['domains']:
                 direct_properties.append(prop_info['label'])
-        
+
         class_info[cls_id] = {
             'label': label,
             'parent_classes': parent_classes,
             'direct_properties': list(set(direct_properties)),
         }
-    
+
     # ★ 第二步：递归计算每个类的继承属性
     def get_inherited_properties(class_id: str, visited: set = None) -> list:
         """
@@ -2809,40 +2797,40 @@ def extract_schema_from_ttl(ttl_content: str) -> dict:
         """
         if visited is None:
             visited = set()
-        
+
         if class_id in visited or class_id not in class_info:
             return []
-        
+
         visited.add(class_id)
-        
+
         inherited_props = []
         info = class_info[class_id]
-        
+
         # 遍历所有父类
         for parent_id in info['parent_classes']:
             if parent_id in class_info:
                 # 获取父类的直接属性
                 parent_direct_props = class_info[parent_id]['direct_properties']
                 inherited_props.extend(parent_direct_props)
-                
+
                 # 递归获取父类的继承属性
                 parent_inherited_props = get_inherited_properties(parent_id, visited)
                 inherited_props.extend(parent_inherited_props)
-        
+
         return inherited_props
-    
+
     # ★ 第三步：构建最终的类列表（合并直接属性和继承属性）
     for cls_id, info in class_info.items():
         direct_props = info['direct_properties']
         inherited_props = get_inherited_properties(cls_id)
-        
+
         # 合并属性（去重）
         all_properties = list(set(direct_props + inherited_props))
-        
+
         # 区分直接属性和继承属性
         inherited_props_set = set(inherited_props)
         direct_props_set = set(direct_props)
-        
+
         # 标记属性来源
         properties_with_source = []
         for prop in all_properties:
@@ -2856,9 +2844,9 @@ def extract_schema_from_ttl(ttl_content: str) -> dict:
                         source_class = class_info[parent_id]['label']
                         break
                 properties_with_source.append({'name': prop, 'source': 'inherited', 'from': source_class})
-        
+
         logger.info(f"[extract_schema_from_ttl] 添加类：{cls_id}, label={info['label']}, parent_classes={info['parent_classes']}, direct_properties={direct_props}, inherited_properties={inherited_props}")
-        
+
         classes.append({
             "id": cls_id,
             "label": info['label'],
@@ -2868,7 +2856,7 @@ def extract_schema_from_ttl(ttl_content: str) -> dict:
             "inherited_properties": inherited_props,  # 继承的属性
             "properties_with_source": properties_with_source,  # 带来源标记的属性
         })
-    
+
     # 提取所有 ObjectProperty 定义
     object_property_defs = {}  # prop_id -> {'id': str, 'label': str, 'domain': str, 'range': str}
     for prop in g.subjects(RDF.type, OWL.ObjectProperty):
@@ -2878,7 +2866,7 @@ def extract_schema_from_ttl(ttl_content: str) -> dict:
             label = str(obj)
             if hasattr(obj, 'language') and obj.language == 'zh':
                 break
-        
+
         # 获取 domain 和 range
         domains = []
         ranges = []
@@ -2888,7 +2876,7 @@ def extract_schema_from_ttl(ttl_content: str) -> dict:
         for range_ in g.objects(prop, RDFS.range):
             range_id = str(range_).split('#')[-1] if '#' in str(range_) else str(range_).split('/')[-1]
             ranges.append(range_id)
-        
+
         prop_def = {
             "id": prop_id,
             "label": label,
@@ -2897,43 +2885,43 @@ def extract_schema_from_ttl(ttl_content: str) -> dict:
         }
         object_properties.append(prop_def)
         object_property_defs[prop_id] = prop_def
-        
+
         # 同时通过 label 建立索引，方便后续查找
         object_property_defs[label] = prop_def
-    
+
     # ★ 新增：提取类之间的实际关系边（类节点通过 ObjectProperty 连接到其他类节点）
     # 这些关系边在 TTL 中表现为：类节点以某个 ObjectProperty 作为谓词，指向另一个类节点
     class_relations = []  # 存储类之间的关系边
-    
+
     # 收集所有已知的 ObjectProperty URI
     object_property_uris = set()
     for prop in g.subjects(RDF.type, OWL.ObjectProperty):
         object_property_uris.add(str(prop))
-    
+
     # 遍历所有类节点，查找它们通过 ObjectProperty 连接到其他类节点的关系
     for cls_uri in class_uris:
         cls_id = str(cls_uri).split('#')[-1] if '#' in str(cls_uri) else str(cls_uri).split('/')[-1]
-        
+
         # 遍历该类的所有谓词-对象对
         for pred, obj in g.predicate_objects(cls_uri):
             pred_uri = str(pred)
             pred_id = pred_uri.split('#')[-1] if '#' in pred_uri else pred_uri.split('/')[-1]
-            
+
             # 跳过元属性
             if pred_uri in [str(RDF.type), str(RDFS.label), str(RDFS.subClassOf),
                             str(RDFS.domain), str(RDFS.range)]:
                 continue
-            
+
             # 检查谓词是否是 ObjectProperty（通过 URI 或定义检查）
             if pred_uri in object_property_uris or pred_id in object_property_defs:
                 # 检查对象是否是一个类（URI 形式，且在 class_uris 中）
                 if isinstance(obj, URIRef) and obj in class_uris:
                     obj_id = str(obj).split('#')[-1] if '#' in str(obj) else str(obj).split('/')[-1]
-                    
+
                     # 获取关系的 label
                     prop_def = object_property_defs.get(pred_id) or object_property_defs.get(pred_uri)
                     rel_label = prop_def['label'] if prop_def else pred_id
-                    
+
                     # 添加类关系边
                     class_relations.append({
                         "source_class": cls_id,
@@ -2941,11 +2929,11 @@ def extract_schema_from_ttl(ttl_content: str) -> dict:
                         "property_id": pred_id,
                         "property_label": rel_label,
                     })
-                    
+
                     logger.info(f"[extract_schema_from_ttl] 发现类关系边：{cls_id} -> {obj_id} (通过 {rel_label})")
-    
+
     logger.info(f"[extract_schema_from_ttl] 共提取 {len(class_relations)} 条类关系边")
-    
+
     return {
         "classes": classes,
         "object_properties": object_properties,
@@ -2975,9 +2963,10 @@ def convert_ttl_to_graph_data(ttl_content: str):
     本函数会将 schema 中定义的 data_properties 添加到对应类节点的 properties 中，
     以便前端在编辑节点时显示这些预定义的属性。
     """
-    from rdflib import Graph, RDF, RDFS, OWL, Namespace, URIRef, Literal
+    from rdflib import Literal, Namespace, URIRef
+
     from app.core.logging import logger
-    
+
     g = Graph()
     g.parse(data=ttl_content, format="turtle")
     ex = Namespace("http://www.example.org/auto_ontology#")
@@ -2988,7 +2977,7 @@ def convert_ttl_to_graph_data(ttl_content: str):
 
     # ★ 改进：收集所有数据属性（支持 owl:DatatypeProperty 和 rdf:Property）
     datatype_props = {}  # prop_uri -> {'id': str, 'label': str, 'domain': str}
-    
+
     # 1. 收集 owl:DatatypeProperty
     for prop in g.subjects(RDF.type, OWL.DatatypeProperty):
         prop_uri = str(prop)
@@ -2998,45 +2987,45 @@ def convert_ttl_to_graph_data(ttl_content: str):
             label = str(obj)
             if hasattr(obj, 'language') and obj.language == 'zh':
                 break
-        
+
         # 获取 domain
         domains = list(g.objects(prop, RDFS.domain))
         domain_id = str(domains[0]).split('#')[-1] if domains else None
-        
+
         datatype_props[prop_uri] = {
             'id': prop_id,
             'label': label,
             'domain': domain_id,
         }
-    
+
     # ★ 新增：2. 收集 rdf:Property（根据 rdfs:range 判断是数据属性还是对象属性）
     # XSD 数据类型范围（如 xsd:string, xsd:integer, xsd:decimal, xsd:date 等）
     xsd_namespace = "http://www.w3.org/2001/XMLSchema#"
-    xsd_datatypes = ['string', 'integer', 'decimal', 'float', 'double', 'boolean', 
-                     'date', 'dateTime', 'time', 'duration', 'anyURI', 'byte', 
+    xsd_datatypes = ['string', 'integer', 'decimal', 'float', 'double', 'boolean',
+                     'date', 'dateTime', 'time', 'duration', 'anyURI', 'byte',
                      'short', 'long', 'unsignedByte', 'unsignedShort', 'unsignedLong']
-    
+
     for prop in g.subjects(RDF.type, RDF.Property):
         prop_uri = str(prop)
         # 跳过已经作为 owl:DatatypeProperty 或 owl:ObjectProperty 处理的属性
         if prop_uri in datatype_props:
             continue
-        
+
         prop_id = str(prop).split('#')[-1] if '#' in str(prop) else str(prop).split('/')[-1]
         label = prop_id
         for obj in g.objects(prop, RDFS.label):
             label = str(obj)
             if hasattr(obj, 'language') and obj.language == 'zh':
                 break
-        
+
         # 获取 domain
         domains = list(g.objects(prop, RDFS.domain))
         domain_id = str(domains[0]).split('#')[-1] if domains else None
-        
+
         # 获取 range
         ranges = list(g.objects(prop, RDFS.range))
         range_uri = str(ranges[0]) if ranges else None
-        
+
         # 判断是否是数据属性：range 是 XSD 数据类型
         is_datatype = False
         if range_uri:
@@ -3048,7 +3037,7 @@ def convert_ttl_to_graph_data(ttl_content: str):
             # rdfs:Literal 也是数据类型
             if range_uri == str(RDFS.Literal):
                 is_datatype = True
-        
+
         if is_datatype:
             datatype_props[prop_uri] = {
                 'id': prop_id,
@@ -3056,7 +3045,7 @@ def convert_ttl_to_graph_data(ttl_content: str):
                 'domain': domain_id,
             }
             logger.info(f"[convert_ttl_to_graph_data] rdf:Property '{prop_id}' 被识别为数据属性（range={range_uri}）")
-    
+
     # 调试日志：打印收集到的数据属性
     logger.info(f"[convert_ttl_to_graph_data] 找到 {len(datatype_props)} 个数据属性（含 owl:DatatypeProperty 和 rdf:Property）: {list(datatype_props.values())}")
 
@@ -3095,15 +3084,15 @@ def convert_ttl_to_graph_data(ttl_content: str):
             if desc_val and not desc_val.startswith('参数类型:'):
                 description = desc_val
             break
-        
+
         for pred, obj in g.predicate_objects(uri):
             pred_uri = str(pred)
-            
+
             if pred_uri in [str(RDF.type), str(RDFS.label), str(RDFS.subClassOf),
                             str(RDFS.domain), str(RDFS.range),
                             str(ex["isActionType"]), str(ex["isActionInstance"])]:
                 continue
-            
+
             if pred_uri in datatype_props:
                 prop_info = datatype_props[pred_uri]
                 prop_label = prop_info['label']
@@ -3165,27 +3154,27 @@ def convert_ttl_to_graph_data(ttl_content: str):
 
     # ★ 改进：收集所有类 URI（支持 owl:Class, rdfs:Class 和隐式声明的类）
     class_uris = set()
-    
+
     # 1. 显式声明为 owl:Class 的节点
     for subj in g.subjects(RDF.type, OWL.Class):
         class_uris.add(subj)
-    
+
     # 2. 显式声明为 rdfs:Class 的节点（新增支持）
     for subj in g.subjects(RDF.type, RDFS.Class):
         class_uris.add(subj)
-    
+
     # 3. 通过 rdfs:subClassOf 关系隐式成为类的节点（作为子类或父类）
     for subj, obj in g.subject_objects(RDFS.subClassOf):
         class_uris.add(subj)  # 子类
         class_uris.add(obj)   # 父类
-    
+
     # 4. 作为 ObjectProperty 的 domain 或 range 的节点（也是类）
     for prop in g.subjects(RDF.type, OWL.ObjectProperty):
         for domain in g.objects(prop, RDFS.domain):
             class_uris.add(domain)
         for range_ in g.objects(prop, RDFS.range):
             class_uris.add(range_)
-    
+
     # 5. 作为 rdf:Property（对象属性）的 domain 或 range 的节点（新增支持）
     for prop in g.subjects(RDF.type, RDF.Property):
         prop_uri = str(prop)
@@ -3199,7 +3188,7 @@ def convert_ttl_to_graph_data(ttl_content: str):
             range_uri = str(range_)
             if not range_uri.startswith(xsd_namespace) and range_uri != str(RDFS.Literal):
                 class_uris.add(range_)
-    
+
     logger.info(f"[convert_ttl_to_graph_data] 收集到 {len(class_uris)} 个类（含 owl:Class, rdfs:Class 和隐式类）")
 
     # 添加所有类节点
@@ -3231,7 +3220,7 @@ def convert_ttl_to_graph_data(ttl_content: str):
         range_ = list(g.objects(prop, RDFS.range))
         label_objs = list(g.objects(prop, RDFS.label))
         prop_label = str(label_objs[0]) if label_objs else str(prop).split('#')[-1]
-        
+
         prop_uri_str = str(prop)
         prop_id = prop_uri_str.split('#')[-1] if '#' in prop_uri_str else prop_uri_str.split('/')[-1]
 
@@ -3262,22 +3251,22 @@ def convert_ttl_to_graph_data(ttl_content: str):
         # 跳过已作为数据属性处理的
         if prop_uri in datatype_props:
             continue
-        
+
         # 获取 domain 和 range
         domain = list(g.objects(prop, RDFS.domain))
         range_ = list(g.objects(prop, RDFS.range))
         label_objs = list(g.objects(prop, RDFS.label))
         prop_label = str(label_objs[0]) if label_objs else str(prop).split('#')[-1]
-        
+
         # 获取 prop_id（从 URI 中提取）
         prop_id = prop_uri.split('#')[-1] if '#' in prop_uri else prop_uri.split('/')[-1]
-        
+
         # 检查 range 是否是 XSD 数据类型（如果是，则跳过，因为已作为数据属性处理）
         if range_:
             range_uri = str(range_[0])
             if range_uri.startswith(xsd_namespace) or range_uri == str(RDFS.Literal):
                 continue  # 这是数据属性，已处理
-        
+
         if domain and range_:
             source_id = add_node(domain[0], "owl:Class")
             target_id = add_node(range_[0], "owl:Class")
@@ -3323,34 +3312,34 @@ def convert_ttl_to_graph_data(ttl_content: str):
         label_objs = list(g.objects(prop, RDFS.label))
         prop_label = str(label_objs[0]) if label_objs else prop_id
         objprop_uri_to_label[prop_uri] = prop_label
-    
+
     # 遍历所有类节点，查找它们通过 ObjectProperty 连接到其他类节点的关系
     for cls_uri in class_uris:
         cls_id = str(cls_uri).split('#')[-1] if '#' in str(cls_uri) else str(cls_uri).split('/')[-1]
-        
+
         # 遍历该类的所有谓词-对象对
         for pred, obj in g.predicate_objects(cls_uri):
             pred_uri = str(pred)
             pred_id = pred_uri.split('#')[-1] if '#' in pred_uri else pred_uri.split('/')[-1]
-            
+
             # 跳过元属性
             if pred_uri in [str(RDF.type), str(RDFS.label), str(RDFS.subClassOf),
                             str(RDFS.domain), str(RDFS.range)]:
                 continue
-            
+
             # 跳过 DatatypeProperty（已作为属性处理）
             if pred_uri in datatype_props:
                 continue
-            
+
             # 检查谓词是否是 ObjectProperty（通过 URI 检查）
             if pred_uri in objprop_uri_to_label:
                 # 检查对象是否是一个类（URI 形式，且在 class_uris 中）
                 if isinstance(obj, URIRef) and obj in class_uris:
                     obj_id = str(obj).split('#')[-1] if '#' in str(obj) else str(obj).split('/')[-1]
-                    
+
                     # 获取关系的 label
                     rel_label = objprop_uri_to_label.get(pred_uri, pred_id)
-                    
+
                     # 添加类关系边（如果节点已处理）
                     if cls_id in processed_nodes and obj_id in processed_nodes:
                         edge_id = f"e_{cls_id}_{obj_id}_{pred_id}"
@@ -3420,17 +3409,17 @@ async def get_task_progress(
     获取任务进度（轮询方式）
     """
     from app.infrastructure.task_manager import task_manager
-    
+
     db_project = db.query(Project).filter(Project.id == project_id).first()
     if not db_project:
         raise HTTPException(status_code=404, detail="Project not found")
     if db_project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="No permission to access this project's tasks")
-    
+
     task = task_manager.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    
+
     return task.to_dict()
 
 
@@ -3449,14 +3438,14 @@ async def stream_task_progress(
     1. Cookie/Session 认证（通过 Depends(get_current_user)）
     2. URL 参数 token 认证（用于 EventSource，因为 EventSource 不支持自定义 headers）
     """
-    from app.infrastructure.task_manager import task_manager
     from app.core.logging import logger
-    
+    from app.infrastructure.task_manager import task_manager
+
     logger.info(f"[progress-stream] 收到请求 - project_id={project_id}, task_id={task_id}")
-    
+
     # 尝试从 URL 参数获取 token 进行认证（EventSource 方式）
     token = request.query_params.get("token")
-    
+
     current_user = None
     if token:
         # 从 token 解析用户
@@ -3478,7 +3467,7 @@ async def stream_task_progress(
             raise HTTPException(status_code=401, detail="Authentication required. Please provide a token.")
         except HTTPException:
             raise
-    
+
     db_project = db.query(Project).filter(Project.id == project_id).first()
     if not db_project:
         logger.warning(f"[progress-stream] 项目不存在 - {project_id}")
@@ -3486,13 +3475,13 @@ async def stream_task_progress(
     if db_project.owner_id != current_user.id:
         logger.warning(f"[progress-stream] 用户无权访问 - project={project_id}, user={current_user.id}")
         raise HTTPException(status_code=403, detail="No permission to access this project's tasks")
-    
+
     task = task_manager.get_task(task_id)
     logger.info(f"[progress-stream] 任务查询结果 - task={task}")
     if not task:
         logger.warning(f"[progress-stream] 任务不存在 - {task_id}")
         raise HTTPException(status_code=404, detail="Task not found")
-    
+
     async def event_generator():
         """生成 SSE 事件流"""
         try:
@@ -3504,12 +3493,12 @@ async def stream_task_progress(
                         "data": json.dumps({"error": "Task not found"})
                     }
                     break
-                
+
                 yield {
                     "event": "progress",
                     "data": json.dumps(task.to_dict())
                 }
-                
+
                 # 如果任务已完成/失败/取消，发送最终状态并断开
                 if task.status.value in ("completed", "failed", "cancelled"):
                     yield {
@@ -3517,7 +3506,7 @@ async def stream_task_progress(
                         "data": json.dumps(task.to_dict())
                     }
                     break
-                
+
                 # 等待 500ms 后再次推送
                 await asyncio.sleep(0.5)
         except asyncio.CancelledError:
@@ -3528,7 +3517,7 @@ async def stream_task_progress(
                 "event": "error",
                 "data": json.dumps({"error": str(e)})
             }
-    
+
     return EventSourceResponse(event_generator())
 
 
@@ -3545,28 +3534,28 @@ async def cancel_task(
     1. Bearer Token (Authorization header)
     2. URL 参数 token (用于不支持 headers 的场景)
     """
-    from app.infrastructure.task_manager import task_manager
-    from app.core.logging import logger
     from app.api.auth import verify_token
-    
+    from app.core.logging import logger
+    from app.infrastructure.task_manager import task_manager
+
     try:
         # 尝试从 URL 参数获取 token（主要方式）
         token = request.query_params.get("token")
-        
+
         # 如果没有 URL 参数，尝试从 Authorization header 获取
         if not token:
             auth_header = request.headers.get("Authorization")
             if auth_header and auth_header.startswith("Bearer "):
                 token = auth_header[7:]
-        
+
         if not token:
             logger.warning("取消任务：未提供 token")
             raise HTTPException(status_code=401, detail="Authentication required")
-        
+
         # 验证 token 获取用户
         current_user = verify_token(token, db=db)
         logger.info(f"取消任务：用户认证成功 - {current_user.username}")
-        
+
         # 验证项目权限
         db_project = db.query(Project).filter(Project.id == project_id).first()
         if not db_project:
@@ -3575,15 +3564,15 @@ async def cancel_task(
         if db_project.owner_id != current_user.id:
             logger.warning(f"取消任务：用户无权取消 - project={project_id}, user={current_user.id}")
             raise HTTPException(status_code=403, detail="No permission to cancel this project's tasks")
-        
+
         # 获取任务
         task = task_manager.get_task(task_id)
         if not task:
             logger.warning(f"取消任务：任务不存在 - {task_id}")
             raise HTTPException(status_code=404, detail="Task not found")
-        
+
         logger.info(f"取消任务：{task_id}, 当前状态：{task.status.value}")
-        
+
         # 检查任务是否已经完成或已取消
         if task.status.value in ("completed", "failed", "cancelled"):
             logger.info(f"取消任务：任务已在终端状态 - {task.status.value}")
@@ -3592,16 +3581,16 @@ async def cancel_task(
                 "task_id": task_id,
                 "status": task.status.value
             }
-        
+
         # 执行取消
         success = task_manager.cancel_task(task_id, "用户取消任务")
         logger.info(f"取消任务结果：success={success}")
-        
+
         if success:
             return {"message": "Task cancelled successfully", "task_id": task_id, "status": "cancelled"}
         else:
             return {"message": "Failed to cancel task", "task_id": task_id}
-    
+
     except HTTPException:
         raise
     except Exception as e:
@@ -3619,15 +3608,15 @@ async def get_project_tasks(
     获取项目所有任务列表
     """
     from app.infrastructure.task_manager import task_manager
-    
+
     db_project = db.query(Project).filter(Project.id == project_id).first()
     if not db_project:
         raise HTTPException(status_code=404, detail="Project not found")
     if db_project.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="No permission to access this project's tasks")
-    
+
     all_tasks = task_manager.get_all_tasks()
-    
+
     # 返回所有任务（前端可以过滤）
     return {
         "tasks": {task_id: task.to_dict() for task_id, task in all_tasks.items()}
@@ -3635,140 +3624,9 @@ async def get_project_tasks(
 
 
 # ─────────────────────────────────────────────
-#  ★ 文档管理 API
+#  文档管理 API 已收编至 app/api/documents.py（M3-1，03 §18）：
+#  GET/DELETE /api/projects/{id}/documents[...] 走新路由（模块码+项目角色守卫、软删、MinIO）。
 # ─────────────────────────────────────────────
-
-@router.get("/{project_id}/documents")
-async def get_project_documents(
-    project_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """
-    获取项目已上传的文档列表
-    """
-    from app.core.logging import logger
-    import pytz
-    from datetime import timezone
-    
-    db_project = db.query(Project).filter(Project.id == project_id).first()
-    if not db_project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    if db_project.owner_id != current_user.id:
-        raise HTTPException(status_code=403, detail="No permission to access this project's documents")
-    
-    documents = db.query(UploadedDocument).filter(
-        UploadedDocument.project_id == project_id
-    ).order_by(UploadedDocument.created_at.desc()).all()
-    
-    # 获取时区
-    tz_utc = pytz.UTC
-    tz_china = pytz.timezone('Asia/Shanghai')
-    
-    return {
-        "documents": [
-            {
-                "id": doc.id,
-                "filename": doc.filename,
-                "file_size": doc.file_size,
-                "file_type": doc.file_type,
-                "created_at": tz_utc.localize(doc.created_at).astimezone(tz_china).isoformat() if doc.created_at else None,
-                "updated_at": tz_utc.localize(doc.updated_at).astimezone(tz_china).isoformat() if doc.updated_at else None,
-            }
-            for doc in documents
-        ]
-    }
-
-
-@router.delete("/{project_id}/documents/{doc_id}")
-async def delete_project_document(
-    project_id: int,
-    doc_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """
-    删除项目已上传的文档
-    """
-    from app.core.logging import logger
-    import os
-    
-    db_project = db.query(Project).filter(Project.id == project_id).first()
-    if not db_project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    if db_project.owner_id != current_user.id:
-        raise HTTPException(status_code=403, detail="No permission to delete this project's documents")
-    
-    document = db.query(UploadedDocument).filter(
-        UploadedDocument.id == doc_id,
-        UploadedDocument.project_id == project_id
-    ).first()
-    
-    if not document:
-        raise HTTPException(status_code=404, detail="Document not found")
-    
-    # 删除物理文件（如果存在）
-    if document.file_path and os.path.exists(document.file_path):
-        try:
-            os.remove(document.file_path)
-            logger.info(f"[delete-document] 已删除物理文件：{document.file_path}")
-        except Exception as e:
-            logger.warning(f"[delete-document] 删除物理文件失败：{e}")
-    
-    # 删除数据库记录
-    db.delete(document)
-    db.commit()
-    
-    logger.info(f"[delete-document] 已删除文档记录：{doc_id}, filename={document.filename}")
-    
-    return {
-        "message": f"文档 '{document.filename}' 已删除",
-        "doc_id": doc_id
-    }
-
-
-@router.post("/{project_id}/documents/clear-all")
-async def clear_all_documents(
-    project_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """
-    清空项目所有已上传的文档
-    """
-    from app.core.logging import logger
-    import os
-    
-    db_project = db.query(Project).filter(Project.id == project_id).first()
-    if not db_project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    if db_project.owner_id != current_user.id:
-        raise HTTPException(status_code=403, detail="No permission to delete this project's documents")
-    
-    documents = db.query(UploadedDocument).filter(
-        UploadedDocument.project_id == project_id
-    ).all()
-    
-    deleted_count = 0
-    for doc in documents:
-        # 删除物理文件
-        if doc.file_path and os.path.exists(doc.file_path):
-            try:
-                os.remove(doc.file_path)
-            except Exception as e:
-                logger.warning(f"[clear-documents] 删除物理文件失败：{doc.file_path}, {e}")
-        
-        db.delete(doc)
-        deleted_count += 1
-    
-    db.commit()
-    
-    logger.info(f"[clear-documents] 已清空 {deleted_count} 个文档")
-    
-    return {
-        "message": f"已清空 {deleted_count} 个文档",
-        "deleted_count": deleted_count
-    }
 
 
 # ─────────────────────────────────────────────
@@ -3807,54 +3665,52 @@ async def qa_endpoint(
     }
     """
     from app.core.logging import logger
-    from app.services.rag_engine import DualPathRAGEngine
-    from app.infrastructure.vector_client import VectorStoreManager
     from app.infrastructure.llm_client import LLMClient
-    from app.infrastructure.database import SystemConfig
-    
+    from app.infrastructure.vector_client import VectorStoreManager
+    from app.services.rag_engine import DualPathRAGEngine
+
     db_project = db.query(Project).filter(Project.id == project_id).first()
     if not db_project:
         raise HTTPException(status_code=404, detail="Project not found")
     if db_project.owner_id != current_user.id and not db_project.is_published:
         raise HTTPException(status_code=403, detail="No permission to access this project")
-    
-    # 获取 LLM 配置
-    db_config = db.query(SystemConfig).filter(SystemConfig.key == "llm_config").first()
-    llm_config = db_config.value if db_config else {}
-    
-    logger.info(f"[QA] 数据库 LLM 配置：{llm_config}")
-    
+
+    # 获取 LLM 配置（M2：改读 model_configs 表，adapters/provider 兼容层；不落日志明文）
+    from app.adapters.provider import build_legacy_llm_config
+
+    llm_config = build_legacy_llm_config(db, project_id)
+
     api_key = llm_config.get("api_key") or settings.VLLM_API_KEY
     base_url = llm_config.get("base_url") or settings.VLLM_BASE_URL
     model = llm_config.get("model") or settings.VLLM_MODEL
-    
-    logger.info(f"[QA] 最终 LLM 配置：api_key={api_key[:10] if api_key else 'None'}..., base_url={base_url}, model={model}")
-    
+
+    logger.info(f"[QA] 最终 LLM 配置：base_url={base_url}, model={model}")
+
     # 解析知识域列表
     domains = None
     if selected_domains and selected_domains.strip():
         domains = [d.strip() for d in selected_domains.split(',') if d.strip()]
-    
+
     # ★ 关键修复：正确解析布尔值参数
     # FastAPI 的 Form 参数无法正确将字符串 "true" 转换为布尔值 True
     use_dual_path_bool = use_dual_path.lower() == "true" if isinstance(use_dual_path, str) else bool(use_dual_path)
-    
+
     logger.info(f"[QA] use_dual_path 参数原始值={use_dual_path}, 解析后={use_dual_path_bool}")
-    
+
     # ★ 双路召回模式：使用 DualPathRAGEngine
     if use_dual_path_bool:
         logger.info("=" * 80)
         logger.info("[QA] 使用双路召回模式（Neo4j + Milvus）")
-        
+
         # ★ 关键修复：传递 LLM 配置给引擎
         engine = DualPathRAGEngine(api_key=api_key, base_url=base_url, model=model)
         logger.info(f"[QA] DualPathRAGEngine 已初始化：model={model}, base_url={base_url}")
-        
+
         # ★ 关键修复：不传入 schema，让 RAG 引擎从 Neo4j 实时获取
         # 原因：SQLite 中的 graph_data.schema 可能为空或过期，而 Neo4j 中存储的是最新数据
         # RAG 引擎的 query 方法会在 schema=None 时自动调用 neo4j_client.get_project_schema()
         schema = None
-        
+
         try:
             result = engine.query(
                 question=question,
@@ -3865,39 +3721,39 @@ async def qa_endpoint(
                 schema=schema,  # ★ 设置为 None，让 RAG 引擎从 Neo4j 获取
                 db_session=db,  # ★ 传递 db_session 用于从 SQLite 获取 schema（作为 fallback）
             )
-            
+
             logger.info(f"[QA] 双路召回成功：{len(result.get('references', []))} 条引用")
             return result
-            
+
         except Exception as e:
             logger.error(f"[QA] 双路召回失败：{e}", exc_info=True)
             # Fallback 到单一向量检索
-    
+
     # ★ 单一向量检索模式（Fallback 或 用户选择）
     logger.info("=" * 80)
     logger.info("[QA] 使用单一向量检索模式")
-    
+
     # 初始化向量管理器，默认使用 knowledge_graph_rag collection
     vector_manager = VectorStoreManager(collection_name="knowledge_graph_rag")
-    
+
     if not vector_manager.is_enabled or not vector_manager.collection:
         raise HTTPException(status_code=503, detail="向量库未启用或不可用")
-    
+
     # 构建 Milvus 过滤表达式
     expr = ""
     if domains:
         domain_expr = ' or '.join([f'domain == "{d}"' for d in domains])
         expr = domain_expr
-    
+
     logger.info(f"[QA] 使用过滤表达式：{expr if expr else '无过滤'}")
-    
+
     # 向量召回
     try:
         results = vector_manager.search_with_expr(query_text=question, expr=expr, top_k=top_k)
     except Exception as e:
         logger.error(f"[QA] 向量召回失败：{e}")
         raise HTTPException(status_code=500, detail=f"向量检索失败：{str(e)}")
-    
+
     if not results:
         logger.info("[QA] 未找到相关知识片段")
         logger.info("=" * 80)
@@ -3905,7 +3761,7 @@ async def qa_endpoint(
             "answer": "未找到相关知识片段，请尝试其他问题或上传更多文档。",
             "references": []
         }
-    
+
     # ★ 详细日志：打印向量召回结果
     logger.info(f"[QA] ★ 向量召回结果：{len(results)} 条")
     for i, result in enumerate(results[:5]):
@@ -3914,25 +3770,25 @@ async def qa_endpoint(
         logger.info(f"            quote={metadata.get('source_quote', '')[:100]}...")
     if len(results) > 5:
         logger.info(f"  ... 还有 {len(results) - 5} 条结果")
-    
+
     # 构建参考上下文
     context_parts = []
     references = []
-    
+
     for i, result in enumerate(results, 1):
         metadata = result.get("metadata", {})
         source_file = metadata.get("source_file", "未知文件")
         source_quote = metadata.get("source_quote", metadata.get("text", result.get("text", "")))
-        
+
         context_parts.append(f"[{i}] {source_quote}")
         references.append({
             "id": i,
             "file": source_file,
             "quote": source_quote,
         })
-    
+
     context = "\n\n".join(context_parts)
-    
+
     # 构建 Prompt
     system_prompt = """你是一位知识图谱问答专家。请基于提供的参考片段回答问题。
 
@@ -3942,7 +3798,7 @@ async def qa_endpoint(
 3. 如果参考片段中没有相关信息，请如实告知用户。
 4. 请直接回答，不要返回 JSON 格式。
 """
-    
+
     user_prompt = f"""【参考片段】：
 {context}
 
@@ -3951,7 +3807,7 @@ async def qa_endpoint(
 
 请回答用户的问题，并在句末标注引用标号。请直接返回文本回答。
 """
-    
+
     # 调用 LLM 生成回答（不要求 JSON 格式）
     llm_client = LLMClient(api_key=api_key, base_url=base_url, model=model)
     try:
@@ -3961,7 +3817,7 @@ async def qa_endpoint(
     except Exception as e:
         logger.error(f"[QA] LLM 调用失败：{e}")
         raise HTTPException(status_code=500, detail=f"LLM 生成回答失败：{str(e)}")
-    
+
     return {
         "answer": answer,
         "references": references,
@@ -3996,15 +3852,22 @@ async def get_inject_config(
         else:
             masked_config[k] = v
 
-    sys_llm_config = db.query(SystemConfig).filter(SystemConfig.key == "llm_config").first()
+    # M2：嵌入模型信息改读 model_configs（adapters/provider 解析，失败回落 env）
     sys_embedding = {}
-    if sys_llm_config and sys_llm_config.value:
-        sv = sys_llm_config.value if isinstance(sys_llm_config.value, dict) else {}
-        for ek in ["embedding_base_url", "embedding_model", "embedding_api_key", "embedding_dim"]:
-            if ek in sv and sv[ek]:
-                sys_embedding[ek] = sv[ek]
+    try:
+        from app.adapters.provider import resolve_embedding
+        emb = resolve_embedding(project_id, db=db)
+        sys_embedding = {
+            "embedding_base_url": emb.base_url,
+            "embedding_model": emb.model_name,
+            "embedding_api_key": emb.api_key or "",
+            "embedding_dim": emb.dims or (emb.params or {}).get("embedding_dim"),
+        }
+        sys_embedding = {k: v for k, v in sys_embedding.items() if v}
+    except Exception as emb_err:
+        logger.warning(f"[inject-config] 嵌入配置解析失败，返回空: {emb_err}")
 
-    is_admin = current_user.username == "admin"
+    is_admin = current_user.role == "admin"
 
     return {
         "status": "success",
@@ -4017,7 +3880,7 @@ async def get_inject_config(
 @router.post("/{project_id}/inject-config")
 async def save_inject_config(
     project_id: int,
-    config: Dict[str, Any],
+    config: dict[str, Any],
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):

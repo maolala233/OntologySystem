@@ -1,25 +1,44 @@
 # ==============================================================================
-# OntologySystem + Semantica 优化版 · 中间件编排
+# OntologySystem + Semantica 优化版 · 中间件编排（扩展参考版 / 单机开发调优）
 # ==============================================================================
-# 生成依据：
-#   - 现有 D:\python_code\OntologySystem\docker-compose.yml（保留其端口约定）
-#   - docs/semantica优化实施步骤.md（需求 6 四存储 + Outbox 一致性）
-#   - docs/图谱展示重构方案.md（>25k 节点需服务端预布局）
+# 与项目根 docker-compose.yml 的关系：
+#   - docker-compose.yml                  = 线上实际使用的文件
+#   - docs/docker-compose.middleware.yml  = 本文件，扩展参考版
+#     服务名、容器名、端口与 docker-compose.yml 完全一致；
+#     额外多出 3 个可选 profile：
+#       --profile es       Elasticsearch + Kibana（本地联调 RAGFlow）
+#       --profile tools    Adminer（MySQL 可视化）
+#       --profile sparql   Oxigraph HTTP 服务（调试用）
+#
+#     模型服务（Ollama）已从本文件移除 —— 本平台按"模型不在容器里跑"配置，
+#     应用层用 host.docker.internal:11434/v1 或远程 API（见 docker-compose.app.yml）。
+#
+# ⚠️ 两个文件二选一，不要同时启动（端口会冲突）。
 #
 # 用法：
-#   仅中间件（默认，不需要构建应用镜像）
-#     docker compose -f docs/docker-compose.middleware.yml up -d
-#   中间件 + 应用层
-#     docker compose -f docs/docker-compose.middleware.yml --profile app up -d
-#   加本地模型服务（Ollama）
-#     docker compose -f docs/docker-compose.middleware.yml --profile models up -d
-#   加全文检索（本地联调 RAGFlow 时）
-#     docker compose -f docs/docker-compose.middleware.yml --profile es up -d
-#   加 SPARQL HTTP 服务 / DB 可视化
-#     docker compose -f docs/docker-compose.middleware.yml --profile sparql --profile tools up -d
-#   全部
-#     docker compose -f docs/docker-compose.middleware.yml \
-#       --profile app --profile models --profile es --profile sparql --profile tools up -d
+#   docker-compose -f docs/docker-compose.middleware.yml up -d
+#   docker-compose -f docs/docker-compose.middleware.yml --profile es up -d
+#
+# 本文件**只含中间件**。backend / frontend / Celery worker-* / beat / flower
+# 等应用层服务已移到项目根 docker-compose.app.yml（需自行 build 镜像 + 本地调试）。
+#
+# ★★ 单机开发（内存有限）已调优 —— 本文件现在自带内存约束，不再需要叠加
+#    docker-compose.override.yml。用本文件时请【不要】再加 -f override，
+#    否则 override 里偏大的值（neo4j 3g 等）会盖掉这里的开发档。
+#    详细预算见文末「★ 内存预算（单机开发）」。
+#
+# 四处调优，针对的是同一件事（宿主内存被吃满 → 换页 / 磁盘 I/O 被抢占）：
+#   ① 每个服务都有 mem_limit
+#      → 超限只触发【容器内】cgroup OOM：只杀自己、OOMKilled=true 可查、
+#        并被 restart 策略自动拉起；不再让宿主 OOM killer 随机杀无辜进程。
+#   ② 每个服务都有 restart
+#      → 被杀/优雅退出后自动恢复，不会像以前那样永久 exited。
+#        （Milvus 因 etcd 租约丢失会【按设计】优雅退出 exit 0，现在能自动回来）
+#   ③ 所有服务统一限制日志体积（10m × 3）
+#      → 防止日志把磁盘写满。磁盘 I/O 被抢占正是「etcd 变慢 → Milvus 租约失效」
+#        这条故障链的起点，比内存更隐蔽。
+#   ④ JVM / buffer pool / maxmemory 全部下调到开发够用的档位
+#      → 参数都写成 ${VAR:-默认值}，想调大不必改文件，写进 .env 即可。
 # ==============================================================================
 #
 # 【镜像清单】—— 必装 8 个
@@ -52,119 +71,62 @@
 #     本地目录；TripletStore 的 oxigraph 分支是
 #       self._store_backend = OxigraphStore(**self.config)
 #     —— 【不传 endpoint】（config.py 里也没有 oxigraph_endpoint 键）。
-#     所以：pip install "semantica[tripletstore-oxigraph]" 装进应用镜像即可，
-#     不需要起容器。本文件仍提供 profile: sparql 的 oxigraph 服务，
-#     仅供「外部工具要 HTTP/SPARQL 访问」或调试用。
+#     所以：pip install "semantica[tripletstore-oxigraph]" 装进应用镜像即可。
 #
-#   ⚠️ 由此带来一个硬约束：RocksDB 是【独占锁】。backend 与多个 worker 同时
-#      打开同一 path 会失败。因此 RDF 写入只能走一个进程 —— 见 worker-rdf
-#      （concurrency=1，唯一可写挂载）。这与 Outbox「单一写入者」模式吻合。
+#   ⚠️ 由此带来一个硬约束：RocksDB 是【独占锁】。多个进程同时打开同一 path 会失败。
+#      因此 RDF 写入只能走一个进程 —— 应用层里由 worker-rdf（concurrency=1，
+#      唯一可写挂载）承担，见 docker-compose.app.yml。这与 Outbox「单一写入者」模式吻合。
 #
-# 【可选 4 个】
-#   ○ elasticsearch:8.15 —— 仅本地联调 RAGFlow 时需要（profile: es）
-#   ○ kibana:8.15        —— ES 可视化（profile: es）
-#   ○ ollama/ollama      —— 本地模型；模型跑在宿主机则不要启（profile: models）
-#   ○ adminer            —— MySQL 可视化（profile: tools）
+# 【可选 profile】
+#   ○ es       Elasticsearch + Kibana —— 仅本地联调 RAGFlow 时需要
+#   ○ tools    Adminer —— MySQL 可视化
+#   ○ sparql   Oxigraph HTTP —— 调试用，Semantica 的 OxigraphStore 连不上它
 #
-# 【端口冲突提示】
-#   现有 compose 已占用：3309(MySQL) 7474/7687(Neo4j) 19530/9091(Milvus)
-#   9002/9003(Milvus MinIO) 8001(attu) 3001(backend) 3080(frontend)
-#   本文件新增且不冲突：6379(Redis) 9010/9011(业务 MinIO) 7878(Oxigraph 可选)
-#   9200/9300(ES) 5601(Kibana) 11434(Ollama) 5555(Flower) 8080(Adminer)
-#
-# 【必需的环境变量】全部给了默认值，不建 .env 也能起。生产请覆盖：
-#   MYSQL_ROOT_PASSWORD / NEO4J_PASSWORD / MINIO_ROOT_PASSWORD
-#   VECTOR_STORE_DIMENSION（必须与 embedder 实测维度一致）
+# 【单机开发的启动策略】—— 比调参数更省内存的一招
+#   不必每次都把 8 个服务全拉起来。Compose 支持只启指定服务：
+#     # 日常（只做本体 / 图 / 文档解析，约 3.3 GiB）
+#     docker-compose -f docs/docker-compose.middleware.yml up -d \
+#       neo4j mysql redis minio-business minio-init
+#     # 需要向量检索时再补上 Milvus 四件套（+约 2.5 GiB）
+#     docker-compose -f docs/docker-compose.middleware.yml up -d \
+#       etcd minio standalone attu
+#   （被跳过的服务只是不启动，不影响端口与数据；之后再 up 一次即补齐。）
 # ==============================================================================
 
 name: ontology-platform
 
+# 统一日志上限：单服务最多 10m × 3 = 30 MiB。防止长期跑把磁盘写满，
+# 而磁盘写满/被抢占会拖慢 etcd，进而触发 Milvus 租约失效退出。
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   # ==========================================================================
-  # 1. 关系库 —— 业务元数据（单一事实源）
-  # ==========================================================================
-  mysql:
-    image: mysql:8.0
-    container_name: mysql-onto
-    restart: always
-    ports:
-      # 宿主机 3309（沿用现有约定，避开本机可能已有的 3306）
-      - "3309:3306"
-    environment:
-      TZ: Asia/Shanghai
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-ontology_db}
-    # ★ 中文必配：不设 utf8mb4，中文标签/属性会按 latin1 落库后乱码。
-    #   现有 compose 缺这一项，属于隐患，迁移时务必带上。
-    command:
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
-      - --default-time-zone=+08:00
-      - --max-connections=500
-      - --innodb-buffer-pool-size=${MYSQL_BUFFER_POOL:-1G}
-    volumes:
-      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/mysql:/var/lib/mysql
-      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/mysql-init:/docker-entrypoint-initdb.d:ro
-    healthcheck:
-      # $$ 让 compose 把 $ 透传给容器，而不是在宿主机展开
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 40s
-
-  # ==========================================================================
-  # 2. 图库 —— LPG 节点/边、路径查询、图谱可视化数据源
-  # ==========================================================================
-  neo4j:
-    image: neo4j:5.26.17
-    container_name: neo4j-onto
-    restart: always
-    ports:
-      - "7474:7474"   # HTTP Browser
-      - "7687:7687"   # Bolt
-    environment:
-      TZ: Asia/Shanghai
-      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-password}
-      # n10s：RDF/OWL 导入导出。需把 n10s jar 放进 ./volumes/neo4j/plugins
-      NEO4J_dbms_unmanaged__extension__classes: n10s.endpoint=/rdf
-      # APOC：n10s 的前置依赖。首次启动会联网下载到 /plugins；
-      # 内网环境请改为手动放置 apoc-5.26.x-core.jar 并删掉这行。
-      NEO4J_PLUGINS: '["apoc"]'
-      # 图谱规模 >100 万节点时按需上调（约物理内存的 50%）
-      NEO4J_server_memory_heap_initial__size: ${NEO4J_HEAP_INIT:-2G}
-      NEO4J_server_memory_heap_max__size: ${NEO4J_HEAP_MAX:-4G}
-      NEO4J_server_memory_pagecache_size: ${NEO4J_PAGECACHE:-2G}
-      # 服务端预布局（>25k 节点）与 Outbox 回放会产生大量写事务
-      NEO4J_dbms_transaction_timeout: 120s
-      NEO4J_dbms_security_procedures_unrestricted: apoc.*,n10s.*
-    volumes:
-      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/neo4j/data:/data
-      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/neo4j/logs:/logs
-      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/neo4j/plugins:/plugins
-      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/neo4j/import:/var/lib/neo4j/import
-    healthcheck:
-      test: ["CMD-SHELL", "cypher-shell -u neo4j -p ${NEO4J_PASSWORD:-password} 'RETURN 1' || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-      start_period: 60s
-
-  # ==========================================================================
-  # 3. 向量库 —— Milvus 三件套（etcd + MinIO + standalone）
+  # 一、向量库 —— Milvus 三件套（etcd + MinIO + standalone）
   #    选型说明：Semantica 自带 semantica/vector_store/milvus_store.py
-  #    （MilvusStore 已在 __init__ 中导出），平台已在用 Milvus，故不引入 Qdrant。
+  #    （MilvusStore 已在 vector_store/__init__.py:178 导出），
+  #    平台已在用 Milvus，故不引入 Qdrant。
+  #    ⚠️ 内存敏感组：单机开发建议按需启动（见文件头「启动策略」）。
   # ==========================================================================
   etcd:
-    image: quay.io/coreos/etcd:v3.5.5
     container_name: milvus-etcd
-    restart: always
+    image: quay.io/coreos/etcd:v3.5.5
+    restart: unless-stopped
+    # ⚠️ etcd 不要给太小：它是 Milvus 的强依赖，一旦被 OOM 杀，Milvus 会
+    #    因租约丢失而「按设计」优雅退出（exit 0，日志 requested lease not found）。
+    #    256m 是下限，别再往下压。
+    mem_limit: ${ETCD_MEM_LIMIT:-256m}
+    logging: *default-logging
     environment:
-      TZ: Asia/Shanghai
       ETCD_AUTO_COMPACTION_MODE: revision
       ETCD_AUTO_COMPACTION_RETENTION: "1000"
       ETCD_QUOTA_BACKEND_BYTES: "4294967296"
-      ETCD_SNAPSHOT_COUNT: "50000"
+      # 原 50000：单机开发没必要留那么多快照，降低磁盘占用与 compaction 抖动
+      ETCD_SNAPSHOT_COUNT: "10000"
+      TZ: Asia/Shanghai
     volumes:
       - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/etcd:/etcd
     command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
@@ -174,19 +136,20 @@ services:
       timeout: 20s
       retries: 3
 
-  # Milvus 专用对象存储 —— 属 Milvus 内部实现细节，不要放业务文件。
-  # 业务文件请用下面的 minio（9010/9011）。
-  milvus-minio:
-    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+  # Milvus 专用对象存储。数据布局随 Milvus 版本变化，不要放业务文件。
+  minio:
     container_name: milvus-minio
-    restart: always
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    restart: unless-stopped
+    mem_limit: ${MINIO_MILVUS_MEM_LIMIT:-256m}
+    logging: *default-logging
     environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
       TZ: Asia/Shanghai
-      MINIO_ACCESS_KEY: ${MILVUS_MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY: ${MILVUS_MINIO_SECRET_KEY:-minioadmin}
     ports:
+      - "9002:9000"   # S3 API
       - "9003:9001"   # Console
-      - "9002:9000"   # API
     volumes:
       - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/minio:/minio_data
     command: minio server /minio_data --console-address ":9001"
@@ -196,57 +159,151 @@ services:
       timeout: 20s
       retries: 3
 
-  milvus:
-    image: milvusdb/milvus:v2.3.5
+  standalone:
     container_name: milvus-standalone
-    restart: always
+    image: milvusdb/milvus:v2.3.5
     command: ["milvus", "run", "standalone"]
     security_opt:
       - seccomp:unconfined
+    # ★ Milvus 没有"优雅降内存"的旋钮，只能靠上限兜底。
+    #   restart 在这里特别重要：它因 etcd 租约丢失而优雅退出时（exit 0），
+    #   靠这条策略自动回来，不用你手动 up。
+    restart: unless-stopped
+    # ⚠️ 不建议低于 1.5g：querynode 加载 segment 时会突发占用，
+    #    压太狠会 OOM → 又走一遍「重启 → 租约 → 退出」循环。
+    mem_limit: ${MILVUS_MEM_LIMIT:-2g}
+    logging: *default-logging
     environment:
-      TZ: Asia/Shanghai
       ETCD_ENDPOINTS: etcd:2379
-      MINIO_ADDRESS: milvus-minio:9000
+      MINIO_ADDRESS: minio:9000
+      TZ: Asia/Shanghai
     volumes:
       - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/milvus:/var/lib/milvus
-    ports:
-      - "19530:19530"   # gRPC（pymilvus 连这个）
-      - "9091:9091"     # 健康检查 / 指标
-    depends_on:
-      etcd:
-        condition: service_healthy
-      milvus-minio:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
       interval: 30s
       start_period: 90s
       timeout: 20s
       retries: 3
+    ports:
+      - "19530:19530"   # gRPC（pymilvus 连这个）
+      - "9091:9091"     # 健康检查 / 指标
+    # 等健康而不是只等容器启动，避免 Milvus 连不上 etcd/minio
+    depends_on:
+      etcd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
 
   attu:
-    image: zilliz/attu:v2.3.5
     container_name: attu-onto
-    restart: always
+    image: zilliz/attu:v2.3.5
+    restart: unless-stopped
+    mem_limit: ${ATTU_MEM_LIMIT:-128m}
+    logging: *default-logging
     environment:
+      MILVUS_URL: standalone:19530
       TZ: Asia/Shanghai
-      MILVUS_URL: milvus:19530
     ports:
       - "8001:3000"
     depends_on:
-      milvus:
+      standalone:
         condition: service_healthy
 
   # ==========================================================================
-  # 4. 队列与缓存 —— 修缺陷 #7「抽取跑在 API 事件循环」的必需品
-  #    现在：api/ontology.py 用模块级 asyncio.Semaphore(3) + create_task，
-  #          进程重启任务全丢、无法水平扩展（信号量是进程级的）。
-  #    改后：Celery + Redis，按 parse / extract / graph / export / rdf 分队列。
+  # 二、图数据库 Neo4j —— 内存大户，调优重点
+  # ==========================================================================
+  neo4j:
+    image: neo4j:5.26.17
+    container_name: neo4j-onto
+    restart: unless-stopped
+    # heap(≤1G) + pagecache(256M) + JVM 堆外/元空间/线程栈(≈0.4G) ≈ 1.7G，留 0.3G 余量
+    mem_limit: ${NEO4J_MEM_LIMIT:-2g}
+    logging: *default-logging
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      TZ: Asia/Shanghai
+      NEO4J_AUTH: neo4j/password
+      # n10s（neosemantics）：Neo4j Labs 的 RDF/OWL/SKOS 插件。
+      # 这里同时配置了 n10s.endpoint 与 procedures_unrestricted=apoc.*,n10s.*，
+      # 所以插件本体也必须装，否则 n10s.* 过程会报 "procedure not found"。
+      NEO4J_dbms_unmanaged__extension__classes: n10s.endpoint=/rdf
+      # APOC 是 n10s 的前置依赖。首次启动联网下载；内网请删掉这一行，
+      # 改为手动放置 apoc-5.26.x-core.jar + neosemantics-5.26.0.jar 到 /plugins。
+      # 可选值只有：apoc / apoc-extended / bloom / genai / graph-data-science / n10s
+      NEO4J_PLUGINS: '["apoc","n10s"]'
+      # ★ 单机开发档：堆 256M 起（JVM 会立刻提交初始堆，设 2G 等于一启动先吃 2 GiB），
+      #   上限 1G；pagecache 256M（它才是"慢慢涨上去"的主因）。
+      #   几千节点的建图 / 消解 1G 堆完全够用。
+      #   内存加到 16 GiB 后可改回 2G / 4G / 2G。
+      NEO4J_server_memory_heap_initial__size: ${NEO4J_HEAP_INIT:-256m}
+      NEO4J_server_memory_heap_max__size: ${NEO4J_HEAP_MAX:-1G}
+      NEO4J_server_memory_pagecache_size: ${NEO4J_PAGECACHE:-256M}
+      # 服务端预布局（>25k 节点）与 Outbox 回放会产生大批量写事务
+      NEO4J_dbms_transaction_timeout: 120s
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*,n10s.*
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/neo4j/plugins:/plugins
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/neo4j/data:/data
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/neo4j/logs:/logs
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/neo4j/file:/mnt/file
+      # 批量导入目录：服务端预布局、大图导出走它
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/neo4j/import:/var/lib/neo4j/import
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p password 'RETURN 1' || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  # ==========================================================================
+  # 三、关系库 MySQL
+  # ==========================================================================
+  mysql:
+    image: mysql:8.0
+    container_name: mysql-onto
+    restart: unless-stopped
+    # buffer pool 256M + 基础开销 ≈ 450M，留余量
+    mem_limit: ${MYSQL_MEM_LIMIT:-640m}
+    logging: *default-logging
+    ports:
+      - "3309:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ontology_db}
+      TZ: Asia/Shanghai
+    # ★ 中文必配：不显式指定服务端字符集与排序规则，中文标签可能按 latin1
+    #   落库后乱码，且已写入的数据无法通过改配置恢复。
+    # ★ 单机开发：buffer pool 1G→256M；关掉 performance_schema（省 100~200M，
+    #   代价是失去细粒度性能诊断，开发阶段不需要）；max-connections 500→200。
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+08:00
+      - --max-connections=${MYSQL_MAX_CONNECTIONS:-200}
+      - --innodb-buffer-pool-size=${MYSQL_BUFFER_POOL:-256M}
+      - --performance-schema=OFF
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  # ==========================================================================
+  # 四、队列与缓存 Redis
+  #    修缺陷 #7「抽取跑在 API 事件循环」的必需品。
   # ==========================================================================
   redis:
     image: redis:7-alpine
     container_name: redis-onto
-    restart: always
+    restart: unless-stopped
+    mem_limit: ${REDIS_MEM_LIMIT:-256m}
+    logging: *default-logging
     ports:
       - "6379:6379"
     environment:
@@ -254,13 +311,19 @@ services:
     command:
       - redis-server
       - --appendonly
-      - "yes"                  # AOF 持久化：队列任务不能丢
+      - "yes"            # AOF 持久化：队列任务不能丢
       - --appendfsync
       - everysec
+      # ★ 关掉 RDB 快照：AOF 已经保证持久化，而 RDB 每次落盘都要 fork，
+      #   内存会瞬时翻倍（COW）—— 在小内存宿主上正是压死骆驼的那根稻草。
+      #   想保留 RDB 备份就删掉下面这两行。
+      - --save
+      - ""
       - --maxmemory
-      - ${REDIS_MAXMEMORY:-1gb}
+      - ${REDIS_MAXMEMORY:-192mb}
+      # ★ 队列场景不能用 allkeys-lru，内存打满时会静默淘汰待处理任务
       - --maxmemory-policy
-      - noeviction             # ★ 队列场景不能用 allkeys-lru，会静默丢任务
+      - noeviction
     volumes:
       - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/redis:/data
     healthcheck:
@@ -270,26 +333,28 @@ services:
       retries: 5
 
   # ==========================================================================
-  # 5. 业务对象存储 —— 存原始上传件 + 解析后全文
-  #    对应实施步骤 Step 3.x：uploaded_documents.text_content(LONGTEXT)
-  #    → text_key（对象路径）+ text_preview（前 2000 字）。
-  #    300 页文档全文塞 LONGTEXT 会让单行超 1MB，拖慢所有列表查询。
+  # 五、业务对象存储 —— 存原始上传件 + 解析后全文
+  #    对应 uploaded_documents.text_content(LONGTEXT) → text_key + text_preview。
   # ==========================================================================
-  minio:
-    image: minio/minio:RELEASE.2024-06-13T22-53-53Z
+  minio-business:
+    # ⚠️ 这里用的是华为云镜像站的转写路径。它只是"国内能拉到"的权宜之计：
+    #    想恢复可移植性，改成 minio/minio:RELEASE.2024-06-13T22-53-53Z，
+    #    并在 /etc/docker/daemon.json 配 registry-mirrors（见根 docker-compose.yml）。
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/minio/minio:RELEASE.2024-06-13T22-53-53Z
     container_name: minio-onto
-    restart: always
+    restart: unless-stopped
+    mem_limit: ${MINIO_MEM_LIMIT:-320m}
+    logging: *default-logging
+    ports:
+      - "9010:9000"   # S3 API（后端 boto3 / minio-py 连这个）
+      - "9011:9001"   # Console
     environment:
-      TZ: Asia/Shanghai
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      MINIO_BROWSER: "on"
-    ports:
-      - "9010:9000"   # API（S3 兼容，后端 boto3 / minio-py 连这个）
-      - "9011:9001"   # Console
+      TZ: Asia/Shanghai
+    command: minio server /data --console-address ":9001"
     volumes:
       - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/minio-business:/data
-    command: minio server /data --console-address ":9001"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 15s
@@ -297,17 +362,19 @@ services:
       retries: 5
       start_period: 20s
 
-  # 自动建 bucket（一次性任务，跑完即退出）
+  # 一次性建 bucket（跑完即退出）
   minio-init:
     image: minio/mc:RELEASE.2024-06-12T14-34-03Z
     container_name: minio-init
     restart: "no"
+    mem_limit: 64m
+    logging: *default-logging
     depends_on:
-      minio:
+      minio-business:
         condition: service_healthy
     entrypoint: >
       /bin/sh -c "
-      mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin} &&
+      mc alias set local http://minio-business:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin} &&
       mc mb --ignore-existing local/ontology-uploads &&
       mc mb --ignore-existing local/ontology-parsed &&
       mc mb --ignore-existing local/ontology-exports &&
@@ -315,75 +382,86 @@ services:
       "
 
   # ==========================================================================
-  # 6. RDF 三元组
-  #    ★ 默认不需要容器：Semantica 的 oxigraph 后端是嵌入式的（pyoxigraph）。
-  #      应用侧这样用（注意是 path，不是 endpoint）：
-  #
-  #        from semantica.triplet_store import TripletStore
-  #        store = TripletStore(backend="oxigraph", path="/data/oxigraph")
-  #        # 命名图划分
-  #        store.add_triplets(triplets, graph="urn:semantica:project:1:instance")
-  #        store.execute_query("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10")
-  #
-  #      数据目录必须挂到持久卷，否则容器重启即丢。
-  #      OxigraphStore 还提供 flush() 显式落盘；add_triplets 已内置 flush。
+  # 六、可选：Oxigraph HTTP 服务（profile: sparql）
+  #    ⚠️ 需求 6 的 RDF 存储不需要这个容器（见文件头说明：嵌入式 pyoxigraph）。
+  #    只在「外部工具要用标准 SPARQL HTTP 协议访问」或调试时需要。
   # ==========================================================================
-
-  # 可选：独立 SPARQL HTTP 服务，仅用于外部工具访问 / 调试。
-  # ⚠️ Semantica 的 OxigraphStore 无法连它（嵌入式后端不认 endpoint），
-  #    只能用标准 SPARQL 1.1 HTTP 协议访问（/query、/update）。
   oxigraph:
     image: ghcr.io/oxigraph/oxigraph:latest
     container_name: oxigraph-onto
     profiles: ["sparql"]
     restart: unless-stopped
+    mem_limit: ${OXIGRAPH_MEM_LIMIT:-256m}
+    logging: *default-logging
     ports:
       - "7878:7878"
     volumes:
+      # 与嵌入式用的目录分开，避免 RocksDB 独占锁冲突
       - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/oxigraph-server:/data
     command: serve --location /data --bind 0.0.0.0:7878
     # ⚠️ 该镜像基于 gcr.io/distroless/cc-debian12 —— 无 shell、无 curl、无 wget，
-    #    因此只能做「二进制可用」级别的探针，无法探测 HTTP 端口。
-    #    若要真探针，请换非 distroless 镜像或自建。
+    #    只能做"二进制可用"级别的探针，探不到 HTTP 端口。
     healthcheck:
       test: ["CMD", "/usr/local/bin/oxigraph", "--version"]
       interval: 30s
       timeout: 5s
       retries: 3
-    # ⚠️ distroless 可能以非 root 运行，挂载目录需可写。若启动报权限错误：
-    #    Linux: sudo chown -R 65532:65532 ./volumes/oxigraph-server
-    #    或取消下面注释强制指定用户
+    # 若启动报权限错误（distroless 可能非 root 运行）：
+    #   Linux: sudo chown -R 65532:65532 ./volumes/oxigraph-server
     # user: "65532:65532"
 
   # ==========================================================================
-  # 7. 可选：全文检索（本地联调 RAGFlow）
-  #    Elasticsearch 不是平台自身存储，而是下游推送目标：
+  # 七、可选：全文检索（profile: es）
+  #    Elasticsearch 不是平台自身存储，而是**下游推送目标**：
   #    services/inject_service.py 的 GraphInjectService.inject_graph()
   #    把本体转成 entities/relationships 写进 ragflow_{tenant_id} 索引。
   #    es_host / es_port 来自 project.inject_config（用户在页面上自填）。
+  #
+  #    ⚠️ 单机开发最贵的一组（ES + Kibana ≈ 1.7 GiB）。7.71 GiB 宿主上
+  #       建议：只做本体/图开发时【不要】开这个 profile；
+  #       真要看数据用 ES 的 REST API（curl localhost:9200）就够，Kibana 可省。
   # ==========================================================================
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
     container_name: es-onto
     profiles: ["es"]
     restart: unless-stopped
+    # heap 512M + Lucene 堆外 + 基础开销
+    mem_limit: ${ES_MEM_LIMIT:-1200m}
+    logging: *default-logging
     environment:
       TZ: Asia/Shanghai
       discovery.type: single-node
       xpack.security.enabled: "false"     # 仅开发；生产必须开启
       xpack.security.http.ssl.enabled: "false"
-      ES_JAVA_OPTS: -Xms1g -Xmx1g
-      bootstrap.memory_lock: "true"
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
+      # ★ 单机开发：1g → 512m（小索引足够）
+      ES_JAVA_OPTS: ${ES_JAVA_OPTS:--Xms512m -Xmx512m}
+      # ★ memory_lock 关掉：它要求把整个堆锁进物理内存，与容器的 mem_limit
+      #   （cgroup 内存限制）天然冲突，配不好 ES 会以 exit 78 拒绝启动。
+      #   开发阶段有 mem_limit 兜底就够了，不需要锁内存。
+      bootstrap.memory_lock: "false"
     ports:
       - "9200:9200"
       - "9300:9300"
     volumes:
       - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/elasticsearch/data:/usr/share/elasticsearch/data
-      # 中文分词需 ik 插件：把 elasticsearch-analysis-ik 解压到这里
+      # 中文分词 ik 插件。规则只有一条：**每个插件独占 plugins/ 下的一个子目录**，
+      # 且该子目录里必须有 plugin-descriptor.properties。
+      # ⚠️ 不能把 zip 直接解压到 plugins/ 根目录 —— 本 zip 内部无外层目录（已验证），
+      # descriptor 会落在 plugins/ 根上 → 插件不生效甚至 ES 启动失败。
+      # 子目录叫什么名字都可以（ES 只看层级，不校验目录名），下面两种都对：
+      #   plugins/ik/                               ← 惯例短名
+      #   plugins/elasticsearch-analysis-ik-8.15.0/ ← 按 zip 名，也可以
+      # 命令：
+      #   unzip elasticsearch-analysis-ik-8.15.0.zip -d volumes/elasticsearch/plugins/ik
+      # 或让容器自己装（CLI 用插件内部声明的 name，即 plugins/analysis-ik/）：
+      #   docker exec -it es-onto bin/elasticsearch-plugin install -b \
+      #     https://release.infinilabs.com/analysis-ik/stable/elasticsearch-analysis-ik-8.15.0.zip
+      # ⚠️ 手动解压与 CLI 安装**二选一**，都做会产生两份副本（可能触发重复插件名报错）。
+      # 装完必须重启 ES：docker restart es-onto
+      # 版本必须与 ES 精确一致（本文件是 8.15.0，不能用 8.15.1/8.15.5）。
+      # Linux 上若 ES 报权限错：sudo chown -R 1000:1000 volumes/elasticsearch/plugins
+      #   （ES 容器以 uid 1000 运行；Ubuntu 首个用户通常也是 1000，那就无需 chown）
       - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/elasticsearch/plugins:/usr/share/elasticsearch/plugins
     healthcheck:
       test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health || exit 1"]
@@ -397,6 +475,8 @@ services:
     container_name: kibana-onto
     profiles: ["es"]
     restart: unless-stopped
+    mem_limit: ${KIBANA_MEM_LIMIT:-512m}
+    logging: *default-logging
     environment:
       TZ: Asia/Shanghai
       ELASTICSEARCH_HOSTS: http://elasticsearch:9200
@@ -407,45 +487,15 @@ services:
         condition: service_healthy
 
   # ==========================================================================
-  # 8. 可选：本地模型服务
-  #    若 Ollama 跑在宿主机（.env.example 里是 host.docker.internal:11434），
-  #    则不要启这个 profile，直接用宿主机的。
-  # ==========================================================================
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ollama-onto
-    profiles: ["models"]
-    restart: unless-stopped
-    ports:
-      - "11434:11434"
-    volumes:
-      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/ollama:/root/.ollama
-    environment:
-      TZ: Asia/Shanghai
-      OLLAMA_KEEP_ALIVE: 24h
-      OLLAMA_NUM_PARALLEL: "4"
-    # 中文场景建议模型（启动后手动拉取）：
-    #   docker exec ollama-onto ollama pull qwen2.5:7b            # LLM 抽取
-    #   docker exec ollama-onto ollama pull bge-small-zh-v1.5     # 嵌入 512 维
-    #   docker exec ollama-onto ollama pull bge-m3                # 嵌入 1024 维
-    #   docker exec ollama-onto ollama pull bge-reranker-v2-m3    # 重排
-    # NVIDIA GPU 需装 nvidia-container-toolkit 并放开下面注释
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
-
-  # ==========================================================================
-  # 9. 可选：数据库可视化
+  # 八、可选：数据库可视化（profile: tools）
   # ==========================================================================
   adminer:
     image: adminer:4-standalone
     container_name: adminer-onto
     profiles: ["tools"]
     restart: unless-stopped
+    mem_limit: ${ADMINER_MEM_LIMIT:-96m}
+    logging: *default-logging
     environment:
       TZ: Asia/Shanghai
       ADMINER_DEFAULT_SERVER: mysql
@@ -455,281 +505,118 @@ services:
       mysql:
         condition: service_healthy
 
-  # ==========================================================================
-  # 10. 应用层（profile: app）—— 需先在项目根 build 出两个镜像：
-  #       ontology-backend:latest   （dockerfile/ 里的后端 Dockerfile）
-  #       ontology-frontend:latest
-  #     worker 按队列拆分：避免长 OCR 任务饿死轻量抽取（实施步骤 §队列隔离）
-  # ==========================================================================
-
-  # ---- 公共环境：用 YAML 锚点避免重复 ----
-  x-app-common: &app-common
-    image: ontology-backend:latest
-    profiles: ["app"]
-    restart: always
-    extra_hosts:
-      # Linux 下让 host.docker.internal 可解析（Win/Mac 自带）
-      - "host.docker.internal:host-gateway"
-
-  backend:
-    <<: *app-common
-    container_name: ontology-backend
-    ports:
-      - "3001:3001"
-    environment:
-      TZ: Asia/Shanghai
-      # ---- MySQL ----
-      MYSQL_HOST: mysql
-      MYSQL_PORT: "3306"
-      MYSQL_USER: root
-      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-ontology_db}
-      # ---- Neo4j ----
-      NEO4J_URI: bolt://neo4j:7687
-      NEO4J_USERNAME: neo4j
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-password}
-      # ---- Milvus ----
-      MILVUS_HOST: milvus
-      MILVUS_PORT: "19530"
-      MILVUS_COLLECTION_NAME: knowledge_graph_rag
-      # ---- Redis / Celery ----
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
-      # ---- MinIO（业务对象存储）----
-      MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      MINIO_BUCKET_UPLOADS: ontology-uploads
-      MINIO_BUCKET_PARSED: ontology-parsed
-      MINIO_BUCKET_EXPORTS: ontology-exports
-      # ---- Semantica 适配层 ----
-      # ★ Oxigraph 是嵌入式：给目录，不给 URL
-      SEMANTICA_TRIPLET_BACKEND: oxigraph
-      SEMANTICA_TRIPLET_PATH: /data/oxigraph
-      VECTOR_STORE_MILVUS_HOST: milvus
-      VECTOR_STORE_MILVUS_PORT: "19530"
-      # ★ 维度必须与 embedder 实测一致（缺陷 #12）。
-      #   nomic-embed-text=768 / bge-small-zh-v1.5=512 / bge-m3=1024
-      VECTOR_STORE_DIMENSION: ${VECTOR_STORE_DIMENSION:-1024}
-      # ---- 模型 ----
-      # 模型在宿主机用 host.docker.internal；在 ollama 容器则改 http://ollama:11434/v1
-      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-http://host.docker.internal:11434/v1}
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-bge-m3:latest}
-      EMBEDDING_DIM: ${VECTOR_STORE_DIMENSION:-1024}
-      VLLM_BASE_URL: ${VLLM_BASE_URL:-}
-      VLLM_API_KEY: ${VLLM_API_KEY:-EMPTY}
-      VLLM_MODEL: ${VLLM_MODEL:-DeepSeek-V3}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      # OCR（Tesseract + chi_sim 需装进镜像，见 dockerfile/）
-      TESSERACT_LANG: chi_sim+eng
-    volumes:
-      - ./TTL:/app/TTL
-      - ./logs:/app/logs
-      # ★ 只读：RDF 写入只允许 worker-rdf（RocksDB 独占锁）
-      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/oxigraph:/data/oxigraph:ro
-    depends_on:
-      mysql:
-        condition: service_healthy
-      neo4j:
-        condition: service_healthy
-      milvus:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-
-  # 解析队列（CPU 密集，可上 GPU 节点）
-  worker-parse:
-    <<: *app-common
-    container_name: ontology-worker-parse
-    command: celery -A app.tasks.celery_app worker -Q parse -c 4 -l info -n parse@%h
-    environment:
-      TZ: Asia/Shanghai
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
-      MYSQL_HOST: mysql
-      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
-      MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      TESSERACT_LANG: chi_sim+eng
-    volumes:
-      - ./logs:/app/logs
-    depends_on:
-      mysql:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-
-  # 抽取队列（IO 密集，调 LLM）
-  worker-extract:
-    <<: *app-common
-    container_name: ontology-worker-extract
-    command: celery -A app.tasks.celery_app worker -Q extract -c 8 -l info -n extract@%h
-    environment:
-      TZ: Asia/Shanghai
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
-      MYSQL_HOST: mysql
-      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
-      MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      VLLM_BASE_URL: ${VLLM_BASE_URL:-}
-      VLLM_API_KEY: ${VLLM_API_KEY:-EMPTY}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-    volumes:
-      - ./logs:/app/logs
-    depends_on:
-      mysql:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-
-  # 建图队列（消解 / 冲突 / 版本）+ 导出队列
-  worker-graph:
-    <<: *app-common
-    container_name: ontology-worker-graph
-    command: celery -A app.tasks.celery_app worker -Q graph,export -c 2 -l info -n graph@%h
-    environment:
-      TZ: Asia/Shanghai
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
-      MYSQL_HOST: mysql
-      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
-      NEO4J_URI: bolt://neo4j:7687
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-password}
-      MILVUS_HOST: milvus
-      MILVUS_PORT: "19530"
-      VECTOR_STORE_DIMENSION: ${VECTOR_STORE_DIMENSION:-1024}
-      MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
-    volumes:
-      - ./logs:/app/logs
-    depends_on:
-      mysql:
-        condition: service_healthy
-      neo4j:
-        condition: service_healthy
-      milvus:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
-  # ★ RDF 单写者：-c 1 是硬要求。
-  #   Oxigraph 嵌入式后端用 RocksDB 独占锁，多进程同时打开同一目录会失败。
-  worker-rdf:
-    <<: *app-common
-    container_name: ontology-worker-rdf
-    command: celery -A app.tasks.celery_app worker -Q rdf -c 1 -l info -n rdf@%h
-    environment:
-      TZ: Asia/Shanghai
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
-      MYSQL_HOST: mysql
-      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
-      SEMANTICA_TRIPLET_BACKEND: oxigraph
-      SEMANTICA_TRIPLET_PATH: /data/oxigraph
-    volumes:
-      - ./logs:/app/logs
-      # 唯一可写挂载点
-      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/oxigraph:/data/oxigraph
-    depends_on:
-      mysql:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
-  # Outbox 派发（每 5 秒）+ 定时任务
-  beat:
-    <<: *app-common
-    container_name: ontology-beat
-    command: celery -A app.tasks.celery_app beat -l info
-    environment:
-      TZ: Asia/Shanghai
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
-      MYSQL_HOST: mysql
-      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
-    volumes:
-      - ./logs:/app/logs
-    depends_on:
-      mysql:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
-  flower:
-    <<: *app-common
-    container_name: ontology-flower
-    command: celery -A app.tasks.celery_app flower --port=5555
-    environment:
-      TZ: Asia/Shanghai
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
-    ports:
-      - "5555:5555"
-    depends_on:
-      redis:
-        condition: service_healthy
-
-  frontend:
-    image: ontology-frontend:latest
-    container_name: ontology-frontend
-    profiles: ["app"]
-    restart: always
-    ports:
-      - "3080:80"
-    environment:
-      TZ: Asia/Shanghai
-    depends_on:
-      backend:
-        condition: service_started
-
 networks:
   default:
     name: ontology-network
-    driver: bridge
 
 # ==============================================================================
-# 宿主机目录（bind mount 目标）—— 与现有 compose 的 ./volumes 结构保持一致，
-# 便于把已有数据直接接过来。首次启动前创建：
+# ★ 内存预算（单机开发 / 7.71 GiB 宿主）
+# ==============================================================================
+# 为什么必须设 mem_limit：
+#   不设的话，超限触发的是【宿主】OOM killer —— 它会挑内存占用最大的进程杀，
+#   不一定是"肇事者"。你上次遇到的正是这种情况：Neo4j 被强杀（exit 137，
+#   OOMKilled=true），而 Milvus 因为 etcd 被拖慢、租约续不上而优雅退出（exit 0）。
+#   设了 mem_limit 之后，只有【容器自己的 cgroup】会 OOM：只杀自己、
+#   OOMKilled=true 可观测、并且被 restart 策略自动拉起。
 #
-#   mkdir -p volumes/mysql volumes/mysql-init \
-#            volumes/neo4j/{data,logs,plugins,import} \
-#            volumes/etcd volumes/minio volumes/milvus volumes/redis \
-#            volumes/minio-business volumes/oxigraph volumes/oxigraph-server \
-#            volumes/elasticsearch/{data,plugins} volumes/ollama
+# 分档（单位 MiB，实际稳态通常只有上限的 50~70%）：
+# ┌──────────────────┬────────┬────────┬──────────────────────────────────────┐
+# │ 服务             │ 核心档 │ 全量档 │ 说明                                 │
+# ├──────────────────┼────────┼────────┼──────────────────────────────────────┤
+# │ neo4j            │  2048  │  2048  │ heap≤1G + pagecache 256M + 堆外      │
+# │ mysql            │   640  │   640  │ buffer pool 256M，performance_schema off │
+# │ redis            │   256  │   256  │ maxmemory 192M，noeviction           │
+# │ minio-business   │   320  │   320  │ 上传件 + 解析全文                    │
+# │ minio-init       │    64  │    64  │ 一次性，跑完即退                     │
+# │ etcd             │    —   │   256  │ ⚠️ 别压到 256M 以下                  │
+# │ milvus-minio     │    —   │   256  │                                      │
+# │ milvus-standalone│    —   │  2048  │ ⚠️ 别压到 1.5G 以下                  │
+# │ attu             │    —   │   128  │                                      │
+# ├──────────────────┼────────┼────────┼──────────────────────────────────────┤
+# │ 合计             │ 3328   │ 6016   │ 约 3.3 GiB / 约 5.9 GiB              │
+# └──────────────────┴────────┴────────┴──────────────────────────────────────┘
+#   "核心档" = neo4j + mysql + redis + minio-business（日常开发够用）
+#   "全量档" = 核心档 + Milvus 四件套
+#
+# 可选 profile 额外开销：
+#   elasticsearch 1200 + kibana 512 = 1712 MiB
+#   oxigraph 256 / adminer 96
+#   → 全量档 + es = 7728 MiB ≈ 7.55 GiB，已经贴到 7.71 GiB 的天花板，
+#     系统自身一点余量都不剩，实际是跑不动的。
+#
+# 结论：7.71 GiB 上
+#   · 日常用【核心档】（3.3 GiB），要向量检索时再补 Milvus（→5.9 GiB）
+#   · es profile 不要和全量档同时开
+#   · 想舒服跑全套，只有加内存到 16 GiB 这一条路
+#
+# 想临时调大某个值（不改文件）——在项目根建 .env：
+#   NEO4J_MEM_LIMIT=3g
+#   NEO4J_HEAP_MAX=2G
+#   NEO4J_PAGECACHE=512M
+#   MILVUS_MEM_LIMIT=3g
+#   MYSQL_BUFFER_POOL=512M
+#
+# ★ 强烈建议开 swap 兜底（2~4 GiB）
+#   内存不够时，swap 不能替代加内存，但能把"被 OOM 硬杀"变成"稍微卡一下"，
+#   对单机开发体验差别很大：
+#     sudo fallocate -l 4G /swapfile && sudo chmod 600 /swapfile
+#     sudo mkswap /swapfile && sudo swapon /swapfile
+#     echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+#     sysctl vm.swappiness        # 建议 10~30，别太高
+#
+# 排查 OOM / 卡顿的三条命令：
+#   docker inspect <容器> --format '{{.State.ExitCode}} {{.State.OOMKilled}}'
+#     → 137 = 128+9(SIGKILL)；OOMKilled=true = 容器 cgroup 触顶
+#     → 注意 exit 0 + OOMKilled=false 也可能是"被上游拖死"（Milvus 就是这种）
+#   sudo dmesg -T | grep -iE "oom|killed process" | tail -20
+#     → 宿主级 OOM 的判定依据（此时 OOMKilled 可能仍是 false）
+#   free -h ; docker stats --no-stream
+#
+# 如果 Milvus 又出现「优雅退出 exit 0」——那是 etcd 变慢/被杀，不是 Milvus 的错。
+#   先查 etcd 是否被拖慢（磁盘 I/O）：
+#     docker logs milvus-etcd 2>&1 | grep -iE "slow|took too long|apply request|election" | tail -20
+#     vmstat 1 5        # si/so 非 0 = 在换页
+#     iostat -x 1 5     # %util 接近 100 = 磁盘瓶颈
+# ==============================================================================
+# 首次启动前创建宿主机目录
+# ==============================================================================
+# ★ 镜像拉不下来（Docker Hub 被墙）？见项目根 docker-compose.yml 文末
+#   「国内网络：镜像拉不下来怎么办」一节，或直接跑：
+#     bash build-scripts/pull-images.sh
+#
+# Git Bash / Linux:
+#   mkdir -p volumes/{etcd,milvus,minio,mysql,redis,minio-business} \
+#            volumes/neo4j/{data,logs,plugins,file,import} \
+#            volumes/oxigraph volumes/oxigraph-server \
+#            volumes/elasticsearch/{data,plugins} \
+#            uploads temp logs
 #
 # Windows PowerShell:
-#   'mysql','mysql-init','etcd','minio','milvus','redis','minio-business',
-#    'oxigraph','oxigraph-server','ollama' | % { mkdir volumes/$_ }
-#   'data','logs','plugins','import' | % { mkdir volumes/neo4j/$_ }
+#   'etcd','milvus','minio','mysql','redis','minio-business','oxigraph',
+#    'oxigraph-server','uploads','temp','logs' | % { mkdir volumes/$_ }
+#   'data','logs','plugins','file','import' | % { mkdir volumes/neo4j/$_ }
 #   'data','plugins' | % { mkdir volumes/elasticsearch/$_ }
 #
-# 【neo4j/plugins 需放置】n10s-*.jar（n10s 的 APOC 依赖由 NEO4J_PLUGINS 自动下载）
-# 【elasticsearch/plugins 需放置】elasticsearch-analysis-ik-8.15.0（中文分词）
+# 需手动放置（仅在无外网、不能用插件 CLI 自动下载时）：
+#   volumes/neo4j/plugins/            neosemantics-5.26.0.jar（即 n10s，配 Neo4j 5.26）
+#                                     ⚠️ 与 NEO4J_PLUGINS 二选一：jar 已在目录里，
+#                                        插件机制会跳过下载，不会装重复
+#   volumes/elasticsearch/plugins/<任意名>/  elasticsearch-analysis-ik-8.15.0.zip 解压后的内容
+#                                     ⚠️ 关键是"plugins/ 下要有一层子目录"，目录名随意
+#                                     （ik/ 或 elasticsearch-analysis-ik-8.15.0/ 都行），
+#                                     但不能解到 plugins/ 根目录
 #
-# ⚠️ Windows 注意：bind mount 跨文件系统性能较差。生产建议改为 named volume，
-#    把各服务的 volumes 换成 `- mysql_data:/var/lib/mysql` 之类，并在文末加：
+# 端口总览：
+#   3309 MySQL        7474/7687 Neo4j      19530/9091 Milvus
+#   9002/9003 Milvus MinIO                   8001 attu
+#   6379 Redis        9010/9011 业务 MinIO
+#   7878 Oxigraph     9200/9300 ES         5601 Kibana
+#   8080 Adminer
+#   （3001 backend / 3080 frontend / 5555 Flower 见 docker-compose.app.yml）
 #
-#    volumes:
-#      mysql_data: {}
-#      neo4j_data: {}
-#      ...
-#
-# ⚠️ Milvus 升级提示：本文件锁 v2.3.5 与现有 attu/pymilvus 匹配。若要升到 2.5.x，
-#    需同步升级 attu（zilliz/attu:v2.5.x）与 etcd（v3.5.18+），并先做 Milvus 备份。
+# ⚠️ Milvus 升级提示：本文件锁 v2.3.5 与现有 attu/pymilvus 匹配。
+#    若要升到 2.5.x，需同步升级 attu（zilliz/attu:v2.5.x）与 etcd（v3.5.18+），
+#    并先做 Milvus 备份。
+#    另：2.3.5 属于「etcd 一慢就优雅退出」的高发版本，2.3.20+ 已大幅改善；
+#    内存宽裕后建议升到 2.3.20+，这是版本层面的根治。
 # ==============================================================================

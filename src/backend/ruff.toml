@@ -1,0 +1,21 @@
+# ruff 配置（src/backend）—— docs/design/08 §2 M0 任务 7
+# 策略：M0 只对新增目录强制 lint；遗留大文件（api/services/infrastructure/schemas）
+# 随各里程碑改造时逐步移出排除清单（08 §3 债务清单）。
+line-length = 120
+target-version = "py310"
+extend-exclude = [
+    "app/api",
+    "app/services",
+    "app/infrastructure",
+    "app/schemas",
+]
+
+[lint]
+select = ["E", "F", "W", "I", "UP"]
+ignore = [
+    "E501",  # 行长：遗留代码与中文注释场景，暂不设硬限
+    "UP045", # Optional[X] -> X | None：与既有代码风格保持一致，M3 起统一现代化
+]
+
+[lint.isort]
+known-first-party = ["app"]

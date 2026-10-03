@@ -3,9 +3,12 @@ import { Form, Input, Button, Card, Tabs, message } from 'antd';
 import { UserOutlined, LockOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { authAPI } from '../api/auth';
+import { useAuthStore } from '../shared/auth/authStore';
 
 const LoginPage: React.FC = () => {
     const navigate = useNavigate();
+    const setTokens = useAuthStore((s) => s.setTokens);
+    const hydrate = useAuthStore((s) => s.hydrate);
     const [loading, setLoading] = useState(false);
     const [activeTab, setActiveTab] = useState('login');
 
@@ -17,8 +20,8 @@ const LoginPage: React.FC = () => {
                 password: values.password,
             });
 
-            localStorage.setItem('access_token', response.access_token);
-            localStorage.setItem('user', JSON.stringify(response.user));
+            setTokens(response.access_token, response.refresh_token || '');
+            await hydrate(); // M1：拉取 /auth/me（role + modules[]），驱动菜单与路由守卫
 
             message.success('登录成功！');
             navigate('/');
@@ -37,8 +40,8 @@ const LoginPage: React.FC = () => {
                 password: values.password,
             });
 
-            localStorage.setItem('access_token', response.access_token);
-            localStorage.setItem('user', JSON.stringify(response.user));
+            setTokens(response.access_token, response.refresh_token || '');
+            await hydrate();
 
             message.success('注册成功！');
             navigate('/');

@@ -544,14 +544,13 @@ class OntologyExtractor:
 
     def _get_streaming_config(self) -> bool:
         try:
-            from app.infrastructure.database import SessionLocal, SystemConfig
+            # M2：改读 model_configs（extract 默认行 params，adapters/provider）
+            from app.adapters.provider import ModelPurpose, resolve_provider
+            from app.infrastructure.database import SessionLocal
             db = SessionLocal()
             try:
-                config = db.query(SystemConfig).filter(SystemConfig.key == "llm_config").first()
-                if config and config.value:
-                    val = config.value.get("streaming_enabled", True)
-                    return val
-                return True
+                resolved = resolve_provider(ModelPurpose.EXTRACT, db=db)
+                return bool((resolved.params or {}).get("streaming_enabled", True))
             finally:
                 db.close()
         except Exception as e:
@@ -560,17 +559,17 @@ class OntologyExtractor:
 
     def _get_timeout_config(self) -> int:
         try:
-            from app.infrastructure.database import SessionLocal, SystemConfig
+            # M2：改读 model_configs（extract 默认行 params）
+            from app.adapters.provider import ModelPurpose, resolve_provider
+            from app.infrastructure.database import SessionLocal
             db = SessionLocal()
             try:
-                config = db.query(SystemConfig).filter(SystemConfig.key == "llm_config").first()
-                if config and config.value:
-                    timeout_val = config.value.get("llm_timeout", 300)
-                    try:
-                        return int(timeout_val) if timeout_val else 300
-                    except (ValueError, TypeError):
-                        return 300
-                return 300
+                resolved = resolve_provider(ModelPurpose.EXTRACT, db=db)
+                timeout_val = (resolved.params or {}).get("llm_timeout", 300)
+                try:
+                    return int(timeout_val) if timeout_val else 300
+                except (ValueError, TypeError):
+                    return 300
             finally:
                 db.close()
         except Exception as e:

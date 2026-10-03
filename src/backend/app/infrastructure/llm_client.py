@@ -20,6 +20,10 @@ class LLMClient:
         raw_url = base_url if base_url is not None else _settings.LLM_BASE_URL
         self.base_url = self._clean_base_url(raw_url)
 
+        # 部分模型（如方舟 glm-5-3-flash）不支持 response_format.type=json_schema，
+        # 首次遇到该 400 后降级为 json_object 并记住，避免每次调用都空耗 3 次重试
+        self._json_schema_supported = True
+
         logger.info(f"LLMClient 正在初始化：model={self.model}, base_url={self.base_url}")
 
         is_external_api = False
@@ -97,12 +101,11 @@ class LLMClient:
         import httpx
         from urllib.parse import urlparse
 
-        if self.base_url and 'openrouter' in self.base_url.lower():
-            proxy_to_use = "http://127.0.0.1:7890"
-        else:
-            http_proxy = os.environ.get('http_proxy') or os.environ.get('HTTP_PROXY')
-            https_proxy = os.environ.get('https_proxy') or os.environ.get('HTTPS_PROXY')
-            proxy_to_use = https_proxy or http_proxy
+        # M0 安全收口：删除 openrouter 硬编码代理 127.0.0.1:7890（docs/design/01 §8），
+        # 代理一律按需读环境变量 HTTP_PROXY/HTTPS_PROXY
+        http_proxy = os.environ.get('http_proxy') or os.environ.get('HTTP_PROXY')
+        https_proxy = os.environ.get('https_proxy') or os.environ.get('HTTPS_PROXY')
+        proxy_to_use = https_proxy or http_proxy
 
         if proxy_to_use:
             if 'socks' in proxy_to_use.lower():
@@ -133,12 +136,10 @@ class LLMClient:
         import httpx
         from urllib.parse import urlparse
 
-        if self.base_url and 'openrouter' in self.base_url.lower():
-            proxy_to_use = "http://127.0.0.1:7890"
-        else:
-            http_proxy = os.environ.get('http_proxy') or os.environ.get('HTTP_PROXY')
-            https_proxy = os.environ.get('https_proxy') or os.environ.get('HTTPS_PROXY')
-            proxy_to_use = https_proxy or http_proxy
+        # M0 安全收口：同上，删除 openrouter 硬编码代理
+        http_proxy = os.environ.get('http_proxy') or os.environ.get('HTTP_PROXY')
+        https_proxy = os.environ.get('https_proxy') or os.environ.get('HTTPS_PROXY')
+        proxy_to_use = https_proxy or http_proxy
 
         if proxy_to_use:
             if 'socks' in proxy_to_use.lower():
@@ -201,7 +202,7 @@ class LLMClient:
         if timeout is not None:
             api_kwargs["timeout"] = timeout
 
-        if json_schema:
+        if json_schema and self._json_schema_supported:
             logger.info(f"[LLM] 使用 json_schema 参数约束输出格式")
             api_kwargs["response_format"] = {
                 "type": "json_schema",
@@ -228,6 +229,11 @@ class LLMClient:
                 api_kwargs["response_format"] = {"type": "json_object"}
 
         return api_kwargs
+
+    @staticmethod
+    def _is_json_schema_unsupported(err: Exception) -> bool:
+        msg = str(err).lower()
+        return "json_schema" in msg and ("not supported" in msg or "invalidparameter" in msg)
 
     def call_llm(self, system_prompt: str, user_prompt: str, max_retries: int = 3, stream: bool = True,
                  timeout: Optional[float] = None, task_id: Optional[str] = None,
@@ -361,6 +367,10 @@ class LLMClient:
                     except Exception:
                         pass
                 err_msg = str(e).lower()
+                if self._is_json_schema_unsupported(e):
+                    self._json_schema_supported = False
+                    logger.warning(f"[LLM] 当前模型不支持 json_schema 约束输出，本次会话降级为 json_object 模式重试: {e}")
+                    continue
                 if "429" in err_msg or "rate limit" in err_msg:
                     wait_time = (attempt + 1) * 10
                     logger.warning(f"触发 API 限流，正在进行第 {attempt+1} 次重试，等待 {wait_time} 秒...")
@@ -512,6 +522,10 @@ class LLMClient:
                     except Exception:
                         pass
                 err_msg = str(e).lower()
+                if self._is_json_schema_unsupported(e):
+                    self._json_schema_supported = False
+                    logger.warning(f"[LLM] 当前模型不支持 json_schema 约束输出，本次会话降级为 json_object 模式重试: {e}")
+                    continue
                 if "429" in err_msg or "rate limit" in err_msg:
                     wait_time = (attempt + 1) * 10
                     logger.warning(f"[AsyncLLM] 触发 API 限流，正在进行第 {attempt+1} 次重试，等待 {wait_time} 秒...")
@@ -698,7 +712,7 @@ class LLMClient:
         if timeout is not None:
             api_kwargs["timeout"] = timeout
 
-        if json_schema:
+        if json_schema and self._json_schema_supported:
             api_kwargs["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {
@@ -776,7 +790,7 @@ class LLMClient:
         if timeout is not None:
             api_kwargs["timeout"] = timeout
 
-        if json_schema:
+        if json_schema and self._json_schema_supported:
             api_kwargs["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {
@@ -1025,6 +1039,10 @@ class LLMClient:
                     except Exception:
                         pass
                 err_msg = str(e).lower()
+                if self._is_json_schema_unsupported(e):
+                    self._json_schema_supported = False
+                    logger.warning(f"[LLM] 当前模型不支持 json_schema 约束输出，本次会话降级为 json_object 模式重试: {e}")
+                    continue
                 if "429" in err_msg or "rate limit" in err_msg:
                     wait_time = (attempt + 1) * 10
                     logger.warning(f"触发 API 限流，正在进行第 {attempt+1} 次重试，等待 {wait_time} 秒...")
@@ -1136,6 +1154,10 @@ class LLMClient:
                     except Exception:
                         pass
                 err_msg = str(e).lower()
+                if self._is_json_schema_unsupported(e):
+                    self._json_schema_supported = False
+                    logger.warning(f"[LLM] 当前模型不支持 json_schema 约束输出，本次会话降级为 json_object 模式重试: {e}")
+                    continue
                 if "429" in err_msg or "rate limit" in err_msg:
                     wait_time = (attempt + 1) * 10
                     logger.warning(f"[AsyncLLM] 触发 API 限流，等待 {wait_time} 秒...")

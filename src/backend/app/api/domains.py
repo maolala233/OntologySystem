@@ -13,9 +13,10 @@ from app.schemas.domain import (
 )
 from app.schemas.ontology import ProjectResponse
 from app.api.auth import get_current_user
+from app.core.deps import require_role
 from app.infrastructure.database import User
 
-router = APIRouter(prefix="/domains", tags=["domains"])
+router = APIRouter(prefix="/api/domains", tags=["domains"])
 
 
 @router.get("", response_model=List[KnowledgeDomainResponse])
@@ -31,7 +32,7 @@ def get_all_domains(db: Session = Depends(get_db)):
 @router.post("", response_model=KnowledgeDomainResponse, status_code=status.HTTP_201_CREATED)
 def create_domain(
     domain_data: KnowledgeDomainCreate,
-    current_user: User = Depends(get_current_user),
+    _admin: User = Depends(require_role("admin")),
     db: Session = Depends(get_db)
 ):
     """
@@ -75,7 +76,7 @@ def get_domain(
 def update_domain(
     domain_id: int,
     domain_data: KnowledgeDomainUpdate,
-    current_user: User = Depends(get_current_user),
+    _admin: User = Depends(require_role("admin")),
     db: Session = Depends(get_db)
 ):
     """
@@ -182,7 +183,7 @@ def migrate_projects(
     domain_id: int,
     project_ids: List[int] = Query(..., description="要迁移的项目 ID 列表"),
     target_domain_id: int = Query(..., description="目标知识域 ID"),
-    current_user: User = Depends(get_current_user),
+    _admin: User = Depends(require_role("admin")),
     db: Session = Depends(get_db)
 ):
     """
@@ -229,7 +230,7 @@ def migrate_projects(
 def migrate_projects_batch(
     domain_id: int,
     request: BatchMigrationRequest,
-    current_user: User = Depends(get_current_user),
+    _admin: User = Depends(require_role("admin")),
     db: Session = Depends(get_db)
 ):
     """
@@ -289,7 +290,7 @@ def migrate_projects_batch(
 def delete_domain(
     domain_id: int,
     migrate_to_domain_id: Optional[int] = None,
-    current_user: User = Depends(get_current_user),
+    _admin: User = Depends(require_role("admin")),
     db: Session = Depends(get_db)
 ):
     """

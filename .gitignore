@@ -30,3 +30,7 @@ src/backend/src/backend/
 *.txt
 *.pdf
 
+# M0 出库与防再入库（docs/design/08 §3）
+src/backend/*.db
+src/backend/pip-install.log
+

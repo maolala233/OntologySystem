@@ -1,0 +1,129 @@
+# ==============================================================================
+# 内存修复补丁 —— 修复「服务运行一段时间后自动 exited」
+# ==============================================================================
+# 病因：docker-compose.yml 里的内存参数是按"大机器"配的，在 7.71 GiB 宿主上
+#   理论峰值就超过了总内存，导致宿主 OOM killer 随机杀进程：
+#     Neo4j  heap 4G + pagecache 2G = 6 GiB
+#     MySQL  innodb-buffer-pool-size 1G
+#     其余   ~0.9 GiB
+#     ────────────────────────────
+#     合计   7.9 GiB  >  7.71 GiB
+#   而 neo4j / milvus / etcd / attu / minio 原来都没有 restart 策略，
+#   被杀后就永久 exited —— 这就是"启动成功了但后面服务自动退出"。
+#
+# 本文件是 Compose 的标准覆盖机制：与 docker-compose.yml 同目录时
+# **自动生效**，无需任何额外参数：
+#     docker compose up -d          # 自动加载 override
+#
+# ⚠️ 如果你用的是 docs/docker-compose.middleware.yml，override 不会自动加载，
+#    要显式带上：
+#     docker compose -f docs/docker-compose.middleware.yml \
+#                    -f docker-compose.override.yml --profile es up -d
+#
+# 回滚：删掉本文件即可。
+# 等你把 base 文件更新成带 mem_limit 的新版后，本文件也可以删掉。
+#
+# 生效后验证：
+#     docker compose up -d
+#     bash build-scripts/check-middleware.sh
+#     free -h                       # 观察 available 是否稳定
+#     docker stats --no-stream
+# ==============================================================================
+
+services:
+  # ==========================================================================
+  # Neo4j —— 元凶，内存占用最大
+  # ==========================================================================
+  neo4j:
+    environment:
+      # 堆初始值从 2G 降到 1G：JVM 会立刻提交初始堆，
+      # 设 2G 意味着一启动就先吃掉 2 GiB，没必要。
+      - NEO4J_server_memory_heap_initial__size=1G
+      # 堆上限 4G → 2G。几千节点的建图/消解 1~2G 完全够。
+      - NEO4J_server_memory_heap_max__size=2G
+      # pagecache 2G → 512M。它会随数据量逐步填满，是"慢慢涨上去"的主因。
+      - NEO4J_server_memory_pagecache_size=512M
+    # 硬上限：heap 2G + pagecache 512M + JVM 堆外开销 ≈ 3 GiB
+    mem_limit: 3g
+    # 被 OOM 杀掉后自动拉起（base 文件里原来没有 restart）
+    restart: unless-stopped
+
+  # ==========================================================================
+  # MySQL —— buffer pool 从 1G 收到 256M
+  # ==========================================================================
+  # 注意：command 是列表形式，覆盖时会**整段替换**，所以必须写全。
+  mysql:
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+08:00
+      - --max-connections=500
+      - --innodb-buffer-pool-size=256M
+      - --performance-schema=OFF
+    mem_limit: 1g
+    restart: always
+
+  # ==========================================================================
+  # Redis —— maxmemory 从 1G 收到 256M（同样是整段替换 command）
+  # ==========================================================================
+  redis:
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      # 关掉 RDB 快照：AOF 已保证持久化，而 RDB 每次落盘都要 fork，
+      # 内存瞬时翻倍（COW）—— 在小内存宿主上是压死骆驼的那根稻草。
+      # 想保留 RDB 备份就删掉下面这两行。
+      - --save
+      - ""
+      - --maxmemory
+      - 256mb
+      # 队列场景必须 noeviction，否则内存打满会静默丢任务
+      - --maxmemory-policy
+      - noeviction
+    mem_limit: 512m
+    restart: always
+
+  # ==========================================================================
+  # Milvus 三件套 + attu —— 补上 mem_limit 与 restart
+  # ==========================================================================
+  etcd:
+    mem_limit: 256m
+    restart: unless-stopped
+
+  minio:
+    mem_limit: 512m
+    restart: unless-stopped
+
+  standalone:
+    mem_limit: 1536m
+    restart: unless-stopped
+
+  attu:
+    mem_limit: 256m
+    restart: unless-stopped
+
+  # ==========================================================================
+  # 业务 MinIO
+  # ==========================================================================
+  minio-business:
+    mem_limit: 512m
+    restart: always
+
+  minio-init:
+    mem_limit: 128m
+    restart: "no"
+
+# ==============================================================================
+# 注意：这里**故意不包含 oxigraph**。
+#   Compose 的 override 里出现的每个服务名，都必须在 base 文件里已存在，
+#   否则会报 `service "xxx" has neither an image nor a build context` 并整体失败。
+#   oxigraph 是 profile: sparql 隔离的可选服务，你的环境不一定有，
+#   所以不放进补丁。若你在用 --profile sparql 且需要限制它，手动加：
+#
+#   oxigraph:
+#     mem_limit: 512m
+#     restart: unless-stopped
+# ==============================================================================

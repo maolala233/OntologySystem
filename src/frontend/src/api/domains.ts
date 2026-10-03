@@ -60,7 +60,7 @@ export interface MigrateProjectsResponse {
  * 获取所有知识域列表
  */
 export const getDomains = async (): Promise<KnowledgeDomain[]> => {
-    const response = await apiClient.get('/domains');
+    const response = await apiClient.get('/api/domains');
     return response.data;
 };
 
@@ -68,7 +68,7 @@ export const getDomains = async (): Promise<KnowledgeDomain[]> => {
  * 创建知识域
  */
 export const createDomain = async (data: KnowledgeDomainCreate): Promise<KnowledgeDomain> => {
-    const response = await apiClient.post('/domains', data);
+    const response = await apiClient.post('/api/domains', data);
     return response.data;
 };
 
@@ -76,7 +76,7 @@ export const createDomain = async (data: KnowledgeDomainCreate): Promise<Knowled
  * 更新知识域
  */
 export const updateDomain = async (id: number, data: KnowledgeDomainUpdate): Promise<KnowledgeDomain> => {
-    const response = await apiClient.put(`/domains/${id}`, data);
+    const response = await apiClient.put(`/api/domains/${id}`, data);
     return response.data;
 };
 
@@ -84,7 +84,7 @@ export const updateDomain = async (id: number, data: KnowledgeDomainUpdate): Pro
  * 获取知识域下的项目列表
  */
 export const getDomainProjects = async (domainId: number): Promise<ProjectInDomain[]> => {
-    const response = await apiClient.get(`/domains/${domainId}/projects`);
+    const response = await apiClient.get(`/api/domains/${domainId}/projects`);
     return response.data;
 };
 
@@ -101,7 +101,7 @@ export const migrateProjects = async (
     data.project_ids.forEach(id => params.append('project_ids', id.toString()));
     
     const response = await apiClient.post(
-        `/domains/${domainId}/migrate-projects?${params.toString()}`,
+        `/api/domains/${domainId}/migrate-projects?${params.toString()}`,
         null
     );
     return response.data;
@@ -124,7 +124,7 @@ export const migrateProjectsBatch = async (
     }>;
 }> => {
     const response = await apiClient.post(
-        `/domains/${domainId}/migrate-projects-batch`,
+        `/api/domains/${domainId}/migrate-projects-batch`,
         data
     );
     return response.data;
@@ -141,6 +141,6 @@ export const deleteDomain = async (
     if (migrateToDomainId !== undefined) {
         params.migrate_to_domain_id = migrateToDomainId;
     }
-    const response = await apiClient.delete(`/domains/${id}`, { params });
+    const response = await apiClient.delete(`/api/domains/${id}`, { params });
     return response.data;
 };

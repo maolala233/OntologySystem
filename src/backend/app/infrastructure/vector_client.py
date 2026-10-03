@@ -194,8 +194,9 @@ class VectorStoreManager:
         try:
             from app.infrastructure.database import get_db, SystemConfig
             db = next(get_db())
-            config = db.query(SystemConfig).filter(SystemConfig.key == 'llm_config').first()
-            
+            # M2：Milvus 开关/连接参数属平台级杂项，改读 platform_config（导入脚本拆分自 llm_config）
+            config = db.query(SystemConfig).filter(SystemConfig.key == 'platform_config').first()
+
             if config and config.value:
                 new_milvus_enabled = config.value.get('milvus_enabled', True)
                 # 强制更新状态
@@ -217,8 +218,9 @@ class VectorStoreManager:
         try:
             from app.infrastructure.database import get_db, SystemConfig
             db = next(get_db())
-            config = db.query(SystemConfig).filter(SystemConfig.key == 'llm_config').first()
-            
+            # M2：platform_config（见上）
+            config = db.query(SystemConfig).filter(SystemConfig.key == 'platform_config').first()
+
             if config and config.value:
                 # 更新启用状态
                 self.milvus_enabled = config.value.get('milvus_enabled', True)
@@ -238,33 +240,34 @@ class VectorStoreManager:
             logger.debug(f"动态检查配置失败: {e}")
     
     def _load_dynamic_config(self):
-        """加载动态配置"""
+        """加载动态配置（M2：Milvus 参数读 platform_config；嵌入模型读 model_configs 表）"""
         try:
-            # 获取数据库会话
             from app.infrastructure.database import get_db, SystemConfig
+            from app.adapters.provider import ModelPurpose, resolve_provider
             db = next(get_db())
-            config = db.query(SystemConfig).filter(SystemConfig.key == 'llm_config').first()
-            
-            if config and config.value:
-                # 使用动态配置
-                self.milvus_enabled = config.value.get('milvus_enabled', True)
-                self.milvus_host = config.value.get('milvus_host', settings.MILVUS_HOST)
-                self.milvus_port = config.value.get('milvus_port', settings.MILVUS_PORT)
-                self.milvus_collection_name = config.value.get('milvus_collection', settings.MILVUS_COLLECTION_NAME)
-                self.embedding_api_key = config.value.get('embedding_api_key', settings.EMBEDDING_API_KEY)
-                self.embedding_base_url = config.value.get('embedding_base_url', settings.EMBEDDING_BASE_URL)
-                self.embedding_model = config.value.get('embedding_model', settings.EMBEDDING_MODEL)
-                self.embedding_dim = config.value.get('embedding_dim', settings.EMBEDDING_DIM)
-            else:
-                # 使用默认配置
-                self.milvus_enabled = True
-                self.milvus_host = settings.MILVUS_HOST
-                self.milvus_port = settings.MILVUS_PORT
-                self.milvus_collection_name = settings.MILVUS_COLLECTION_NAME
+            platform = db.query(SystemConfig).filter(SystemConfig.key == 'platform_config').first()
+            platform_cfg = platform.value if platform and platform.value else {}
+
+            # 嵌入模型：model_configs 表（provider 解析，失败回落 env 默认）
+            try:
+                emb = resolve_provider(ModelPurpose.EMBEDDING, db=db)
+                # openai SDK 将空串视为缺失凭据 → 无密钥 provider（Ollama）用 EMPTY 占位
+                self.embedding_api_key = emb.api_key or "EMPTY"
+                self.embedding_base_url = emb.base_url
+                self.embedding_model = emb.model_name
+                self.embedding_dim = (emb.params or {}).get('embedding_dim') or emb.dims or settings.EMBEDDING_DIM
+            except Exception as emb_err:
+                logger.debug(f"嵌入模型解析失败，使用 env 默认: {emb_err}")
                 self.embedding_api_key = settings.EMBEDDING_API_KEY
                 self.embedding_base_url = settings.EMBEDDING_BASE_URL
                 self.embedding_model = settings.EMBEDDING_MODEL
                 self.embedding_dim = settings.EMBEDDING_DIM
+
+            # Milvus 开关与连接参数：platform_config（回退 env）
+            self.milvus_enabled = platform_cfg.get('milvus_enabled', True)
+            self.milvus_host = platform_cfg.get('milvus_host', settings.MILVUS_HOST)
+            self.milvus_port = platform_cfg.get('milvus_port', settings.MILVUS_PORT)
+            self.milvus_collection_name = platform_cfg.get('milvus_collection', settings.MILVUS_COLLECTION_NAME)
             
             db.close()
         except Exception as e:

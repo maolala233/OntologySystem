@@ -38,6 +38,14 @@ pypinyin>=0.50.0
 # 图数据库
 neo4j>=5.0.0
 
+# ===== M0 新增（Semantica 演进重构 · 见 docs/design/01）=====
+# 本体引擎（适配层唯一依赖，业务层禁止直接 import）
+semantica[all]==0.7.*
+# 任务队列（parse/extract/graph/rdf 四队列 + beat）
+celery[redis]>=5.3
+# 业务对象存储（健康检查 / 文件链路 M3）
+minio>=7.2
+
 # 基础工具
 pydantic>=2.0.0
 pydantic-settings>=2.0.0

@@ -12,11 +12,23 @@ export interface RegisterRequest {
 
 export interface AuthResponse {
     access_token: string;
+    refresh_token?: string;
     token_type: string;
     user: {
         id: number;
         username: string;
     };
+}
+
+export interface MeResponse {
+    id: number;
+    username: string;
+    role: 'admin' | 'user';
+    display_name?: string | null;
+    email?: string | null;
+    locale: string;
+    is_active: boolean;
+    modules: string[];
 }
 
 export const authAPI = {
@@ -38,6 +50,21 @@ export const authAPI = {
 
     getCurrentUser: async () => {
         const response = await apiClient.get('/api/auth/me');
+        return response.data as MeResponse;
+    },
+
+    refresh: async (refresh_token: string) => {
+        const response = await apiClient.post('/api/auth/refresh', { refresh_token });
+        return response.data as AuthResponse;
+    },
+
+    updateMe: async (data: { display_name?: string; locale?: string }) => {
+        const response = await apiClient.put('/api/auth/me', data);
+        return response.data;
+    },
+
+    getSseTicket: async (taskId: string): Promise<{ ticket: string; expires_in: number }> => {
+        const response = await apiClient.get('/api/auth/sse-ticket', { params: { task_id: taskId } });
         return response.data;
     },
 

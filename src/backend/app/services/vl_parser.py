@@ -19,36 +19,33 @@ VL_MAX_TOKENS = 8192
 
 
 def _get_vl_config() -> dict:
-    from app.core.config import settings
-    from app.infrastructure.database import SessionLocal, SystemConfig
+    from app.adapters.provider import ModelPurpose, resolve_provider
+    from app.infrastructure.database import SessionLocal
 
-    base_url = ""
-    api_key = ""
-    model = ""
-    disable_think = True
-
+    # M2：改读 model_configs（vl 默认行，adapters/provider）；解析失败回退 env
     try:
         db = SessionLocal()
         try:
-            config = db.query(SystemConfig).filter(SystemConfig.key == "vl_config").first()
-            if config and config.value:
-                base_url = config.value.get("vl_base_url", "")
-                api_key = config.value.get("vl_api_key", "")
-                model = config.value.get("vl_model", "")
-                disable_think = config.value.get("vl_disable_think", True)
+            vl = resolve_provider(ModelPurpose.VL, db=db)
+            return {
+                "base_url": vl.base_url,
+                "api_key": vl.api_key,
+                "model": vl.model_name,
+                "disable_think": bool((vl.params or {}).get("disable_think", True)),
+            }
         finally:
             db.close()
     except Exception:
         pass
 
-    if not base_url:
-        base_url = settings.EMBEDDING_BASE_URL
-    if not api_key:
-        api_key = settings.EMBEDDING_API_KEY
-    if not model:
-        model = settings.LLM_MODEL_NAME
+    from app.core.config import settings
 
-    return {"base_url": base_url, "api_key": api_key, "model": model, "disable_think": disable_think}
+    return {
+        "base_url": settings.EMBEDDING_BASE_URL,
+        "api_key": settings.EMBEDDING_API_KEY,
+        "model": settings.LLM_MODEL_NAME,
+        "disable_think": True,
+    }
 
 
 def _docx_to_pdf(docx_path: str, work_dir: str) -> Optional[str]:
