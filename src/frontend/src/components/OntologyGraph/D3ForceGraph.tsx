@@ -2,29 +2,38 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { forceSimulation, forceLink, forceManyBody, forceCenter, forceCollide, forceX, forceY } from 'd3-force';
 import { select } from 'd3-selection';
 import { drag as d3Drag } from 'd3-drag';
-import { zoom as d3Zoom } from 'd3-zoom';
+import { zoom as d3Zoom, zoomIdentity } from 'd3-zoom';
 import { transition } from 'd3-transition';
 import { message } from 'antd';
 import { OntologyNode, OntologyEdge } from '../../types/ontology';
 
 const NODE_TYPES = {
     CLASS: 'owl:Class',
-    ACTION_TYPE: 'owl:ActionType',
     INDIVIDUAL: 'owl:NamedIndividual',
     PROPERTY: 'owl:ObjectProperty'
 };
 
+// 抽取链路写 type='Class'（与后端 graph_rows.CLASS_TYPES 对齐），画布统一归一到 owl:Class，
+// 保证配色/半径/形状与左下角图例一致
+const normalizeNodeType = (t?: string): string =>
+    t === 'Class' ? NODE_TYPES.CLASS : (t || NODE_TYPES.CLASS);
+
 const NODE_COLORS = {
     [NODE_TYPES.CLASS]: { fill: '#4a90d9', stroke: '#2d6cb4', text: '#ffffff' },
-    [NODE_TYPES.ACTION_TYPE]: { fill: '#555555', stroke: '#3a3a3a', text: '#ffffff' },
     [NODE_TYPES.INDIVIDUAL]: { fill: '#f79767', stroke: '#d4703f', text: '#ffffff' },
     [NODE_TYPES.PROPERTY]: { fill: '#c990c0', stroke: '#9e6b96', text: '#ffffff' },
     DEFAULT: { fill: '#666', stroke: '#444', text: '#ffffff' }
 };
 
+const DARK_NODE_COLORS = {
+    [NODE_TYPES.CLASS]: { fill: '#B585F2', stroke: '#8F5BD9', text: '#ffffff' },
+    [NODE_TYPES.INDIVIDUAL]: { fill: '#5B8DEF', stroke: '#3E6CC7', text: '#ffffff' },
+    [NODE_TYPES.PROPERTY]: { fill: '#34C3A4', stroke: '#27997F', text: '#ffffff' },
+    DEFAULT: { fill: '#56679B', stroke: '#3E4C74', text: '#ffffff' }
+};
+
 const NODE_RADII = {
     [NODE_TYPES.CLASS]: 32,
-    [NODE_TYPES.ACTION_TYPE]: 27,
     [NODE_TYPES.INDIVIDUAL]: 22,
     [NODE_TYPES.PROPERTY]: 20
 };
@@ -35,7 +44,21 @@ const LIGHT_THEME = {
     edge: '#c0c4cc',
     edgeHighlight: '#909399',
     edgeInstance: '#e0c8b8',
-    edgeAction: '#a0a0a0',
+    panel: 'rgba(255, 255, 255, 0.95)',
+    panelBorder: '#e5e7eb',
+    panelText: '#6b7280',
+};
+
+// 深色主题（06 §6.3）：与 graph-explorer 的 GRAPH_THEME 同源，骨架画布与实例探索器视觉统一
+const DARK_THEME = {
+    background: '#0F1420',
+    text: '#E6EAF2',
+    edge: '#56679B',
+    edgeHighlight: '#F2B950',
+    edgeInstance: '#5B8DEF',
+    panel: 'rgba(19, 26, 42, 0.95)',
+    panelBorder: '#1A2233',
+    panelText: '#8B94AB',
 };
 
 const EDGE_CLICK_WIDTH = 20;
@@ -51,6 +74,11 @@ interface D3ForceGraphProps {
     height?: number;
     className?: string;
     highlightNodeId?: string | null;
+    /** 固定邻域高亮（"在画布中聚焦"的持续版悬停效果）；画布点击其他节点时由外部清除 */
+    neighborhoodPinId?: string | null;
+    /** 聚焦请求：seq 递增触发画布平移缩放定位到节点（详情页"在画布中聚焦/邻域展开"） */
+    focusRequest?: { nodeId: string; seq: number } | null;
+    theme?: 'light' | 'dark';
 }
 
 const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
@@ -63,8 +91,16 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
     width: propWidth,
     height: propHeight,
     className = '',
-    highlightNodeId = null
+    highlightNodeId = null,
+    neighborhoodPinId = null,
+    focusRequest = null,
+    theme = 'light'
 }) => {
+    const T = theme === 'dark' ? DARK_THEME : LIGHT_THEME;
+    const nodeTheme = theme === 'dark' ? DARK_NODE_COLORS : NODE_COLORS;
+    // SVG 资源 id 唯一化：两个画布同挂时避免 defs ID 冲突（隐藏 SVG 的 marker/filter 不渲染）
+    const uidRef = useRef<string>(`ah${Math.random().toString(36).slice(2, 8)}`);
+    const uid = uidRef.current;
     const svgRef = useRef<SVGSVGElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const simulationRef = useRef<any>(null);
@@ -78,6 +114,8 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
     const prevEdgeIdsRef = useRef<Set<string>>(new Set());
     const d3NodesRef = useRef<Map<string, any>>(new Map());
     const zoomBehaviorRef = useRef<any>(null);
+    // 当前缩放平移变换（提示框/标签定位需从数据坐标换算到屏幕坐标）
+    const zoomTransformRef = useRef<any>(zoomIdentity);
 
     const onNodeClickRef = useRef(onNodeClick);
     onNodeClickRef.current = onNodeClick;
@@ -85,6 +123,10 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
     onEdgeClickRef.current = onEdgeClick;
     const onNodesChangeRef = useRef(onNodesChange);
     onNodesChangeRef.current = onNodesChange;
+    // 固定邻域高亮：悬停临时的持续版（详见 applyHoverHighlight）
+    const neighborhoodPinRef = useRef<string | null>(neighborhoodPinId);
+    neighborhoodPinRef.current = neighborhoodPinId;
+    const applyHoverRef = useRef<((id: string | null) => void) | null>(null);
     const onNodeRightClickRef = useRef(onNodeRightClick);
     onNodeRightClickRef.current = onNodeRightClick;
 
@@ -93,12 +135,13 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             if (containerRef.current) {
                 const rect = containerRef.current.getBoundingClientRect();
                 const parentElement = containerRef.current.parentElement;
+                // 容器宽高被写死为上次测量值（反馈环），以父级弹性空间为准
                 let parentHeight = rect.height;
                 let parentWidth = rect.width;
                 if (parentElement) {
                     const parentRect = parentElement.getBoundingClientRect();
-                    if (rect.height === 0) parentHeight = parentRect.height;
-                    if (rect.width === 0) parentWidth = parentRect.width;
+                    if (parentRect.height > 0) parentHeight = parentRect.height;
+                    if (parentRect.width > 0) parentWidth = parentRect.width;
                 }
                 setContainerSize({
                     width: propWidth || parentWidth || window.innerWidth - 300,
@@ -113,25 +156,31 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
         };
         updateContainerSize();
         window.addEventListener('resize', updateContainerSize);
-        return () => window.removeEventListener('resize', updateContainerSize);
+        // 画布容器自身尺寸变化（如左侧列表展开/收起）不会触发 window resize，需单独观察；
+        // 容器宽度被写死为测量像素值，会随父级收缩而溢出，故观察父级（弹性尺寸）
+        let ro: ResizeObserver | null = null;
+        const roTarget = containerRef.current?.parentElement;
+        if (typeof ResizeObserver !== 'undefined' && roTarget) {
+            ro = new ResizeObserver(() => updateContainerSize());
+            ro.observe(roTarget);
+        }
+        return () => {
+            window.removeEventListener('resize', updateContainerSize);
+            ro?.disconnect();
+        };
     }, [propWidth, propHeight]);
 
     const width = propWidth || containerSize.width;
     const height = propHeight || containerSize.height;
 
     const getNodeRadius = useCallback((node: OntologyNode) => {
-        return NODE_RADII[node.data?.type || NODE_TYPES.CLASS] || NODE_RADII[NODE_TYPES.CLASS];
+        return NODE_RADII[normalizeNodeType(node.data?.type)] || NODE_RADII[NODE_TYPES.CLASS];
     }, []);
 
     const isInstanceEdge = useCallback((edge: any) => {
         const sourceType = edge.source?.data?.type || edge.source?.type;
         const targetType = edge.target?.data?.type || edge.target?.type;
         return sourceType === NODE_TYPES.INDIVIDUAL || targetType === NODE_TYPES.INDIVIDUAL;
-    }, []);
-
-    const isActionEdge = useCallback((edge: any) => {
-        const rel = edge.data?.relation || edge.originalEdge?.data?.relation;
-        return rel === 'action';
     }, []);
 
     const getAdaptiveForceParams = useCallback(() => {
@@ -194,38 +243,27 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
     };
 
     const getNodeColors = useCallback((d: any) => {
-        const isInstance = d.type === NODE_TYPES.INDIVIDUAL;
-        const rawId = d.originalNode?.data?.raw_id || '';
-        const isActionInstance = isInstance && (d.originalNode?.data?._is_action_instance || rawId.startsWith('AT_'));
-
-        if (isActionInstance) return { fill: '#8a8a8a', stroke: '#6a6a6a', text: '#ffffff' };
-        return NODE_COLORS[d.type] || NODE_COLORS.DEFAULT;
-    }, []);
+        // 实例节点统一单色（与类节点紫色 #B585F2 搭配的主题蓝），不再按所属类分色
+        return nodeTheme[d.type] || nodeTheme.DEFAULT;
+    }, [nodeTheme]);
 
     const getEdgeColor = useCallback((d: any) => {
-        if (isActionEdge(d)) return LIGHT_THEME.edgeAction;
-        return isInstanceEdge(d) ? LIGHT_THEME.edgeInstance : LIGHT_THEME.edge;
-    }, [isInstanceEdge, isActionEdge]);
+        return isInstanceEdge(d) ? T.edgeInstance : T.edge;
+    }, [isInstanceEdge, T]);
 
     const getEdgeDash = useCallback((d: any) => {
-        if (isActionEdge(d)) return "6,3";
         return isInstanceEdge(d) ? "4,4" : "none";
-    }, [isInstanceEdge, isActionEdge]);
+    }, [isInstanceEdge]);
 
     const getEdgeMarker = useCallback((d: any) => {
-        if (isActionEdge(d)) return "url(#arrowhead-action)";
-        return isInstanceEdge(d) ? "url(#arrowhead-instance)" : "url(#arrowhead-class)";
-    }, [isInstanceEdge, isActionEdge]);
+        return isInstanceEdge(d) ? `url(#${uid}-arrowhead-instance)` : `url(#${uid}-arrowhead-class)`;
+    }, [isInstanceEdge]);
 
     const setupNodeContent = useCallback((nodeG: any, d: any) => {
         nodeG.selectAll("*").remove();
 
-        const isClass = d.type === NODE_TYPES.CLASS || d.type === NODE_TYPES.ACTION_TYPE;
+        const isClass = d.type === NODE_TYPES.CLASS;
         const isInstance = d.type === NODE_TYPES.INDIVIDUAL;
-        const isActionType = d.type === NODE_TYPES.ACTION_TYPE;
-        const rawId = d.originalNode?.data?.raw_id || '';
-        const isActionInstance = isInstance && (d.originalNode?.data?._is_action_instance || rawId.startsWith('AT_'));
-        const isActionNode = isActionType || isActionInstance;
 
         const colors = getNodeColors(d);
         const label = d.originalNode?.data?.label || d.id;
@@ -237,36 +275,20 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             .attr("r", 0)
             .attr("fill", colors.fill)
             .attr("stroke", colors.stroke)
-            .attr("stroke-width", isActionNode ? 1.5 : (isClass ? 2.5 : 1.5))
-            .attr("filter", d.id === highlightNodeId ? "url(#glow-selected)" : null)
+            .attr("stroke-width", isClass ? 2.5 : 1.5)
+            .attr("filter", d.id === highlightNodeId ? `url(#${uid}-glow-selected)` : null)
             .transition()
             .duration(400)
             .ease((t: number) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2)
             .attr("r", nodeRadius);
-
-        if (isActionType) {
-            nodeG.append("text")
-                .attr("class", "node-action-icon")
-                .attr("text-anchor", "middle")
-                .attr("dy", -nodeRadius - 6)
-                .style("fill", '#888')
-                .style("font-size", "8px")
-                .style("pointer-events", "none")
-                .style("opacity", 0)
-                .text("⚡")
-                .transition()
-                .delay(200)
-                .duration(300)
-                .style("opacity", 1);
-        }
 
         nodeG.append("text")
             .attr("class", "node-label")
             .attr("text-anchor", "middle")
             .attr("dominant-baseline", "central")
             .style("fill", colors.text)
-            .style("font-size", isActionNode ? "10px" : (isClass ? "11px" : "9px"))
-            .style("font-weight", isActionNode ? "500" : (isClass ? "600" : "500"))
+            .style("font-size", isClass ? "11px" : "9px")
+            .style("font-weight", isClass ? "600" : "500")
             .style("pointer-events", "none")
             .style("opacity", 0)
             .text(truncateLabel(label, isClass ? 6 : 5))
@@ -280,7 +302,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                 .attr("class", "node-sublabel")
                 .attr("text-anchor", "middle")
                 .attr("dy", nodeRadius + 12)
-                .style("fill", isActionInstance ? '#777' : '#999')
+                .style("fill", theme === 'dark' ? '#8B94AB' : '#999')
                 .style("font-size", "9px")
                 .style("pointer-events", "none")
                 .style("opacity", 0)
@@ -290,7 +312,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                 .duration(300)
                 .style("opacity", 1);
         }
-    }, [highlightNodeId, getNodeColors]);
+    }, [highlightNodeId, getNodeColors, theme]);
 
     const renderGraph = useCallback(() => {
         if (!svgRef.current || nodes.length === 0) return;
@@ -311,33 +333,36 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
         }
 
         const markers = svg.select<SVGGElement>("defs.markers");
-        if (markers.empty()) {
-            svg.append("defs").attr("class", "markers")
+        if (markers.empty() || markers.attr("data-theme") !== theme) {
+            svg.select("defs.markers").remove();
+            const arrowClass = theme === 'dark' ? '#8B94AB' : '#94a3b8';
+            const arrowInstance = theme === 'dark' ? '#5B8DEF' : '#e0c8b8';
+            const arrowHl = T.edgeHighlight;
+            const glowSelected = theme === 'dark' ? '#F2B950' : '#409eff';
+            const glowHover = theme === 'dark' ? '#5AC8FA' : '#66b1ff';
+            svg.append("defs").attr("class", "markers").attr("data-theme", theme)
                 .html(`
-                    <marker id="arrowhead-class" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-                        <polygon points="0 0, 8 3, 0 6" fill="#c0c4cc" />
+                    <marker id="${uid}-arrowhead-class" markerWidth="7" markerHeight="5.5" refX="6.5" refY="2.75" orient="auto">
+                        <polygon points="0 0, 6.5 2.75, 0 5.5" fill="${arrowClass}" />
                     </marker>
-                    <marker id="arrowhead-instance" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-                        <polygon points="0 0, 8 3, 0 6" fill="#e0c8b8" />
+                    <marker id="${uid}-arrowhead-instance" markerWidth="7" markerHeight="5.5" refX="6.5" refY="2.75" orient="auto">
+                        <polygon points="0 0, 6.5 2.75, 0 5.5" fill="${arrowInstance}" />
                     </marker>
-                    <marker id="arrowhead-action" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-                        <polygon points="0 0, 8 3, 0 6" fill="#a0a0a0" />
+                    <marker id="${uid}-arrowhead-hl" markerWidth="7" markerHeight="5.5" refX="6.5" refY="2.75" orient="auto">
+                        <polygon points="0 0, 6.5 2.75, 0 5.5" fill="${arrowHl}" />
                     </marker>
-                    <marker id="arrowhead-hl" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-                        <polygon points="0 0, 8 3, 0 6" fill="#909399" />
-                    </marker>
-                    <filter id="glow-selected" x="-50%" y="-50%" width="200%" height="200%">
+                    <filter id="${uid}-glow-selected" x="-50%" y="-50%" width="200%" height="200%">
                         <feGaussianBlur stdDeviation="3" result="blur" />
-                        <feFlood flood-color="#409eff" flood-opacity="0.6" result="color" />
+                        <feFlood flood-color="${glowSelected}" flood-opacity="0.6" result="color" />
                         <feComposite in="color" in2="blur" operator="in" result="shadow" />
                         <feMerge>
                             <feMergeNode in="shadow" />
                             <feMergeNode in="SourceGraphic" />
                         </feMerge>
                     </filter>
-                    <filter id="glow-hover" x="-50%" y="-50%" width="200%" height="200%">
+                    <filter id="${uid}-glow-hover" x="-50%" y="-50%" width="200%" height="200%">
                         <feGaussianBlur stdDeviation="2" result="blur" />
-                        <feFlood flood-color="#66b1ff" flood-opacity="0.4" result="color" />
+                        <feFlood flood-color="${glowHover}" flood-opacity="0.4" result="color" />
                         <feComposite in="color" in2="blur" operator="in" result="shadow" />
                         <feMerge>
                             <feMergeNode in="shadow" />
@@ -367,7 +392,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                 fx: isPinned ? (existingNode?.x ?? node.position?.x) : (existingNode?.fx || null),
                 fy: isPinned ? (existingNode?.y ?? node.position?.y) : (existingNode?.fy || null),
                 data: node.data,
-                type: node.data?.type || NODE_TYPES.CLASS,
+                type: normalizeNodeType(node.data?.type),
                 radius: radius,
                 originalNode: node,
                 isNew: isNew
@@ -465,14 +490,17 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                 .on("mouseenter", function (this: SVGPathElement, event: MouseEvent) {
                     event.stopPropagation();
                     select(this)
-                        .attr("stroke", LIGHT_THEME.edgeHighlight)
+                        .attr("stroke", T.edgeHighlight)
                         .attr("stroke-width", 2.5)
-                        .attr("marker-end", "url(#arrowhead-hl)");
+                        .attr("marker-end", `url(#${uid}-arrowhead-hl)`);
 
                     const pathElement = this as SVGPathElement;
                     const pathLength = pathElement.getTotalLength();
                     if (pathLength === 0) return;
                     const midPoint = pathElement.getPointAtLength(pathLength / 2);
+                    const _zt = zoomTransformRef.current;
+                    const midScreenX = _zt.applyX(midPoint.x);
+                    const midScreenY = _zt.applyY(midPoint.y);
 
                     const labelGroupId = `edge-label-${d.id}`;
                     let labelGroup = svg.select<SVGGElement>(`g#${labelGroupId}`);
@@ -484,8 +512,8 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                             .raise();
                         labelGroup.append("rect")
                             .attr("class", "edge-label-bg")
-                            .attr("fill", "#fff")
-                            .attr("stroke", "#bbb")
+                            .attr("fill", theme === 'dark' ? '#1A2233' : '#fff')
+                            .attr("stroke", theme === 'dark' ? '#2A3550' : '#bbb')
                             .attr("stroke-width", 0.5)
                             .attr("rx", 3)
                             .attr("ry", 3)
@@ -494,7 +522,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                             .attr("class", "edge-label-text")
                             .attr("text-anchor", "middle")
                             .attr("dominant-baseline", "central")
-                            .style("fill", "#555")
+                            .style("fill", theme === 'dark' ? '#E6EAF2' : '#555')
                             .style("font-size", "10px")
                             .style("font-weight", "500")
                             .style("pointer-events", "none");
@@ -508,12 +536,12 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                         const textBBox = textNode.getBBox();
                         const padding = 4;
                         labelBg
-                            .attr("x", midPoint.x - textBBox.width / 2 - padding)
-                            .attr("y", midPoint.y - textBBox.height / 2 - padding)
+                            .attr("x", midScreenX - textBBox.width / 2 - padding)
+                            .attr("y", midScreenY - textBBox.height / 2 - padding)
                             .attr("width", textBBox.width + padding * 2)
                             .attr("height", textBBox.height + padding * 2)
                             .style("display", "block");
-                        labelText.attr("x", midPoint.x).attr("y", midPoint.y);
+                        labelText.attr("x", midScreenX).attr("y", midScreenY);
                     }
                     labelGroup.style("display", "block").raise();
                 })
@@ -555,14 +583,17 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                 event.stopPropagation();
                 const visibleLink = g.select<SVGPathElement>(`path.link[data-edge-id="${d.id}"]`);
                 visibleLink
-                    .attr("stroke", LIGHT_THEME.edgeHighlight)
+                    .attr("stroke", T.edgeHighlight)
                     .attr("stroke-width", 2.5)
-                    .attr("marker-end", "url(#arrowhead-hl)");
+                    .attr("marker-end", `url(#${uid}-arrowhead-hl)`);
 
                 const pathElement = this as SVGPathElement;
                 const pathLength = pathElement.getTotalLength();
                 if (pathLength === 0) return;
                 const midPoint = pathElement.getPointAtLength(pathLength / 2);
+                const _zt = zoomTransformRef.current;
+                const midScreenX = _zt.applyX(midPoint.x);
+                const midScreenY = _zt.applyY(midPoint.y);
 
                 const edgeLabel = d.data?.label || d.data?.relation || '';
                 const labelGroupId = `edge-label-${d.id}`;
@@ -575,8 +606,8 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                         .raise();
                     labelGroup.append("rect")
                         .attr("class", "edge-label-bg")
-                        .attr("fill", "#fff")
-                        .attr("stroke", "#bbb")
+                        .attr("fill", theme === 'dark' ? '#1A2233' : '#fff')
+                        .attr("stroke", theme === 'dark' ? '#2A3550' : '#bbb')
                         .attr("stroke-width", 0.5)
                         .attr("rx", 3)
                         .attr("ry", 3)
@@ -585,7 +616,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                         .attr("class", "edge-label-text")
                         .attr("text-anchor", "middle")
                         .attr("dominant-baseline", "central")
-                        .style("fill", "#555")
+                        .style("fill", theme === 'dark' ? '#E6EAF2' : '#555')
                         .style("font-size", "10px")
                         .style("font-weight", "500")
                         .style("pointer-events", "none");
@@ -599,12 +630,12 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                     const textBBox = textNode.getBBox();
                     const padding = 4;
                     labelBg
-                        .attr("x", midPoint.x - textBBox.width / 2 - padding)
-                        .attr("y", midPoint.y - textBBox.height / 2 - padding)
+                        .attr("x", midScreenX - textBBox.width / 2 - padding)
+                        .attr("y", midScreenY - textBBox.height / 2 - padding)
                         .attr("width", textBBox.width + padding * 2)
                         .attr("height", textBBox.height + padding * 2)
                         .style("display", "block");
-                    labelText.attr("x", midPoint.x).attr("y", midPoint.y);
+                    labelText.attr("x", midScreenX).attr("y", midScreenY);
                 }
                 labelGroup.style("display", "block").raise();
             })
@@ -669,7 +700,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                             .attr("filter", function (this: SVGElement) {
                                 const parentG = this.parentElement;
                                 const nodeData = select(parentG).datum() as any;
-                                return nodeData?.id === d.id ? "url(#glow-selected)" : null;
+                                return nodeData?.id === d.id ? `url(#${uid}-glow-selected)` : null;
                             });
 
                         if (onNodeClickRef.current) onNodeClickRef.current(d.originalNode);
@@ -704,7 +735,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             const nodeG = select(this);
             const shape = nodeG.select(".node-shape");
             if (!shape.empty()) {
-                shape.attr("filter", d.id === highlightNodeId ? "url(#glow-selected)" : null);
+                shape.attr("filter", d.id === highlightNodeId ? `url(#${uid}-glow-selected)` : null);
             }
         });
 
@@ -712,20 +743,50 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
 
         const allNodes = nodeEnter.merge(nodeSelection as any);
 
+        // ── 悬停/固定邻域高亮：hoverId 非空=临时悬停；否则落到固定 pin（"在画布中聚焦"）──
+        const applyHoverHighlight = (hoverId: string | null) => {
+            const effective = hoverId ?? neighborhoodPinRef.current;
+            if (effective) {
+                const neighborIds = new Set<string>([effective]);
+                const edgeConnected = new Set<string>();
+                d3Links.forEach((l: any) => {
+                    const s = typeof l.source === 'object' ? l.source.id : l.source;
+                    const t = typeof l.target === 'object' ? l.target.id : l.target;
+                    if (s === effective || t === effective) {
+                        neighborIds.add(s);
+                        neighborIds.add(t);
+                        edgeConnected.add(l.id);
+                    }
+                });
+                g.selectAll<SVGGElement, any>("g.node-group")
+                    .style("opacity", (d: any) => (neighborIds.has(d.id) ? 1 : 0.15));
+                g.selectAll<SVGPathElement, any>("path.link")
+                    .attr("stroke-opacity", (d: any) => (edgeConnected.has(d.id) ? 0.95 : 0.06))
+                    .attr("stroke-width", (d: any) => (edgeConnected.has(d.id) ? 2.2 : 1.5));
+            } else {
+                g.selectAll<SVGGElement, any>("g.node-group").style("opacity", 1);
+                g.selectAll<SVGPathElement, any>("path.link")
+                    .attr("stroke-opacity", 0.7)
+                    .attr("stroke-width", 1.5);
+            }
+        };
+        applyHoverRef.current = applyHoverHighlight;
+
         allNodes
             .on("contextmenu", (event: MouseEvent, d: any) => {
                 event.preventDefault();
                 event.stopPropagation();
-                if ((d.data?.type === NODE_TYPES.CLASS || d.data?.type === NODE_TYPES.ACTION_TYPE) && onNodeRightClickRef.current) {
+                if (normalizeNodeType(d.data?.type) === NODE_TYPES.CLASS && onNodeRightClickRef.current) {
                     onNodeRightClickRef.current(d.originalNode);
-                } else if (d.data?.type !== NODE_TYPES.CLASS && d.data?.type !== NODE_TYPES.ACTION_TYPE) {
+                } else if (normalizeNodeType(d.data?.type) !== NODE_TYPES.CLASS) {
                     message.info('只有类节点支持右键展开实例');
                 }
             })
             .on("mouseenter", function (this: SVGGElement, event: MouseEvent, d: any) {
                 if (d.id !== selectedNodeIdRef.current) {
-                    select(this).select(".node-shape").attr("filter", "url(#glow-hover)");
+                    select(this).select(".node-shape").attr("filter", `url(#${uid}-glow-hover)`);
                 }
+                applyHoverHighlight(d.id);
                 const tooltip = d.originalNode?.data?.properties || {};
                 const propKeys = Object.keys(tooltip).filter(k => !k.startsWith('_'));
                 const sourceDoc = d.originalNode?.data?.source_document || d.originalNode?.data?._source_file;
@@ -745,8 +806,8 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                             .raise();
                         labelGroup.append("rect")
                             .attr("class", "tooltip-bg")
-                            .attr("fill", "#fff")
-                            .attr("stroke", "#ddd")
+                            .attr("fill", theme === 'dark' ? '#1A2233' : '#fff')
+                            .attr("stroke", theme === 'dark' ? '#2A3550' : '#ddd')
                             .attr("stroke-width", 0.5)
                             .attr("rx", 4)
                             .attr("ry", 4)
@@ -764,7 +825,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                             .attr("text-anchor", "middle")
                             .attr("dominant-baseline", "central")
                             .attr("dy", startY + i * lineHeight)
-                            .style("fill", i === 0 && sourceDoc ? "#1890ff" : "#666")
+                            .style("fill", i === 0 && sourceDoc ? (theme === 'dark' ? '#5AC8FA' : '#1890ff') : (theme === 'dark' ? '#8B94AB' : '#666'))
                             .style("font-size", "9px")
                             .style("pointer-events", "none")
                             .text(line);
@@ -773,7 +834,10 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                     const offsetY = -(d.radius) - 10 - (lines.length * lineHeight) / 2;
 
                     setTimeout(() => {
+                        // 背景矩形不参与测量：上一轮已撑大的 rect 会被 getBBox 计入，导致背景越悬停越大
+                        tooltipBg.style("display", "none");
                         const textBBox = (labelGroup.node() as SVGGElement)?.getBBox();
+                        tooltipBg.style("display", null);
                         if (textBBox) {
                             const padding = 6;
                             tooltipBg
@@ -782,8 +846,9 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                                 .attr("width", textBBox.width + padding * 2)
                                 .attr("height", textBBox.height + padding * 2);
                         }
+                        const _nt = zoomTransformRef.current;
                         labelGroup
-                            .attr("transform", `translate(${d.x || 0}, ${(d.y || 0) + offsetY})`)
+                            .attr("transform", `translate(${_nt.applyX(d.x || 0)}, ${_nt.applyY((d.y || 0) + offsetY)})`)
                             .style("display", "block").raise();
                     }, 0);
                 }
@@ -792,6 +857,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                 if (d.id !== selectedNodeIdRef.current) {
                     select(this).select(".node-shape").attr("filter", null);
                 }
+                applyHoverHighlight(null);
                 svg.selectAll(`g#node-tooltip-${d.id}`).style("display", "none");
             });
 
@@ -888,7 +954,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             svg.selectAll("g.edge-label-group").style("display", "none");
         });
 
-    }, [nodes, edges, width, height, getNodeRadius, isInstanceEdge, isActionEdge, highlightNodeId, getAdaptiveForceParams, getEdgeColor, getEdgeDash, getEdgeMarker, getNodeColors, setupNodeContent]);
+    }, [nodes, edges, width, height, getNodeRadius, isInstanceEdge, highlightNodeId, getAdaptiveForceParams, getEdgeColor, getEdgeDash, getEdgeMarker, getNodeColors, setupNodeContent, theme]);
 
     useEffect(() => {
         if (!svgRef.current) return;
@@ -897,13 +963,37 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             .scaleExtent([0.1, 4])
             .on("zoom", (event: any) => {
                 const transform = event.transform;
+                zoomTransformRef.current = transform;
                 setZoomLevel(transform.k);
                 svg.select("g.main-group").attr("transform", transform.toString());
+                // 平移缩放时隐藏悬停提示/标签，避免停留陈旧位置
+                svg.selectAll("g.edge-label-group").style("display", "none");
             });
         svg.call(zoomBehavior);
         zoomBehaviorRef.current = zoomBehavior;
         return () => { svg.on(".zoom", null); };
     }, []);
+
+    // 聚焦请求：把目标节点平移缩放到画布中心（seq 变化触发）
+    const focusSeqRef = useRef(0);
+    useEffect(() => {
+        if (!focusRequest?.nodeId) return;
+        if (focusRequest.seq === focusSeqRef.current) return;
+        focusSeqRef.current = focusRequest.seq;
+        const nd = d3NodesRef.current.get(focusRequest.nodeId);
+        const zoomBehavior = zoomBehaviorRef.current;
+        if (!nd || nd.x == null || !zoomBehavior) return;  // 布局未就绪时只高亮不缩放
+        const k = 1.4;
+        const t = zoomIdentity.translate(width / 2 - k * nd.x, height / 2 - k * nd.y).scale(k);
+        select(svgRef.current)
+            .transition().duration(500)
+            .call(zoomBehavior.transform, t);
+    }, [focusRequest?.seq, focusRequest?.nodeId, width, height]);
+
+    // 固定邻域变化（设置/清除）时重刷高亮：hoverId=null → 落到 pin 或还原
+    useEffect(() => {
+        applyHoverRef.current?.(null);
+    }, [neighborhoodPinId]);
 
     const handleSliderChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
         const newValue = parseInt(e.target.value, 10);
@@ -961,15 +1051,18 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                 width={width}
                 height={height}
                 style={{
-                    background: LIGHT_THEME.background,
+                    background: T.background,
                     cursor: isDragging ? 'grabbing' : 'grab',
                     display: 'block'
                 }}
             />
-            <div className="fixed top-[80px] right-4 bg-white bg-opacity-95 rounded-lg shadow-lg p-3 z-[1000] w-64">
+            <div
+                className="absolute top-16 right-4 rounded-lg shadow-lg p-3 z-[1000] w-64"
+                style={theme === 'dark' ? { background: T.panel, border: `1px solid ${T.panelBorder}` } : { background: 'rgba(255,255,255,0.95)' }}
+            >
                 <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-medium text-gray-600">节点间距</span>
-                    <span className="text-xs font-medium text-gray-500">{getSliderLabel()}</span>
+                    <span className="text-xs font-medium" style={{ color: T.text }}>节点间距</span>
+                    <span className="text-xs font-medium" style={{ color: T.panelText }}>{getSliderLabel()}</span>
                 </div>
                 <input
                     type="range"
@@ -982,7 +1075,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                         background: `linear-gradient(to right, #bae6fd 0%, #0ea5e9 50%, #0369a1 100%)`
                     }}
                 />
-                <div className="flex justify-between mt-1 text-xs text-gray-400">
+                <div className="flex justify-between mt-1 text-xs" style={{ color: theme === 'dark' ? '#56679B' : '#9ca3af' }}>
                     <span>紧凑</span>
                     <span>标准</span>
                     <span>宽松</span>
@@ -990,35 +1083,37 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             </div>
 
             <div className="absolute bottom-4 right-4">
-                <div className="bg-white bg-opacity-90 text-gray-700 px-3 py-1.5 rounded shadow text-sm pointer-events-none z-10">
+                <div
+                    className="px-3 py-1.5 rounded shadow text-sm pointer-events-none z-10"
+                    style={theme === 'dark'
+                        ? { background: T.panel, border: `1px solid ${T.panelBorder}`, color: T.panelText }
+                        : { background: 'rgba(255,255,255,0.9)', color: '#4b5563' }}
+                >
                     {nodes.length} 个节点，{edges.length} 条边 {zoomLevel !== 1 && `(缩放：${Math.round(zoomLevel * 100)}%)`}
                 </div>
             </div>
 
-            <div className="absolute bottom-4 left-4 bg-white bg-opacity-90 rounded shadow px-3 py-2 z-10 text-xs text-gray-500">
+            <div
+                className="absolute bottom-4 left-4 rounded shadow px-3 py-2 z-10 text-xs"
+                style={theme === 'dark'
+                    ? { background: T.panel, border: `1px solid ${T.panelBorder}`, color: T.panelText }
+                    : { background: 'rgba(255,255,255,0.9)', color: '#6b7280' }}
+            >
                 <div className="flex items-center gap-3 flex-wrap">
                     <span className="flex items-center gap-1">
-                        <span style={{ display: 'inline-block', width: 12, height: 12, backgroundColor: '#4a90d9', borderRadius: '50%', border: '2px solid #2d6cb4' }}></span>
+                        <span style={{ display: 'inline-block', width: 12, height: 12, backgroundColor: nodeTheme[NODE_TYPES.CLASS].fill, borderRadius: '50%', border: `2px solid ${nodeTheme[NODE_TYPES.CLASS].stroke}` }}></span>
                         类
                     </span>
                     <span className="flex items-center gap-1">
-                        <span style={{ display: 'inline-block', width: 10, height: 10, backgroundColor: '#f79767', borderRadius: '50%', border: '1.5px solid #d4703f' }}></span>
+                        <span style={{ display: 'inline-block', width: 12, height: 12, backgroundColor: nodeTheme[NODE_TYPES.INDIVIDUAL].fill, borderRadius: '50%', border: `2px solid ${nodeTheme[NODE_TYPES.INDIVIDUAL].stroke}` }}></span>
                         实例
                     </span>
                     <span className="flex items-center gap-1">
-                        <span style={{ display: 'inline-block', width: 10, height: 10, backgroundColor: '#555555', borderRadius: '50%', border: '1.5px solid #3a3a3a' }}></span>
-                        动作类型
-                    </span>
-                    <span className="flex items-center gap-1">
-                        <span style={{ display: 'inline-block', width: 9, height: 9, backgroundColor: '#8a8a8a', borderRadius: '50%', border: '1.5px solid #6a6a6a' }}></span>
-                        动作实例
-                    </span>
-                    <span className="flex items-center gap-1">
-                        <span style={{ display: 'inline-block', width: 16, height: 0, borderTop: '1.5px dashed #e0c8b8' }}></span>
+                        <span style={{ display: 'inline-block', width: 16, height: 0, borderTop: `1.5px dashed ${T.edgeInstance}` }}></span>
                         类型
                     </span>
                     <span className="flex items-center gap-1">
-                        <span style={{ display: 'inline-block', width: 16, height: 0, borderTop: '1.5px solid #c0c4cc' }}></span>
+                        <span style={{ display: 'inline-block', width: 16, height: 0, borderTop: `1.5px solid ${T.edge}` }}></span>
                         关系
                     </span>
                 </div>

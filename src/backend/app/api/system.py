@@ -36,14 +36,24 @@ def _check_mysql() -> dict:
         conn.close()
 
 
+def _env_cfg() -> dict:
+    from app.services.env_config_service import get_effective_raw
+    from app.infrastructure.database import SessionLocal
+    db = SessionLocal()
+    try:
+        return get_effective_raw(db)
+    finally:
+        db.close()
+
+
 def _check_neo4j() -> dict:
     import time
     from neo4j import GraphDatabase
-    from app.core.config import settings
 
+    cfg = _env_cfg()
     t0 = time.perf_counter()
     driver = GraphDatabase.driver(
-        settings.NEO4J_URI, auth=(settings.NEO4J_USERNAME, settings.NEO4J_PASSWORD),
+        cfg["neo4j_uri"], auth=(cfg["neo4j_username"], cfg["neo4j_password"]),
         connection_timeout=2,
     )
     try:
@@ -58,10 +68,11 @@ def _check_milvus() -> dict:
     from pymilvus import connections, utility
     from app.core.config import settings
 
+    cfg = _env_cfg()
     t0 = time.perf_counter()
     alias = "healthcheck"
-    connections.connect(alias=alias, host=settings.MILVUS_HOST,
-                        port=settings.MILVUS_PORT, timeout=2)
+    connections.connect(alias=alias, host=cfg["milvus_host"],
+                        port=cfg["milvus_port"], timeout=2)
     try:
         utility.get_server_version(using=alias)
         return {"status": "ok", "latency_ms": int((time.perf_counter() - t0) * 1000)}
@@ -74,8 +85,9 @@ def _check_redis() -> dict:
     import redis
     from app.core.config import settings
 
+    cfg = _env_cfg()
     t0 = time.perf_counter()
-    client = redis.Redis.from_url(settings.REDIS_URL, socket_connect_timeout=2)
+    client = redis.Redis.from_url(cfg["redis_url"], socket_connect_timeout=2)
     client.ping()
     return {"status": "ok", "latency_ms": int((time.perf_counter() - t0) * 1000)}
 
@@ -85,9 +97,10 @@ def _check_minio() -> dict:
     from minio import Minio
     from app.core.config import settings
 
+    cfg = _env_cfg()
     t0 = time.perf_counter()
-    client = Minio(settings.MINIO_ENDPOINT, access_key=settings.MINIO_ACCESS_KEY,
-                   secret_key=settings.MINIO_SECRET_KEY, secure=settings.MINIO_SECURE)
+    client = Minio(cfg["minio_endpoint"], access_key=cfg["minio_access_key"],
+                   secret_key=cfg["minio_secret_key"], secure=bool(cfg["minio_secure"]))
     list(client.list_buckets())
     return {"status": "ok", "latency_ms": int((time.perf_counter() - t0) * 1000)}
 
@@ -129,12 +142,19 @@ def middleware_view(_admin: User = Depends(require_role("admin"))):
     def mask(v: str) -> str:
         return (v[:4] + "***") if v and len(v) > 8 else "***"
 
+    from app.services.env_config_service import get_effective_raw
+    from app.infrastructure.database import SessionLocal
+    db = SessionLocal()
+    try:
+        cfg = get_effective_raw(db)
+    finally:
+        db.close()
     return {
         "mysql": {"host": settings.MYSQL_HOST, "port": settings.MYSQL_PORT, "database": settings.MYSQL_DATABASE,
-                  "password": mask(settings.MYSQL_PASSWORD)},
-        "neo4j": {"uri": settings.NEO4J_URI, "password": mask(settings.NEO4J_PASSWORD)},
-        "redis": {"url": settings.REDIS_URL.split("@")[-1] if "@" in settings.REDIS_URL else settings.REDIS_URL},
-        "milvus": {"host": settings.MILVUS_HOST, "port": settings.MILVUS_PORT},
-        "minio": {"endpoint": settings.MINIO_ENDPOINT, "secret": mask(settings.MINIO_SECRET_KEY)},
+                  "password": mask(settings.MYSQL_PASSWORD), "note": "平台自身元数据库，仅 .env 可改"},
+        "neo4j": {"uri": cfg["neo4j_uri"], "password": mask(cfg["neo4j_password"])},
+        "redis": {"url": cfg["redis_url"].split("@")[-1] if "@" in cfg["redis_url"] else cfg["redis_url"]},
+        "milvus": {"host": cfg["milvus_host"], "port": cfg["milvus_port"]},
+        "minio": {"endpoint": cfg["minio_endpoint"], "secret": mask(cfg["minio_secret_key"])},
         "oxigraph": {"path": settings.OXIGRAPH_PATH, "note": "M4 接入（嵌入式）"},
     }

@@ -12,11 +12,26 @@ logger = logging.getLogger(__name__)
 
 class Neo4jClient:
     def __init__(self):
-        self.uri = settings.NEO4J_URI
-        self.username = settings.NEO4J_USERNAME
-        self.password = settings.NEO4J_PASSWORD
         self.driver = None
-        
+        self._connect()
+
+    def _resolve_config(self) -> tuple[str, str, str]:
+        """连接参数：platform_config（DB 覆盖，env_config_service）→ .env 默认。"""
+        try:
+            from app.services.env_config_service import get_effective_raw
+            from app.infrastructure.database import SessionLocal
+            db = SessionLocal()
+            try:
+                cfg = get_effective_raw(db)
+                return cfg["neo4j_uri"], cfg["neo4j_username"], cfg["neo4j_password"]
+            finally:
+                db.close()
+        except Exception as e:
+            logger.debug(f"[Neo4j] 读 DB 配置失败，回退 .env：{e}")
+            return settings.NEO4J_URI, settings.NEO4J_USERNAME, settings.NEO4J_PASSWORD
+
+    def _connect(self):
+        self.uri, self.username, self.password = self._resolve_config()
         if self.uri and self.password:
             try:
                 self.driver = GraphDatabase.driver(self.uri, auth=(self.username, self.password))
@@ -24,6 +39,15 @@ class Neo4jClient:
                 logger.info("Successfully connected to Neo4j")
             except Exception as e:
                 logger.error(f"Failed to connect to Neo4j: {e}")
+
+    def reconfigure(self) -> bool:
+        """环境配置保存后热重建连接（env_configs API 调用）。返回是否连上。"""
+        try:
+            self.close()
+        except Exception:
+            pass
+        self._connect()
+        return self.driver is not None
 
     def close(self):
         if self.driver:

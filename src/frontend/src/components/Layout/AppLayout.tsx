@@ -3,8 +3,10 @@ import { Layout, Menu, Avatar, Dropdown, Button, Modal, Input, Tag, Spin, Table 
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import {
     HomeOutlined,
+    AuditOutlined,
     UserOutlined,
-    AppstoreOutlined,
+    BookOutlined,
+
     DatabaseOutlined,
     LogoutOutlined,
     SettingOutlined,
@@ -12,29 +14,25 @@ import {
     InfoCircleOutlined,
     ApiOutlined,
     ClusterOutlined,
+    FileImageOutlined,
+    FileTextOutlined,
+    ToolOutlined,
     QuestionCircleOutlined,
-    MessageOutlined,
-    SendOutlined,
-    BookOutlined,
-    CheckCircleOutlined,
-    ClearOutlined,
-    LoadingOutlined,
     LockOutlined,
     TeamOutlined,
     EyeOutlined,
+    RobotOutlined,
     SafetyOutlined,
 } from '@ant-design/icons';
 import { Form, message, Switch } from 'antd';
 import { authAPI } from '../../api/auth';
 import apiClient from '../../api/client';
-import { getDomains, KnowledgeDomain } from '../../api/domains';
 import { CONNECTIVITY_FIELDS, describeConnectivityError } from '../../utils/connectivity';
 import { projectsApi } from '../../api/projects';
 import { useAuthStore } from '../../shared/auth/authStore';
-import type { ProjectData } from '../../types/ontology';
+import { confirmLeaveUnsaved } from '../../utils/unsavedGuard';
 
 const { Sider, Content } = Layout;
-const { TextArea } = Input;
 
 const UserManagement: React.FC = () => {
     const [users, setUsers] = useState<any[]>([]);
@@ -143,6 +141,23 @@ const UserManagement: React.FC = () => {
 const AppLayout: React.FC = () => {
     const navigate = useNavigate();
     const location = useLocation();
+
+    // 子菜单收纳（R8）：进入子页自动展开其所在分组；用户可手动收起/展开（onOpenChange 受控）
+    const parentOfPath: Record<string, string> = {
+        '/qa': 'tools', '/tools/reports': 'tools', '/tools/ppt': 'tools', '/tools/mcp': 'tools',
+        '/domain-management': 'system-config',
+        '/admin/users': 'system-config', '/admin/modules': 'system-config',
+        '/admin/model-configs': 'system-config', '/admin/env-configs': 'system-config',
+    };
+    const [openMenus, setOpenMenus] = useState<string[]>(() => {
+        const parent = parentOfPath[location.pathname];
+        return parent ? [parent] : [];
+    });
+    useEffect(() => {
+        const parent = parentOfPath[location.pathname];
+        if (parent) setOpenMenus(prev => (prev.includes(parent) ? prev : [...prev, parent]));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [location.pathname]);
     const [collapsed, setCollapsed] = useState(false);
     const [isMobile, setIsMobile] = useState(false);
 
@@ -190,129 +205,6 @@ const AppLayout: React.FC = () => {
 
     // 测试连通性状态
 
-    // GraphRAG 问答相关状态
-    const [isQAModalOpen, setIsQAModalOpen] = useState(false);
-    const [qaQuestion, setQaQuestion] = useState('');
-    const [qaAnswer, setQaAnswer] = useState('');
-    const [qaReferences, setQaReferences] = useState<any[]>([]);
-    const [isQALoading, setIsQALoading] = useState(false);
-    const [selectedQADomains, setSelectedQADomains] = useState<number[]>([]);
-    const [availableDomains, setAvailableDomains] = useState<KnowledgeDomain[]>([]);
-    const [isDomainsLoading, setIsDomainsLoading] = useState(false);
-    const [qaProjectId, setQaProjectId] = useState<number | null>(null);
-    const [qaProjects, setQaProjects] = useState<ProjectData[]>([]);
-    const [isQaProjectsLoading, setIsQaProjectsLoading] = useState(false);
-    const [showProjectSelector, setShowProjectSelector] = useState(false);
-
-    const loadAvailableDomains = async () => {
-        setIsDomainsLoading(true);
-        try {
-            const domains = await getDomains();
-            setAvailableDomains(domains);
-        } catch (error: any) {
-            message.error('加载知识域列表失败');
-        } finally {
-            setIsDomainsLoading(false);
-        }
-    };
-
-    // 加载用户项目列表
-    const loadQaProjects = async () => {
-        setIsQaProjectsLoading(true);
-        try {
-            const projects = await projectsApi.getMyProjects();
-            setQaProjects(projects);
-        } catch (error: any) {
-            message.error('加载项目列表失败');
-        } finally {
-            setIsQaProjectsLoading(false);
-        }
-    };
-
-    // 打开问答 Modal
-    const handleOpenQAModal = () => {
-        // 获取当前项目 ID（从 URL 路径）
-        const pathParts = location.pathname.split('/');
-        const lastPart = pathParts[pathParts.length - 1];
-        const projectIdFromUrl = lastPart && !isNaN(Number(lastPart)) ? Number(lastPart) : null;
-        
-        if (projectIdFromUrl) {
-            // 如果当前在项目页面，直接使用该项目
-            setQaProjectId(projectIdFromUrl);
-            setShowProjectSelector(false);
-        } else {
-            // 否则显示项目选择器
-            loadQaProjects();
-            setShowProjectSelector(true);
-        }
-        
-        setIsQAModalOpen(true);
-        loadAvailableDomains();
-    };
-
-    // 选择项目
-    const handleSelectProject = (projectId: number) => {
-        setQaProjectId(projectId);
-        setShowProjectSelector(false);
-    };
-
-    // 发送问题
-    const handleSendQuestion = async () => {
-        if (!qaQuestion.trim()) {
-            message.warning('请输入问题');
-            return;
-        }
-
-        if (!qaProjectId) {
-            message.warning('请先选择项目');
-            return;
-        }
-
-        setIsQALoading(true);
-        try {
-            // 构建选中的知识域字符串（逗号分隔）
-            const selectedDomainsStr = selectedQADomains.length > 0
-                ? selectedQADomains.map(id => {
-                    const domain = availableDomains.find(d => d.id === id);
-                    return domain?.name || '';
-                }).filter(Boolean).join(',')
-                : undefined;
-
-            const response = await projectsApi.qaQuery(qaProjectId, qaQuestion, {
-                selected_domains: selectedDomainsStr,
-                top_k: 5,
-            });
-
-            setQaAnswer(response.answer || '未生成回答');
-            setQaReferences(response.references || []);
-        } catch (error: any) {
-            const errorDetail = error.response?.data?.detail || error.message || '未知错误';
-            message.error(`问答失败：${errorDetail}`);
-            setQaAnswer('问答失败，请稍后重试');
-        } finally {
-            setIsQALoading(false);
-        }
-    };
-
-    // 知识域多选切换
-    const handleQADomainToggle = (domainId: number) => {
-        setSelectedQADomains(prev => {
-            if (prev.includes(domainId)) {
-                return prev.filter(id => id !== domainId);
-            } else {
-                return [...prev, domainId];
-            }
-        });
-    };
-
-    // 清空问答状态
-    const handleClearQA = () => {
-        setQaQuestion('');
-        setQaAnswer('');
-        setQaReferences([]);
-        setSelectedQADomains([]);
-    };
-
     const userMenuItems = [
         {
             key: 'change-password',
@@ -338,6 +230,7 @@ const AppLayout: React.FC = () => {
     ];
 
     // M1：菜单按授权矩阵过滤（模块码见 docs/design/README §4.1）
+    // M3-7：构建器不再有独立菜单入口（从「我的项目」进入四 Tab）；新增审核工作台
     const menuItems = [
         {
             key: '/',
@@ -346,16 +239,16 @@ const AppLayout: React.FC = () => {
             module: 'dashboard',
         },
         {
-            key: '/ontology-builder',
-            icon: <AppstoreOutlined />,
-            label: '本体构建',
-            module: 'projects',
-        },
-        {
             key: '/my-projects',
             icon: <UserOutlined />,
             label: '我的项目',
             module: 'projects',
+        },
+        {
+            key: '/reviews',
+            icon: <AuditOutlined />,
+            label: '审核工作台',
+            module: 'review',
         },
         {
             key: '/asset-center',
@@ -365,34 +258,48 @@ const AppLayout: React.FC = () => {
         },
     ].filter((item) => hasModule(item.module));
 
-    // 管理员专属菜单项（03 §3–4：用户管理/模块授权为 /admin/* 页面）
+    // R8 工具分组（可折叠子菜单）：本体问答（qa）/ 报告生成（report，独立模块码）/ MCP 服务（mcp）
+    const toolChildren = [
+        ...(hasModule('qa') ? [
+            { key: '/qa', icon: <BookOutlined />, label: '本体问答' },
+        ] : []),
+        ...(hasModule('report') ? [
+            { key: '/tools/reports', icon: <FileTextOutlined />, label: '报告生成' },
+        ] : []),
+        ...(hasModule('ppt') ? [
+            { key: '/tools/ppt', icon: <FileImageOutlined />, label: 'PPT生成' },
+        ] : []),
+        ...(hasModule('mcp') ? [
+            { key: '/tools/mcp', icon: <ApiOutlined />, label: 'MCP 服务' },
+        ] : []),
+    ];
+    const toolsMenu = toolChildren.length > 0 ? [{
+        key: 'tools',
+        icon: <ToolOutlined />,
+        label: '工具',
+        children: toolChildren,
+    }] : [];
+
+    // 管理员专属菜单（03 §3–4）：收纳进「系统配置」子菜单（抽屉式，进入子页自动展开所在组）
     const adminMenuItems = [];
 
     if (user.role === 'admin') {
         adminMenuItems.push({
-            key: '/domain-management',
-            icon: <ClusterOutlined />,
-            label: '知识域管理',
-        });
-        adminMenuItems.push({
-            key: '/admin/users',
-            icon: <TeamOutlined />,
-            label: '用户管理',
-        });
-        adminMenuItems.push({
-            key: '/admin/modules',
-            icon: <SafetyOutlined />,
-            label: '模块授权',
-        });
-        adminMenuItems.push({
-            key: 'system-config-trigger',
+            key: 'system-config',
             icon: <SettingOutlined />,
             label: '系统配置',
+            children: [
+                { key: '/domain-management', icon: <ClusterOutlined />, label: '知识域管理' },
+                { key: '/admin/users', icon: <TeamOutlined />, label: '用户管理' },
+                { key: '/admin/modules', icon: <SafetyOutlined />, label: '模块授权' },
+                { key: '/admin/model-configs', icon: <RobotOutlined />, label: '模型配置' },
+                { key: '/admin/env-configs', icon: <CloudServerOutlined />, label: '环境配置' },
+            ],
         });
     }
     
     // 合并菜单项
-    const allMenuItems = [...menuItems, ...adminMenuItems];
+    const allMenuItems = [...menuItems, ...toolsMenu, ...adminMenuItems];
 
     return (
         <Layout className="min-h-screen">
@@ -430,23 +337,16 @@ const AppLayout: React.FC = () => {
                         theme="dark"
                         mode="inline"
                         selectedKeys={[location.pathname]}
+                        openKeys={openMenus}
+                        onOpenChange={keys => setOpenMenus(keys as string[])}
                         items={allMenuItems}
                         onClick={({ key }) => {
                             if (key === 'user-management') {
                                 setUserManagementVisible(true);
                                 return;
                             }
-                            if (key === 'system-config-trigger') {
-                                navigate('/admin/model-configs');
-                            } else if (key === 'question') {
-                                // 打开外部问答系统
-                                window.open('http://28.4.185.69:7861', '_blank');
-                            } else if (key === 'question-test') {
-                                // 打开 GraphRAG 问答测试 Modal
-                                handleOpenQAModal();
-                            } else {
-                                navigate(key);
-                            }
+                            if (key === location.pathname) return;
+                            confirmLeaveUnsaved(() => navigate(key));
                         }}
                         className="border-r-0"
                     />
@@ -536,233 +436,7 @@ const AppLayout: React.FC = () => {
             >
                 <UserManagement />
             </Modal>
-
-
-            {/* GraphRAG 问答 Modal */}
-            <Modal
-                title={
-                    <div className="flex items-center gap-2">
-                        <MessageOutlined className="text-green-500" />
-                        <span>GraphRAG 问答测试</span>
-                    </div>
-                }
-                open={isQAModalOpen}
-                onCancel={() => {
-                    setIsQAModalOpen(false);
-                    handleClearQA();
-                    setShowProjectSelector(false);
-                }}
-                footer={null}
-                width={700}
-            >
-                <div className="py-2">
-                    {/* 项目选择区域 */}
-                    {showProjectSelector ? (
-                        <div className="mb-4">
-                            <div className="flex items-center gap-2 mb-2">
-                                <DatabaseOutlined className="text-blue-500" />
-                                <span className="font-medium text-gray-700">选择项目</span>
-                            </div>
-                            <div className="text-xs text-gray-500 mb-2">
-                                请选择要进行问答的项目
-                            </div>
-                            {isQaProjectsLoading ? (
-                                <div className="flex justify-center py-8">
-                                    <Spin size="large" />
-                                </div>
-                            ) : qaProjects.length === 0 ? (
-                                <div className="text-center py-8 text-gray-400">
-                                    <DatabaseOutlined className="text-4xl mb-2" />
-                                    <p>暂无可用项目</p>
-                                    <p className="text-sm mt-2">请先在"我的项目"中创建项目</p>
-                                </div>
-                            ) : (
-                                <div className="max-h-64 overflow-auto space-y-2">
-                                    {qaProjects.map((project) => (
-                                        <div
-                                            key={project.id}
-                                            className="p-3 border border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 cursor-pointer transition-all"
-                                            onClick={() => handleSelectProject(project.id)}
-                                        >
-                                            <div className="flex items-center justify-between">
-                                                <div>
-                                                    <div className="font-medium text-gray-800">{project.name}</div>
-                                                    <div className="text-xs text-gray-500 mt-1">
-                                                        {project.description || '暂无描述'}
-                                                    </div>
-                                                </div>
-                                                <div className="flex items-center gap-2">
-                                                    <Tag color={project.is_published ? 'green' : 'orange'}>
-                                                        {project.is_published ? '已发布' : '草稿'}
-                                                    </Tag>
-                                                    <Tag color="blue">{project.domain?.name || '未分类'}</Tag>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-                    ) : (
-                        <>
-                    {/* 当前项目显示 */}
-                    <div className="mb-3 p-2 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                            <DatabaseOutlined className="text-blue-500" />
-                            <span className="text-sm text-gray-600">当前项目 ID: {qaProjectId}</span>
-                        </div>
-                        <Button
-                            size="small"
-                            onClick={() => {
-                                loadQaProjects();
-                                setShowProjectSelector(true);
-                            }}
-                        >
-                            更换项目
-                        </Button>
-                    </div>
-
-                    {/* 知识域多选区域 */}
-                    <div className="mb-4">
-                        <div className="flex items-center gap-2 mb-2">
-                            <BookOutlined className="text-indigo-500" />
-                            <span className="font-medium text-gray-700">选择知识域（多选）</span>
-                        </div>
-                        <div className="text-xs text-gray-500 mb-2">
-                            选择要检索的知识域范围，不选择则默认在所有知识域中检索
-                        </div>
-                        {isDomainsLoading ? (
-                            <div className="flex justify-center py-4">
-                                <Spin size="small" />
-                            </div>
-                        ) : availableDomains.length === 0 ? (
-                            <div className="text-center py-4 text-gray-400 text-sm">
-                                暂无可用知识域
-                            </div>
-                        ) : (
-                            <div className="flex flex-wrap gap-2 max-h-32 overflow-auto p-2 border border-gray-200 rounded-lg bg-gray-50">
-                                {availableDomains.map((domain) => (
-                                    <Tag
-                                        key={domain.id}
-                                        color={selectedQADomains.includes(domain.id) ? 'blue' : 'default'}
-                                        className={`cursor-pointer transition-all ${
-                                            selectedQADomains.includes(domain.id)
-                                                ? 'border-blue-500 text-blue-600'
-                                                : 'border-gray-300 hover:border-gray-400'
-                                        }`}
-                                        onClick={() => handleQADomainToggle(domain.id)}
-                                    >
-                                        {domain.name}
-                                        {selectedQADomains.includes(domain.id) && (
-                                            <CheckCircleOutlined className="ml-1 text-blue-500" />
-                                        )}
-                                    </Tag>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-
-                    {/* 问题输入区域 */}
-                    <div className="mb-4">
-                        <div className="flex items-center gap-2 mb-2">
-                            <SendOutlined className="text-blue-500" />
-                            <span className="font-medium text-gray-700">问题</span>
-                        </div>
-                        <TextArea
-                            value={qaQuestion}
-                            onChange={(e) => setQaQuestion(e.target.value)}
-                            placeholder="请输入您的问题，例如：什么是本体论？"
-                            rows={3}
-                            disabled={isQALoading}
-                            onPressEnter={(e) => {
-                                if (!e.shiftKey) {
-                                    e.preventDefault();
-                                    handleSendQuestion();
-                                }
-                            }}
-                        />
-                        <div className="flex justify-end mt-2">
-                            <Button
-                                type="primary"
-                                icon={isQALoading ? <LoadingOutlined spin /> : <SendOutlined />}
-                                onClick={handleSendQuestion}
-                                loading={isQALoading}
-                                disabled={!qaQuestion.trim()}
-                                className="bg-green-600 hover:bg-green-700"
-                            >
-                                {isQALoading ? '生成中...' : '发送问题'}
-                            </Button>
-                        </div>
-                    </div>
-
-                    {/* 答案显示区域 */}
-                    {qaAnswer && (
-                        <div className="mb-4">
-                            <div className="flex items-center gap-2 mb-2">
-                                <CheckCircleOutlined className="text-green-500" />
-                                <span className="font-medium text-gray-700">答案</span>
-                            </div>
-                            <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
-                                <div className="text-sm text-gray-800 whitespace-pre-wrap">{qaAnswer}</div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* 溯源引用区域 */}
-                    {qaReferences && qaReferences.length > 0 && (
-                        <div>
-                            <div className="flex items-center gap-2 mb-2">
-                                <BookOutlined className="text-purple-500" />
-                                <span className="font-medium text-gray-700">溯源引用 ({qaReferences.length})</span>
-                            </div>
-                            <div className="max-h-48 overflow-auto space-y-2">
-                                {qaReferences.map((ref, index) => (
-                                    <div
-                                        key={ref.id}
-                                        className="p-2 bg-gray-50 border border-gray-200 rounded-lg text-sm"
-                                    >
-                                        <div className="flex items-center gap-2 mb-1">
-                                            <Tag color="purple" className="font-medium">[{index + 1}]</Tag>
-                                            <span className="text-gray-600 font-medium">{ref.file}</span>
-                                        </div>
-                                        <div className="text-gray-500 pl-8 line-clamp-2">
-                                            {ref.quote}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* 空状态提示 */}
-                    {!qaAnswer && !isQALoading && !showProjectSelector && (
-                        <div className="text-center py-8 text-gray-400">
-                            <MessageOutlined className="text-4xl mb-2" />
-                            <p>请输入问题开始问答</p>
-                            <p className="text-sm mt-1">支持基于知识图谱的 RAG 检索和溯源</p>
-                        </div>
-                    )}
-                    </>
-                    )}
-                </div>
-
-                {/* 底部操作区 */}
-                <div className="flex justify-between items-center pt-4 border-t border-gray-200">
-                    <Button
-                        onClick={handleClearQA}
-                        icon={<ClearOutlined />}
-                        disabled={isQALoading || (!qaAnswer && qaReferences.length === 0)}
-                    >
-                        清空
-                    </Button>
-                    <Button onClick={() => {
-                        setIsQAModalOpen(false);
-                        handleClearQA();
-                    }}>
-                        关闭
-                    </Button>
-                </div>
-            </Modal>
+            {/* 本体问答已改为独立页面 /qa（R8）；QaDrawer 组件保留供其他入口复用 */}
 
             {/* 主内容区 */}
             <Layout>

@@ -218,6 +218,25 @@ def test_extract_schema_fielded_prompt_contains_known_classes():
     assert "- 理财产品" in prompts[0] and "- 客户" in prompts[0]
 
 
+def test_extract_schema_guidance_injected_into_prompt():
+    """引导模板（提示词注入）：guidance 出现在每次切片抽取的 user prompt，且随 prompt 进缓存键。"""
+    from app.adapters.extraction import extract_schema
+
+    prompts = []
+
+    def call(system, user, schema):
+        prompts.append(user)
+        return {"classes": [{"label": "基金"}]}
+
+    guidance = "场景：行业研报\n- 主体「机构与公司」（关注属性：主营业务；常见关系：研发）"
+    extract_schema(["切片一", "切片二"], base_uri="u", use_cache=False,
+                   llm_call=call, guidance=guidance)
+    assert len(prompts) == 2
+    for p in prompts:
+        assert "【抽取引导（用户注入，优先遵守；与文档内容冲突时以文档为准）】" in p
+        assert "主体「机构与公司」" in p
+
+
 def test_extract_schema_retry_with_error_feedback():
     from app.adapters.extraction import extract_schema
 
@@ -263,6 +282,99 @@ def test_extract_schema_redis_cache():
     assert r2.classes == r1.classes
 
 
+def test_extract_schema_stitches_cross_chunk_relations():
+    """跨切片关系缝合：切片各自只产出类，归并后缝合轮把跨片类对连上（带原文证据）。"""
+    from app.adapters.extraction import extract_schema
+
+    stitch_calls = []
+    stitch_progress = []
+
+    def call(system, user, schema):
+        if "跨切片关系缝合" in system:
+            stitch_calls.append(user)
+            return {"relations": [
+                {"label": "投资", "domain": "基金", "range": "债券",
+                 "evidence": "基金募集资金投资于债券"}]}
+        # 切片抽取：切片一产 基金，切片二产 债券（互不共现 → 无关系边）
+        if "切片一" in user:
+            return {"classes": [{"label": "基金", "definition": "募集资金的投资计划"}]}
+        return {"classes": [{"label": "债券", "definition": "固定收益证券"}]}
+
+    res = extract_schema(["切片一：基金相关", "切片二：债券相关"], base_uri="u",
+                         use_cache=False, llm_call=call,
+                         stitch_progress_cb=lambda si, segs: stitch_progress.append((si, segs)))
+    assert res.stitched_relations == 1
+    op = next(o for o in res.object_properties if o["label"] == "投资")
+    assert op["domain"] == "基金" and op["range"] == "债券"
+    # 缝合 prompt 带全类清单与文档摘录
+    assert "- 基金" in stitch_calls[0] and "- 债券" in stitch_calls[0]
+    assert "【文档内容摘录】" in stitch_calls[0]
+    # 缝合进度实时上报（否则 UI 在 90% 静默卡住）
+    assert stitch_progress == [(1, 1)]
+
+
+def test_extract_schema_stitch_ignores_unknown_classes_and_self_loops():
+    """缝合防线：domain/range 不在类清单或自环的关系一律丢弃，不造类。"""
+    from app.adapters.extraction import extract_schema
+
+    def call(system, user, schema):
+        if "跨切片关系缝合" in system:
+            return {"relations": [
+                {"label": "投资", "domain": "基金", "range": "不存在的类"},
+                {"label": "自环", "domain": "基金", "range": "基金"},
+                {"label": "持有", "domain": "基金", "range": "债券"}]}
+        if "切片一" in user:
+            return {"classes": [{"label": "基金"}]}
+        return {"classes": [{"label": "债券"}]}
+
+    res = extract_schema(["切片一", "切片二"], base_uri="u", use_cache=False, llm_call=call)
+    assert res.stitched_relations == 1
+    labels = {(o["domain"], o["range"]) for o in res.object_properties}
+    assert ("基金", "债券") in labels and ("基金", "不存在的类") not in labels
+    assert all(c["label"] in ("基金", "债券") for c in res.classes)  # 不造类
+
+
+def test_extract_schema_stitch_cached():
+    """缝合结果同样进 (model, prompt) 缓存：同输入第二次抽取不再调用 LLM。"""
+    from app.adapters.extraction import extract_schema
+
+    n_calls = {"n": 0}
+
+    def call(system, user, schema):
+        n_calls["n"] += 1
+        if "跨切片关系缝合" in system:
+            return {"relations": [{"label": "投资", "domain": "基金", "range": "债券"}]}
+        if "缓存探针甲" in user:
+            return {"classes": [{"label": "基金"}]}
+        return {"classes": [{"label": "债券"}]}
+
+    chunks = [{"index": 0, "text": "缝合缓存探针甲"}, {"index": 1, "text": "缝合缓存探针乙"}]
+    r1 = extract_schema(chunks, base_uri="u", model_override={"model_name": TAG},
+                        use_cache=True, llm_call=call)
+    assert r1.stitched_relations == 1
+    r2 = extract_schema(chunks, base_uri="u", model_override={"model_name": TAG},
+                        use_cache=True, llm_call=call)
+    assert r2.stitched_relations == 1
+    assert n_calls["n"] == 3  # 2 次切片抽取 + 1 次缝合，第二轮全部命中缓存
+
+
+def test_build_nodes_writes_provenance_fields():
+    """类节点携带来源文档/切片/定义原文 → graph_rows 据此落 ProvenanceRecord（详情页溯源证据）。"""
+    from app.tasks.extract_tasks import _build_nodes
+
+    nodes, _ = _build_nodes([
+        {"label": "基金", "definition": "募集资金的投资计划",
+         "_source_chunk_index": 0, "_source_doc": "研报.txt"},
+        {"label": "债券", "definition": "固定收益证券"},  # 无来源（如缝合占位）
+    ])
+    fund = next(n for n in nodes if n["data"]["label"] == "基金")
+    bond = next(n for n in nodes if n["data"]["label"] == "债券")
+    assert fund["data"]["source_document"] == "研报.txt"
+    assert fund["data"]["source_chunk_index"] == 0
+    assert fund["data"]["source_quote"] == "募集资金的投资计划"
+    assert "source_document" not in bond["data"]
+
+
 # ── API 契约（03 §8：模块码 schema_build + 项目角色）──
 
 
@@ -287,6 +399,8 @@ def api_env(db):
     db.commit()
     db.refresh(user)
     db.add(UserModuleGrant(user_id=user.id, module_code="schema_build", allowed=1,
+                           granted_by=user.id))
+    db.add(UserModuleGrant(user_id=user.id, module_code="instance_build", allowed=1,
                            granted_by=user.id))
     db.commit()
     proj = Project(name=f"{TAG}_p", owner_id=user.id)
@@ -329,7 +443,99 @@ def test_api_task_not_found(api_env):
     assert r.status_code == 404
 
 
+def test_api_instances_schema_version_contract(api_env, db):
+    """框架复用（04 §9）：/instances 校验 schema_version_no（非法/不存在/合法但无切片）。"""
+    proj = api_env["proj"].id
+    h = api_env["headers"]
+    # 非整数版本号 → 400（在切片检查之前）
+    r = client.post(f"/api/projects/{proj}/extraction/instances", headers=h,
+                    json={"schema_version_no": "v1"})
+    assert r.status_code == 400 and r.json()["error"]["code"] == "INVALID_SCHEMA_VERSION"
+    # 不存在的版本 → 404
+    r = client.post(f"/api/projects/{proj}/extraction/instances", headers=h,
+                    json={"schema_version_no": 999})
+    assert r.status_code == 404 and r.json()["error"]["code"] == "SCHEMA_VERSION_NOT_FOUND"
+    # 无画布骨架且未指定版本 → 400 NO_SCHEMA
+    r = client.post(f"/api/projects/{proj}/extraction/instances", headers=h, json={})
+    assert r.status_code == 400 and r.json()["error"]["code"] == "NO_SCHEMA"
+    # 指定合法版本（先手动打版）可越过画布骨架门槛 → 走到切片检查（400 NO_CHUNKS，不会 .delay）
+    from app.infrastructure.database import OntologyVersion, Project
+    p = db.query(Project).filter(Project.id == proj).first()
+    p.graph_data = {"nodes": [], "edges": []}  # 画布无骨架
+    db.commit()
+    ver = OntologyVersion(project_id=proj, version_no=1, kind="schema",
+                          created_by=api_env["user"].id, label="框架复用测试版",
+                          checksum="test-checksum")
+    db.add(ver)
+    db.commit()
+    r = client.post(f"/api/projects/{proj}/extraction/instances", headers=h,
+                    json={"schema_version_no": 1})
+    assert r.status_code == 400 and r.json()["error"]["code"] == "NO_CHUNKS", r.text
+
+
 def test_api_requires_auth(api_env):
     proj = api_env["proj"].id
     r = client.post(f"/api/projects/{proj}/extraction/schema", json={})
     assert r.status_code in (401, 403)
+
+
+def test_api_import_schema_from_project(api_env, db):
+    """跨项目框架复用：把源项目框架导入目标项目（TBox 替换、实例保留、自动打版）。"""
+    from app.infrastructure.database import OntologyVersion, Project
+    user_id = api_env["user"].id
+    src = Project(name=f"{TAG}_src", owner_id=user_id,
+                  graph_data={"schema": {"classes": [{"label": "基金"}], "object_properties": []},
+                              "nodes": [{"id": "cls_1", "data": {"label": "基金", "type": "Class"}},
+                                        {"id": "cls_2", "data": {"label": "债券", "type": "Class"}},
+                                        {"id": "inst_1", "data": {"label": "基金A", "type": "owl:NamedIndividual"}}],
+                              "edges": [{"id": "e1", "source": "cls_1", "target": "cls_2", "data": {"relation": "投资"}}]})
+    tgt = Project(name=f"{TAG}_tgt", owner_id=user_id,
+                  graph_data={"nodes": [{"id": "inst_old", "data": {"label": "旧实例", "type": "owl:NamedIndividual"}}],
+                              "edges": []})
+    db.add_all([src, tgt])
+    db.commit()
+    db.refresh(src)
+    db.refresh(tgt)
+    try:
+        h = api_env["headers"] = _login(api_env["user"].username)
+        # 源=目标 → 400
+        r = client.post(f"/api/projects/{tgt.id}/schema/import-from", headers=h,
+                        json={"source_project_id": tgt.id})
+        assert r.status_code == 400 and r.json()["error"]["code"] == "INVALID_SOURCE_PROJECT"
+        # 源不存在 → 404
+        r = client.post(f"/api/projects/{tgt.id}/schema/import-from", headers=h,
+                        json={"source_project_id": 999999})
+        assert r.status_code == 404
+        # 正常导入
+        r = client.post(f"/api/projects/{tgt.id}/schema/import-from", headers=h,
+                        json={"source_project_id": src.id})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["imported_classes"] == 2 and body["imported_relations"] == 1
+        assert body["version_no"] >= 1
+        # 结束测试会话的读事务（REPEATABLE READ 快照），否则会读到导入前的旧数据
+        db.commit()
+        db.expire_all()
+        t = db.query(Project).filter(Project.id == tgt.id).first()
+        gd = t.graph_data
+        types = sorted((n["data"]["type"] for n in gd["nodes"]))
+        # 导入只替换框架层：目标原有实例 inst_old 保留，源实例不复制
+        assert types == ["Class", "Class", "owl:NamedIndividual"]
+        assert any(n["id"] == "inst_old" for n in gd["nodes"])
+        assert gd["schema"]["classes"][0]["label"] == "基金"
+        assert any(e["source"] == "cls_1" and e["target"] == "cls_2" for e in gd["edges"])
+        vers = db.query(OntologyVersion).filter(OntologyVersion.project_id == tgt.id).all()
+        assert len(vers) == 1 and vers[0].kind == "schema"
+    finally:
+        from app.core.config import settings
+        from app.infrastructure.minio_client import get_minio_client
+        for v in db.query(OntologyVersion).filter(OntologyVersion.project_id.in_([src.id, tgt.id])).all():
+            if v.full_snapshot_key:
+                try:
+                    get_minio_client().client.remove_object(settings.MINIO_BUCKET_PARSED, v.full_snapshot_key)
+                except Exception:  # noqa: BLE001
+                    pass
+        db.query(OntologyVersion).filter(OntologyVersion.project_id.in_([src.id, tgt.id])).delete(synchronize_session=False)
+        db.delete(src)
+        db.delete(tgt)
+        db.commit()

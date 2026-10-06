@@ -1,5 +1,5 @@
 # app/services/document_pipeline.py - M3-2 解析切片管道（docs/design/04 §2 / 03 §7）
-# 共享执行体：Celery parse 任务（异步）与旧 parse-files shim（同步）都走这里。
+# 共享执行体：Celery parse 任务（唯一解析路径；M3-7 已删除旧 parse-files 同步 shim）。
 # 链路：MinIO 取原件 → parse_document（后端选择）→ 中文切片 → 全文落 ontology-parsed
 #       → document_chunks 落库 → 元数据回填（text_key/page_count/language/parse_backend）。
 # 兼容期：同步双写 text_content（旧 extract-* 端点直接读该列，M3-3 R5 行表双写后收口）。
@@ -85,7 +85,10 @@ def run_parse(document_id: int, backend: str = "auto",
         doc.parse_status = "parsed"
         db.commit()
 
-        stats = {"chunks": len(chunks), "chars": len(full_text),
+        # 07 §4 入库环节：切片写入向量库（QA 向量召回的数据源；失败不阻断解析）
+        _progress("vector", 94, "切片写入向量库", {"chunks": len(chunks)})
+        vector_count = _sync_chunks_to_vector(doc, chunks)
+        stats = {"chunks": len(chunks), "chars": len(full_text), "vectors": vector_count,
                  "backend": doc.parse_backend, "language": doc.language,
                  "page_count": doc.page_count}
         finish_task_progress(task_id, "completed", "解析完成", stats)
@@ -106,6 +109,42 @@ def run_parse(document_id: int, backend: str = "auto",
         raise
     finally:
         db.close()
+
+
+def _sync_chunks_to_vector(doc: UploadedDocument, chunks) -> int:
+    """切片 embedding 写入 Milvus（project_id 表达式隔离 QA 召回，07 §4）。
+
+    重解析先清该文档旧向量防陈旧内容；任何向量库故障只记日志不阻断解析落库。
+    """
+    if not chunks:
+        return 0
+    try:
+        from app.infrastructure.vector_client import VectorStoreManager
+        vm = VectorStoreManager()
+        if not vm.is_enabled:
+            logger.warning(f"[pipeline] Milvus 未启用，文档 {doc.id} 跳过向量入库")
+            return 0
+        try:
+            # Milvus 2.3 不支持 JSON 路径表达式（metadata["k"]），用已建索引的
+            # source_file 标量字段清理；同项目同名文件的旧向量一并清除（内容哈希去重兜底）
+            vm.delete_by_expr(
+                f'project_id == {doc.project_id} and source_file == "{doc.filename}"')
+        except Exception as e:  # noqa: BLE001 —— 清旧失败不阻断写入
+            logger.warning(f"[pipeline] 文档 {doc.id} 旧向量清理失败: {e}")
+        metas = [{"source_file": doc.filename,
+                  "source_quote": c.text,  # 全文存入（QA 上下文 quote 上限 1500，截短会丢答案段）
+                  "source_document_id": doc.id,
+                  "chunk_index": i,
+                  "char_start": c.start_index,
+                  "char_end": c.end_index,
+                  "chunk_text": c.text}
+                 for i, c in enumerate(chunks)]
+        vm.insert_data([c.text for c in chunks], metas, project_id=doc.project_id)
+        logger.info(f"[pipeline] 文档 {doc.id} 向量入库完成: {len(chunks)} 条")
+        return len(chunks)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[pipeline] 向量入库失败（不阻断解析）doc={doc.id}: {e}")
+        return 0
 
 
 def _page_of(parsed, char_offset: int) -> int:

@@ -12,8 +12,6 @@ import json
 import time
 from typing import Any, Optional
 
-from app.core.config import settings
-
 _PROGRESS_KEY = "progress:{task_id}"
 _PROGRESS_TTL = 24 * 3600
 
@@ -21,7 +19,8 @@ _PROGRESS_TTL = 24 * 3600
 def _redis():
     import redis
 
-    return redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+    from app.services.env_config_service import redis_url
+    return redis.Redis.from_url(redis_url(), decode_responses=True)
 
 
 def set_task_progress(task_id: str, stage: str, percent: int,

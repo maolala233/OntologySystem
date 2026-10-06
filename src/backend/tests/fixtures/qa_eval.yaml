@@ -1,0 +1,36 @@
+# tests/fixtures/qa_eval.yaml - M5 问答金样本集（docs/design/07 §5，08 §2 M5 验收）
+# 目标项目 3（理财产品语料，已发布）。引用命中率验收门槛 ≥ 80%：
+# 命中定义 = 检索到引用（sources 非空）且答案含合法引用标号 [n]（1 ≤ n ≤ len(sources)）。
+project_id: 3
+threshold: 0.8
+samples:
+  - {id: q01, type: 单跳, question: 本行理财产品的风险等级是怎么划分的？}
+  - {id: q02, type: 单跳, question: 理财产品的业绩比较基准是什么含义？}
+  - {id: q03, type: 单跳, question: 购买理财产品有起点金额要求吗？}
+  - {id: q04, type: 单跳, question: 理财产品的管理费是怎么收取的？}
+  - {id: q05, type: 单跳, question: 理财产品的募集期是怎么规定的？}
+  - {id: q06, type: 单跳, question: 理财产品到期后资金什么时候到账？}
+  - {id: q07, type: 单跳, question: 理财产品的托管费率是多少？}
+  - {id: q08, type: 单跳, question: 理财产品的销售费率是多少？}
+  - {id: q09, type: 单跳, question: 理财产品可以提前赎回吗？}
+  - {id: q10, type: 单跳, question: 理财产品的投资范围包括哪些资产？}
+  - {id: q11, type: 多跳, question: R2 风险等级的理财产品适合什么类型的投资者？}
+  - {id: q12, type: 多跳, question: 理财产品在募集期内购买和开放期内购买有什么区别？}
+  - {id: q13, type: 多跳, question: 购买理财产品需要哪些步骤？从签约到资金划转的流程是怎样的？}
+  - {id: q14, type: 多跳, question: 理财产品到期日前如果想赎回，赎回费和到账时间是怎么规定的？}
+  - {id: q15, type: 多跳, question: 理财产品的费用有哪些，分别按什么方式计算？}
+  - {id: q16, type: 多跳, question: 超过起购金额的部分按什么份额单位确认？}
+  - {id: q17, type: 多跳, question: 理财产品的收益是怎么计算的，和业绩比较基准什么关系？}
+  - {id: q18, type: 多跳, question: 风险承受能力评估和可以购买的理财产品等级之间是什么关系？}
+  - {id: q19, type: 比较, question: 理财产品和存款有什么区别？}
+  - {id: q20, type: 比较, question: 前端收费和后端收费有什么不同？}
+  - {id: q21, type: 比较, question: 封闭式理财和开放式理财在赎回安排上有什么差异？}
+  - {id: q22, type: 比较, question: 普通投资者和专业投资者在购买理财产品时有什么不同待遇？}
+  - {id: q23, type: 比较, question: 认购和申购的区别是什么？}
+  - {id: q24, type: 否认, question: 理财产品是保本保息的吗？}
+  - {id: q25, type: 否认, question: 理财产品的业绩比较基准等于承诺收益吗？}
+  - {id: q26, type: 否认, question: 购买理财产品时银行会承诺本金不受损失吗？}
+  - {id: q27, type: 否认, question: 理财产品可以随时无条件赎回吗？}
+  - {id: q28, type: 否认, question: 未成年人可以直接购买理财产品吗？}
+  - {id: q29, type: 单跳, question: 理财产品说明书里提到的风险提示包括哪些风险类型？}
+  - {id: q30, type: 多跳, question: 理财产品信息披露的频率和渠道是怎么安排的？}

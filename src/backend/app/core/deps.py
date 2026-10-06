@@ -97,7 +97,7 @@ def require_role(platform_role: str):
 
 
 def require_module(module_code: str):
-    """模块码守卫：14 个模块码见 docs/design/README §4.1。
+    """模块码守卫：模块码见 docs/design/README §4.1（含 R11 新增 report/ppt）。
 
     admin 直通；否则 grants 显式拒绝 > 显式允许 > is_default_on 兜底。
     未授权抛 ForbiddenError(code="MODULE_NOT_GRANTED")。
@@ -106,32 +106,81 @@ def require_module(module_code: str):
     def _dependency(
         user: User = Depends(get_current_user), db: Session = Depends(get_db)
     ) -> User:
-        if user.role == "admin":
-            return user
-        grants, default_on, all_codes = _user_module_context(db, user)
-        allowed = resolve_user_modules("user", grants, default_on, all_codes)
-        if module_code not in allowed:
-            raise ForbiddenError(f"未开通模块: {module_code}", code="MODULE_NOT_GRANTED")
+        ensure_module(user, db, module_code)
         return user
 
     return _dependency
 
 
+def require_any_module(*module_codes: str):
+    """任一模块开通即通过（admin 直通）——工具类共用端点（报告/PPT）按 kind 前置放行用。"""
+
+    def _dependency(
+        user: User = Depends(get_current_user), db: Session = Depends(get_db)
+    ) -> User:
+        if user.role == "admin":
+            return user
+        grants, default_on, all_codes = _user_module_context(db, user)
+        allowed = resolve_user_modules("user", grants, default_on, all_codes)
+        if not any(c in allowed for c in module_codes):
+            raise ForbiddenError(f"未开通模块: {'/'.join(module_codes)}", code="MODULE_NOT_GRANTED")
+        return user
+
+    return _dependency
+
+
+def ensure_module(user: User, db: Session, module_code: str) -> None:
+    """命令式模块码检查（端点体内按运行时参数判定时用，如 report/ppt 按 kind 分流）。"""
+    if user.role == "admin":
+        return
+    grants, default_on, all_codes = _user_module_context(db, user)
+    allowed = resolve_user_modules("user", grants, default_on, all_codes)
+    if module_code not in allowed:
+        raise ForbiddenError(f"未开通模块: {module_code}", code="MODULE_NOT_GRANTED")
+
+
+def is_super_admin(user: User) -> bool:
+    """超级管理员（平台主账号 username='admin'）：可跨租户查看/编辑所有用户的项目；
+    其余 role=admin 为普通管理员，项目访问与普通用户一致（仅 owner/成员），但模块与管理后台直通。"""
+    return user.role == "admin" and user.username == "admin"
+
+
 def require_project_role(
-    project_id: int, min_role: str = "viewer", user: User = None, db: Session = None
+    project_id: int, min_role: str = "viewer", user: User = None, db: Session = None,
+    allow_published: bool = False,
 ) -> User:
     """项目成员守卫：owner > editor > viewer；非成员/等级不足抛 ProjectForbiddenError。
 
-    判定顺序：admin 直通 → project_members 显式行 → projects.owner_id 隐含 owner
-    （02 §3.3：owner 与 members 冗余同步；members 行写入方落地前先查 owner_id 兜底）。
+    判定顺序：超级管理员直通 → project_members 显式行 → projects.owner_id 隐含 owner
+    （R11：普通管理员不再直通项目，仅超管 username='admin' 跨租户全量可访问）。
     在端点体内直接调用（project_id 来自路径参数）：
         current_user = require_project_role(project_id, "editor", user, db)
-    发布态只读拦截（PublishedReadOnlyError）由 M4 项目状态机接入。
+    发布态只读拦截（03 §12）：project.status=='published' 且请求的是写角色
+    （editor/owner）→ 403 PUBLISHED_READONLY；publish/unpublish 等治理端点传
+    allow_published=True 豁免。viewer 只读不受影响。
     """
     if min_role not in PROJECT_ROLES:
         raise ValueError(f"未知项目角色: {min_role}")
-    if user is not None and getattr(user, "role", None) == "admin":
+    if user is not None and is_super_admin(user):
         return user
+    # 已发布项目对所有人开放只读（03 §12 公共区语义；写角色仍被下方 PUBLISHED_READONLY 拦截）
+    if min_role == "viewer":
+        from app.infrastructure.database import Project
+
+        row = (db.query(Project.is_published, Project.status)
+               .filter(Project.id == project_id).first())
+        if row and (row[0] or row[1] == "published"):
+            return user
+    if min_role in ("editor", "owner") and not allow_published:
+        from app.infrastructure.database import Project
+
+        proj_status = (db.query(Project.status)
+                       .filter(Project.id == project_id).first())
+        if proj_status is not None and proj_status[0] == "published":
+            from app.core.exceptions import APIError
+
+            raise APIError("项目已发布，处于只读状态；请先取消发布或另起新版本",
+                           code="PUBLISHED_READONLY", http_status=403)
     member = (
         db.query(ProjectMember)
         .filter(ProjectMember.project_id == project_id, ProjectMember.user_id == user.id)

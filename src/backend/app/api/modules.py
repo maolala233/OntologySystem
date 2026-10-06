@@ -55,6 +55,16 @@ def list_modules(_admin: User = Depends(require_role("admin")), db: Session = De
     return {"items": items}
 
 
+@router.get("/grants-all")
+def get_all_grants(_admin: User = Depends(require_role("admin")), db: Session = Depends(get_db)):
+    """全量用户授权矩阵（平铺）：{user_id: [{module_code, allowed}]}，未列出的模块按 is_default_on 兜底。"""
+    rows = db.query(UserModuleGrant).all()
+    items: dict[int, list] = {}
+    for g in rows:
+        items.setdefault(g.user_id, []).append({"module_code": g.module_code, "allowed": bool(g.allowed)})
+    return {"items": items}
+
+
 @router.get("/grants")
 def get_grants(user_id: int = Query(...), _admin: User = Depends(require_role("admin")),
                db: Session = Depends(get_db)):

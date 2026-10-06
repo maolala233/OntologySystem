@@ -1,6 +1,20 @@
 import apiClient from './client';
 import { ProjectData } from '../types/ontology';
 import { KnowledgeDomain } from './domains';
+import { resolveFilenameFromDisposition, triggerBlobDownload } from '../utils/blobDownload';
+
+/** 平台支持的导出格式 id（与后端 GET /api/projects/{id}/export?format= 一致） */
+export type ExportFormatId = 'turtle' | 'ntriples' | 'rdfxml' | 'jsonld' | 'trig' | 'owl' | 'json';
+
+export const EXPORT_FORMAT_EXT: Record<ExportFormatId, string> = {
+    turtle: 'ttl',
+    ntriples: 'nt',
+    rdfxml: 'rdf',
+    jsonld: 'jsonld',
+    trig: 'trig',
+    owl: 'owl',
+    json: 'json',
+};
 
 export interface CreateProjectRequest {
     name: string;
@@ -46,8 +60,11 @@ export interface InstanceExtractionRequest {
 
 export const projectsApi = {
     // 获取我的项目列表
-    getMyProjects: async (): Promise<ProjectData[]> => {
-        const response = await apiClient.get('/api/projects/my');
+    getMyProjects: async (scope?: 'mine' | 'all'): Promise<ProjectData[]> => {
+        // scope=all 仅超级管理员（username=admin）可用，返回全部项目（含归属人 owner）
+        const response = await apiClient.get('/api/projects/my', {
+            params: scope === 'all' ? { scope: 'all' } : {},
+        });
         return response.data;
     },
 
@@ -55,6 +72,16 @@ export const projectsApi = {
     getPublicProjects: async (): Promise<ProjectData[]> => {
         const response = await apiClient.get('/api/projects/public');
         return response.data;
+    },
+
+    // 可选项目列表：我的项目 + 公共已发布项目（问答/报告/PPT/MCP 等工具页共用）
+    getSelectableProjects: async (): Promise<ProjectData[]> => {
+        const [mine, pub] = await Promise.all([
+            projectsApi.getMyProjects(),
+            projectsApi.getPublicProjects().catch(() => [] as ProjectData[]),
+        ]);
+        const seen = new Set(mine.map((p) => p.id));
+        return [...mine, ...pub.filter((p) => !seen.has(p.id))];
     },
 
     // 获取单个项目详情
@@ -150,105 +177,31 @@ export const projectsApi = {
         return response.data;
     },
 
-    // 下载 TTL 文件
-    downloadTTL: async (projectId: number): Promise<void> => {
-        // 先获取项目信息，使用项目名称构建文件名
+    // 统一导出下载（semantica 适配层）：6 种 RDF 序列化 + 平台 JSON（可导回）
+    exportProject: async (projectId: number, format: ExportFormatId): Promise<void> => {
+        // 先获取项目信息，用于下载失败时的兜底文件名
         let projectName = `project_${projectId}`;
         try {
             const projectInfo = await apiClient.get(`/api/projects/${projectId}`);
             projectName = projectInfo.data?.name || `project_${projectId}`;
         } catch (e) {
-            console.error('[downloadTTL] 获取项目信息失败:', e);
+            console.error('[exportProject] 获取项目信息失败:', e);
         }
-        
-        const response = await apiClient.get(`/api/projects/${projectId}/download-ttl`, {
-            responseType: 'blob'
+
+        const response = await apiClient.get(`/api/projects/${projectId}/export`, {
+            params: { format },
+            responseType: 'blob',
         });
 
-        // 从响应头获取文件名
-        const contentDisposition = response.headers['content-disposition'];
-        let filename = `ontology_${projectName}.ttl`;
-        
-        console.log('[downloadTTL] Content-Disposition:', contentDisposition);
-        
-        if (contentDisposition) {
-            // 优先解析 filename* 参数（RFC 5987，支持 UTF-8 中文）
-            // 格式：filename*=UTF-8''encoded_filename
-            const filenameStarMatch = contentDisposition.match(/filename\*\s*=\s*UTF-8''([^;\s]+)/i);
-            if (filenameStarMatch && filenameStarMatch[1]) {
-                const encodedFilename = filenameStarMatch[1].trim();
-                console.log('[downloadTTL] 解析 filename* 参数:', encodedFilename);
-                try {
-                    // 使用 decodeURIComponent 解码 URL 编码的字符串
-                    filename = decodeURIComponent(encodedFilename);
-                    console.log('[downloadTTL] 解码后文件名:', filename);
-                } catch (e) {
-                    console.error('[downloadTTL] 解码失败:', e);
-                    filename = encodedFilename;
-                }
-            } else {
-                // 回退到 filename 参数
-                const filenameMatch = contentDisposition.match(/filename="([^"]+)"/i);
-                if (filenameMatch && filenameMatch[1]) {
-                    filename = filenameMatch[1];
-                }
-            }
-        }
-        
-        console.log('[downloadTTL] 最终文件名:', filename);
-
-        // 创建下载链接
-        const url = window.URL.createObjectURL(new Blob([response.data]));
-        const link = document.createElement('a');
-        link.href = url;
-        link.setAttribute('download', filename);
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        window.URL.revokeObjectURL(url);
+        const fallback = `ontology_${projectName}.${EXPORT_FORMAT_EXT[format]}`;
+        const filename = resolveFilenameFromDisposition(response.headers['content-disposition'], fallback);
+        triggerBlobDownload(new Blob([response.data]), filename);
     },
 
-    downloadJSON: async (projectId: number): Promise<void> => {
-        let projectName = `project_${projectId}`;
-        try {
-            const projectInfo = await apiClient.get(`/api/projects/${projectId}`);
-            projectName = projectInfo.data?.name || `project_${projectId}`;
-        } catch (e) {
-            console.error('[downloadJSON] 获取项目信息失败:', e);
-        }
+    // 旧下载端点的兼容封装（内部已统一走 /export）
+    downloadTTL: (projectId: number): Promise<void> => projectsApi.exportProject(projectId, 'turtle'),
 
-        const response = await apiClient.get(`/api/projects/${projectId}/download-json`, {
-            responseType: 'blob'
-        });
-
-        const contentDisposition = response.headers['content-disposition'];
-        let filename = `ontology_${projectName}.json`;
-
-        if (contentDisposition) {
-            const filenameStarMatch = contentDisposition.match(/filename\*\s*=\s*UTF-8''([^;\s]+)/i);
-            if (filenameStarMatch && filenameStarMatch[1]) {
-                try {
-                    filename = decodeURIComponent(filenameStarMatch[1].trim());
-                } catch {
-                    filename = filenameStarMatch[1].trim();
-                }
-            } else {
-                const filenameMatch = contentDisposition.match(/filename="([^"]+)"/i);
-                if (filenameMatch && filenameMatch[1]) {
-                    filename = filenameMatch[1];
-                }
-            }
-        }
-
-        const url = window.URL.createObjectURL(new Blob([response.data]));
-        const link = document.createElement('a');
-        link.href = url;
-        link.setAttribute('download', filename);
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        window.URL.revokeObjectURL(url);
-    },
+    downloadJSON: (projectId: number): Promise<void> => projectsApi.exportProject(projectId, 'json'),
 
     // ==================== 两阶段提取 API ====================
 

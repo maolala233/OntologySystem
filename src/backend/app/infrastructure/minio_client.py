@@ -20,18 +20,36 @@ class MinIOClient:
     """MinIO 薄封装：进程内单例（get_minio_client），业务层禁止直接 import minio。"""
 
     def __init__(self):
+        endpoint, access_key, secret_key, secure, buckets = self._resolve_config()
         self.client = Minio(
-            settings.MINIO_ENDPOINT,
-            access_key=settings.MINIO_ACCESS_KEY,
-            secret_key=settings.MINIO_SECRET_KEY,
-            secure=settings.MINIO_SECURE,
+            endpoint,
+            access_key=access_key,
+            secret_key=secret_key,
+            secure=secure,
         )
-        self._buckets = (
-            settings.MINIO_BUCKET_UPLOADS,
-            settings.MINIO_BUCKET_PARSED,
-            settings.MINIO_BUCKET_EXPORTS,
-        )
+        self._buckets = buckets
         self._ensure_buckets()
+
+    def _resolve_config(self):
+        """连接参数：platform_config（DB 覆盖，env_config_service）→ .env 默认。"""
+        try:
+            from app.services.env_config_service import get_effective_raw
+            from app.infrastructure.database import SessionLocal
+            db = SessionLocal()
+            try:
+                cfg = get_effective_raw(db)
+                return (cfg["minio_endpoint"], cfg["minio_access_key"],
+                        cfg["minio_secret_key"], bool(cfg["minio_secure"]),
+                        (settings.MINIO_BUCKET_UPLOADS, settings.MINIO_BUCKET_PARSED,
+                         settings.MINIO_BUCKET_EXPORTS))
+            finally:
+                db.close()
+        except Exception as e:
+            logger.debug(f"[MinIO] 读 DB 配置失败，回退 .env：{e}")
+        return (settings.MINIO_ENDPOINT, settings.MINIO_ACCESS_KEY,
+                settings.MINIO_SECRET_KEY, settings.MINIO_SECURE,
+                (settings.MINIO_BUCKET_UPLOADS, settings.MINIO_BUCKET_PARSED,
+                 settings.MINIO_BUCKET_EXPORTS))
 
     def _ensure_buckets(self):
         for bucket in self._buckets:

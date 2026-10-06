@@ -34,3 +34,11 @@ src/backend/src/backend/
 src/backend/*.db
 src/backend/pip-install.log
 
+
+# 临时与生成产物（不入库）
+src/backend/data/
+src/backend/gate-report.xml
+src/backend/full-report.xml
+*.tsbuildinfo
+src/frontend/vite.config.js
+src/frontend/vite.config.d.ts

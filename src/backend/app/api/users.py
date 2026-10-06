@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.deps import get_db, require_role
 from app.core.exceptions import DuplicateUploadError, NotFoundError, ValidationError
-from app.infrastructure.database import User
+from app.infrastructure.database import Role, User
 from app.core.logging import logger
 
 router = APIRouter(prefix="/api/admin/users", tags=["admin-users"])
@@ -26,6 +26,7 @@ class UserOut(BaseModel):
     display_name: Optional[str] = None
     locale: str
     is_active: bool
+    app_role_id: Optional[int] = None       # R12：应用的角色预设
 
     class Config:
         from_attributes = True
@@ -62,6 +63,9 @@ def list_users(
         q = q.filter(User.username.like(like) | User.email.like(like))
     rows = q.limit(limit).all()
     items = [UserOut.model_validate(u).model_dump() for u in rows]
+    role_names = {r.id: r.name for r in db.query(Role).all()}
+    for item in items:
+        item["app_role_name"] = role_names.get(item.get("app_role_id"))
     next_cursor = rows[-1].id if len(rows) == limit else None
     return {"items": items, "next_cursor": next_cursor, "has_more": next_cursor is not None}
 
@@ -88,6 +92,43 @@ def create_user(data: UserCreateIn,
     db.refresh(user)
     logger.info(f"[audit] action=user.create operator={admin.username} target={user.username} role={user.role}")
     return UserOut.model_validate(user)
+
+
+@router.get("/{user_id}/projects")
+def list_user_projects(user_id: int, _admin: User = Depends(require_role("admin")),
+                       db: Session = Depends(get_db)):
+    """用户名下项目清单（admin 查看）：拥有的项目 + 以成员身份参与的项目（去重）。"""
+    from app.infrastructure.database import Project, ProjectMember
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise NotFoundError("用户不存在", code="USER_NOT_FOUND")
+    items: list[dict] = []
+    seen: set[int] = set()
+    for p in db.query(Project).filter(Project.owner_id == user_id).order_by(Project.id).all():
+        seen.add(p.id)
+        items.append({
+            "id": p.id, "name": p.name, "status": p.status,
+            "is_published": bool(p.is_published), "role": "owner",
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+        })
+    rows = (
+        db.query(ProjectMember, Project)
+        .join(Project, ProjectMember.project_id == Project.id)
+        .filter(ProjectMember.user_id == user_id)
+        .order_by(Project.id)
+        .all()
+    )
+    for pm, p in rows:
+        if p.id in seen:
+            continue
+        seen.add(p.id)
+        items.append({
+            "id": p.id, "name": p.name, "status": p.status,
+            "is_published": bool(p.is_published), "role": pm.role,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+        })
+    return {"items": items, "owned_count": sum(1 for i in items if i["role"] == "owner")}
 
 
 @router.patch("/{user_id}")
@@ -124,3 +165,36 @@ def patch_user(user_id: int, data: UserPatchIn,
     if reset_password:
         body["password"] = reset_password  # 仅此一次可见
     return body
+
+
+@router.delete("/{user_id}")
+def delete_user(user_id: int, admin: User = Depends(require_role("admin")),
+                db: Session = Depends(get_db)):
+    """删除用户（硬删）：守卫自己/最后一个管理员/名下项目；
+    先清理授权行、项目成员、MCP 令牌、问答历史再删用户。"""
+    from app.infrastructure.database import McpToken, Project, ProjectMember, QaHistory, UserModuleGrant
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise NotFoundError("用户不存在", code="USER_NOT_FOUND")
+    if user.id == admin.id:
+        raise ValidationError("不能删除自己")
+    if user.role == "admin":
+        active_admins = db.query(User).filter(User.role == "admin", User.is_active.is_(True)).count()
+        if active_admins <= 1:
+            raise ValidationError("最后一个管理员不可删除")
+    project_count = db.query(Project).filter(Project.owner_id == user_id).count()
+    if project_count > 0:
+        raise ValidationError(
+            f"该用户名下有 {project_count} 个项目，请先删除或转移项目后再删除用户",
+            code="USER_HAS_PROJECTS",
+        )
+
+    db.query(UserModuleGrant).filter(UserModuleGrant.user_id == user_id).delete()
+    db.query(ProjectMember).filter(ProjectMember.user_id == user_id).delete()
+    db.query(McpToken).filter(McpToken.user_id == user_id).delete()
+    db.query(QaHistory).filter(QaHistory.user_id == user_id).delete()
+    db.delete(user)
+    db.commit()
+    logger.info(f"[audit] action=user.delete operator={admin.username} target={user.username}")
+    return {"deleted": True, "id": user_id}

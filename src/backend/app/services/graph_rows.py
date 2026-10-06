@@ -18,7 +18,7 @@ from app.infrastructure.database import (
 )
 
 # TBox/ABox 判据（与 extractor/画布/inject_service 的现有约定对齐）
-CLASS_TYPES = {"owl:Class", "owl:ActionType", "Class"}
+CLASS_TYPES = {"owl:Class", "Class"}
 INDIVIDUAL_TYPES = {"owl:NamedIndividual", "Instance"}
 
 
@@ -96,6 +96,7 @@ def sync_project_rows(db: Session, project_id: int, graph_data: dict | None) -> 
     n_relations = 0
     skipped_edges = 0
     seen_edges: set[tuple[int, str, int]] = set()
+    relation_prov: list[tuple[Relation, dict]] = []  # (关系行, 边 data) → 溯源落库用
     for edge in edges:
         s_id = id_map.get(str(edge.get("source")))
         o_id = id_map.get(str(edge.get("target")))
@@ -107,45 +108,69 @@ def sync_project_rows(db: Session, project_id: int, graph_data: dict | None) -> 
             continue
         seen_edges.add(key)
         data = edge.get("data") if isinstance(edge.get("data"), dict) else {}
-        db.add(Relation(
+        try:
+            conf = float(data.get("confidence")) if data.get("confidence") is not None else None
+        except (TypeError, ValueError):
+            conf = None
+        row = Relation(
             project_id=project_id,
             subject_id=s_id,
             predicate=_edge_relation(edge),
             object_id=o_id,
-            props={k: v for k, v in data.items() if k not in ("label", "relation")},
+            props={k: v for k, v in data.items() if k not in ("label", "relation", "confidence")},
+            confidence=conf,
             is_class_edge=class_map.get(str(edge.get("source")), False)
             and class_map.get(str(edge.get("target")), False),
-        ))
+        )
+        db.add(row)
+        db.flush()  # 取自增 id，关系溯源 FK 需要
+        relation_prov.append((row, data))
         n_relations += 1
 
-    # 3) 溯源（实体级）：data.source_document（文件名）→ 项目内 uploaded_documents
+    # 3) 溯源：实体级 + 关系级。文档 id 优先取节点自带 source_document_id（抽取时记录），
+    #    缺失时按文件名回查；char_start/end 为切片内证据偏移（locate_quote 定位，M3-6）。
     doc_by_name = _doc_index(db, project_id)
     n_prov = 0
     skipped_prov = 0
+
+    def _prov_target(data: dict, target_type: str, target_id: int) -> None:
+        nonlocal n_prov, skipped_prov
+        doc_id = data.get("source_document_id") if isinstance(data.get("source_document_id"), int) \
+            else doc_by_name.get(str(data.get("source_document") or ""))
+        if doc_id is None:
+            if data.get("source_document"):
+                skipped_prov += 1
+            return
+        evidence = str(data.get("source_quote") or "")[:1024]
+        # 优先库内切片序号（source_chunk_no，多文档下与全量序号不同）；旧数据回退全量序号
+        chunk_no = data.get("source_chunk_no")
+        chunk_index = chunk_no if isinstance(chunk_no, int) else data.get("source_chunk_index")
+        cs = data.get("source_char_start")
+        ce = data.get("source_char_end")
+        db.add(ProvenanceRecord(
+            project_id=project_id,
+            target_type=target_type,
+            target_id=target_id,
+            source_document_id=doc_id,
+            chunk_index=int(chunk_index) if isinstance(chunk_index, int) else None,
+            evidence_text=evidence or None,
+            char_start=int(cs) if isinstance(cs, int) else None,
+            char_end=int(ce) if isinstance(ce, int) else None,
+            extraction_method="llm_ner",
+            checksum=sha256_hex(f"{data.get('source_document')}|{chunk_index}||{evidence}"),
+        ))
+        n_prov += 1
+
     for node in nodes:
         data = _node_data(node)
         eid = id_map.get(str(node.get("id")))
         if eid is None:
             continue
-        doc_id = doc_by_name.get(str(data.get("source_document") or ""))
-        if doc_id is None:
-            if data.get("source_document"):
-                skipped_prov += 1
-            continue
-        evidence = str(data.get("source_quote") or "")[:1024]
-        chunk_index = data.get("source_chunk_index")
-        db.add(ProvenanceRecord(
-            project_id=project_id,
-            target_type="entity",
-            target_id=eid,
-            source_document_id=doc_id,
-            chunk_index=int(chunk_index) if isinstance(chunk_index, int) else None,
-            evidence_text=evidence or None,
-            extraction_method="llm_ner",
-            # S1 回填无精确偏移：checksum 绑定 文档|chunk|证据（M3-6 接精确 char_start/end）
-            checksum=sha256_hex(f"{data.get('source_document')}|{chunk_index}||{evidence}"),
-        ))
-        n_prov += 1
+        _prov_target(data, "entity", eid)
+
+    for rel_row, data in relation_prov:
+        if data.get("source_quote"):
+            _prov_target(data, "relation", rel_row.id)
 
     db.flush()
     return {"entities": n_entities, "relations": n_relations,

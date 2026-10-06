@@ -1,0 +1,85 @@
+{
+  "_comment": "金样本回归集（04 §12）：期望实体/关系/合并组。测试用脚本化 LLM（按 evidence 检索切片）模拟完美抽取，回归对象是管道本身：闸门、去重、evidence 定位、三层消解阈值。改抽取链路后跑 tests/test_golden_regression.py。",
+  "tbox": {
+    "classes": {
+      "公司": [],
+      "项目": [],
+      "合同": [],
+      "人员": [],
+      "产品": []
+    },
+    "object_properties": {
+      "承建": {"domain": "公司", "range": "项目"},
+      "发包": {"domain": "公司", "range": "项目"},
+      "签署": {"domain": "人员", "range": "合同"},
+      "法定代表人": {"domain": "人员", "range": "公司"},
+      "子公司": {"domain": "公司", "range": "公司"},
+      "研发": {"domain": "公司", "range": "产品"}
+    }
+  },
+  "documents": {
+    "contract.md": {
+      "entities": [
+        {"label": "华信科技有限公司", "class_label": "公司", "props": {"角色": "甲方"}, "evidence": "华信科技有限公司（以下简称\"甲方\"）与中恒建设工程有限公司"},
+        {"label": "中恒建设工程有限公司", "class_label": "公司", "props": {"角色": "乙方"}, "evidence": "与中恒建设工程有限公司（以下简称\"乙方\"）就数据中心一期工程签订本合同"},
+        {"label": "数据中心一期工程", "class_label": "项目", "props": {}, "evidence": "就数据中心一期工程签订本合同，合同编号为 HT-2024-091"},
+        {"label": "HT-2024-091", "class_label": "合同", "props": {"金额": "1200万元", "签订日期": "2024-03-15"}, "evidence": "合同编号为 HT-2024-091"},
+        {"label": "张明", "class_label": "人员", "props": {"职务": "项目经理"}, "evidence": "项目经理张明代表甲方签署本合同"}
+      ],
+      "relations": [
+        {"subject": "中恒建设工程有限公司", "predicate": "承建", "object": "数据中心一期工程", "evidence": "乙方承建数据中心一期工程的土建与机电安装部分"},
+        {"subject": "华信科技有限公司", "predicate": "发包", "object": "数据中心一期工程", "evidence": "甲方作为发包方负责提供场地与设计图纸"},
+        {"subject": "张明", "predicate": "签署", "object": "HT-2024-091", "evidence": "项目经理张明代表甲方签署本合同"}
+      ]
+    },
+    "org.md": {
+      "entities": [
+        {"label": "张明", "class_label": "人员", "props": {"职务": "法定代表人"}, "evidence": "法定代表人为张明，注册资本5000万元人民币"},
+        {"label": "华信科技有限公司", "class_label": "公司", "props": {"注册资本": "5000万元", "注册地": "杭州市滨江区"}, "evidence": "华信科技有限公司成立于2011年"},
+        {"label": "星桥数据科技有限公司", "class_label": "公司", "props": {}, "evidence": "星桥数据科技有限公司是华信科技有限公司的全资子公司"},
+        {"label": "华信人工智能研究院", "class_label": "公司", "props": {"备注": "研究机构"}, "evidence": "华信人工智能研究院是公司设立的研究机构"},
+        {"label": "李芸", "class_label": "人员", "props": {"职务": "院长"}, "evidence": "由李芸担任院长"}
+      ],
+      "relations": [
+        {"subject": "张明", "predicate": "法定代表人", "object": "华信科技有限公司", "evidence": "法定代表人为张明，注册资本5000万元人民币"},
+        {"subject": "星桥数据科技有限公司", "predicate": "子公司", "object": "华信科技有限公司", "evidence": "星桥数据科技有限公司是华信科技有限公司的全资子公司"},
+        {"subject": "李芸", "predicate": "法定代表人", "object": "华信人工智能研究院", "evidence": "由李芸担任院长"}
+      ]
+    },
+    "product.md": {
+      "entities": [
+        {"label": "星桥数据科技有限公司", "class_label": "公司", "props": {}, "evidence": "信鸽智能客服平台是星桥数据科技有限公司研发的智能客服产品"},
+        {"label": "信鸽智能客服平台Ｖ3.2", "class_label": "产品", "props": {"版本": "V3.2", "发布时间": "2023-09"}, "evidence": "当前版本为V3.2，于2023年9月正式发布"},
+        {"label": "信鸽智能客服平台V3.2", "class_label": "产品", "props": {"备注": "服务条款指向同产品"}, "evidence": "华信客户成功部为信鸽智能客服平台提供7×24小时技术支持"},
+        {"label": "华信客户成功部", "class_label": "公司", "props": {"备注": "内部部门"}, "evidence": "华信客户成功部为信鸽智能客服平台提供7×24小时技术支持"}
+      ],
+      "relations": [
+        {"subject": "星桥数据科技有限公司", "predicate": "研发", "object": "信鸽智能客服平台Ｖ3.2", "evidence": "信鸽智能客服平台是星桥数据科技有限公司研发的智能客服产品"}
+      ]
+    }
+  },
+  "merge_groups": [
+    {
+      "_comment": "跨文档同指（L1）：合同/机构两文都抽取华信科技有限公司，同 (norm,class) 必并",
+      "labels": ["华信科技有限公司", "华信科技有限公司"]
+    },
+    {
+      "_comment": "跨文档同指（L1）：机构/产品两文的星桥数据科技有限公司",
+      "labels": ["星桥数据科技有限公司", "星桥数据科技有限公司"]
+    },
+    {
+      "_comment": "跨文档同指（L1）：张明在合同（项目经理）与机构（法定代表人）中同指",
+      "labels": ["张明", "张明"]
+    },
+    {
+      "_comment": "同文档变体（L1 归一）：全角Ｖ 与半角 V 经 NFKC 归一后同串必并",
+      "labels": ["信鸽智能客服平台Ｖ3.2", "信鸽智能客服平台V3.2"]
+    }
+  ],
+  "thresholds": {
+    "entity_f1": 0.95,
+    "relation_f1": 0.95,
+    "evidence_hit_rate": 0.95,
+    "resolution_f1": 0.85
+  }
+}

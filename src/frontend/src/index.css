@@ -389,3 +389,34 @@ button[title*="列表"] {
 button[title*="列表"]:hover {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
+
+/* M3-7：构建器 Tabs 填满剩余高度，内容区滚动 */
+.builder-tabs {
+  display: flex;
+  flex-direction: column;
+  height: calc(100% - 8px);
+}
+
+/* 高度链必须打通到 tabpane，否则 SchemaTab 里 absolute inset-0 的
+   画布/引导卡会锚在 0 高度盒上（引导卡上半截被裁、工具条叠压文字） */
+.builder-tabs .ant-tabs-content-holder {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+}
+
+.builder-tabs .ant-tabs-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.builder-tabs .ant-tabs-tabpane {
+  flex: 1;
+  min-height: 0;
+}
+
+.builder-tabs .ant-tabs-nav {
+  margin-bottom: 8px;
+}

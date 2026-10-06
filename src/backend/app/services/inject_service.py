@@ -11,8 +11,6 @@ OWL_TYPE_MAP = {
     "owl:NamedIndividual": "实例",
     "owl:DatatypeProperty": "数据属性",
     "owl:ObjectProperty": "对象属性",
-    "owl:ActionType": "动作类型",
-    "owl:ActionInstance": "动作实例",
 }
 
 
@@ -138,12 +136,7 @@ class GraphInjectService:
             node_type = data.get("type", "Class")
             props = data.get("properties", {})
             desc = props.get("description", "") or data.get("description", "")
-            raw_id = data.get("raw_id", "")
             node_id = node.get("id", "")
-            is_action = raw_id.startswith('AT_') or node_id.startswith('AT_')
-
-            if is_action and node_type == "owl:Class":
-                node_type = "owl:ActionType"
 
             node_id_to_label[node_id] = label
 
@@ -154,8 +147,6 @@ class GraphInjectService:
                 "properties": props,
                 "description": desc,
             }
-            if is_action and data.get("parameters"):
-                entity_data["parameters"] = data["parameters"]
 
             entities.append(entity_data)
 

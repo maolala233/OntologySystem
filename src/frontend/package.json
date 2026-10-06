@@ -19,12 +19,17 @@
     "d3-selection": "^3.0.0",
     "d3-zoom": "^3.0.0",
     "dagre": "^0.8.5",
+    "graphology": "^0.26.0",
+    "graphology-layout-forceatlas2": "^0.10.1",
     "jwt-decode": "^4.0.0",
     "lucide-react": "^0.294.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "^6.30.3",
     "reactflow": "^11.10.1",
+    "remark-gfm": "^4.0.1",
+    "sigma": "^3.0.3",
     "zustand": "^5.0.15"
   },
   "devDependencies": {

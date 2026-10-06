@@ -208,7 +208,8 @@ def parse_events(
     from app.core.config import settings
     from app.infrastructure.database import User
 
-    client = _redis.Redis.from_url(settings.REDIS_URL, socket_connect_timeout=2)
+    from app.services.env_config_service import redis_url
+    client = _redis.Redis.from_url(redis_url(), socket_connect_timeout=2)
     raw = client.get(f"sse:ticket:{ticket}")
     if not raw:
         raise APIError("SSE ticket 无效或已过期", code="TICKET_INVALID", http_status=401)
@@ -254,6 +255,39 @@ def parse_events(
 
     return StreamingResponse(_stream(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.get("/{doc_id}/chunks/{chunk_index}")
+def get_chunk_context(
+    project_id: int,
+    doc_id: int,
+    chunk_index: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """切片原文上下文（溯源"查看原文"用，04 §8）：返回切片全文 + 文档级偏移。
+
+    详情抽屉拿切片文本后在 source_char_start/end（切片内偏移）处高亮证据原句；
+    char_start/char_end 是切片在原文档中的绝对偏移，可用于将来跳转原文档定位。
+    """
+    require_project_role(project_id, "viewer", current_user, db)
+    doc = _load_doc_or_404(project_id, doc_id, db)
+    if chunk_index < 0:
+        raise APIError("chunk_index 不能为负", code="INVALID_CHUNK_INDEX", http_status=400)
+    chunk = (db.query(DocumentChunk)
+             .filter(DocumentChunk.document_id == doc.id,
+                     DocumentChunk.chunk_index == chunk_index)
+             .first())
+    if chunk is None:
+        raise NotFoundError(f"切片不存在: 文档 {doc.id} chunk {chunk_index}")
+    return {"status": "success", "chunk": {
+        "document_id": doc.id,
+        "document_name": doc.filename,
+        "chunk_index": chunk.chunk_index,
+        "text": chunk.text,
+        "char_start": chunk.char_start,
+        "char_end": chunk.char_end,
+    }}
 
 
 @router.post("/{doc_id}/parse", dependencies=[Depends(require_module("documents"))])

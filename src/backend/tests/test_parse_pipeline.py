@@ -200,34 +200,6 @@ def test_reparse_validation_and_backend_param(env, db):
     assert r.status_code == 404
 
 
-def test_legacy_parse_files_shim(env, db):
-    """旧 parse-files shim：同步解析 + 旧响应契约（text_content/saved_documents）+ 失败隔离。"""
-    token = _login(env["user"].username)
-    proj = env["proj"].id
-    data = [("files", ("旧链路.txt", io.BytesIO(("旧前端同步解析链路测试。" * 100).encode()), "text/plain")),
-            ("files", ("旧链路2.md", io.BytesIO(("# 次文档\n内容行\n" * 50).encode()), "text/markdown"))]
-    r = client.post(f"/api/projects/{proj}/parse-files?save_documents=true",
-                    headers={"Authorization": f"Bearer {token}"}, files=data)
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert len(body["text_content"]) > 200
-    assert len(body["saved_documents"]) == 2
-    ids = [d["id"] for d in body["saved_documents"]]
-    db.commit()
-    rows = db.query(UploadedDocument).filter(UploadedDocument.id.in_(ids)).all()
-    assert all(row.parse_status == "parsed" for row in rows)
-    # shim 走了新管道：chunks 已落库
-    counts = (db.query(DocumentChunk)
-              .filter(DocumentChunk.document_id.in_(ids)).count())
-    assert counts >= 2
-    # 秒传复用：同内容再传不新增行
-    r2 = client.post(f"/api/projects/{proj}/parse-files",
-                     headers={"Authorization": f"Bearer {token}"},
-                     files=[("files", ("旧链路.txt", io.BytesIO(("旧前端同步解析链路测试。" * 100).encode()), "text/plain"))])
-    assert r2.status_code == 200
-    assert ids[0] in [d["id"] for d in r2.json()["saved_documents"]]
-
-
 def test_chunks_cursor_pagination(env, db):
     """chunks 游标分页在真实分块数据上工作（M3-1 空占位的端到端闭环）。"""
     token = _login(env["user"].username)

@@ -3,9 +3,12 @@ import { Card, Empty, Spin, message, Tag, Input, Select, Button } from 'antd';
 import { EyeOutlined, UserOutlined, NodeIndexOutlined, AppstoreOutlined, DatabaseOutlined, ArrowLeftOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Layout/Navbar';
+import TechHero, { TECH_COLORS, GraphMotif } from '../components/TechHero';
 import { projectsApi } from '../api/projects';
 import { getDomains, KnowledgeDomain } from '../api/domains';
 import { ProjectData } from '../types/ontology';
+
+const TC = TECH_COLORS;
 
 /**
  * 资产中心页面 - 两层视图结构：
@@ -143,13 +146,7 @@ const AssetCenterPage: React.FC = () => {
 
     // 渲染知识域选择视图（第一层）
     const renderDomainSelectionView = () => (
-        <div className="p-4 sm:p-6">
-            {/* 页面标题和说明 */}
-            <div className="mb-6 text-center">
-                <h1 className="text-2xl font-bold text-gray-800 mb-2">知识域分类</h1>
-                <p className="text-gray-500">选择一个知识域来浏览相关的本体资产</p>
-            </div>
-
+        <div>
             {loading ? (
                 <div className="flex justify-center items-center h-96">
                     <Spin size="large" />
@@ -167,26 +164,46 @@ const AssetCenterPage: React.FC = () => {
                         <Card
                             key={domain.id}
                             hoverable
-                            className="rounded-xl shadow-md hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1 cursor-pointer"
+                            className="rounded-xl shadow-sm hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1 cursor-pointer border border-gray-100"
                             onClick={() => handleDomainSelect(domain)}
                             cover={
-                                <div className="h-32 sm:h-40 relative overflow-hidden bg-gradient-to-br from-indigo-400 via-purple-400 to-pink-400">
-                                    {/* 装饰性图案 */}
-                                    <div className="absolute inset-0 opacity-20">
-                                        <div className="absolute top-4 left-4 w-16 h-16 border-4 border-white rounded-full"></div>
-                                        <div className="absolute bottom-4 right-4 w-24 h-24 border-4 border-white rounded-full"></div>
-                                    </div>
+                                <div
+                                    className="ac-cover h-32 sm:h-40"
+                                    style={{ background: TC.bgDark }}
+                                >
+                                    {/* 网格底纹 + 辉光 */}
+                                    <div className="absolute inset-0 ac-cover-grid" />
+                                    <div
+                                        className="absolute -top-8 -right-8 w-36 h-36 rounded-full"
+                                        style={{ background: TC.blue, filter: 'blur(60px)', opacity: 0.3 }}
+                                    />
+                                    <div
+                                        className="absolute -bottom-10 -left-6 w-36 h-36 rounded-full"
+                                        style={{ background: TC.purple, filter: 'blur(60px)', opacity: 0.3 }}
+                                    />
 
                                     {/* 知识域图标 */}
                                     <div className="absolute inset-0 flex items-center justify-center">
-                                        <DatabaseOutlined className="text-white text-5xl sm:text-6xl opacity-40" />
+                                        <DatabaseOutlined
+                                            className="text-5xl sm:text-6xl"
+                                            style={{ color: TC.cyan, opacity: 0.75, filter: `drop-shadow(0 0 14px ${TC.cyan})` }}
+                                        />
                                     </div>
 
                                     {/* 项目数量标签 */}
-                                    <div className="absolute bottom-4 left-4 right-4">
-                                        <Tag color="blue" className="font-medium text-sm">
+                                    <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between">
+                                        <span
+                                            className="tk-mono text-[11px] tracking-wider px-2.5 py-0.5 rounded-full"
+                                            style={{ color: TC.cyan, border: `1px solid ${TC.line}`, background: 'rgba(90,200,250,0.08)' }}
+                                        >
                                             {domain.projectCount} 个项目
-                                        </Tag>
+                                        </span>
+                                        <span
+                                            className="tk-mono text-[10px] tracking-widest"
+                                            style={{ color: TC.textSub }}
+                                        >
+                                            DOMAIN
+                                        </span>
                                     </div>
                                 </div>
                             }
@@ -212,7 +229,7 @@ const AssetCenterPage: React.FC = () => {
 
     // 渲染项目列表视图（第二层）
     const renderProjectListView = () => (
-        <div className="p-4 sm:p-6 lg:p-8">
+        <div>
             {/* 顶部导航栏 - 返回按钮 + 知识域信息 + 排序 */}
             <div className="mb-6 bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-5">
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -298,31 +315,31 @@ const AssetCenterPage: React.FC = () => {
                             className="group rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden border border-gray-100 cursor-pointer"
                             onClick={() => navigate(`/asset-center/${project.id}`)}
                             cover={
-                                <div className="h-44 bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 relative overflow-hidden">
-                                    {/* 动态装饰图案 */}
-                                    <div className="absolute inset-0 opacity-15">
-                                        <div className="absolute top-6 left-6 w-20 h-20 border-4 border-white rounded-full"></div>
-                                        <div className="absolute bottom-6 right-6 w-28 h-28 border-4 border-white rounded-full"></div>
-                                        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-36 h-36 border-4 border-white rounded-full"></div>
-                                    </div>
-
-                                    {/* 渐变叠加层 */}
-                                    <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent"></div>
-
-                                    {/* 项目首字母 */}
-                                    <div className="absolute inset-0 flex items-center justify-center">
-                                        <div className="text-white text-6xl font-bold opacity-25 group-hover:opacity-35 group-hover:scale-110 transition-all duration-300">
-                                            {project.name.charAt(0).toUpperCase()}
-                                        </div>
-                                    </div>
+                                <div
+                                    className="ac-cover h-44"
+                                    style={{ background: TC.bgDark }}
+                                >
+                                    {/* 网格底纹 + 双色辉光 */}
+                                    <div className="absolute inset-0 ac-cover-grid" />
+                                    <div
+                                        className="absolute -top-10 -right-10 w-40 h-40 rounded-full"
+                                        style={{ background: TC.purple, filter: 'blur(60px)', opacity: 0.35 }}
+                                    />
+                                    <div
+                                        className="absolute -bottom-12 -left-8 w-40 h-40 rounded-full"
+                                        style={{ background: TC.blue, filter: 'blur(60px)', opacity: 0.35 }}
+                                    />
+                                    <GraphMotif seed={project.id} className="absolute inset-0 w-full h-full opacity-80" />
 
                                     {/* 标签区域 */}
                                     <div className="absolute top-3 left-3 right-3 flex items-start justify-between gap-2">
                                         {/* 知识域标签 */}
                                         {project.domain && (
-                                            <Tag color="white" className="font-medium text-xs shadow-sm border-0 bg-white/90 backdrop-blur-sm">
-                                                <DatabaseOutlined className="mr-1 text-indigo-600" />
-                                                <span className="text-gray-700">{project.domain.name}</span>
+                                            <Tag
+                                                className="font-medium text-xs border-0 tk-mono"
+                                                style={{ color: TC.cyan, background: 'rgba(90,200,250,0.1)', border: `1px solid ${TC.line}` }}
+                                            >
+                                                {project.domain.name}
                                             </Tag>
                                         )}
                                         {/* 发布标签 */}
@@ -330,6 +347,14 @@ const AssetCenterPage: React.FC = () => {
                                             <CheckCircleOutlined className="mr-0.5" />
                                             已发布
                                         </Tag>
+                                    </div>
+
+                                    {/* 底部标识 */}
+                                    <div
+                                        className="absolute bottom-3 right-3 tk-mono text-[10px] tracking-widest"
+                                        style={{ color: TC.textSub }}
+                                    >
+                                        ONTOLOGY
                                     </div>
                                 </div>
                             }
@@ -385,9 +410,31 @@ const AssetCenterPage: React.FC = () => {
 
     return (
         <div className="min-h-screen bg-gray-50">
+            <style>{`
+                .ac-cover { position: relative; overflow: hidden; }
+                .ac-cover-grid {
+                    background-image:
+                        linear-gradient(rgba(91,141,239,0.12) 1px, transparent 1px),
+                        linear-gradient(90deg, rgba(91,141,239,0.12) 1px, transparent 1px);
+                    background-size: 24px 24px;
+                }
+            `}</style>
             <Navbar breadcrumbs={breadcrumbs} onSearch={handleSearch} />
 
-            {currentView === 'domain' ? renderDomainSelectionView() : renderProjectListView()}
+            <div className="p-4 sm:p-6 lg:p-8">
+                <TechHero
+                    compact
+                    chips={
+                        currentView === 'domain'
+                            ? ['ASSET CENTER', 'PUBLIC ONTOLOGIES']
+                            : ['ASSET CENTER', selectedDomain && selectedDomain.id !== 0 ? selectedDomain.name : '全部知识域']
+                    }
+                    title="资产中心"
+                    subtitle="浏览已发布的公共本体资产：按知识域归类 · 只读快照 · 支持在线检索与图谱预览"
+                    showConstellation={currentView === 'domain'}
+                />
+                {currentView === 'domain' ? renderDomainSelectionView() : renderProjectListView()}
+            </div>
         </div>
     );
 };

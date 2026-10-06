@@ -3,7 +3,7 @@ import json
 import time
 import os
 import asyncio
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Iterator, Optional
 from openai import OpenAI, AsyncOpenAI
 from app.core.config import settings
 from app.core.logging import logger
@@ -540,7 +540,7 @@ class LLMClient:
 
     def _repair_truncated_json(self, json_str: str) -> Dict[str, Any]:
         if not json_str:
-            return {"classes": [], "instances": [], "object_types": [], "link_types": [], "action_types": [], "links": []}
+            return {"classes": [], "instances": [], "object_types": [], "link_types": [], "links": []}
 
         clean = json_str.strip()
         clean = re.sub(r'^```json\s*', '', clean, flags=re.MULTILINE)
@@ -550,7 +550,7 @@ class LLMClient:
 
         if clean.lower().startswith(('hello', 'hi ', 'i ', 'the ', 'this ', 'that ', 'yes', 'no', 'ok', 'sure', 'sorry', 'cannot', 'unable')):
             logger.warning(f"检测到非 JSON 内容：{clean[:100]}...，返回默认结构")
-            return {'classes': [], 'instances': [], 'object_types': [], 'link_types': [], 'action_types': [], 'links': []}
+            return {'classes': [], 'instances': [], 'object_types': [], 'link_types': [], 'links': []}
 
         try:
             return json.loads(clean)
@@ -566,7 +566,7 @@ class LLMClient:
                     for key in ["classes", "object_types"]:
                         if key not in parsed:
                             parsed[key] = []
-                    for key in ["instances", "link_types", "action_types", "links"]:
+                    for key in ["instances", "link_types", "links"]:
                         if key not in parsed:
                             parsed[key] = []
                     logger.info(f"[JSON 修复成功] 方法：转义字符串内控制字符，原始 {len(clean)} 字符 → 修复后 {len(escaped_json)} 字符")
@@ -584,7 +584,7 @@ class LLMClient:
                     for key in ["classes", "object_types"]:
                         if key not in parsed:
                             parsed[key] = []
-                    for key in ["instances", "link_types", "action_types", "links"]:
+                    for key in ["instances", "link_types", "links"]:
                         if key not in parsed:
                             parsed[key] = []
                     logger.info(f"[JSON 修复成功] 方法：结构修复")
@@ -608,7 +608,7 @@ class LLMClient:
                                 for key in ["classes", "object_types"]:
                                     if key not in parsed:
                                         parsed[key] = []
-                                for key in ["instances", "link_types", "action_types", "links"]:
+                                for key in ["instances", "link_types", "links"]:
                                     if key not in parsed:
                                         parsed[key] = []
                                 logger.info(f"[JSON 修复成功] 方法：括号平衡法，提取 {len(possible_json)} 字符")
@@ -626,7 +626,7 @@ class LLMClient:
                     for key in ["classes", "object_types"]:
                         if key not in parsed:
                             parsed[key] = []
-                    for key in ["instances", "link_types", "action_types", "links"]:
+                    for key in ["instances", "link_types", "links"]:
                         if key not in parsed:
                             parsed[key] = []
                     logger.info(f"[JSON 修复成功] 方法：截断到最后对象，提取 {len(fixed_json)} 字符")
@@ -643,7 +643,7 @@ class LLMClient:
                     for key in ["classes", "object_types"]:
                         if key not in parsed:
                             parsed[key] = []
-                    for key in ["instances", "link_types", "action_types", "links"]:
+                    for key in ["instances", "link_types", "links"]:
                         if key not in parsed:
                             parsed[key] = []
                     logger.info(f"[JSON 修复成功] 方法：最后括号截断，提取 {len(fixed_json)} 字符")
@@ -659,7 +659,7 @@ class LLMClient:
                 for key in ["classes", "object_types"]:
                     if key not in parsed:
                         parsed[key] = []
-                for key in ["instances", "link_types", "action_types", "links"]:
+                for key in ["instances", "link_types", "links"]:
                     if key not in parsed:
                         parsed[key] = []
                 logger.info(f"[JSON 修复成功] 方法：逗号修复，提取 {len(cleaned)} 字符")
@@ -668,7 +668,7 @@ class LLMClient:
                 logger.debug(f"[JSON 修复尝试 {fix_attempts}] 逗号修复失败：{je}")
 
             logger.error(f"JSON 修复失败 (共尝试 {fix_attempts} 种方法)，返回默认结构，原始内容前 200 字符：{clean[:200]}...")
-            return {"classes": [], "instances": [], "object_types": [], "link_types": [], "action_types": [], "links": []}
+            return {"classes": [], "instances": [], "object_types": [], "link_types": [], "links": []}
 
     def _clean_continued_content(self, content: str) -> str:
         content = re.sub(r'^```(?:json)?\s*', '', content.lstrip())
@@ -929,6 +929,43 @@ class LLMClient:
             result = result.rstrip(',')
 
         return result
+
+    def call_llm_stream(self, system_prompt: str, user_prompt: str,
+                        timeout: Optional[float] = None) -> Iterator[str]:
+        """流式文本生成（M5 问答 SSE，07 §4）：逐 delta 产出 content 片段。
+
+        与 call_llm_text 不同：不重试（中途重试会导致已发出的 token 重复）、
+        不做 JSON 修复（问答为纯文本）。异常直接上抛由路由层转 SSE error 事件。
+        """
+        api_kwargs = {
+            "model": getattr(self, 'model', 'unknown-model'),
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.1,
+            "stream": True,
+            "max_tokens": 8000,
+        }
+        if timeout is not None:
+            api_kwargs["timeout"] = timeout
+
+        logger.info(f"[LLM] 流式生成开始：model={api_kwargs['model']}，user_prompt={len(user_prompt)} 字符")
+        response = self.client.chat.completions.create(**api_kwargs)
+        chunk_count = 0
+        try:
+            for chunk in response:
+                if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
+                    chunk_count += 1
+                    yield chunk.choices[0].delta.content
+        except GeneratorExit:
+            if hasattr(response, 'close'):
+                try:
+                    response.close()
+                except Exception:
+                    pass
+            raise
+        logger.info(f"[LLM] 流式生成完成：{chunk_count} 个 chunk")
 
     def call_llm_text(self, system_prompt: str, user_prompt: str, max_retries: int = 3, stream: bool = False,
                       timeout: Optional[float] = None, task_id: Optional[str] = None) -> Dict[str, Any]:

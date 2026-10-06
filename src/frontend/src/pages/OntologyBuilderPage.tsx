@@ -61,11 +61,13 @@ import {
     BookOutlined,
     SendOutlined,
     ThunderboltOutlined,
+    ExportOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import Navbar from '../components/Layout/Navbar';
 import { OntologyNode, OntologyEdge, ExtractionMetadata, DataPropertyDef } from '../types/ontology';
 import { projectsApi } from '../api/projects';
+import ExportDialog from '../features/builder/components/ExportDialog';
 import { getLayoutedElements } from '../utils/layoutUtils';
 import { modelConfigsApi } from '../api/model-configs';
 import ModelPicker from '../shared/auth/ModelPicker';
@@ -1173,27 +1175,8 @@ const OntologyBuilderPage: React.FC = () => {
         return false;
     };
 
-    const handleDownloadTTL = async () => {
-        if (!projectId) return;
-
-        try {
-            await projectsApi.downloadTTL(Number(projectId));
-            message.success('TTL 文件已开始下载');
-        } catch (error: any) {
-            message.error(error.response?.data?.detail || '下载 TTL 文件失败');
-        }
-    };
-
-    const handleDownloadJSON = async () => {
-        if (!projectId) return;
-
-        try {
-            await projectsApi.downloadJSON(Number(projectId));
-            message.success('JSON 文件已开始下载');
-        } catch (error: any) {
-            message.error(error.response?.data?.detail || '下载 JSON 文件失败');
-        }
-    };
+    // 统一导出弹窗（RDF 6 种序列化 + 平台 JSON）
+    const [exportOpen, setExportOpen] = useState(false);
 
     const handleOpenInjectModal = async () => {
         if (!projectId) return;
@@ -2119,7 +2102,7 @@ const OntologyBuilderPage: React.FC = () => {
                                         domain_id: selectedDomainId,
                                         domain_name: selectedDomainName,
                                     });
-                                    navigate(`/ontology-builder/${newProject.id}`);
+                                    navigate(`/projects/${newProject.id}/schema`);
                                     message.success('项目创建成功，已进入编辑界面');
                                 } catch (error: any) {
                                     message.error('创建项目失败，请重试');
@@ -2512,11 +2495,8 @@ const OntologyBuilderPage: React.FC = () => {
                                             {isPublished ? '已发布' : '发布'}
                                         </Button>
                                     </Tooltip>
-                                    <Tooltip title="下载 TTL">
-                                        <Button size="small" icon={<DownloadOutlined />} onClick={handleDownloadTTL} className="border-gray-300 hover:bg-gray-50">TTL</Button>
-                                    </Tooltip>
-                                    <Tooltip title="下载 JSON（ES注入格式）">
-                                        <Button size="small" icon={<DownloadOutlined />} onClick={handleDownloadJSON} className="border-gray-300 hover:bg-gray-50">JSON</Button>
+                                    <Tooltip title="导出图谱（RDF / JSON）">
+                                        <Button size="small" icon={<ExportOutlined />} onClick={() => setExportOpen(true)} className="border-gray-300 hover:bg-gray-50">导出</Button>
                                     </Tooltip>
                                     <Button
                                         size="small"
@@ -2843,6 +2823,13 @@ const OntologyBuilderPage: React.FC = () => {
                                 </Form>
                             )}
                         </Drawer>
+
+                        <ExportDialog
+                            open={exportOpen}
+                            onClose={() => setExportOpen(false)}
+                            projectId={Number(projectId)}
+                            title="导出图谱"
+                        />
 
                         {/* 骨架提取方式选择 Modal */}
                         <Modal

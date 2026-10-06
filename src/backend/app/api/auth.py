@@ -249,7 +249,8 @@ def issue_sse_ticket(task_id: str = "", current_user: User = Depends(get_current
 
     ticket = uuid.uuid4().hex
     payload = {"user_id": current_user.id, "task_id": task_id}
-    client = redis.Redis.from_url(settings.REDIS_URL, socket_connect_timeout=2)
+    from app.services.env_config_service import redis_url
+    client = redis.Redis.from_url(redis_url(), socket_connect_timeout=2)
     client.setex(f"sse:ticket:{ticket}", 60, json.dumps(payload))
     return {"ticket": ticket, "expires_in": 60}
 

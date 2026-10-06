@@ -11,10 +11,15 @@ import {
     DeleteFilled,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
+import { Segmented } from 'antd';
+import { useAuthStore } from '../shared/auth/authStore';
 import Navbar from '../components/Layout/Navbar';
+import TechHero, { TECH_COLORS, GraphMotif } from '../components/TechHero';
 import { projectsApi } from '../api/projects';
 import { ProjectData } from '../types/ontology';
 import KnowledgeDomainSelector from '../components/KnowledgeDomainSelector';
+
+const TC = TECH_COLORS;
 
 type SortField = 'created_at' | 'name' | 'node_count';
 type SortOrder = 'asc' | 'desc';
@@ -37,13 +42,19 @@ const MyProjectsPage: React.FC = () => {
     const [sortField, setSortField] = useState<SortField>('created_at');
     const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
+    // R11：超级管理员（username=admin）可查看/编辑全部用户的项目；普通管理员与普通用户只看自己相关的
+    const me = useAuthStore((s) => s.user);
+    const isSuperAdmin = me?.role === 'admin' && me?.username === 'admin';
+    const [scope, setScope] = useState<'mine' | 'all'>('mine');
+
     useEffect(() => {
         loadProjects();
-    }, []);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [scope]);
 
     const loadProjects = () => {
         setLoading(true);
-        projectsApi.getMyProjects()
+        projectsApi.getMyProjects(isSuperAdmin ? scope : undefined)
             .then((data) => {
                 setProjects(data);
             })
@@ -73,7 +84,7 @@ const MyProjectsPage: React.FC = () => {
             setSelectedDomainId(undefined);
             setSelectedDomainName(undefined);
 
-            navigate(`/ontology-builder/${newProject.id}`);
+            navigate(`/projects/${newProject.id}/documents`);
         } catch (error: any) {
             message.error('创建失败，请稍后重试');
         }
@@ -241,6 +252,17 @@ const MyProjectsPage: React.FC = () => {
 
     return (
         <div className="min-h-screen bg-gray-50">
+            <style>{`
+                .mp-cover { position: relative; overflow: hidden; }
+                .mp-cover-grid {
+                    background-image:
+                        linear-gradient(rgba(91,141,239,0.12) 1px, transparent 1px),
+                        linear-gradient(90deg, rgba(91,141,239,0.12) 1px, transparent 1px);
+                    background-size: 24px 24px;
+                }
+                .mp-card { border-radius: 14px; border: 1px solid #EEF1F8; transition: all .25s ease; }
+                .mp-card:hover { box-shadow: 0 16px 34px -12px rgba(15,20,32,.22); transform: translateY(-3px); }
+            `}</style>
             <Navbar
                 breadcrumbs={breadcrumbs}
                 showCreateButton
@@ -248,6 +270,26 @@ const MyProjectsPage: React.FC = () => {
             />
 
             <div className="p-4 sm:p-6">
+                <TechHero
+                    compact
+                    chips={['PROJECT WORKSPACE', `共 ${projects.length} 个项目`]}
+                    title={isSuperAdmin && scope === 'all' ? '全部项目' : '我的项目'}
+                    subtitle={isSuperAdmin && scope === 'all'
+                        ? '平台全部用户的项目，可查看与编辑'
+                        : '创建与管理你的本体建模项目：AI 框架提取 · 骨架画布 · 实例探索 · 版本治理'}
+                    showConstellation={projects.length > 0}
+                    actions={isSuperAdmin ? (
+                        <Segmented
+                            value={scope}
+                            onChange={(v) => setScope(v as 'mine' | 'all')}
+                            options={[
+                                { value: 'mine', label: '我的项目' },
+                                { value: 'all', label: '全部项目' },
+                            ]}
+                        />
+                    ) : undefined}
+                />
+
                 {projects.length > 0 && (
                     <div className="mb-4 flex flex-wrap items-center gap-3">
                         <Input
@@ -353,14 +395,28 @@ const MyProjectsPage: React.FC = () => {
                                         </div>
                                         <Card
                                             hoverable
-                                            className={`rounded-xl shadow-md hover:shadow-xl transition-all duration-300 cursor-pointer ${isSelected ? 'ring-2 ring-blue-500 ring-offset-1' : ''}`}
+                                            className={`mp-card shadow-sm cursor-pointer ${isSelected ? 'ring-2 ring-blue-500 ring-offset-1' : ''}`}
                                             cover={
                                                 <div
-                                                    className="h-32 sm:h-40 bg-gradient-to-br from-blue-400 via-purple-400 to-pink-400 flex items-center justify-center"
-                                                    onClick={() => navigate(`/ontology-builder/${project.id}`)}
+                                                    className="mp-cover h-32 sm:h-40"
+                                                    style={{ background: TC.bgDark }}
+                                                    onClick={() => navigate(`/projects/${project.id}/documents`)}
                                                 >
-                                                    <div className="text-white text-4xl sm:text-6xl font-bold opacity-20">
-                                                        {project.name.charAt(0).toUpperCase()}
+                                                    <div className="absolute inset-0 mp-cover-grid" />
+                                                    <div
+                                                        className="absolute -top-8 -right-8 w-36 h-36 rounded-full"
+                                                        style={{ background: TC.purple, filter: 'blur(60px)', opacity: 0.3 }}
+                                                    />
+                                                    <div
+                                                        className="absolute -bottom-10 -left-6 w-36 h-36 rounded-full"
+                                                        style={{ background: TC.blue, filter: 'blur(60px)', opacity: 0.3 }}
+                                                    />
+                                                    <GraphMotif seed={project.id} className="absolute inset-0 w-full h-full opacity-80" />
+                                                    <div
+                                                        className="absolute bottom-3 right-3 tk-mono text-[10px] tracking-widest"
+                                                        style={{ color: TC.textSub }}
+                                                    >
+                                                        {project.is_published ? 'PUBLISHED' : 'DRAFT'}
                                                     </div>
                                                 </div>
                                             }
@@ -368,7 +424,7 @@ const MyProjectsPage: React.FC = () => {
                                                 <Button
                                                     type="text"
                                                     icon={<EyeOutlined />}
-                                                    onClick={() => navigate(`/ontology-builder/${project.id}`)}
+                                                    onClick={() => navigate(`/projects/${project.id}/documents`)}
                                                     className="text-xs sm:text-sm"
                                                 >
                                                     <span className="hidden sm:inline">查看</span>
@@ -384,7 +440,7 @@ const MyProjectsPage: React.FC = () => {
                                                 <Button
                                                     type="text"
                                                     icon={<EditOutlined />}
-                                                    onClick={() => navigate(`/ontology-builder/${project.id}`)}
+                                                    onClick={() => navigate(`/projects/${project.id}/documents`)}
                                                     className="text-xs sm:text-sm"
                                                 >
                                                     <span className="hidden sm:inline">编辑</span>
@@ -405,7 +461,7 @@ const MyProjectsPage: React.FC = () => {
                                                     <div className="flex items-center justify-between">
                                                         <span
                                                             className="truncate cursor-pointer hover:text-blue-500 transition-colors"
-                                                            onClick={() => navigate(`/ontology-builder/${project.id}`)}
+                                                            onClick={() => navigate(`/projects/${project.id}/documents`)}
                                                         >
                                                             {project.name}
                                                         </span>
@@ -418,15 +474,22 @@ const MyProjectsPage: React.FC = () => {
                                                 }
                                                 description={
                                                     <div className="text-gray-500 text-sm">
+                                                        {isSuperAdmin && scope === 'all' && (
+                                                            <div className="mb-2 text-xs">
+                                                                归属：<span className="tk-mono" style={{ color: TC.blue }}>
+                                                                    {project.owner?.username || `用户#${project.owner_id ?? '?'}`}
+                                                                </span>
+                                                            </div>
+                                                        )}
                                                         <div className="truncate mb-2">
                                                             {project.description || '暂无描述'}
                                                         </div>
                                                         <div className="flex items-center justify-between text-xs">
-                                                            <span>
-                                                                节点：{project.graph_data?.nodes?.length || 0}
+                                                            <span className="tk-mono">
+                                                                节点：<span style={{ color: TC.blue }}>{project.graph_data?.nodes?.length || 0}</span>
                                                             </span>
-                                                            <span>
-                                                                关系：{project.graph_data?.edges?.length || 0}
+                                                            <span className="tk-mono">
+                                                                关系：<span style={{ color: TC.purple }}>{project.graph_data?.edges?.length || 0}</span>
                                                             </span>
                                                         </div>
                                                         {project.created_at && (

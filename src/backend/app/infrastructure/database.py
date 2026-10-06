@@ -22,6 +22,8 @@ class User(Base):
     display_name = Column(String(64), nullable=True)
     locale = Column(String(10), nullable=False, server_default="zh-CN")
     last_login_at = Column(DateTime, nullable=True)
+    # R12：用户被应用的角色预设（角色配置 apply 时写入；用户管理列表展示用）
+    app_role_id = Column(Integer, ForeignKey("roles.id"), nullable=True)
 
     projects = relationship("Project", back_populates="owner")
 
@@ -44,6 +46,10 @@ class Project(Base):
     inject_config = Column(JSON, nullable=True)
     
     is_published = Column(Boolean, default=False)
+    # M3-6 R6（02 §3.3）：项目状态机 + 当前版本指针（is_published 兼容期并存，写路径以 status/publications 为准）
+    status = Column(Enum("draft", "building", "ready", "published", name="project_status"),
+                    nullable=False, server_default="draft")
+    current_version_id = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
@@ -150,6 +156,19 @@ class Module(Base):
     sort_order = Column(Integer, nullable=False, server_default="0")
 
 
+class Role(Base):
+    """角色 = 模块授权预设（R8）：应用角色即按 module_codes 全量生成用户 grants
+    （允许列表内 allowed=1，其余模块 allowed=0，角色即真相，覆盖既有微调）。"""
+    __tablename__ = "roles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(64), unique=True, nullable=False)
+    description = Column(String(255), nullable=True)
+    module_codes = Column(JSON, nullable=False)  # 允许的模块码列表（MySQL JSON 列无默认值，应用层保证）
+    is_builtin = Column(Boolean, nullable=False, server_default="0")  # 内置角色不可删、不可改名
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
 class UserModuleGrant(Base):
     """用户 × 模块授权矩阵（M1）：显式 allow/deny 可覆盖 is_default_on。"""
     __tablename__ = "user_module_grants"
@@ -211,7 +230,7 @@ class Entity(Base):
     消解/审核/导出以行表为准，Neo4j/Milvus/Oxigraph 为其投影（02 §4 三阶段迁移）。
     uri = urn:onto:{project_id}:entity/{graph_data 节点 id}，节点 id 由抽取侧
     make_deterministic_id 或画布保证稳定。is_class_node 判据 data.type ∈
-    {owl:Class, owl:ActionType, Class}（TBox）；owl:NamedIndividual/Instance 为 ABox。
+    {owl:Class, Class}（TBox；历史动作类型已废弃）；owl:NamedIndividual/Instance 为 ABox。
     """
     __tablename__ = "entities"
 
@@ -305,6 +324,150 @@ class ReviewItem(Base):
     created_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))
 
 
+class OntologyVersion(Base):
+    """版本控制（M3-6 R6，docs/design/02 §3.7）：修订画布/抽取完成/发布前/回滚前强制落版本。
+
+    version_no 项目内自增；快照正文入 MinIO（schema_snapshot_key/full_snapshot_key），
+    行表只存 key + stats + checksum（不可变副本）。
+    """
+    __tablename__ = "ontology_versions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, nullable=False)
+    version_no = Column(Integer, nullable=False)
+    label = Column(String(64), nullable=True)
+    kind = Column(Enum("schema", "full", "publication", "rollback", name="version_kind"),
+                  nullable=False)
+    schema_snapshot_key = Column(String(512), nullable=True)
+    full_snapshot_key = Column(String(512), nullable=True)
+    stats = Column(JSON, nullable=True)  # {classes, properties, instances, relations}
+    checksum = Column(String(64), nullable=False)
+    parent_version_id = Column(Integer, nullable=True)
+    created_by = Column(Integer, nullable=False)
+    description = Column(String(500), nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))
+
+    __table_args__ = (
+        UniqueConstraint("project_id", "version_no", name="uk_proj_ver"),
+    )
+
+
+class GraphSnapshot(Base):
+    """图快照（02 §3.7）：发布/回滚/备份的不可变副本，MinIO 存储。"""
+    __tablename__ = "graph_snapshots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, nullable=False)
+    version_id = Column(Integer, nullable=True)
+    purpose = Column(Enum("version", "publication", "pre_rollback", "backup",
+                          name="snapshot_purpose"), nullable=False)
+    storage_key = Column(String(512), nullable=False)
+    node_count = Column(Integer, nullable=False)
+    edge_count = Column(Integer, nullable=False)
+    checksum = Column(String(64), nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))
+
+
+class Publication(Base):
+    """发布记录（02 §3.7）：发布即固化快照，公共区一律读快照（只读）。"""
+    __tablename__ = "publications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, nullable=False)
+    version_id = Column(Integer, nullable=False)
+    snapshot_id = Column(Integer, nullable=False)
+    status = Column(Enum("published", "unpublished", name="publication_status"),
+                    nullable=False, server_default="published")
+    note = Column(String(500), nullable=True)
+    published_by = Column(Integer, nullable=False)
+    published_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))
+    unpublished_at = Column(DateTime, nullable=True)
+
+
+class OutboxEvent(Base):
+    """事务性 Outbox（02 §3.8）：API 事务内写入，worker-graph/worker-rdf 消费（M4 接线）。"""
+    __tablename__ = "outbox_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    aggregate_type = Column(Enum("project", "entity", "relation", "document",
+                                 "publication", "version", name="outbox_aggregate"),
+                            nullable=False)
+    aggregate_id = Column(Integer, nullable=False)
+    event_type = Column(String(64), nullable=False)
+    payload = Column(JSON, nullable=False)
+    status = Column(Enum("pending", "processed", "failed", name="outbox_status"),
+                    nullable=False, server_default="pending")
+    attempts = Column(Integer, nullable=False, server_default="0")
+    last_error = Column(Text, nullable=True)
+    trace_id = Column(String(64), nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))
+    processed_at = Column(DateTime, nullable=True)
+
+
+class AuditLog(Base):
+    """审计日志（02 §3.8）：安全事件与治理动作全量留痕（review.decide/publish/rollback…）。"""
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, nullable=True)
+    action = Column(String(64), nullable=False)
+    resource_type = Column(String(32), nullable=True)
+    resource_id = Column(String(64), nullable=True)
+    detail = Column(JSON, nullable=True)
+    ip = Column(String(45), nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))
+
+
+class GraphLayout(Base):
+    """服务端预布局结果（02 §3.8；>25k 节点，M4 graph_layouts 消费）。"""
+    __tablename__ = "graph_layouts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, nullable=False)
+    algorithm = Column(String(32), nullable=False, server_default="fa2")
+    layout = Column(JSON, nullable=True)
+    node_count = Column(Integer, nullable=False)
+    status = Column(Enum("pending", "done", "failed", name="layout_status"),
+                    nullable=False, server_default="pending")
+    created_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))
+
+
+class McpToken(Base):
+    """MCP 网关令牌（M5 R7，02 §3.9 / 07 §3.2）：user+project+读写范围 绑定。
+
+    明文 sk-mcp- 前缀 40 字符只在签发响应出现一次，库内仅存 SHA-256。
+    """
+    __tablename__ = "mcp_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, nullable=False)
+    name = Column(String(64), nullable=False)
+    token_hash = Column(String(64), nullable=False, unique=True)  # SHA-256(sk-mcp-*)
+    project_id = Column(Integer, nullable=False)
+    can_write = Column(Boolean, nullable=False, server_default=sa_text("0"))
+    expires_at = Column(DateTime, nullable=True)
+    last_used_at = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))
+
+
+class QaHistory(Base):
+    """问答历史（M5 R7，03 §15 GET /qa/history 契约的存储）。"""
+    __tablename__ = "qa_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, nullable=False)
+    user_id = Column(Integer, nullable=True)
+    conversation_id = Column(String(36), nullable=True)  # 对话分组（R8：一次会话一个 uuid）
+    question = Column(Text, nullable=False)
+    answer = Column(Text, nullable=True)
+    sources = Column(JSON, nullable=True)  # 引用列表（含溯源定位）
+    model = Column(String(128), nullable=True)
+    latency_ms = Column(Integer, nullable=True)
+    confidence = Column(Numeric(4, 3), nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))
+
+
 # 14 个功能模块种子（M1 R2 迁移同样写入，保持两处一致；README §4.1）
 MODULE_SEEDS = [
     {"code": "dashboard",       "name": "工作台",          "description": "首页统计与快捷入口",     "is_default_on": True,  "sort_order": 1},
@@ -319,8 +482,10 @@ MODULE_SEEDS = [
     {"code": "asset_center",    "name": "公共资产中心",    "description": "浏览已发布本体",         "is_default_on": True,  "sort_order": 10},
     {"code": "graph_explore",   "name": "图谱探索",        "description": "大规模图只读探索",       "is_default_on": False, "sort_order": 11},
     {"code": "qa",              "name": "本体问答",        "description": "基于本体的 GraphRAG 问答", "is_default_on": False, "sort_order": 12},
-    {"code": "mcp",             "name": "MCP 工具层",      "description": "MCP 令牌与工具调用",     "is_default_on": False, "sort_order": 13},
+    {"code": "mcp",             "name": "MCP 工具",        "description": "MCP 令牌与工具调用",     "is_default_on": False, "sort_order": 13},
     {"code": "export",          "name": "导出",            "description": "18 种格式导出",          "is_default_on": False, "sort_order": 14},
+    {"code": "report",          "name": "报告生成",        "description": "基于本体的主题分析报告（Word/MD）", "is_default_on": False, "sort_order": 15},
+    {"code": "ppt",             "name": "PPT生成",         "description": "基于本体的主题演示文稿（PPT）", "is_default_on": False, "sort_order": 16},
 ]
 
 
@@ -602,7 +767,7 @@ def _register_graph_rows_listener() -> None:
     @event.listens_for(SASession, "before_flush")
     def _on_before_flush(session, flush_context, instances):  # noqa: ANN001
         # 项目删除 → 行表清理（entities.project_id 无 FK，孤儿行需显式删；
-        # 放 before_flush：session.deleted 在此处保证可见）
+        # 放 before_flush：session.deleted 在此处保证可见）+ outbox 下线事件
         deleted_ids = [obj.id for obj in session.deleted if isinstance(obj, Project)]
         if deleted_ids:
             rows = SessionLocal()
@@ -615,6 +780,10 @@ def _register_graph_rows_listener() -> None:
                  .delete(synchronize_session=False))
                 (rows.query(Entity).filter(Entity.project_id.in_(deleted_ids))
                  .delete(synchronize_session=False))
+                for pid in deleted_ids:  # M4：worker-graph 消费 → Neo4j DETACH DELETE（02 §5）
+                    rows.add(OutboxEvent(aggregate_type="project", aggregate_id=pid,
+                                         event_type="project.deleted",
+                                         payload={"project_id": pid}))
                 rows.commit()
             except Exception as e:  # noqa: BLE001
                 rows.rollback()
@@ -635,6 +804,10 @@ def _register_graph_rows_listener() -> None:
             rows = SessionLocal()
             try:
                 sync_project_rows(rows, proj.id, proj.graph_data)
+                # M4（02 §5）：图变更 → outbox 事件，worker-graph 消费同步 Neo4j（同事务写）
+                rows.add(OutboxEvent(aggregate_type="project", aggregate_id=proj.id,
+                                     event_type="project.graph_rebuilt",
+                                     payload={"project_id": proj.id}))
                 rows.commit()
             except Exception as e:  # noqa: BLE001 —— 行表失败不影响 blob 写入链路
                 rows.rollback()

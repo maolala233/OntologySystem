@@ -20,9 +20,9 @@ celery_app = Celery(
     backend=settings.celery_backend,
     include=[
         "app.tasks.parse_tasks",    # M3-2：解析/切片（parse 队列）
-        "app.tasks.graph_tasks",    # M3-3：S1 存量行表回填（graph 队列）
+        "app.tasks.graph_tasks",    # M3-3 行表回填 + M4 outbox→Neo4j 消费（graph 队列）
         "app.tasks.extract_tasks",  # M3-4：Schema/Instance 抽取（extract 队列）
-        # TODO(M4): "app.tasks.rdf_tasks"
+        "app.tasks.rdf_tasks",      # M4：outbox→Oxigraph 命名图（rdf 队列，唯一写者）
     ],
 )
 
@@ -53,9 +53,13 @@ celery_app.conf.update(
     accept_content=["json"],
     timezone="Asia/Shanghai",
     enable_utc=True,
-    # beat：定时任务 M3 起挂入（目录清理/失败重试/审核超时提醒，08 §2 M3）
+    # beat：定时任务（08 §2 M3/M4）
     beat_schedule={
-        # TODO(M3): "cleanup-temp-dirs": {"task": "app.tasks.parse_tasks.cleanup", "schedule": 600.0}
+        # M4 outbox 消费链（02 §5）：worker-graph → Neo4j / worker-rdf → Oxigraph
+        "drain-outbox-neo4j": {"task": "app.tasks.graph_tasks.drain_outbox",
+                               "schedule": 30.0, "options": {"queue": "graph"}},
+        "drain-outbox-rdf": {"task": "app.tasks.rdf_tasks.drain_rdf_outbox",
+                             "schedule": 60.0, "options": {"queue": "rdf"}},
     },
 )
 
