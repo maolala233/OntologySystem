@@ -31,6 +31,7 @@ class VersionKind(str, Enum):
     FULL = "full"
     PUBLICATION = "publication"
     ROLLBACK = "rollback"
+    MANUAL = "manual"  # R13：实例探索手动编辑（每次编辑落一版）
 
 
 class VersionDiff(BaseModel):

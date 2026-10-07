@@ -97,7 +97,29 @@ function ResultBody({ text }: { text: string }) {
 
 // ───────────────────────── 页面
 
-type TabKey = 'tools' | 'resources' | 'ping';
+type TabKey = 'tools' | 'resources' | 'ping' | 'docs';
+
+/** 接入说明用的代码块：深色底 + 右上角复制 */
+function CodeBlock({ title, code }: { title?: string; code: string }) {
+    const [copied, setCopied] = useState(false);
+    return (
+        <div>
+            <div className="flex items-center justify-between mb-1">
+                <span className="text-xs text-gray-500">{title}</span>
+                <Button size="small" type="text" icon={<CopyOutlined />}
+                    onClick={() => {
+                        navigator.clipboard.writeText(code);
+                        setCopied(true);
+                        setTimeout(() => setCopied(false), 1500);
+                    }} />
+            </div>
+            <div className="relative border border-gray-700 rounded-lg bg-gray-900 overflow-auto max-h-80">
+                {copied && <span className="absolute bottom-1.5 right-2 text-[11px] text-green-400 z-10">已复制</span>}
+                <pre className="p-3 font-mono text-[12px] leading-relaxed text-gray-100 whitespace-pre">{code}</pre>
+            </div>
+        </div>
+    );
+}
 
 interface McpResourceSpec {
     uri: string;
@@ -377,7 +399,11 @@ export default function McpConsolePage() {
         { key: 'tools', label: '工具' },
         { key: 'resources', label: '资源' },
         { key: 'ping', label: 'Ping' },
+        { key: 'docs', label: '接入说明' },
     ];
+
+    // 接入说明示例中的令牌：已选令牌且有明文缓存则代入，否则占位
+    const docTok = bearer || 'sk-mcp-<你的令牌>';
 
     return (
         <div className="flex h-full bg-gray-50 min-h-0">
@@ -494,6 +520,118 @@ export default function McpConsolePage() {
 
                 {/* 内容区 */}
                 <div className="flex-1 min-h-0 flex">
+                    {activeTab === 'docs' && (
+                        <div className="flex-1 overflow-auto p-4 bg-gray-50">
+                            <div className="max-w-3xl mx-auto space-y-4 pb-8">
+                                <div className="bg-white border border-gray-200 rounded-xl p-4">
+                                    <div className="font-medium text-gray-800 mb-2">三步接入</div>
+                                    <ol className="text-sm text-gray-600 list-decimal pl-5 space-y-1 leading-relaxed">
+                                        <li>左侧「签发」创建 <span className="font-mono">sk-mcp-</span> 令牌：选持有人、绑定项目、勾是否允许写入——<b>明文只展示一次</b>，当场复制</li>
+                                        <li>端点固定为 <span className="font-mono">{endpoint}</span>（HTTP Streamable，无状态 POST-only）</li>
+                                        <li>把端点 + 令牌配到下方任意一种客户端 / 自己的 agent 里</li>
+                                    </ol>
+                                    <div className="mt-2 text-xs text-gray-400">
+                                        令牌绑定单项目（数据隔离）；只读令牌不暴露写入工具；限流：读 60 次/分、写 20 次/分。
+                                        {bearer ? ' 已检测到当前选中令牌，下方示例已代入。' : ' 尚未选令牌，示例中用占位符表示，替换为你的明文即可。'}
+                                    </div>
+                                </div>
+
+                                <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
+                                    <div className="font-medium text-gray-800">curl 调用</div>
+                                    <CodeBlock title="① 握手 + 列出工具（tools/list）" code={`# initialize（唯一不需要令牌的方法）
+curl -s -X POST ${endpoint} -H "Content-Type: application/json" \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}'
+
+# 列出全部工具（需令牌）
+curl -s -X POST ${endpoint} \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer ${docTok}" \\
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'`} />
+                                    <CodeBlock title="② 调用 ask（GraphRAG 问答）" code={`curl -s -X POST ${endpoint} \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer ${docTok}" \\
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 3,
+    "method": "tools/call",
+    "params": {
+      "name": "ask",
+      "arguments": { "question": "这个产品的投资范围是什么", "top_k": 12 }
+    }
+  }'`} />
+                                    <CodeBlock title="③ 提取答案正文（jq，可选）" code={`# ask 返回双层 JSON：content[0].text 是字符串化的结果（answer + sources 溯源原文）
+# 人看只取 answer；agent 建议连同 sources 一起消费用于核对
+... | jq -r '.result.content[0].text | fromjson | .answer'
+
+# 只看答案 + 置信度 + 引用来源摘要（不带原文大段）
+... | jq '{answer: .answer, confidence: .confidence,
+           sources: [.sources[] | {doc_file, score, ref_type}]}'`} />
+                                </div>
+
+                                <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
+                                    <div className="font-medium text-gray-800">Python 调用（官方 MCP SDK）</div>
+                                    <CodeBlock title="pip install mcp" code={`import asyncio
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
+
+ENDPOINT = "${endpoint}"
+HEADERS = {"Authorization": "Bearer ${docTok}"}
+
+async def main():
+    async with streamablehttp_client(ENDPOINT, headers=HEADERS) as (read, write, _):
+        async with ClientSession(read, write) as s:
+            await s.initialize()
+            tools = await s.list_tools()
+            print([t.name for t in tools.tools])
+
+            # GraphRAG 问答
+            res = await s.call_tool("ask", {"question": "这个产品的投资范围是什么"})
+            payload = json.loads(res.content[0].text)
+            print(payload["answer"])
+            for src in payload["sources"]:
+                print(src["doc_file"], round(src["score"], 3))
+
+asyncio.run(main())`} />
+                                </div>
+
+                                <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
+                                    <div className="font-medium text-gray-800">配到现成 MCP 客户端</div>
+                                    <CodeBlock title="Cursor 等支持 HTTP Streamable 的客户端（mcpServers JSON）" code={`{
+  "mcpServers": {
+    "ontology-platform": {
+      "url": "${endpoint}",
+      "headers": { "Authorization": "Bearer ${docTok}" }
+    }
+  }
+}`} />
+                                    <CodeBlock title="Claude Code 命令行" code={`claude mcp add --transport http ontology-platform \\
+  ${endpoint} \\
+  --header "Authorization: Bearer ${docTok}"`} />
+                                    <CodeBlock title="仅支持 stdio 的客户端（如桌面版 Claude）：mcp-remote 桥接" code={`{
+  "mcpServers": {
+    "ontology-platform": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "${endpoint}",
+               "--header", "Authorization: Bearer ${docTok}"]
+    }
+  }
+}`} />
+                                </div>
+
+                                <div className="bg-white border border-gray-200 rounded-xl p-4">
+                                    <div className="font-medium text-gray-800 mb-2">注意事项</div>
+                                    <ul className="text-sm text-gray-600 list-disc pl-5 space-y-1 leading-relaxed">
+                                        <li>端点为无状态实现：每次 POST 独立、不需要会话保持；GET /mcp 返回 405 是预期行为</li>
+                                        <li>除 <span className="font-mono">initialize</span> 外的所有方法都要 <span className="font-mono">Authorization: Bearer sk-mcp-*</span>；令牌无效返回 401 + JSON-RPC 认证错误</li>
+                                        <li>令牌与单个项目绑定，工具的读写范围仅限该项目图谱；撤销后立即失效</li>
+                                        <li>限流：读类 60 次/分钟、写类 20 次/分钟，超限返回限流错误，稍后重试</li>
+                                        <li>ask 的响应较大（sources 含命中文档原文整段，用于溯源核对），curl 调试建议配合 jq 取 answer</li>
+                                        <li>接入后建议 agent 先调 <span className="font-mono">get_ontology_schema</span> / <span className="font-mono">search_entities</span> 探索，再 <span className="font-mono">query_graph</span> / <span className="font-mono">ask</span> 深挖</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                     {activeTab === 'tools' && (
                         <>
                             {/* 工具清单 */}

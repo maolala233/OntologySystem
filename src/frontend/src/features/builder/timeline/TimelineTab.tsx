@@ -17,6 +17,7 @@ const KIND_META: Record<string, { color: string; label: string }> = {
     full: { color: 'green', label: '实例' },
     publication: { color: 'purple', label: '发布' },
     rollback: { color: 'orange', label: '回滚' },
+    manual: { color: 'geekblue', label: '手动编辑' },
 };
 
 // ── diff 友好呈现 ─────────────────────────────────────────────

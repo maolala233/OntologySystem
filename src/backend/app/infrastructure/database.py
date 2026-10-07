@@ -336,7 +336,7 @@ class OntologyVersion(Base):
     project_id = Column(Integer, nullable=False)
     version_no = Column(Integer, nullable=False)
     label = Column(String(64), nullable=True)
-    kind = Column(Enum("schema", "full", "publication", "rollback", name="version_kind"),
+    kind = Column(Enum("schema", "full", "publication", "rollback", "manual", name="version_kind"),
                   nullable=False)
     schema_snapshot_key = Column(String(512), nullable=True)
     full_snapshot_key = Column(String(512), nullable=True)

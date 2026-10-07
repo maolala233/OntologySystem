@@ -126,3 +126,50 @@ export const graphApi = {
     layoutCoords: async (projectId: number): Promise<{ available: boolean; coords: Record<string, [number, number]> }> =>
         (await apiClient.get(`/api/projects/${projectId}/graph/layout`)).data,
 };
+
+// ── R13：实例探索手动编辑（每次编辑后端落一版 kind=manual，可在「时间轴」追溯）──
+export interface GraphEditResult {
+    version_recorded: boolean;
+    version_no: number | null;
+    node_id?: string;
+    edge_id?: string;
+    class_label?: string;
+    changes?: string[];
+    deleted?: boolean;
+    removed_edges?: number;
+}
+
+export const graphEditApi = {
+    /** 新增实例 {class_node_id, label, properties?, position?} */
+    addInstance: async (projectId: number, body: {
+        class_node_id: string; label: string; properties?: Record<string, string>;
+        position?: { x: number; y: number };
+    }): Promise<GraphEditResult> =>
+        (await apiClient.post(`/api/projects/${projectId}/graph/instances`, body)).data,
+
+    /** 修改实例 {label?, class_node_id?, properties?} */
+    updateInstance: async (projectId: number, nodeId: string, body: {
+        label?: string; class_node_id?: string; properties?: Record<string, string>;
+    }): Promise<GraphEditResult> =>
+        (await apiClient.patch(`/api/projects/${projectId}/graph/instances/${encodeURIComponent(nodeId)}`, body)).data,
+
+    /** 删除实例（连带其全部关系边） */
+    deleteInstance: async (projectId: number, nodeId: string): Promise<GraphEditResult> =>
+        (await apiClient.delete(`/api/projects/${projectId}/graph/instances/${encodeURIComponent(nodeId)}`)).data,
+
+    /** 新增关系 {source_node_id, target_node_id, predicate} */
+    addRelation: async (projectId: number, body: {
+        source_node_id: string; target_node_id: string; predicate: string;
+    }): Promise<GraphEditResult> =>
+        (await apiClient.post(`/api/projects/${projectId}/graph/relations`, body)).data,
+
+    /** 修改关系谓词 {predicate} */
+    updateRelation: async (projectId: number, edgeId: string, body: {
+        predicate: string;
+    }): Promise<GraphEditResult> =>
+        (await apiClient.patch(`/api/projects/${projectId}/graph/relations/${encodeURIComponent(edgeId)}`, body)).data,
+
+    /** 删除关系 */
+    deleteRelation: async (projectId: number, edgeId: string): Promise<GraphEditResult> =>
+        (await apiClient.delete(`/api/projects/${projectId}/graph/relations/${encodeURIComponent(edgeId)}`)).data,
+};

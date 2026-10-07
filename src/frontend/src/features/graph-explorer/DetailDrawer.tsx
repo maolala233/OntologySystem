@@ -113,8 +113,15 @@ function EvidenceCards({ rows, projectId }: { projectId: number; rows: ProvRow[]
                 <div key={p.id} className="border-l-4 border-amber-400 bg-amber-50/40 rounded-r px-3 py-2">
                     <div className="flex items-center gap-2 flex-wrap mb-1 text-xs text-gray-500">
                         <Text strong className="text-gray-700">{p.document_name || '未知文档'}</Text>
-                        {p.chunk_index != null && <Tag>chunk #{p.chunk_index}</Tag>}
-                        {p.method && <Tag color="blue">{p.method}</Tag>}
+                        {p.chunk_index != null &&
+                            <Tooltip title={TERM_HELP['chunk']}><Tag>chunk #{p.chunk_index}</Tag></Tooltip>}
+                        {p.method && (
+                            <Tooltip title={p.method === 'llm_ner'
+                                ? '该证据由大模型命名实体识别（LLM NER）从原文抽取'
+                                : `证据抽取方式：${p.method}`}>
+                                <Tag color="blue">{p.method}</Tag>
+                            </Tooltip>
+                        )}
                         {p.char_start != null && p.char_end != null &&
                             <Tag>字符 [{p.char_start}, {p.char_end}]</Tag>}
                         {p.checksum && <Tooltip title={`checksum ${p.checksum}`}><Text code className="text-[10px]">{p.checksum.slice(0, 10)}…</Text></Tooltip>}
@@ -146,7 +153,7 @@ function EvidenceCards({ rows, projectId }: { projectId: number; rows: ProvRow[]
     );
 }
 
-function Section({ title, extra, children }: { title: string; extra?: React.ReactNode; children: React.ReactNode }) {
+function Section({ title, extra, children }: { title: React.ReactNode; extra?: React.ReactNode; children: React.ReactNode }) {
     return (
         <div className="mb-4">
             <div className="flex items-center justify-between mb-2">
@@ -158,6 +165,32 @@ function Section({ title, extra, children }: { title: string; extra?: React.Reac
     );
 }
 
+/** 学术术语悬停解释：虚线下划线提示可悬停 */
+const TERM_HELP: Record<string, string> = {
+    度数: '该节点与其他节点直接相连的关系边总数（入边 + 出边）。度数越高，说明该实体在图谱中关联越密集、越核心。',
+    置信: '抽取引擎对这条数据的把握程度（0~1）。越高越可信；置信度较低的数据通常会转入人工审核。',
+    置信度: '抽取引擎对这条数据的把握程度（0~1）。越高越可信；置信度较低的数据通常会转入人工审核。',
+    URI: '该实体在本项目图谱中的唯一标识地址，类似「身份证号」，跨系统引用时不会混淆。',
+    规范名: '实体消解合并后，作为该实体标准称呼的名称。',
+    归一化: '实体消解时把不同写法（全半角、大小写、别名等）统一后的标准形式，用于机器判断是否为同一实体。',
+    溯源证据: '记录这条数据来自哪份文档的哪个切片、原文是什么，便于人工核对与审计。',
+    谓词: '两个实体之间关系的类型，如「属于」「发行机构」。',
+    双向边: '两个节点之间同时存在方向相反的两条关系时，画布上以弧形错开绘制，避免两条线重叠。',
+    chunk: '文档解析时切分出的片段编号，是检索与溯源的基本单位。',
+    被合并: '实体消解判定它与另一实体为同一事物，数据已并入规范实体（点击可跳转查看）。',
+    合并源: '该实体由多个来源节点合并而来，这是被并入的来源节点。',
+};
+
+export function Term({ t, children }: { t: string; children?: React.ReactNode }) {
+    const help = TERM_HELP[t];
+    if (!help) return <>{children ?? t}</>;
+    return (
+        <Tooltip title={help}>
+            <span className="cursor-help border-b border-dotted border-gray-400">{children ?? t}</span>
+        </Tooltip>
+    );
+}
+
 interface Props {
     projectId: number;
     selection: { type: 'node' | 'edge'; id: string } | null;
@@ -165,9 +198,13 @@ interface Props {
     onNavigateNode?: (nodeId: string) => void;
     /** expand=true 时额外展开该节点的邻域（类节点=展开实例） */
     onExpandNode?: (nodeId: string, opts?: { expand?: boolean }) => void;
+    /** R13：节点详情右上角追加操作（实例探索的编辑/加关系/删除等，由宿主页面注入） */
+    extraNodeActions?: (nodeId: string) => React.ReactNode;
+    /** 变化后触发详情刷新（手动编辑保存成功等） */
+    reloadKey?: number;
 }
 
-const DetailDrawer: React.FC<Props> = ({ projectId, selection, onClose, onNavigateNode, onExpandNode }) => {
+const DetailDrawer: React.FC<Props> = ({ projectId, selection, onClose, onNavigateNode, onExpandNode, extraNodeActions, reloadKey }) => {
     const [nodeTitle, setNodeTitle] = useState<string>('节点详情');
     const [edgeDetail, setEdgeDetail] = useState<EdgeDetail | null>(null);
 
@@ -193,7 +230,8 @@ const DetailDrawer: React.FC<Props> = ({ projectId, selection, onClose, onNaviga
             width={560}
             title={<Space><span>{title}</span></Space>}
             extra={selection?.type === 'node' && (
-                <Space>
+                <Space wrap size={4}>
+                    {extraNodeActions?.(selection.id)}
                     {onExpandNode && <Button size="small" icon={<SendOutlined />}
                                              onClick={() => onExpandNode(selection.id)}>在画布中聚焦</Button>}
                     {onExpandNode && <Button size="small" type="primary" ghost icon={<ExpandOutlined />}
@@ -206,6 +244,7 @@ const DetailDrawer: React.FC<Props> = ({ projectId, selection, onClose, onNaviga
                 <NodeDetailContent
                     projectId={projectId}
                     nodeId={selection.id}
+                    reloadKey={reloadKey}
                     onNavigateNode={onNavigateNode}
                     onExpandNode={onExpandNode}
                     onLoaded={(d) => setNodeTitle(d.node?.label || '节点详情')}
@@ -215,7 +254,7 @@ const DetailDrawer: React.FC<Props> = ({ projectId, selection, onClose, onNaviga
                 <div>
                     <Section title="关系">
                         <Descriptions size="small" column={1} bordered>
-                            <Descriptions.Item label="谓词"><Tag color="purple">{edgeDetail.edge.label}</Tag></Descriptions.Item>
+                            <Descriptions.Item label={<Term t="谓词" />}><Tag color="purple">{edgeDetail.edge.label}</Tag></Descriptions.Item>
                             <Descriptions.Item label="主体">
                                 {edgeDetail.subject ? (
                                     <a onClick={() => edgeDetail.subject && onNavigateNode?.(edgeDetail.subject.id)}>
@@ -230,11 +269,11 @@ const DetailDrawer: React.FC<Props> = ({ projectId, selection, onClose, onNaviga
                                     </a>
                                 ) : '（缺失）'}
                             </Descriptions.Item>
-                            <Descriptions.Item label="置信度">
+                            <Descriptions.Item label={<Term t="置信度" />}>
                                 {edgeDetail.confidence != null ? <Tag color="blue">{edgeDetail.confidence.toFixed(2)}</Tag> : '—'}
                             </Descriptions.Item>
                             <Descriptions.Item label="状态"><Tag color={STATUS_COLOR[edgeDetail.status]}>{edgeDetail.status}</Tag></Descriptions.Item>
-                            <Descriptions.Item label="双向边">{edgeDetail.edge.bidirectional ? `是（弧形偏移 #${edgeDetail.edge.pairIndex}）` : '否'}</Descriptions.Item>
+                            <Descriptions.Item label={<Term t="双向边" />}>{edgeDetail.edge.bidirectional ? `是（弧形偏移 #${edgeDetail.edge.pairIndex}）` : '否'}</Descriptions.Item>
                             {Object.keys(edgeDetail.props).length > 0 && (
                                 <Descriptions.Item label="属性">
                                     {Object.entries(edgeDetail.props).map(([k, v]) =>
@@ -243,7 +282,7 @@ const DetailDrawer: React.FC<Props> = ({ projectId, selection, onClose, onNaviga
                             )}
                         </Descriptions>
                     </Section>
-                    <Section title="溯源证据">
+                    <Section title={<span><Term t="溯源证据" />（{edgeDetail.provenance.length}）</span>}>
                         <EvidenceCards rows={edgeDetail.provenance} projectId={projectId} />
                     </Section>
                 </div>
@@ -261,7 +300,9 @@ export const NodeDetailContent: React.FC<{
     onNavigateNode?: (nodeId: string) => void;
     onExpandNode?: (nodeId: string, opts?: { expand?: boolean }) => void;
     onLoaded?: (d: NodeDetail) => void;
-}> = ({ projectId, nodeId, onNavigateNode, onExpandNode, onLoaded }) => {
+    /** 变化后触发重新加载（宿主页编辑保存成功等） */
+    reloadKey?: number;
+}> = ({ projectId, nodeId, onNavigateNode, onExpandNode, onLoaded, reloadKey }) => {
     const [nodeDetail, setNodeDetail] = useState<NodeDetail | null>(null);
     const [loading, setLoading] = useState(false);
     const [refreshKey, setRefreshKey] = useState(0);
@@ -285,7 +326,7 @@ export const NodeDetailContent: React.FC<{
         load();
         return () => { alive = false; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [projectId, nodeId, refreshKey]);
+    }, [projectId, nodeId, refreshKey, reloadKey]);
 
     if (loading) return <Spin className="block mx-auto my-10" />;
     if (!nodeDetail) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="详情加载失败或节点不存在" />;
@@ -301,15 +342,16 @@ export const NodeDetailContent: React.FC<{
                         </Tag>
                         <Tag color="geekblue">{nodeDetail.entity.class_label}</Tag>
                         <Tag color={STATUS_COLOR[nodeDetail.entity.status]}>{nodeDetail.entity.status}</Tag>
-                        {nodeDetail.entity.confidence != null && <Tag color="blue">置信 {nodeDetail.entity.confidence.toFixed(2)}</Tag>}
-                        <Tag>度数 {nodeDetail.degree}</Tag>
+                        {nodeDetail.entity.confidence != null &&
+                            <Tooltip title={TERM_HELP['置信']}><Tag color="blue">置信 {nodeDetail.entity.confidence.toFixed(2)}</Tag></Tooltip>}
+                        <Tooltip title={TERM_HELP['度数']}><Tag>度数 {nodeDetail.degree}</Tag></Tooltip>
                     </Space>
 
                     <Section title="基本信息">
                         <Descriptions size="small" column={1} bordered>
                             <Descriptions.Item label="URI"><Text code copyable style={{ fontSize: 11 }}>{nodeDetail.entity.uri}</Text></Descriptions.Item>
-                            <Descriptions.Item label="规范名">{nodeDetail.entity.label}</Descriptions.Item>
-                            <Descriptions.Item label="归一化">{nodeDetail.entity.label_normalized}</Descriptions.Item>
+                            <Descriptions.Item label={<Term t="规范名" />}>{nodeDetail.entity.label}</Descriptions.Item>
+                            <Descriptions.Item label={<Term t="归一化" />}>{nodeDetail.entity.label_normalized}</Descriptions.Item>
                             {nodeDetail.entity.instance_count != null &&
                                 <Descriptions.Item label="实例数">{nodeDetail.entity.instance_count}</Descriptions.Item>}
                             {nodeDetail.entity.created_at &&
@@ -342,7 +384,7 @@ export const NodeDetailContent: React.FC<{
                         )}
                     </Section>
 
-                    <Section title={`溯源证据（${nodeDetail.provenance.length}）`}>
+                    <Section title={<span><Term t="溯源证据" />（{nodeDetail.provenance.length}）</span>}>
                         <EvidenceCards rows={nodeDetail.provenance} projectId={projectId} />
                     </Section>
 
@@ -351,13 +393,13 @@ export const NodeDetailContent: React.FC<{
                             size="small" pagination={{ pageSize: 8 }} rowKey="id"
                             dataSource={nodeDetail.relations}
                             columns={[
-                                { title: '谓词', dataIndex: 'predicate', width: '30%',
+                                { title: <Term t="谓词" />, dataIndex: 'predicate', width: '30%',
                                   render: (v, r) => <Tag color={r.direction === 'out' ? 'blue' : 'green'}>{v}{r.direction === 'out' ? ' →' : ' ←'}</Tag> },
                                 { title: '对方', dataIndex: 'other_label',
                                   render: (v, r) => r.other_id ? (
                                       <a onClick={() => r.other_id && onNavigateNode?.(r.other_id)}>{v} <Text type="secondary" className="text-xs">{r.other_class}</Text></a>
                                   ) : v },
-                                { title: '置信', dataIndex: 'confidence', width: 70,
+                                { title: <Term t="置信" />, dataIndex: 'confidence', width: 70,
                                   render: (v) => v != null ? v.toFixed(2) : '—' },
                             ]}
                         />
@@ -367,7 +409,7 @@ export const NodeDetailContent: React.FC<{
                         <Section title="合并信息">
                             {nodeDetail.merge.canonical_id && (
                                 <div className="mb-1">
-                                    <Tag color="cyan">被合并</Tag>
+                                    <Tooltip title={TERM_HELP['被合并']}><Tag color="cyan">被合并</Tag></Tooltip>
                                     <a onClick={() => onNavigateNode?.(nodeDetail.merge.canonical_id!)}>
                                         规范实体 #{nodeDetail.merge.canonical_id}
                                     </a>
@@ -375,7 +417,7 @@ export const NodeDetailContent: React.FC<{
                             )}
                             {nodeDetail.merge.merged_children.map((c) => (
                                 <div key={c.id} className="mb-1">
-                                    <Tag color="cyan">合并源</Tag>
+                                    <Tooltip title={TERM_HELP['合并源']}><Tag color="cyan">合并源</Tag></Tooltip>
                                     <a onClick={() => onNavigateNode?.(c.id)}>{c.label} (#{c.id})</a>
                                 </div>
                             ))}

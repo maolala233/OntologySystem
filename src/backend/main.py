@@ -11,6 +11,7 @@ from app.api import (
     domains,
     env_configs,
     extraction,
+    graph_edit,
     graph_view,
     mcp_gateway,
     mcp_tokens,
@@ -102,6 +103,7 @@ app.include_router(resolution.router)  # M3-5：实体消解与冲突（03 §9�
 app.include_router(reviews.router)  # M3-6：审核队列与裁决（03 §11，状态机 pending→claimed→终态）
 app.include_router(versions.router)  # M3-6：版本/快照/diff/回滚/时间轴（03 §11，04 §9）
 app.include_router(publications.router)  # M3-6：发布与公共区只读（03 §12，04 §10）
+app.include_router(graph_edit.router)  # R13：实例探索手动编辑（每次编辑落 manual 版本）
 app.include_router(graph_view.router)  # M4：图视图数据契约 + 节点/边详情（03 §13，06 §4）
 app.include_router(qa.router)  # M5：本体问答 SSE 流式 + 历史/溯源（03 §15，07 §4）
 app.include_router(reports.router)  # R8：本体报告/PPT 生成（工具层扩展）

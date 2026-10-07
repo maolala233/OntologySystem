@@ -5,19 +5,22 @@
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button, Dropdown, Form, Input, Modal, Select, Space, Tooltip, Tree, message } from 'antd';
+import {
+    AutoComplete, Button, Dropdown, Form, Input, Modal, Popconfirm, Radio, Select, Space, Tag, Tooltip, Tree, message,
+} from 'antd';
 import type { MenuProps, TreeProps } from 'antd';
 import {
-    CheckCircleOutlined, CloudServerOutlined, ClusterOutlined, ExportOutlined, EyeOutlined,
-    ExpandOutlined, LeftOutlined, MoreOutlined, RadarChartOutlined, RightOutlined, SaveOutlined,
-    SearchOutlined, ShrinkOutlined, ThunderboltOutlined, UnorderedListOutlined,
+    ApartmentOutlined, CheckCircleOutlined, CloudServerOutlined, ClusterOutlined, DeleteOutlined,
+    EditOutlined, ExportOutlined, EyeOutlined, ExpandOutlined, LeftOutlined, MoreOutlined,
+    PlusOutlined, RadarChartOutlined, RightOutlined, SaveOutlined, SearchOutlined,
+    ShrinkOutlined, ThunderboltOutlined, UnorderedListOutlined,
 } from '@ant-design/icons';
 
 import { projectsApi } from '../../../api/projects';
 import { setUnsavedGuard } from '../../../utils/unsavedGuard';
 import { extractionApi } from '../../../api/extraction';
 import { versionsApi } from '../../../api/governance';
-import { graphApi } from '../../../api/graphview';
+import { graphApi, graphEditApi, GraphEditResult } from '../../../api/graphview';
 import D3ForceGraph from '../../../components/OntologyGraph/D3ForceGraph';
 import DetailDrawer from '../../graph-explorer/DetailDrawer';
 import RagSyncModal from '../components/RagSyncModal';
@@ -65,6 +68,15 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
     // 保存（与骨架编辑同款）：拖拽布局等画布改动 → 更新当前抽取结果
     const [isSaving, setIsSaving] = useState(false);
     const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+
+    // ── R13：实例手动编辑（每次编辑后端落一版 kind=manual，在「时间轴」可追溯）──
+    const [editTick, setEditTick] = useState(0);          // 编辑成功后刷新详情抽屉
+    const [savingEdit, setSavingEdit] = useState(false);  // 编辑弹窗提交中
+    const [instModal, setInstModal] = useState<{ mode: 'add' | 'edit'; nodeId?: string } | null>(null);
+    const [relModal, setRelModal] = useState<{ anchorId: string } | null>(null);
+    const [edgePred, setEdgePred] = useState('');         // 边弹窗可编辑谓词
+    const [instForm] = Form.useForm();
+    const [relForm] = Form.useForm();
 
     // 未保存守卫：Tab 切换 / 侧边导航离开前弹窗确认；浏览器关闭/刷新走 beforeunload
     useEffect(() => {
@@ -122,9 +134,189 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
         }
     };
 
+    // ───────────────────────── R13：实例手动编辑 ─────────────────────────
+    const isInstanceNode = (n: any) => (n?.data || {}).type === 'owl:NamedIndividual';
+    const classNodeOptions = useMemo(() => graphNodes
+        .filter((n) => CLASS_TYPES.has((n.data || {}).type))
+        .map((n) => ({ value: String(n.id), label: n.data?.label || String(n.id) }))
+        .sort((a, b) => a.label.localeCompare(b.label, 'zh')), [graphNodes]);
+    const instanceNodeOptions = useMemo(() => graphNodes
+        .filter((n) => (n.data || {}).type === 'owl:NamedIndividual')
+        .map((n) => ({
+            value: String(n.id),
+            label: `${n.data?.label || String(n.id)}（${n.data?.class_label || '未分类'}）`,
+        }))
+        .sort((a, b) => a.label.localeCompare(b.label, 'zh')), [graphNodes]);
+    // 谓词候选：画布已有关系谓词（rdf:type 除外），支持自由输入
+    const predicateOptions = useMemo(() => {
+        const s = new Set<string>();
+        graphEdges.forEach((e) => {
+            const r = (e.data || {}).relation || e.label;
+            if (r && r !== 'rdf:type' && r !== 'instance_of') s.add(String(r));
+        });
+        return [...s].sort().map((v) => ({ value: v }));
+    }, [graphEdges]);
+
+    // 实例当前所属类节点 id：rdf:type 边 → class_label 兜底
+    const resolveClassId = useCallback((nodeId: string): string | undefined => {
+        const typeEdge = graphEdges.find((e) => String(e.source) === nodeId
+            && (e.label === 'rdf:type' || (e.data || {}).relation === 'instance_of'));
+        if (typeEdge && CLASS_TYPES.has(graphNodes.find((n) => n.id === typeEdge.target)?.data?.type)) {
+            return String(typeEdge.target);
+        }
+        const node = graphNodes.find((n) => String(n.id) === nodeId);
+        const cl = (node?.data || {}).class_label;
+        const byLabel = cl && graphNodes.find((n) => CLASS_TYPES.has((n.data || {}).type)
+            && n.data?.label === cl);
+        return byLabel ? String(byLabel.id) : undefined;
+    }, [graphEdges, graphNodes]);
+
+    const afterEdit = useCallback((r: GraphEditResult, tips?: string) => {
+        message.success(r.version_recorded
+            ? `${tips || '已保存'}，已记录到版本 v${r.version_no}（时间轴可查）`
+            : `${tips || '已保存'}（版本记录失败，稍后可通过「保存」补偿）`);
+        setEditTick((t) => t + 1);
+        refresh();
+    }, [refresh]);
+
+    const editErrMsg = (e: any, fallback: string) => {
+        message.error(e?.response?.data?.error?.message || e?.response?.data?.detail || fallback);
+    };
+
+    const openInstAdd = () => {
+        instForm.resetFields();
+        instForm.setFieldsValue({ label: '', class_node_id: undefined, properties: [] });
+        setInstModal({ mode: 'add' });
+    };
+
+    const openInstEdit = (node: any) => {
+        instForm.resetFields();
+        instForm.setFieldsValue({
+            label: node.data?.label || '',
+            class_node_id: resolveClassId(String(node.id)),
+            properties: Object.entries(node.data?.properties || {}).map(([key, value]) => ({ key, value: String(value ?? '') })),
+        });
+        setInstModal({ mode: 'edit', nodeId: String(node.id) });
+    };
+
+    const openRelAdd = (node: any) => {
+        relForm.resetFields();
+        relForm.setFieldsValue({ direction: 'out', target: undefined, predicate: '' });
+        setRelModal({ anchorId: String(node.id) });
+    };
+
+    const handleInstSave = async () => {
+        try {
+            const values = await instForm.validateFields();
+            const props: Record<string, string> = {};
+            (values.properties || []).forEach((row: any) => {
+                if (row?.key && String(row.key).trim()) props[String(row.key).trim()] = String(row.value ?? '');
+            });
+            setSavingEdit(true);
+            if (instModal?.mode === 'add') {
+                const r = await graphEditApi.addInstance(projectId, {
+                    class_node_id: values.class_node_id,
+                    label: String(values.label).trim(),
+                    properties: props,
+                });
+                // 新实例挂到所选类并聚焦
+                setExpandedNodeIds((prev) => new Set(prev).add(values.class_node_id));
+                if (r.node_id) {
+                    setNeighborhoodPinId(r.node_id);
+                    setHighlightNodeId(r.node_id);
+                    focusSeqRef.current += 1;
+                    setFocusRequest({ nodeId: r.node_id, seq: focusSeqRef.current });
+                }
+                afterEdit(r, `已新增实例「${values.label}」`);
+            } else if (instModal?.nodeId) {
+                const r = await graphEditApi.updateInstance(projectId, instModal.nodeId, {
+                    label: String(values.label).trim(),
+                    class_node_id: values.class_node_id,
+                    properties: props,
+                });
+                afterEdit(r, `已修改实例「${values.label}」`);
+            }
+            setInstModal(null);
+            if (selectedNode) setSelectedNode({ ...selectedNode });
+        } catch (e: any) {
+            if (e?.errorFields) return; // 表单校验错误
+            editErrMsg(e, '保存失败');
+        } finally {
+            setSavingEdit(false);
+        }
+    };
+
+    const handleDeleteInstance = async (node: any) => {
+        try {
+            const r = await graphEditApi.deleteInstance(projectId, String(node.id));
+            setSelectedNode(null);
+            afterEdit(r, `已删除实例「${node.data?.label || node.id}」`);
+        } catch (e: any) {
+            editErrMsg(e, '删除失败');
+        }
+    };
+
+    const handleRelSave = async () => {
+        if (!relModal) return;
+        try {
+            const values = await relForm.validateFields();
+            const anchor = relModal.anchorId;
+            const source = values.direction === 'out' ? anchor : values.target;
+            const target = values.direction === 'out' ? values.target : anchor;
+            setSavingEdit(true);
+            const r = await graphEditApi.addRelation(projectId, {
+                source_node_id: source,
+                target_node_id: target,
+                predicate: String(values.predicate).trim(),
+            });
+            setRelModal(null);
+            afterEdit(r, '已新增关系');
+            if (selectedNode) setSelectedNode({ ...selectedNode });
+        } catch (e: any) {
+            if (e?.errorFields) return;
+            editErrMsg(e, '保存失败');
+        } finally {
+            setSavingEdit(false);
+        }
+    };
+
+    const handleEdgeSave = async () => {
+        if (!selectedEdge?.id) return;
+        try {
+            setSavingEdit(true);
+            const r = await graphEditApi.updateRelation(projectId, String(selectedEdge.id), {
+                predicate: edgePred.trim(),
+            });
+            afterEdit(r, '已修改关系谓词');
+            setSelectedEdge(null);
+        } catch (e: any) {
+            editErrMsg(e, '保存失败');
+        } finally {
+            setSavingEdit(false);
+        }
+    };
+
+    const handleEdgeDelete = async () => {
+        if (!selectedEdge?.id) return;
+        try {
+            setSavingEdit(true);
+            const r = await graphEditApi.deleteRelation(projectId, String(selectedEdge.id));
+            setSelectedEdge(null);
+            afterEdit(r, '已删除关系');
+        } catch (e: any) {
+            editErrMsg(e, '删除失败');
+        } finally {
+            setSavingEdit(false);
+        }
+    };
+
+    // 打开边弹窗时同步可编辑谓词初值
+    useEffect(() => {
+        if (selectedEdge) setEdgePred(String(selectedEdge.data?.relation || selectedEdge.data?.label || ''));
+    }, [selectedEdge]);
+
     // 与骨架编辑同规则：类节点常显；实例仅在其所属类被右键展开后显示
-    const { displayNodes, displayEdges } = useMemo(() => {
-        const classToInstances = new Map<string, string[]>();
+    const { displayNodes, displayEdges } = useMemo(() => {        const classToInstances = new Map<string, string[]>();
         const instanceToClass = new Map<string, string>();
         graphEdges.forEach((e) => {
             const label = e.label || e.data?.label || e.data?.relation || '';
@@ -448,24 +640,85 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                         focusCanvasNode(nid);
                     }}
                     onExpandNode={(nid) => focusCanvasNode(nid)}
+                    reloadKey={editTick}
+                    extraNodeActions={(nid) => {
+                        const node = graphNodes.find((n) => String(n.id) === nid);
+                        if (!isInstanceNode(node)) return null; // 类节点的编辑走「骨架编辑」
+                        return (
+                            <>
+                                <Button size="small" icon={<EditOutlined />}
+                                        onClick={() => openInstEdit(node)}>编辑</Button>
+                                <Button size="small" icon={<ApartmentOutlined />}
+                                        onClick={() => openRelAdd(node)}>加关系</Button>
+                                <Popconfirm
+                                    title={`删除实例「${node.data?.label || nid}」？`}
+                                    description="将连带删除它的全部关系边；操作会记录到版本时间轴。"
+                                    okText="删除" okButtonProps={{ danger: true }} cancelText="取消"
+                                    onConfirm={() => handleDeleteInstance(node)}>
+                                    <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
+                                </Popconfirm>
+                            </>
+                        );
+                    }}
                 />
-                {selectedEdge && (
-                    <Modal
-                        title={`关系 - ${selectedEdge.data?.label || selectedEdge.data?.relation || '未命名'}`}
-                        open
-                        onCancel={() => setSelectedEdge(null)}
-                        footer={null}
-                        width={420}
-                    >
-                        <div className="space-y-2 text-sm">
-                            <div>源头：{String(selectedEdge.source)}</div>
-                            <div>目标：{String(selectedEdge.target)}</div>
-                            {selectedEdge.data?.confidence != null && (
-                                <div>置信度：{Number(selectedEdge.data.confidence).toFixed(2)}</div>
-                            )}
-                        </div>
-                    </Modal>
-                )}
+                {selectedEdge && (() => {
+                    const rel = selectedEdge.data?.relation || selectedEdge.data?.label || '';
+                    const isTypeEdge = rel === 'rdf:type' || rel === 'instance_of';
+                    const hasId = !!selectedEdge.id;
+                    return (
+                        <Modal
+                            title={`关系 - ${selectedEdge.data?.label || rel || '未命名'}`}
+                            open
+                            onCancel={() => setSelectedEdge(null)}
+                            footer={null}
+                            width={460}
+                        >
+                            <div className="space-y-2 text-sm">
+                                <div>源头：{String(selectedEdge.source)}</div>
+                                <div>目标：{String(selectedEdge.target)}</div>
+                                {selectedEdge.data?.confidence != null && (
+                                    <div>置信度：{Number(selectedEdge.data.confidence).toFixed(2)}</div>
+                                )}
+                                {isTypeEdge ? (
+                                    <div className="text-xs text-gray-400">
+                                        rdf:type 边（实例归属类）不支持在此编辑；如需调整类别请在实例详情里「编辑」。
+                                    </div>
+                                ) : hasId ? (
+                                    <>
+                                        <div className="flex items-center gap-2 pt-1">
+                                            <span className="shrink-0">谓词：</span>
+                                            <AutoComplete
+                                                value={edgePred}
+                                                onChange={(v) => setEdgePred(v)}
+                                                options={predicateOptions}
+                                                style={{ width: 220 }}
+                                                placeholder="关系类型，如：属于"
+                                            />
+                                        </div>
+                                        <div className="flex items-center gap-2 pt-2">
+                                            <Button type="primary" size="small" loading={savingEdit}
+                                                    disabled={!edgePred.trim() || edgePred.trim() === rel}
+                                                    onClick={handleEdgeSave}>保存修改</Button>
+                                            <Popconfirm title="删除这条关系？" okText="删除"
+                                                        okButtonProps={{ danger: true }} cancelText="取消"
+                                                        onConfirm={handleEdgeDelete}>
+                                                <Button danger size="small" icon={<DeleteOutlined />}
+                                                        loading={savingEdit}>删除关系</Button>
+                                            </Popconfirm>
+                                        </div>
+                                        <div className="text-xs text-gray-400">
+                                            修改会记录到「时间轴」版本记录。
+                                        </div>
+                                    </>
+                                ) : (
+                                    <div className="text-xs text-gray-400">
+                                        该关系缺少稳定 ID（旧数据），请先点击顶部「保存」后再编辑。
+                                    </div>
+                                )}
+                            </div>
+                        </Modal>
+                    );
+                })()}
             </>
         );
     };
@@ -649,6 +902,11 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                                         列表
                                     </Button>
                                 </Tooltip>
+                                <Tooltip title="手动新增一个实例节点（挂到所选类下，操作记录到版本时间轴）">
+                                    <Button size="small" type="primary" ghost icon={<PlusOutlined />} onClick={openInstAdd}>
+                                        新增实例
+                                    </Button>
+                                </Tooltip>
                             </div>
                         </div>
 
@@ -713,6 +971,106 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                 <div className="mt-2 text-xs text-gray-400">
                     选历史版本时从该版本快照读取框架，抽取结果仍写回当前画布。
                 </div>
+            </Modal>
+
+            {/* ── R13：新增/编辑实例弹窗 ── */}
+            <Modal
+                title={instModal?.mode === 'add' ? '新增实例' : '编辑实例'}
+                open={!!instModal}
+                onOk={handleInstSave}
+                okText="保存"
+                confirmLoading={savingEdit}
+                onCancel={() => setInstModal(null)}
+                okButtonProps={instModal?.mode === 'add' ? {} : { danger: false }}
+                destroyOnClose
+            >
+                <Form form={instForm} layout="vertical" className="mt-2">
+                    <Form.Item name="label" label="实例名称" rules={[{ required: true, message: '请输入实例名称' }]}>
+                        <Input maxLength={200} placeholder="如：XX 稳健型理财产品" />
+                    </Form.Item>
+                    <Form.Item name="class_node_id" label="所属类" rules={[{ required: true, message: '请选择所属类' }]}>
+                        <Select
+                            showSearch
+                            optionFilterProp="label"
+                            placeholder="选择该实例归属的类"
+                            options={classNodeOptions}
+                        />
+                    </Form.Item>
+                    <Form.Item label="属性（可选）" className="mb-0">
+                        <Form.List name="properties">
+                            {(fields, { add, remove }) => (
+                                <>
+                                    {fields.map((field) => (
+                                        <Space key={field.key} className="flex mb-2">
+                                            <Form.Item name={[field.name, 'key']} noStyle>
+                                                <Input maxLength={100} placeholder="属性名" style={{ width: 150 }} />
+                                            </Form.Item>
+                                            <Form.Item name={[field.name, 'value']} noStyle>
+                                                <Input maxLength={500} placeholder="值" style={{ width: 240 }} />
+                                            </Form.Item>
+                                            <Button type="text" danger icon={<DeleteOutlined />}
+                                                    onClick={() => remove(field.name)} />
+                                        </Space>
+                                    ))}
+                                    <Button type="dashed" block icon={<PlusOutlined />}
+                                            onClick={() => add({ key: '', value: '' })}>
+                                        添加属性
+                                    </Button>
+                                </>
+                            )}
+                        </Form.List>
+                    </Form.Item>
+                </Form>
+                <div className="text-xs text-gray-400 mt-2">
+                    保存后会同步行表与图数据库，并自动记录一个「手动编辑」版本。
+                </div>
+            </Modal>
+
+            {/* ── R13：新增关系弹窗 ── */}
+            <Modal
+                title="新增关系"
+                open={!!relModal}
+                onOk={handleRelSave}
+                okText="保存"
+                confirmLoading={savingEdit}
+                onCancel={() => setRelModal(null)}
+                destroyOnClose
+            >
+                {relModal && (() => {
+                    const anchor = graphNodes.find((n) => String(n.id) === relModal.anchorId);
+                    return (
+                        <Form form={relForm} layout="vertical" className="mt-2">
+                            <div className="mb-3 text-sm">
+                                当前实例：<Tag color="blue">{anchor?.data?.label || relModal.anchorId}</Tag>
+                            </div>
+                            <Form.Item name="direction" label="方向" rules={[{ required: true }]}>
+                                <Radio.Group>
+                                    <Radio value="out">当前实例 → 对方</Radio>
+                                    <Radio value="in">对方 → 当前实例</Radio>
+                                </Radio.Group>
+                            </Form.Item>
+                            <Form.Item name="target" label="对方实例" rules={[{ required: true, message: '请选择对方实例' }]}>
+                                <Select
+                                    showSearch
+                                    optionFilterProp="label"
+                                    placeholder="选择另一个实例"
+                                    options={instanceNodeOptions.filter((o) => o.value !== relModal.anchorId)}
+                                />
+                            </Form.Item>
+                            <Form.Item name="predicate" label="关系类型（谓词）" rules={[{ required: true, message: '请输入关系类型' }]}>
+                                <AutoComplete
+                                    options={predicateOptions}
+                                    placeholder="如：属于 / 发行机构（可自由输入）"
+                                    filterOption={(input, option) =>
+                                        (option?.value ?? '').toLowerCase().includes(input.toLowerCase())}
+                                />
+                            </Form.Item>
+                            <div className="text-xs text-gray-400">
+                                保存后会同步行表与图数据库，并自动记录一个「手动编辑」版本。
+                            </div>
+                        </Form>
+                    );
+                })()}
             </Modal>
 
             <RagSyncModal
