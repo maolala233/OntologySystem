@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "nomic-embed-text:latest"
     EMBEDDING_DIM: int = 768
 
+    # docling 离线模型目录（内网部署）：docling-tools models download 预下载后指过去，
+    # 解析 PDF 不再联网拉 HuggingFace；留空 = 默认行为（首次联网下载到 ~/.cache/docling）
+    DOCLING_ARTIFACTS_PATH: str = ""
+
     MILVUS_HOST: str = "127.0.0.1"
     MILVUS_PORT: str = "19530"
     MILVUS_COLLECTION_NAME: str = "knowledge_graph_rag"

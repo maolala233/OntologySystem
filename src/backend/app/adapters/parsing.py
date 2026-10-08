@@ -150,12 +150,22 @@ def _docling_convert(content: bytes, filename: str, ocr: bool):
     try:
         tmp.write(content)
         tmp.close()
+        from docling.datamodel.base_models import InputFormat
         from docling.datamodel.pipeline_options import PdfPipelineOptions
-        from docling.document_converter import DocumentConverter
+        from docling.document_converter import DocumentConverter, PdfFormatOption
 
+        from app.core.config import settings as app_settings
+
+        # 离线模型目录（DOCLING_ARTIFACTS_PATH，内网部署预下载后指过去）；
+        # 未设置时 docling 默认行为 = 首次从 HuggingFace 下载到 ~/.cache/docling
+        artifacts = (app_settings.DOCLING_ARTIFACTS_PATH or "").strip() or None
         opts = PdfPipelineOptions()
         opts.do_ocr = ocr
-        converter = DocumentConverter(pipeline_options=opts) if ocr else DocumentConverter()
+        if artifacts:
+            opts.artifacts_path = artifacts
+        # 2.x 新 API：pipeline 选项经 format_options 传入（直接传 pipeline_options 会 TypeError）；
+        # 显式 do_ocr：无 tesseract/easyocr 的机器上默认 True 会因找不到 OCR 引擎抛错
+        converter = DocumentConverter(format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)})
         result = converter.convert(tmp.name)
         return result.document.export_to_markdown()
     except Exception:  # noqa: BLE001 —— docling 任何失败（网络/格式/内存）都降级 native

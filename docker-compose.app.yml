@@ -104,9 +104,10 @@ services:
       EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
       EMBEDDING_DIM: "${EMBEDDING_DIM:-1024}"
-      # ---- ★ 新增：中文 OCR ----
-      # Tesseract + chi_sim 语言包需打进 backend 镜像（见 dockerfile/）
-      TESSERACT_LANG: chi_sim+eng
+      # ---- ★ 中文 OCR ----
+      # docling 解析走 RapidOCR（onnxruntime，纯 Python），无需 tesseract 系统包；
+      # 模型用 docling-tools models download 预下载到 volumes/docling-models 后挂载（内网离线可用）
+      DOCLING_ARTIFACTS_PATH: /opt/docling-models
     # ★ 新增：让 host.docker.internal 在 Linux 上也能解析
     # （Windows / macOS 的 Docker Desktop 自带，但 Linux 没有）
     extra_hosts:
@@ -114,6 +115,8 @@ services:
     volumes:
       - ./TTL:/app/TTL
       - ./logs:/app/logs
+      # ★ 新增：docling 离线模型（只读；宿主机 docling-tools models download 后拷入该目录）
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/docling-models:/opt/docling-models:ro
       # ★ 新增：上传文件与临时目录必须挂出来。
       #   config.py 里 UPLOAD_DIR="uploads"、TEMP_DIR="temp" 是容器内相对路径，
       #   原来没挂载 → 容器重建后用户上传的原始文档全部丢失。
@@ -164,13 +167,15 @@ services:
       MINIO_ENDPOINT: minio-business:9000
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
-      TESSERACT_LANG: chi_sim+eng
+      # docling 离线模型（RapidOCR onnx，无需 tesseract；模型随 backend 同一挂载）
+      DOCLING_ARTIFACTS_PATH: /opt/docling-models
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./logs:/app/logs
       - ./uploads:/app/uploads
       - ./temp:/app/temp
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/docling-models:/opt/docling-models:ro
     depends_on:
       mysql:
         condition: service_healthy
