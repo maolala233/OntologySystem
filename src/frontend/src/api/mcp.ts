@@ -1,7 +1,8 @@
 // src/api/mcp.ts - MCP 控制台（R8）：令牌管理 + 真实 JSON-RPC 调用（POST /mcp 网关）
 import apiClient, { API_BASE_URL, forceLogout } from './client';
 
-// ───────────────────────── 令牌管理（admin，明文仅签发时返回一次）
+// ───────────────────────── 令牌管理（admin 端 /api/admin/mcp-tokens + 自助端 /api/mcp-tokens，
+// ───────────────────────── 明文仅签发时返回一次）
 
 export interface McpTokenItem {
     id: number;
@@ -34,6 +35,43 @@ export async function createMcpToken(body: {
 
 export async function revokeMcpToken(tokenId: number): Promise<void> {
     await apiClient.delete(`/api/admin/mcp-tokens/${tokenId}`);
+}
+
+// 自助端：登录用户只能看到/签发/撤销自己的令牌（持有人固定为当前用户）
+
+export async function listMyMcpTokens(): Promise<McpTokenItem[]> {
+    const resp = await apiClient.get('/api/mcp-tokens');
+    return resp.data.items ?? [];
+}
+
+export async function createMyMcpToken(body: {
+    project_id: number;
+    name: string;
+    can_write: boolean;
+    expires_days?: number | null;
+}): Promise<{ token: string } & McpTokenItem> {
+    const resp = await apiClient.post('/api/mcp-tokens', body);
+    return resp.data;
+}
+
+export async function revokeMyMcpToken(tokenId: number): Promise<void> {
+    await apiClient.delete(`/api/mcp-tokens/${tokenId}`);
+}
+
+// ───────────────────────── MCP 端点（默认按页面地址自动推导；可被 localStorage 覆盖，
+// ───────────────────────── 适配容器化/反代部署：端口映射改变或同域代理时在控制台改一次即可）
+
+export const MCP_ENDPOINT_KEY = 'mcp_endpoint';
+
+/** 默认端点：host 随浏览器地址栏（部署 IP/域名），端口沿用 API_BASE_URL 的推导（3001） */
+export function getDefaultMcpEndpoint(): string {
+    return `${API_BASE_URL}/mcp`;
+}
+
+/** 实际生效端点：localStorage 覆盖值 > 默认推导 */
+export function getMcpEndpoint(): string {
+    const saved = localStorage.getItem(MCP_ENDPOINT_KEY)?.trim();
+    return saved || getDefaultMcpEndpoint();
 }
 
 // ───────────────────────── JSON-RPC 客户端（MCP HTTP Streamable，无状态 POST）
@@ -75,8 +113,9 @@ export async function mcpRpc(
     bearerToken: string,
     method: string,
     params?: Record<string, unknown>,
+    endpoint?: string,
 ): Promise<RpcResponse['result']> {
-    const resp = await fetch(`${API_BASE_URL}/mcp`, {
+    const resp = await fetch(endpoint ?? getMcpEndpoint(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bearerToken}` },
         body: JSON.stringify({ jsonrpc: '2.0', id: rpcIdCounter++, method, params: params ?? {} }),

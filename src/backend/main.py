@@ -109,6 +109,7 @@ app.include_router(qa.router)  # M5：本体问答 SSE 流式 + 历史/溯源（
 app.include_router(reports.router)  # R8：本体报告/PPT 生成（工具层扩展）
 app.include_router(mcp_gateway.router)  # M5：MCP 网关（HTTP Streamable，03 §16，07 §3）
 app.include_router(mcp_tokens.router)  # M5：MCP 令牌管理（admin，03 §16）
+app.include_router(mcp_tokens.router_self)  # M5+：MCP 令牌自助管理（登录用户限本人令牌）
 app.include_router(env_configs.router)  # 环境配置（admin）：中间件连接参数 UI 可改
 
 

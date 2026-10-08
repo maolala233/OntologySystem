@@ -10,15 +10,18 @@ import {
 import {
     ApiOutlined, CaretRightOutlined, ClearOutlined, CopyOutlined, DisconnectOutlined,
     LinkOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined, RightOutlined,
-    SearchOutlined, ThunderboltOutlined,
+    SearchOutlined, ThunderboltOutlined, UndoOutlined,
 } from '@ant-design/icons';
 import {
-    McpRpcError, createMcpToken, listMcpTokens, mcpRpc, revokeMcpToken,
-    textFromCallResult,
+    McpRpcError, createMcpToken, createMyMcpToken, getDefaultMcpEndpoint,
+    getMcpEndpoint, listMcpTokens, listMyMcpTokens,
+    mcpRpc, revokeMcpToken, revokeMyMcpToken, textFromCallResult,
+    MCP_ENDPOINT_KEY,
     type McpTokenItem, type McpToolSpec,
 } from '../api/mcp';
 import { adminApi } from '../api/admin';
 import { projectsApi } from '../api/projects';
+import { useAuthStore } from '../shared/auth/authStore';
 import type { AdminUser } from '../api/admin';
 import type { ProjectData } from '../types/ontology';
 
@@ -141,6 +144,10 @@ interface HistoryEntry {
 let historySeq = 0;
 
 export default function McpConsolePage() {
+    // ── 角色：admin 走 /api/admin/mcp-tokens（可代他人签发）；普通用户走 /api/mcp-tokens 自助端（限本人）
+    const currentUser = useAuthStore(s => s.user);
+    const isAdmin = currentUser?.role === 'admin';
+
     // ── 连接配置
     const [tokens, setTokens] = useState<McpTokenItem[]>([]);
     const [selectedTokenId, setSelectedTokenId] = useState<number | null>(null);
@@ -180,7 +187,11 @@ export default function McpConsolePage() {
     const [issueForm, setIssueForm] = useState({ user_id: null as number | null, project_id: null as number | null, name: '', can_write: false, expires_days: 30 });
     const [issuedPlain, setIssuedPlain] = useState<string | null>(null);
 
-    const endpoint = `${window.location.origin.split(':').slice(0, 2).join(':')}:3001/mcp`;
+    // 端点：默认按页面地址推导（host 随访问 IP/域名）；容器化/反代部署可在输入框改一次，
+    // 存 localStorage 后所有调用与文档示例联动；清空输入框恢复默认
+    const defaultEndpoint = useMemo(() => getDefaultMcpEndpoint(), []);
+    const [endpoint, setEndpoint] = useState<string>(() => getMcpEndpoint());
+    const endpointDirty = endpoint.trim() !== defaultEndpoint;
 
     /** 记录一次 JSON-RPC 调用（带请求/响应包络，可展开回放） */
     const pushHistory = useCallback((method: string, request: Record<string, unknown>, ok: boolean, response: Record<string, unknown> | null) => {
@@ -194,23 +205,23 @@ export default function McpConsolePage() {
 
     const loadTokens = useCallback(async () => {
         try {
-            const items = await listMcpTokens();
+            const items = isAdmin ? await listMcpTokens() : await listMyMcpTokens();
             setTokens(items.filter(t => !t.revoked_at));
             setSelectedTokenId(prev => prev ?? items.find(t => !t.revoked_at)?.id ?? null);
         } catch {
-            message.error('加载 MCP 令牌失败（需 admin）');
+            message.error(isAdmin ? '加载 MCP 令牌失败（需 admin）' : '加载 MCP 令牌失败');
         }
-    }, []);
+    }, [isAdmin]);
 
     useEffect(() => {
         loadTokens();
         (async () => {
             try {
-                setUsers(await adminApi.listUsers());
+                if (isAdmin) setUsers(await adminApi.listUsers()); // 仅 admin 需要持有人下拉
                 setProjects(await projectsApi.getSelectableProjects());
             } catch { /* 下拉留空 */ }
         })();
-    }, [loadTokens]);
+    }, [loadTokens, isAdmin]);
 
     const disconnect = useCallback(() => {
         setConnected(false);
@@ -225,12 +236,21 @@ export default function McpConsolePage() {
         setPingResult(null);
     }, []);
 
+    // 改端点即断开当前连接（避免还挂在旧端点的会话状态上）
+    const changeEndpoint = useCallback((v: string) => {
+        setEndpoint(v);
+        const t = v.trim();
+        if (t) localStorage.setItem(MCP_ENDPOINT_KEY, t);
+        else localStorage.removeItem(MCP_ENDPOINT_KEY);
+        disconnect();
+    }, [disconnect]);
+
     /** 调用 JSON-RPC 并自动写历史；返回 result 或抛 McpRpcError */
     const rpc = useCallback(async (method: string, params: Record<string, unknown> = {}) => {
         historySeq += 1;
         const request = { jsonrpc: '2.0', id: historySeq, method, params };
         try {
-            const result = await mcpRpc(bearer, method, params);
+            const result = await mcpRpc(bearer, method, params, endpoint.trim() || undefined);
             pushHistory(method, request, true, { jsonrpc: '2.0', id: historySeq, result });
             return result;
         } catch (e) {
@@ -240,7 +260,7 @@ export default function McpConsolePage() {
             pushHistory(method, request, false, { jsonrpc: '2.0', id: historySeq, error: err });
             throw e;
         }
-    }, [bearer, pushHistory]);
+    }, [bearer, endpoint, pushHistory]);
 
     // 连接 = initialize（取 serverInfo/协议版本）→ tools/list
     const connect = useCallback(async () => {
@@ -342,16 +362,23 @@ export default function McpConsolePage() {
     }, [rpc]);
 
     const issue = useCallback(async () => {
-        if (issueForm.user_id == null || issueForm.project_id == null || !issueForm.name.trim()) {
-            message.warning('请填写持有人、绑定项目与令牌名称');
+        const holderId = isAdmin ? issueForm.user_id : currentUser?.id ?? null;
+        if (holderId == null || issueForm.project_id == null || !issueForm.name.trim()) {
+            message.warning(isAdmin ? '请填写持有人、绑定项目与令牌名称' : '请填写绑定项目与令牌名称');
             return;
         }
         try {
-            const created = await createMcpToken({
-                user_id: issueForm.user_id, project_id: issueForm.project_id,
-                name: issueForm.name.trim(), can_write: issueForm.can_write,
-                expires_days: issueForm.expires_days || null,
-            });
+            const created = isAdmin
+                ? await createMcpToken({
+                    user_id: holderId, project_id: issueForm.project_id,
+                    name: issueForm.name.trim(), can_write: issueForm.can_write,
+                    expires_days: issueForm.expires_days || null,
+                })
+                : await createMyMcpToken({
+                    project_id: issueForm.project_id,
+                    name: issueForm.name.trim(), can_write: issueForm.can_write,
+                    expires_days: issueForm.expires_days || null,
+                });
             localStorage.setItem(`mcp_plain_${created.id}`, created.token); // 仅本页内存，明文不落库
             setIssuedPlain(created.token);
             await loadTokens();
@@ -359,18 +386,18 @@ export default function McpConsolePage() {
         } catch (e: any) {
             message.error(e?.response?.data?.error?.message || '签发失败');
         }
-    }, [issueForm, loadTokens]);
+    }, [isAdmin, currentUser, issueForm, loadTokens]);
 
     const doRevoke = useCallback(async (id: number) => {
         try {
-            await revokeMcpToken(id);
+            if (isAdmin) await revokeMcpToken(id); else await revokeMyMcpToken(id);
             localStorage.removeItem(`mcp_plain_${id}`);
             if (selectedTokenId === id) { setSelectedTokenId(null); disconnect(); }
             loadTokens();
         } catch {
             message.error('撤销失败');
         }
-    }, [selectedTokenId, loadTokens, disconnect]);
+    }, [isAdmin, selectedTokenId, loadTokens, disconnect]);
 
     const schemaProps = Object.entries(selectedTool?.inputSchema?.properties ?? {});
     const requiredKeys = selectedTool?.inputSchema?.required ?? [];
@@ -404,6 +431,8 @@ export default function McpConsolePage() {
 
     // 接入说明示例中的令牌：已选令牌且有明文缓存则代入，否则占位
     const docTok = bearer || 'sk-mcp-<你的令牌>';
+    // 文档示例统一用生效端点（输入框清空时回落默认）
+    const effEndpoint = endpoint.trim() || defaultEndpoint;
 
     return (
         <div className="flex h-full bg-gray-50 min-h-0">
@@ -422,10 +451,21 @@ export default function McpConsolePage() {
                 <div>
                     <div className="text-xs text-gray-400 mb-1">端点</div>
                     <div className="flex gap-1">
-                        <Input size="small" value={endpoint} readOnly className="!text-[11px] font-mono" />
+                        <Tooltip title="默认按页面地址自动推导；容器化/反向代理部署可直接改为实际可达地址（如 https://域名/mcp）">
+                            <Input size="small" value={endpoint}
+                                onChange={e => changeEndpoint(e.target.value)}
+                                placeholder={defaultEndpoint}
+                                className="!text-[11px] font-mono" />
+                        </Tooltip>
+                        {endpointDirty && (
+                            <Tooltip title="恢复默认端点">
+                                <Button size="small" icon={<UndoOutlined />}
+                                    onClick={() => changeEndpoint(defaultEndpoint)} />
+                            </Tooltip>
+                        )}
                         <Tooltip title="复制端点">
                             <Button size="small" icon={<CopyOutlined />}
-                                onClick={() => { navigator.clipboard.writeText(endpoint); message.success('已复制'); }} />
+                                onClick={() => { navigator.clipboard.writeText(endpoint.trim() || defaultEndpoint); message.success('已复制'); }} />
                         </Tooltip>
                     </div>
                 </div>
@@ -526,8 +566,8 @@ export default function McpConsolePage() {
                                 <div className="bg-white border border-gray-200 rounded-xl p-4">
                                     <div className="font-medium text-gray-800 mb-2">三步接入</div>
                                     <ol className="text-sm text-gray-600 list-decimal pl-5 space-y-1 leading-relaxed">
-                                        <li>左侧「签发」创建 <span className="font-mono">sk-mcp-</span> 令牌：选持有人、绑定项目、勾是否允许写入——<b>明文只展示一次</b>，当场复制</li>
-                                        <li>端点固定为 <span className="font-mono">{endpoint}</span>（HTTP Streamable，无状态 POST-only）</li>
+                                        <li>左侧「签发」创建 <span className="font-mono">sk-mcp-</span> 令牌：{isAdmin ? '选持有人、' : ''}绑定项目、勾是否允许写入——<b>明文只展示一次</b>，当场复制</li>
+                                        <li>端点默认为 <span className="font-mono">{effEndpoint}</span>（host 随访问地址自动推导；容器化/反代部署可在左栏改，HTTP Streamable，无状态 POST-only）</li>
                                         <li>把端点 + 令牌配到下方任意一种客户端 / 自己的 agent 里</li>
                                     </ol>
                                     <div className="mt-2 text-xs text-gray-400">
@@ -539,15 +579,15 @@ export default function McpConsolePage() {
                                 <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
                                     <div className="font-medium text-gray-800">curl 调用</div>
                                     <CodeBlock title="① 握手 + 列出工具（tools/list）" code={`# initialize（唯一不需要令牌的方法）
-curl -s -X POST ${endpoint} -H "Content-Type: application/json" \\
+curl -s -X POST ${effEndpoint} -H "Content-Type: application/json" \\
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}'
 
 # 列出全部工具（需令牌）
-curl -s -X POST ${endpoint} \\
+curl -s -X POST ${effEndpoint} \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer ${docTok}" \\
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'`} />
-                                    <CodeBlock title="② 调用 ask（GraphRAG 问答）" code={`curl -s -X POST ${endpoint} \\
+                                    <CodeBlock title="② 调用 ask（GraphRAG 问答）" code={`curl -s -X POST ${effEndpoint} \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer ${docTok}" \\
   -d '{
@@ -574,7 +614,7 @@ curl -s -X POST ${endpoint} \\
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
-ENDPOINT = "${endpoint}"
+ENDPOINT = "${effEndpoint}"
 HEADERS = {"Authorization": "Bearer ${docTok}"}
 
 async def main():
@@ -599,19 +639,19 @@ asyncio.run(main())`} />
                                     <CodeBlock title="Cursor 等支持 HTTP Streamable 的客户端（mcpServers JSON）" code={`{
   "mcpServers": {
     "ontology-platform": {
-      "url": "${endpoint}",
+      "url": "${effEndpoint}",
       "headers": { "Authorization": "Bearer ${docTok}" }
     }
   }
 }`} />
                                     <CodeBlock title="Claude Code 命令行" code={`claude mcp add --transport http ontology-platform \\
-  ${endpoint} \\
+  ${effEndpoint} \\
   --header "Authorization: Bearer ${docTok}"`} />
                                     <CodeBlock title="仅支持 stdio 的客户端（如桌面版 Claude）：mcp-remote 桥接" code={`{
   "mcpServers": {
     "ontology-platform": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "${endpoint}",
+      "args": ["-y", "mcp-remote", "${effEndpoint}",
                "--header", "Authorization: Bearer ${docTok}"]
     }
   }
@@ -933,13 +973,20 @@ asyncio.run(main())`} />
                     </div>
                 ) : (
                     <div className="space-y-3 py-2">
-                        <div>
-                            <div className="text-xs text-gray-500 mb-1">持有人</div>
-                            <Select className="w-full" placeholder="选择用户"
-                                value={issueForm.user_id ?? undefined}
-                                onChange={v => setIssueForm(f => ({ ...f, user_id: v }))}
-                                options={users.map(u => ({ value: u.id, label: `${u.username}${u.role === 'admin' ? '（管理员）' : ''}` }))} />
-                        </div>
+                        {isAdmin && (
+                            <div>
+                                <div className="text-xs text-gray-500 mb-1">持有人</div>
+                                <Select className="w-full" placeholder="选择用户"
+                                    value={issueForm.user_id ?? undefined}
+                                    onChange={v => setIssueForm(f => ({ ...f, user_id: v }))}
+                                    options={users.map(u => ({ value: u.id, label: `${u.username}${u.role === 'admin' ? '（管理员）' : ''}` }))} />
+                            </div>
+                        )}
+                        {!isAdmin && (
+                            <div className="text-xs text-gray-400">
+                                持有人为当前账号（{currentUser?.username}）；令牌仅能访问你为成员的项目
+                            </div>
+                        )}
                         <div>
                             <div className="text-xs text-gray-500 mb-1">绑定项目（令牌仅能访问该项目数据）</div>
                             <Select className="w-full" placeholder="选择项目"
