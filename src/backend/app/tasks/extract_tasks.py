@@ -35,6 +35,119 @@ def is_cancelled(task_id: str) -> bool:
     return bool(r.get(_CANCEL_KEY.format(task_id=task_id)))
 
 
+# ---- 派发入口：优先投 Celery extract 队列；无 worker（或 broker 不可达）时进程内后台线程执行 ----
+# 与 parse_tasks.dispatch_parse 同一模式：uvicorn 单进程部署（不另起 worker）下，
+# 骨架/实例抽取也能直接执行，避免任务投进队列后无人消费、永远停在"已入队"。
+# inline 的 task_id 形如 inline-<hex>，作为 celery task.apply 的 task_id 传入，
+# 任务体内的 self.request.id 与之对齐 → 进度键/取消键/SSE 与 Celery 模式完全一致。
+
+def _extract_worker_alive(timeout: float = 2.0) -> bool:
+    """探测是否有 Celery worker 在线且消费 extract 队列。
+
+    返回 False 表示：无任何 worker / broker 不可达 / 无消费 extract 队列的 worker——
+    调用方应降级为进程内执行，避免任务投进队列后无人消费。
+    """
+    from app.core.logging import logger
+
+    try:
+        pong = celery_app.control.ping(timeout=timeout)  # {worker: {'ok': 'pong'}}
+        if not pong:
+            return False
+    except Exception as e:  # noqa: BLE001 —— broker 不可达
+        logger.warning(f"[extract dispatch] worker 探测失败（broker 不可达？）: {e}")
+        return False
+    try:
+        queues = celery_app.control.inspect().active_queues() or {}
+    except Exception:  # noqa: BLE001 —— 探测异常按无 worker 处理
+        queues = {}
+    for worker_queues in queues.values():
+        if any(str(q.get("name")) == "extract" for q in worker_queues):
+            return True
+    return False
+
+
+def _dispatch(task, args: tuple, kwargs: dict, project_id: int) -> dict:
+    """通用派发：worker 存活 → Celery 入队；否则进程内后台线程同步执行。
+
+    返回 {"mode": "celery"|"inline", "task_id": str}。
+    """
+    import threading
+    import uuid
+
+    from app.core.logging import logger
+
+    if _extract_worker_alive():
+        try:
+            ar = task.apply_async(args=args, kwargs=kwargs)
+            return {"mode": "celery", "task_id": ar.id}
+        except Exception as e:  # noqa: BLE001 —— 派发失败降级进程内
+            logger.warning(f"[extract dispatch] Celery 派发失败，降级进程内执行: {e}")
+    task_id = f"inline-{uuid.uuid4().hex[:12]}"
+
+    def _worker() -> None:
+        try:
+            task.apply(args=args, kwargs=kwargs, task_id=task_id)
+        except Exception as e:  # noqa: BLE001 —— 任务体已置 failed，兜底记录
+            logger.error(f"[extract dispatch] 进程内执行 {task.name} "
+                         f"project={project_id} 失败: {e}")
+
+    threading.Thread(target=_worker, name=f"extract-inline-{project_id}",
+                     daemon=True).start()
+    return {"mode": "inline", "task_id": task_id}
+
+
+def dispatch_schema_extraction(project_id: int,
+                               document_ids: Optional[list[int]] = None,
+                               parallelism: int = 4,
+                               chunk_limit: int = 200,
+                               guidance: Optional[str] = None,
+                               model_config_id: Optional[int] = None) -> dict:
+    """派发骨架抽取（03 §8）：详见 _dispatch。返回 {"mode", "task_id"}。"""
+    return _dispatch(
+        run_schema_extraction,
+        (project_id, document_ids, parallelism, chunk_limit),
+        {"guidance": guidance, "model_config_id": model_config_id},
+        project_id)
+
+
+def dispatch_instance_extraction(project_id: int,
+                                 document_ids: Optional[list[int]] = None,
+                                 strict_gate: bool = True,
+                                 promote_policy: str = "review",
+                                 parallelism: int = 4,
+                                 chunk_limit: int = 200,
+                                 schema_version_no: Optional[int] = None,
+                                 model_config_id: Optional[int] = None) -> dict:
+    """派发实例抽取（04 §4）：详见 _dispatch。返回 {"mode", "task_id"}。"""
+    return _dispatch(
+        run_instance_extraction,
+        (project_id, document_ids, strict_gate, promote_policy, parallelism,
+         chunk_limit, schema_version_no),
+        {"model_config_id": model_config_id},
+        project_id)
+
+
+def dispatch_resolution(project_id: int, scope: str = "all",
+                        thresholds: Optional[dict] = None,
+                        blocking: str = "pinyin") -> dict:
+    """派发三层实体消解（04 §5）：详见 _dispatch。返回 {"mode", "task_id"}。"""
+    return _dispatch(
+        run_resolution_task,
+        (project_id, scope, thresholds, blocking),
+        {},
+        project_id)
+
+
+def dispatch_conflict_detection(project_id: int,
+                                types: Optional[list[str]] = None) -> dict:
+    """派发冲突检测（04 §6）：详见 _dispatch。返回 {"mode", "task_id"}。"""
+    return _dispatch(
+        run_conflict_detection_task,
+        (project_id,),
+        {"types": types},
+        project_id)
+
+
 def _grid_position(i: int) -> dict:
     """确定性网格布局（04 §3.1 画布兼容；6 列）。"""
     return {"x": 80 + (i % 6) * 220, "y": 80 + (i // 6) * 150}
@@ -67,11 +180,13 @@ def run_schema_extraction(self, project_id: int,
                           document_ids: Optional[list[int]] = None,
                           parallelism: int = 4,
                           chunk_limit: int = 200,
-                          guidance: Optional[str] = None) -> dict:
+                          guidance: Optional[str] = None,
+                          model_config_id: Optional[int] = None) -> dict:
     """Schema 阶段抽取（TBox）。失败置 failed 并上抛（需人工诊断模型配置后重跑）。
 
     guidance：用户注入的抽取引导（规则表单组装的纯文本），进每次切片抽取的 prompt
     并随 prompt 哈希参与缓存键；None/空 = 默认通用模式。
+    model_config_id：发起者个人选择的 model_configs 行（API 层校验后传入）。
     """
     task_id = self.request.id
     set_task_progress(task_id, "queued", 1, "任务已入队", {"project_id": project_id},
@@ -133,6 +248,7 @@ def run_schema_extraction(self, project_id: int,
                                     parallelism=parallelism,
                                     progress_cb=_progress, cancel_cb=_cancel_check,
                                     guidance=guidance,
+                                    model_config_id=model_config_id,
                                     stitch_progress_cb=_stitch_progress)
 
             # 全部切片失败（如 LLM 连接中断）：不写画布，避免用空骨架覆盖已有图谱
@@ -247,10 +363,12 @@ def run_instance_extraction(self, project_id: int,
                             promote_policy: str = "review",
                             parallelism: int = 4,
                             chunk_limit: int = 200,
-                            schema_version_no: Optional[int] = None) -> dict:
+                            schema_version_no: Optional[int] = None,
+                            model_config_id: Optional[int] = None) -> dict:
     """Instance 阶段抽取（ABox，04 §4）：读切片+TBox → extract_instances（严格闸门）
     → ABox 节点/边并入 graph_data → 行表双写 → 违例物化 review_items。
-    schema_version_no 非空时基于该历史框架版本快照抽取（框架复用），否则用当前画布骨架。"""
+    schema_version_no 非空时基于该历史框架版本快照抽取（框架复用），否则用当前画布骨架。
+    model_config_id：发起者个人选择的 model_configs 行（API 层校验后传入）。"""
     task_id = self.request.id
     set_task_progress(task_id, "queued", 1, "任务已入队", {"project_id": project_id},
                       queue="extract")
@@ -326,7 +444,8 @@ def run_instance_extraction(self, project_id: int,
             result = extract_instances(
                 chunks, tbox, base_uri=f"urn:onto:{project_id}",
                 strict_gate=strict_gate, promote_policy=promote_policy,
-                parallelism=parallelism, progress_cb=_progress, cancel_cb=_cancel_check)
+                parallelism=parallelism, progress_cb=_progress, cancel_cb=_cancel_check,
+                model_config_id=model_config_id)
 
             # 全部切片失败（如 LLM 连接中断）：不写画布，避免用空实例覆盖已有图谱
             if result.chunks_processed and len(result.warnings) >= result.chunks_processed \

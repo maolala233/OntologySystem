@@ -38,6 +38,13 @@ export interface TestResult {
     sample_output?: string;
 }
 
+/** 用户个人模型选择（R14，/me/pick）：普通用户点选的全局抽取模型 */
+export interface ModelPickState {
+    purpose: string;
+    config_id: number | null;
+    config: ModelConfigRow | null;
+}
+
 export const modelConfigsApi = {
     listProviders: async (): Promise<ProviderMeta[]> => {
         const resp = await apiClient.get('/api/model-configs/providers');
@@ -68,6 +75,22 @@ export const modelConfigsApi = {
 
     setDefault: async (id: number): Promise<ModelConfigRow> => {
         const resp = await apiClient.put(`/api/model-configs/${id}/default`);
+        return resp.data;
+    },
+
+    // ---- R14 个人模型选择（仅全局抽取配置可选，对所有项目生效）----
+    getMyPick: async (purpose: string = 'extract'): Promise<ModelPickState> => {
+        const resp = await apiClient.get('/api/model-configs/me/pick', { params: { purpose } });
+        return resp.data;
+    },
+
+    setMyPick: async (configId: number, purpose: string = 'extract'): Promise<ModelPickState> => {
+        const resp = await apiClient.put('/api/model-configs/me/pick', { purpose, config_id: configId });
+        return resp.data;
+    },
+
+    clearMyPick: async (purpose: string = 'extract'): Promise<ModelPickState> => {
+        const resp = await apiClient.delete('/api/model-configs/me/pick', { params: { purpose } });
         return resp.data;
     },
 

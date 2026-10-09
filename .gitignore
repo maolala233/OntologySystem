@@ -19,6 +19,7 @@ src/backend/temp/
 src/backend/temp_uploads/
 src/backend/temp_downloads/
 src/backend/src/backend/
+models/
 
 # files
 *.pyc

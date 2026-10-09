@@ -522,8 +522,10 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
             });
             if (!r.ok) throw new Error(`HTTP ${r.status}`);
             const data = await r.json();
-            message.success(`冲突检测完成：检测 ${data.detected ?? 0} 项，新增待审 ${data.review_created ?? 0} 项`);
-            refresh();
+            // 异步任务：复用一个进度窗口（TaskProgressModal onCompleted 已绑定 refresh）
+            setProgressTitle('冲突检测');
+            setTaskId(data.task_id);
+            setProgressOpen(true);
         } catch (e: any) {
             message.error(e.message || '冲突检测失败');
         }

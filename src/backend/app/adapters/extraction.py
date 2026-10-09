@@ -173,7 +173,8 @@ def _cache_put(key: str, payload: dict) -> None:
 
 # ── 默认 LLM 调用（provider → LLMClient）──
 
-def _default_llm_call(model_override: Optional[dict]):
+def _default_llm_call(model_override: Optional[dict],
+                      model_config_id: Optional[int] = None):
     """返回 (model_name, call)。call(system, user, json_schema) -> dict | None。"""
     from app.adapters.provider import ModelPurpose, resolve_provider
     from app.infrastructure.database import SessionLocal
@@ -182,7 +183,8 @@ def _default_llm_call(model_override: Optional[dict]):
     override = model_override if (model_override or {}).get("base_url") else None
     db = SessionLocal()
     try:
-        resolved = resolve_provider(ModelPurpose.EXTRACT, db=db, request_override=override)
+        resolved = resolve_provider(ModelPurpose.EXTRACT, db=db,
+                                    request_override=override, config_id=model_config_id)
     finally:
         db.close()
     client = LLMClient(api_key=resolved.api_key, base_url=resolved.base_url,
@@ -417,6 +419,7 @@ def _stitch_doc_text(prepared: list[tuple[int, str]]) -> str:
 def extract_schema(chunks: list, base_uri: str,
                    parallelism: int = 4,
                    model_override: Optional[dict] = None,
+                   model_config_id: Optional[int] = None,
                    known_classes: Optional[list[str]] = None,
                    use_cache: bool = True,
                    llm_call: Optional[Callable] = None,
@@ -433,6 +436,7 @@ def extract_schema(chunks: list, base_uri: str,
       不同切片的类间关系（只连已知类，需原文证据；stitched_relations 记数）
     - 本地校验失败带错误反馈重试 1 次，仍失败计 warning
     - progress_cb(done, total, cache_hits)；cancel_cb() 抛异常即中止（Celery 取消用）
+    model_config_id：显式指定 model_configs 行（用户个人选择，API 层已校验可见性）；
     llm_call 注入用于测试；生产走 resolve_provider(EXTRACT) + LLMClient。
     """
     result = SchemaExtractionResult()
@@ -442,7 +446,7 @@ def extract_schema(chunks: list, base_uri: str,
         return result
 
     if llm_call is None:
-        model_name, llm_call = _default_llm_call(model_override)
+        model_name, llm_call = _default_llm_call(model_override, model_config_id)
     else:
         model_name = str((model_override or {}).get("model_name") or "injected")
     known: list[str] = list(known_classes or [])
@@ -790,6 +794,7 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
                       promote_policy: Literal["review", "discard", "auto"] = "review",
                       parallelism: int = 4,
                       model_override: Optional[dict] = None,
+                      model_config_id: Optional[int] = None,
                       known_entities: Optional[list[str]] = None,
                       use_cache: bool = True,
                       llm_call: Optional[Callable] = None,
@@ -800,6 +805,7 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
     tbox_summary：{"classes": {类名: [别名]}, "object_properties": {谓词: {domain, range}}}
     （与 schema_gate.apply_gate 的 tbox 同形；chunks 定位文本内部自动构建）。
     strict_gate=False 时闸门只做归一不拦违例（调试用）。
+    model_config_id：显式指定 model_configs 行（用户个人选择，API 层已校验可见性）。
     """
     from app.adapters.schema_gate import PromotePolicy, apply_gate
 
@@ -810,7 +816,7 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
         return result
 
     if llm_call is None:
-        model_name, llm_call = _default_llm_call(model_override)
+        model_name, llm_call = _default_llm_call(model_override, model_config_id)
     else:
         model_name = str((model_override or {}).get("model_name") or "injected")
     known = list(known_entities or [])

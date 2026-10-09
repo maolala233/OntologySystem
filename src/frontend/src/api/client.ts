@@ -13,6 +13,14 @@ const getApiBaseUrl = () => {
     // 方法 2: 使用当前页面的 host（推荐）
     const currentHost = window.location.host;
 
+    // 容器化/反代同域部署（nginx 已把 /api、/mcp 反代到后端）：
+    // 页面端口不是 3001（后端直出）/5173（vite dev）时 → 相对路径，同域走 nginx
+    const portMatch = currentHost.match(/:(\d+)$/);
+    const port = portMatch ? Number(portMatch[1]) : 80;
+    if (port !== 3001 && port !== 5173) {
+        return '';
+    }
+
     // 如果是 localhost 或 127.0.0.1，使用 localhost:3001（与后端端口一致）
     if (currentHost === 'localhost' || currentHost === '127.0.0.1') {
         return 'http://localhost:3001';

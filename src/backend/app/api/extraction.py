@@ -35,6 +35,35 @@ def _check_task_of_project(task_id: str, project_id: int) -> dict:
     return prog
 
 
+def _resolve_extract_config_id(db: Session, current_user: User, body: dict,
+                               project_id: int) -> int | None:
+    """解析本次抽取使用的 model_configs id（R14 用户个人选择）。
+
+    优先级：请求显式 model_config_id → 用户个人选择（user_model_picks, extract）。
+    校验行存在/启用/对用户可见（global 或本项目 project 级）；不可用时回落
+    None（默认解析：项目默认 → 全局默认），不阻塞抽取任务。
+    """
+    from app.infrastructure.database import ModelConfig, UserModelPick
+
+    config_id = body.get("model_config_id")
+    if not isinstance(config_id, int):
+        pick = (db.query(UserModelPick)
+                .filter(UserModelPick.user_id == current_user.id,
+                        UserModelPick.purpose == "extract")
+                .first())
+        config_id = pick.config_id if pick else None
+    if config_id is None:
+        return None
+
+    row = db.query(ModelConfig).filter(ModelConfig.id == config_id,
+                                       ModelConfig.enabled.is_(True)).first()
+    if row is None:
+        return None
+    if row.scope == "project" and row.project_id != project_id:
+        return None  # 他项目的 project 级配置不可用（个人选择仅限 global/本项目）
+    return config_id
+
+
 @router.post("/schema", dependencies=[Depends(require_module("schema_build"))])
 def start_schema_extraction(
     project_id: int,
@@ -76,10 +105,14 @@ def start_schema_extraction(
         raise APIError("项目没有已解析切片，请先在文档 Tab 完成解析",
                        code="NO_CHUNKS", http_status=400)
 
-    from app.tasks.extract_tasks import run_schema_extraction
+    from app.tasks.extract_tasks import dispatch_schema_extraction
 
-    task = run_schema_extraction.delay(project_id, document_ids, parallelism, guidance=guidance)
-    return {"task_id": task.id, "chunks_total": chunks_total, "parallelism": parallelism}
+    model_config_id = _resolve_extract_config_id(db, current_user, body, project_id)
+    dispatched = dispatch_schema_extraction(
+        project_id, document_ids, parallelism,
+        guidance=guidance, model_config_id=model_config_id)
+    return {"task_id": dispatched["task_id"], "mode": dispatched["mode"],
+            "chunks_total": chunks_total, "parallelism": parallelism}
 
 
 @router.post("/instances", dependencies=[Depends(require_module("instance_build"))])
@@ -142,11 +175,14 @@ def start_instance_extraction(
         raise APIError("项目没有已解析切片，请先在文档 Tab 完成解析",
                        code="NO_CHUNKS", http_status=400)
 
-    from app.tasks.extract_tasks import run_instance_extraction
+    from app.tasks.extract_tasks import dispatch_instance_extraction
 
-    task = run_instance_extraction.delay(project_id, document_ids, strict_gate,
-                                         promote_policy, parallelism, schema_version_no)
-    return {"task_id": task.id, "chunks_total": chunks_total, "parallelism": parallelism,
+    model_config_id = _resolve_extract_config_id(db, current_user, body, project_id)
+    dispatched = dispatch_instance_extraction(
+        project_id, document_ids, strict_gate, promote_policy, parallelism,
+        schema_version_no=schema_version_no, model_config_id=model_config_id)
+    return {"task_id": dispatched["task_id"], "mode": dispatched["mode"],
+            "chunks_total": chunks_total, "parallelism": parallelism,
             "strict_gate": strict_gate, "promote_policy": promote_policy,
             "schema_version_no": schema_version_no}
 

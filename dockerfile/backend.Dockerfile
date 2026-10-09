@@ -1,5 +1,5 @@
 # Backend Dockerfile
-FROM ontology-backend-env:0.0.2
+FROM ontology-backend-env:0.0.3
 
 # 复制源代码
 COPY src/backend /app

@@ -43,10 +43,11 @@ def start_resolution(
         raise APIError('blocking 取值 "pinyin"|"none"', code="INVALID_BLOCKING",
                        http_status=400)
 
-    from app.tasks.extract_tasks import run_resolution_task
+    from app.tasks.extract_tasks import dispatch_resolution
 
-    task = run_resolution_task.delay(project_id, scope, thresholds, blocking)
-    return {"task_id": task.id, "scope": scope, "blocking": blocking}
+    dispatched = dispatch_resolution(project_id, scope, thresholds, blocking)
+    return {"task_id": dispatched["task_id"], "mode": dispatched["mode"],
+            "scope": scope, "blocking": blocking}
 
 
 @router.get("/resolution/clusters", dependencies=[Depends(require_module("resolution"))])
@@ -145,10 +146,10 @@ def detect_conflicts_endpoint(
     if not isinstance(types, list) or any(t not in allowed for t in types):
         raise APIError(f"types 取值限 {sorted(allowed)}", code="INVALID_TYPES",
                        http_status=400)
-    from app.services.resolution_service import run_conflict_detection
+    from app.tasks.extract_tasks import dispatch_conflict_detection
 
-    stats = run_conflict_detection(project_id, db=db, types=types)
-    return stats
+    dispatched = dispatch_conflict_detection(project_id, types=types)
+    return {"task_id": dispatched["task_id"], "mode": dispatched["mode"]}
 
 
 @router.get("/conflicts", dependencies=[Depends(require_module("resolution"))])

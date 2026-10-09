@@ -20,7 +20,7 @@ from app.adapters.provider import (
 from app.core.deps import get_current_user, get_db, require_project_role, require_role
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
 from app.core.security import decrypt_str, encrypt_str, mask_secret
-from app.infrastructure.database import ModelConfig, User
+from app.infrastructure.database import ModelConfig, UserModelPick, User
 from app.core.logging import logger
 
 router = APIRouter(prefix="/api/model-configs", tags=["model-configs"])
@@ -239,6 +239,70 @@ def test_config(data: TestIn, user: User = Depends(get_current_user),
     if data.config_id:
         mark_test_result(db, data.config_id, result.get("ok", False))
     return result
+
+
+# ---- R14 用户个人模型选择（/me/pick）：普通用户可点选全局抽取模型 ----
+
+class PickIn(BaseModel):
+    purpose: str = "extract"
+    config_id: int
+
+
+def _pick_out(db: Session, purpose: str, pick: Optional[UserModelPick]) -> dict:
+    config = None
+    if pick:
+        row = db.query(ModelConfig).filter(ModelConfig.id == pick.config_id).first()
+        if row:
+            config = _out(row)
+    return {"purpose": purpose, "config_id": pick.config_id if pick else None,
+            "config": config}
+
+
+@router.get("/me/pick")
+def get_my_pick(purpose: str = "extract", user: User = Depends(get_current_user),
+                db: Session = Depends(get_db)):
+    """当前用户的个人模型选择（无则跟随项目默认→全局默认）。"""
+    pick = (db.query(UserModelPick)
+            .filter(UserModelPick.user_id == user.id, UserModelPick.purpose == purpose)
+            .first())
+    return _pick_out(db, purpose, pick)
+
+
+@router.put("/me/pick")
+def set_my_pick(data: PickIn, user: User = Depends(get_current_user),
+                db: Session = Depends(get_db)):
+    """设置个人模型选择：仅全局启用的同 purpose 配置可选（对所有项目生效）。"""
+    row = db.query(ModelConfig).filter(ModelConfig.id == data.config_id,
+                                       ModelConfig.enabled.is_(True)).first()
+    if row is None:
+        raise NotFoundError("模型配置不存在或已停用", code="MODEL_CONFIG_NOT_FOUND")
+    if row.purpose != data.purpose:
+        raise ValidationError("所选配置的用途与请求不一致")
+    if row.scope != "global":
+        raise ValidationError("个人模型选择仅支持全局配置（项目级配置在项目内管理）")
+    pick = (db.query(UserModelPick)
+            .filter(UserModelPick.user_id == user.id, UserModelPick.purpose == data.purpose)
+            .first())
+    if pick is None:
+        pick = UserModelPick(user_id=user.id, purpose=data.purpose, config_id=row.id)
+        db.add(pick)
+    else:
+        pick.config_id = row.id
+    db.commit()
+    logger.info(f"[audit] action=model.pick operator={user.username} "
+                f"target={row.name} purpose={data.purpose}")
+    return _pick_out(db, data.purpose, pick)
+
+
+@router.delete("/me/pick")
+def clear_my_pick(purpose: str = "extract", user: User = Depends(get_current_user),
+                  db: Session = Depends(get_db)):
+    """清除个人模型选择，恢复跟随项目默认→全局默认。"""
+    (db.query(UserModelPick)
+     .filter(UserModelPick.user_id == user.id, UserModelPick.purpose == purpose)
+     .delete(synchronize_session=False))
+    db.commit()
+    return {"purpose": purpose, "config_id": None, "config": None}
 
 
 @router.get("/resolve")

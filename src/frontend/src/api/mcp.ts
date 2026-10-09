@@ -63,15 +63,22 @@ export async function revokeMyMcpToken(tokenId: number): Promise<void> {
 
 export const MCP_ENDPOINT_KEY = 'mcp_endpoint';
 
-/** 默认端点：host 随浏览器地址栏（部署 IP/域名），端口沿用 API_BASE_URL 的推导（3001） */
+/** 默认端点：host 随浏览器地址栏（部署 IP/域名）。同域部署时 API_BASE_URL 为空，
+ *  取页面 origin 补全为绝对地址——相对路径 /mcp 在本页可用，但外部 MCP 客户端需要完整 URL。 */
 export function getDefaultMcpEndpoint(): string {
-    return `${API_BASE_URL}/mcp`;
+    if (API_BASE_URL) {
+        return `${API_BASE_URL}/mcp`;
+    }
+    return `${window.location.origin}/mcp`;
 }
 
-/** 实际生效端点：localStorage 覆盖值 > 默认推导 */
+/** 实际生效端点：localStorage 覆盖值 > 默认推导；历史保存的相对路径同样补全为绝对地址 */
 export function getMcpEndpoint(): string {
     const saved = localStorage.getItem(MCP_ENDPOINT_KEY)?.trim();
-    return saved || getDefaultMcpEndpoint();
+    if (saved) {
+        return saved.startsWith('/') ? `${window.location.origin}${saved}` : saved;
+    }
+    return getDefaultMcpEndpoint();
 }
 
 // ───────────────────────── JSON-RPC 客户端（MCP HTTP Streamable，无状态 POST）

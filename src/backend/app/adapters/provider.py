@@ -23,9 +23,6 @@ PROVIDER_META: dict[str, dict[str, Any]] = {
     "openai_compatible": {"label": "OpenAI 兼容（通用）", "needs_key": True, "default_base_url": "", "hint": "任何 OpenAI 兼容端点：远程 API / 云厂商 / vLLM"},
     "ollama": {"label": "Ollama（本地/内网）", "needs_key": False, "default_base_url": "http://localhost:11434/v1", "hint": "Ollama 原生 /v1 兼容端点，无需 api_key"},
     "vllm": {"label": "vLLM（自托管）", "needs_key": False, "default_base_url": "http://localhost:8000/v1", "hint": "vLLM OpenAI 兼容服务"},
-    "deepseek": {"label": "DeepSeek", "needs_key": True, "default_base_url": "https://api.deepseek.com/v1", "hint": "https://api.deepseek.com/v1"},
-    "zhipu": {"label": "智谱 GLM", "needs_key": True, "default_base_url": "https://open.bigmodel.cn/api/paas/v4", "hint": "开放平台兼容端点"},
-    "siliconflow": {"label": "硅基流动", "needs_key": True, "default_base_url": "https://api.siliconflow.cn/v1", "hint": "聚合平台"},
 }
 
 
@@ -112,8 +109,13 @@ def _env_fallback(purpose: ModelPurpose) -> Optional[ResolvedProvider]:
 
 def resolve_provider(purpose: ModelPurpose, project_id: Optional[int] = None,
                      request_override: Optional[dict] = None,
-                     db: Optional[Session] = None) -> ResolvedProvider:
-    """按解析优先级返回可用的 provider；找不到抛 EngineError(PROVIDER_UNAVAILABLE)。"""
+                     db: Optional[Session] = None,
+                     config_id: Optional[int] = None) -> ResolvedProvider:
+    """按解析优先级返回可用的 provider；找不到抛 EngineError(PROVIDER_UNAVAILABLE)。
+
+    config_id：显式指定某条 model_configs（调用侧已做可见性校验，如用户个人选择）。
+    该行不可用（删除/禁用）时静默回落到默认解析，保证抽取任务不被历史选择卡死。
+    """
     if request_override and request_override.get("base_url") and request_override.get("model_name"):
         return ResolvedProvider(
             base_url=_clean_base_url(request_override["base_url"]),
@@ -122,25 +124,36 @@ def resolve_provider(purpose: ModelPurpose, project_id: Optional[int] = None,
             params=request_override.get("params") or {},
             source="request_override")
     if db is not None:
-        row = _pick_default(db, purpose, project_id)
+        row = None
+        if config_id is not None:
+            row = (db.query(ModelConfig)
+                   .filter(ModelConfig.id == config_id,
+                           ModelConfig.enabled.is_(True)).first())
+        if row is None:
+            row = _pick_default(db, purpose, project_id)
         if row:
-            api_key = ""
-            if row.api_key_encrypted:
-                api_key = decrypt_str(bytes(row.api_key_encrypted))
-            base = ResolvedProvider(
-                base_url=_clean_base_url(row.base_url),
-                api_key=api_key,
-                model_name=row.model_name,
-                params=row.params or {},
-                source="model_config")
-            if purpose == ModelPurpose.EMBEDDING:
-                return ResolvedEmbedding(**base.model_dump(), dims=row.dims or 1024)
-            return base
+            return _row_to_resolved(row, purpose)
     fallback = _env_fallback(purpose)
     if fallback:
         return fallback
     raise EngineError(f"未配置可用的 {purpose.value} 模型：请在管理后台「模型配置」中添加",
                       code="PROVIDER_UNAVAILABLE")
+
+
+def _row_to_resolved(row: ModelConfig, purpose: ModelPurpose) -> ResolvedProvider:
+    """model_configs 行 → ResolvedProvider（密钥仅内存流转，禁止写日志/响应）。"""
+    api_key = ""
+    if row.api_key_encrypted:
+        api_key = decrypt_str(bytes(row.api_key_encrypted))
+    base = ResolvedProvider(
+        base_url=_clean_base_url(row.base_url),
+        api_key=api_key,
+        model_name=row.model_name,
+        params=row.params or {},
+        source="model_config")
+    if purpose == ModelPurpose.EMBEDDING:
+        return ResolvedEmbedding(**base.model_dump(), dims=row.dims or 1024)
+    return base
 
 
 def resolve_embedding(project_id: Optional[int] = None,

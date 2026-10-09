@@ -224,6 +224,24 @@ class ModelConfig(Base):
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
 
+class UserModelPick(Base):
+    """用户个人模型选择（R14）：普通用户从全局 model_configs 里挑一个作为
+    个人抽取模型，该用户发起的 schema/instance 抽取任务按此解析；
+    未设置时回落项目默认 → 全局默认（provider._pick_default）。
+    purpose 复用 model_purpose 枚举扩展预留（chat/vl），当前仅 extract 有入口。
+    """
+    __tablename__ = "user_model_picks"
+    __table_args__ = (UniqueConstraint("user_id", "purpose", name="uk_user_pick_purpose"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    purpose = Column(Enum("chat", "extract", "embedding", "vl", name="model_purpose"),
+                     nullable=False)
+    config_id = Column(Integer, ForeignKey("model_configs.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
 class Entity(Base):
     """实体行表（M3-3 R5，docs/design/02 §3.5）：graph_data blob 的拆行事实源。
 

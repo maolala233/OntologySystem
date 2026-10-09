@@ -1,0 +1,286 @@
+# ==============================================================================
+# OntologySystem 一键启动编排（中间件 + 前后端 + Celery workers）
+# ==============================================================================
+# 基于 docker-compose-middleware.yml（全部中间件原样引入，含内存调优/healthcheck），
+# 合并 docker-compose.app.yml 的应用层（backend / worker-* / beat / frontend）。
+#
+# 一键启动（无需先 build —— 请先构建镜像，见文末）：
+#   docker compose -f docker-compose-full.yml up -d
+#
+# ★ 与 docker-compose.app.yml 的差异：
+#   1. 去掉了全部 profiles（app/workers/monitor）—— 本文件就是"全都要"，
+#      一条命令把中间件、Web、四个队列 worker、beat、前端全部拉起。
+#   2. 端口沿用 middleware 文件默认值（3309/6379，旧栈容器已停、端口空闲，
+#      新栈复用 ./volumes/mysql 同一份数据，开发库连接串不变）；
+#      backend 宿主端口 3002（避开可能的本地 dev uvicorn 3001）。
+#   3. 前端入口 http://localhost:3080，nginx 已同域反代 /api 与 /mcp，
+#      浏览器只需暴露这一个端口（+可选 3002 调试 API）。
+#
+# ★ 镜像构建（版本变化后需重新执行）：
+#   docker build -f dockerfile/envbackend.Dockerfile -t ontology-backend-env:0.0.3 .
+#   docker build -f dockerfile/backend.Dockerfile  -t ontology-backend:latest  .
+#   docker build -f dockerfile/frontend.Dockerfile -t ontology-frontend:latest .
+#
+# ★ 模型服务不在容器里跑：LLM/嵌入用管理后台「模型配置」（存 DB，密钥加密），
+#   或经 ${VLLM_*}/${EMBEDDING_*} 环境变量注入做兜底（见 backend environment）。
+#   加密密钥 SECRET_MASTER_KEY / JWT_SECRET_KEY 直接用镜像内 /app/.env
+#   （与开发环境一致，保证 DB 里已加密的模型 api_key 可以解密）。
+# ==============================================================================
+
+include:
+  - docker-compose-middleware.yml
+
+services:
+  # ==========================================================================
+  # Web 后端（uvicorn，多 worker 数见 UVICORN_WORKERS）
+  # ==========================================================================
+  backend:
+    image: ontology-backend:latest
+    container_name: ontology-backend
+    ports:
+      - "3002:3001"
+    environment:
+      TZ: Asia/Shanghai
+      # ---- 图库 ----
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USERNAME: neo4j
+      NEO4J_PASSWORD: password
+      # ---- 关系库（覆盖镜像内 .env 的远程地址 → 容器内 mysql）----
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ontology_db}
+      # ---- 向量库 ----
+      MILVUS_HOST: standalone
+      MILVUS_PORT: "19530"
+      MILVUS_COLLECTION_NAME: knowledge_graph_rag
+      # ---- Redis / Celery ----
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      # ---- 业务对象存储 ----
+      MINIO_ENDPOINT: minio-business:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_BUCKET_UPLOADS: ontology-uploads
+      MINIO_BUCKET_PARSED: ontology-parsed
+      MINIO_BUCKET_EXPORTS: ontology-exports
+      # ---- Semantica 适配层（Oxigraph 嵌入式：给目录不给 URL；backend 只读）----
+      SEMANTICA_TRIPLET_BACKEND: oxigraph
+      SEMANTICA_TRIPLET_PATH: /data/oxigraph
+      VECTOR_STORE_MILVUS_HOST: standalone
+      VECTOR_STORE_MILVUS_PORT: "19530"
+      VECTOR_STORE_DIMENSION: "1024"
+      # ---- 模型服务兜底（主配置在管理后台「模型配置」）----
+      VLLM_API_KEY: ${VLLM_API_KEY:-EMPTY}
+      VLLM_BASE_URL: ${VLLM_BASE_URL:-}
+      VLLM_MODEL: ${VLLM_MODEL:-}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      EMBEDDING_DIM: "${EMBEDDING_DIM:-1024}"
+      # ---- 中文 OCR（docling 离线模型，只读挂载）----
+      DOCLING_ARTIFACTS_PATH: /opt/docling-models
+      # ---- Web 多 worker：>1 时预初始化单进程跑一次迁移/种子，防并发竞态 ----
+      UVICORN_WORKERS: "${UVICORN_WORKERS:-2}"
+      PRESTART_INIT_DONE: "1"
+    # 预初始化（迁移+种子，单进程一次）→ 起 web 服务
+    command: sh -c "python -c 'from app.infrastructure.database import init_db; init_db()' && exec python main.py"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./TTL:/app/TTL
+      - ./logs:/app/logs
+      - ./uploads:/app/uploads
+      - ./temp:/app/temp
+      - ./volumes/docling-models:/opt/docling-models:ro
+      # Oxigraph 嵌入式数据目录：写入只允许 worker-rdf（RocksDB 独占锁）
+      - ./volumes/oxigraph:/data/oxigraph:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      standalone:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-business:
+        condition: service_healthy
+    restart: always
+
+  # ==========================================================================
+  # Celery 队列 workers（与 worker 存活探测/inline 兜底配套：
+  # 起了 worker 就走队列模式；全停掉时 API 进程内兜底执行，两种形态都能跑）
+  # ==========================================================================
+  worker-parse:
+    image: ontology-backend:latest
+    container_name: ontology-worker-parse
+    restart: always
+    command: celery -A app.tasks.celery_app worker -Q parse -c 4 -l info -n parse@%h
+    environment:
+      TZ: Asia/Shanghai
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ontology_db}
+      MINIO_ENDPOINT: minio-business:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      DOCLING_ARTIFACTS_PATH: /opt/docling-models
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./logs:/app/logs
+      - ./uploads:/app/uploads
+      - ./temp:/app/temp
+      - ./volumes/docling-models:/opt/docling-models:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-business:
+        condition: service_healthy
+
+  worker-extract:
+    image: ontology-backend:latest
+    container_name: ontology-worker-extract
+    restart: always
+    command: celery -A app.tasks.celery_app worker -Q extract -c 8 -l info -n extract@%h
+    environment:
+      TZ: Asia/Shanghai
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ontology_db}
+      MINIO_ENDPOINT: minio-business:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      VLLM_API_KEY: ${VLLM_API_KEY:-EMPTY}
+      VLLM_BASE_URL: ${VLLM_BASE_URL:-}
+      VLLM_MODEL: ${VLLM_MODEL:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker-graph:
+    image: ontology-backend:latest
+    container_name: ontology-worker-graph
+    restart: always
+    command: celery -A app.tasks.celery_app worker -Q graph,export -c 2 -l info -n graph@%h
+    environment:
+      TZ: Asia/Shanghai
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ontology_db}
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USERNAME: neo4j
+      NEO4J_PASSWORD: password
+      MILVUS_HOST: standalone
+      MILVUS_PORT: "19530"
+      VECTOR_STORE_DIMENSION: "1024"
+      MINIO_ENDPOINT: minio-business:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      mysql:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      standalone:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ★ RDF 单写者：-c 1 是硬要求（Oxigraph 嵌入式 = RocksDB 独占锁，
+  #   整个栈只有这个服务对 /data/oxigraph 可写，backend 挂 :ro）
+  worker-rdf:
+    image: ontology-backend:latest
+    container_name: ontology-worker-rdf
+    restart: always
+    command: celery -A app.tasks.celery_app worker -Q rdf -c 1 -l info -n rdf@%h
+    environment:
+      TZ: Asia/Shanghai
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ontology_db}
+      SEMANTICA_TRIPLET_BACKEND: oxigraph
+      SEMANTICA_TRIPLET_PATH: /data/oxigraph
+    volumes:
+      - ./logs:/app/logs
+      - ./volumes/oxigraph:/data/oxigraph
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Outbox 派发（每 5 秒）+ 定时任务：清空 Neo4j/Milvus/Oxigraph 后可完整重放重建
+  beat:
+    image: ontology-backend:latest
+    container_name: ontology-beat
+    restart: always
+    command: celery -A app.tasks.celery_app beat -l info
+    environment:
+      TZ: Asia/Shanghai
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ontology_db}
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ==========================================================================
+  # Web 前端（nginx 同域反代 /api、/mcp → backend:3001）
+  # ==========================================================================
+  frontend:
+    image: ontology-frontend:latest
+    container_name: ontology-frontend
+    ports:
+      - "3080:80"
+    depends_on:
+      - backend
+    restart: always
+
+networks:
+  default:
+    name: ontology-network

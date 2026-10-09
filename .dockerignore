@@ -1,0 +1,17 @@
+# 构建上下文瘦身：镜像构建只需要源码与配置，数据卷/依赖缓存/工具包全部排除
+volumes/
+offline_packages/
+old_coding/
+test/
+testfile/
+TTL/
+logs/
+temp/
+uploads/
+build-scripts/
+docs/
+.git/
+.gitignore
+*.md
+docker-compose*.yml
+2025*.docx
