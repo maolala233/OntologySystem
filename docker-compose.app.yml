@@ -108,6 +108,13 @@ services:
       # docling 解析走 RapidOCR（onnxruntime，纯 Python），无需 tesseract 系统包；
       # 模型用 docling-tools models download 预下载到 volumes/docling-models 后挂载（内网离线可用）
       DOCLING_ARTIFACTS_PATH: /opt/docling-models
+      # ---- ★ Web 多 worker ----
+      # UVICORN_WORKERS>1 时，command 里的预初始化先跑一次迁移/种子，
+      # 再以 PRESTART_INIT_DONE=1 跳过各 worker 的 import 期 init_db（防并发竞态）
+      UVICORN_WORKERS: "${UVICORN_WORKERS:-2}"
+      PRESTART_INIT_DONE: "1"
+    # 预初始化（迁移+种子单进程跑一次）→ 起 web 服务（worker 数读 UVICORN_WORKERS）
+    command: sh -c "python -c 'from app.infrastructure.database import init_db; init_db()' && exec python main.py"
     # ★ 新增：让 host.docker.internal 在 Linux 上也能解析
     # （Windows / macOS 的 Docker Desktop 自带，但 Linux 没有）
     extra_hosts:

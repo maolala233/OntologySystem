@@ -31,7 +31,14 @@ from app.api import (
 from app.core.config import cleanup_dir_if_exceeded, ensure_dirs, settings, start_periodic_cleanup
 from app.infrastructure.database import SessionLocal, UploadedDocument, User, init_db
 
-init_db()
+# 多 worker 部署（UVICORN_WORKERS>1）时必须由启动命令先跑一次预初始化
+# （python -c "from app.infrastructure.database import init_db; init_db()"），
+# 再设 PRESTART_INIT_DONE=1 跳过 import 期初始化——否则每个 worker 各自并发
+# 跑 alembic/种子数据，空库首次部署会竞态。单机直跑保持默认（=执行）。
+if os.environ.get("PRESTART_INIT_DONE", "") == "1":
+    print("⏭️  [Database] PRESTART_INIT_DONE=1，跳过 import 期 init_db（预初始化已由启动命令完成）")
+else:
+    init_db()
 
 ensure_dirs()
 
@@ -123,7 +130,7 @@ if __name__ == '__main__':
         "main:app",
         host="0.0.0.0",
         port=3001,
-        workers=1,
+        workers=int(os.environ.get("UVICORN_WORKERS", "1")),  # 多 worker 由环境变量控制，默认单进程
         limit_concurrency=100,
         timeout_keep_alive=30,
         log_level="info",
