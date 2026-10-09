@@ -74,8 +74,8 @@ function App() {
                         {/* M1 管理后台（admin） */}
                         <Route path="admin/users" element={<RequireAdmin><UserAdminPage /></RequireAdmin>} />
                         <Route path="admin/modules" element={<RequireAdmin><ModuleGrantsPage /></RequireAdmin>} />
-                        {/* M2 模型配置（admin） */}
-                        <Route path="admin/model-configs" element={<RequireAdmin><ModelConfigsPage /></RequireAdmin>} />
+                        {/* M2 模型配置：admin 管全局配置；普通用户（项目 owner）可建项目级配置，页面内按角色自适应 */}
+                        <Route path="admin/model-configs" element={<ModelConfigsPage />} />
                         {/* 环境配置（admin）：中间件连接参数 */}
                         <Route path="admin/env-configs" element={<RequireAdmin><EnvConfigPage /></RequireAdmin>} />
                     </Route>

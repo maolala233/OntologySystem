@@ -44,7 +44,7 @@ export const modelConfigsApi = {
         return resp.data.items;
     },
 
-    list: async (params?: { purpose?: string; scope?: string }): Promise<ModelConfigRow[]> => {
+    list: async (params?: { purpose?: string; scope?: string; project_id?: number }): Promise<ModelConfigRow[]> => {
         const resp = await apiClient.get('/api/model-configs', { params });
         return resp.data.items;
     },

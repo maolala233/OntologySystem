@@ -2689,7 +2689,7 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                 <div className="pt-4 border-t border-gray-200 mt-4">
                                     <div className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg mb-3">
                                         <span className="text-xs text-gray-500">当前抽取模型</span>
-                                        <ModelPicker />
+                                        <ModelPicker projectId={Number(projectId)} />
                                     </div>
                                     <div className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg mb-3">
                                         <div className="flex items-center gap-2">

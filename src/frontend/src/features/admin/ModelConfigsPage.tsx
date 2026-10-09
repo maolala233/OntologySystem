@@ -1,14 +1,20 @@
 /**
  * 管理后台 · 模型配置（M2，docs/design/05 §6.10 / 03 §5）
  * purpose 四 Tab + 卡片列表 + provider 动态表单 + 连通性测试（密钥掩码回显）。
+ * 权限模型（与后端 _scope_guard 对齐）：global 配置仅 admin 可建/改；
+ * project 配置项目 owner 可建/改——普通用户（项目 owner）进入本页时
+ * 默认项目作用域、仅展示自己拥有的项目，全局行只读展示。
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import {
     Button, Card, Drawer, Form, Input, InputNumber, message, Modal,
-    Select, Space, Switch, Tag, Typography, Empty,
+    Select, Space, Switch, Tag, Typography, Empty, Tooltip,
 } from 'antd';
 import { ApiOutlined, PlusOutlined, ReloadOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
 import { modelConfigsApi, ModelConfigRow, ProviderMeta } from '../../api/model-configs';
+import { useAuthStore } from '../../shared/auth/authStore';
+import { projectsApi } from '../../api/projects';
+import { ProjectData } from '../../types/ontology';
 
 const { Text } = Typography;
 
@@ -20,8 +26,11 @@ const PURPOSES = [
 ] as const;
 
 const ModelConfigsPage: React.FC = () => {
+    const { user } = useAuthStore();
+    const isAdmin = user?.role === 'admin';
     const [rows, setRows] = useState<ModelConfigRow[]>([]);
     const [providers, setProviders] = useState<ProviderMeta[]>([]);
+    const [myProjects, setMyProjects] = useState<ProjectData[]>([]);
     const [activePurpose, setActivePurpose] = useState<string>('extract');
     const [loading, setLoading] = useState(false);
     const [drawerOpen, setDrawerOpen] = useState(false);
@@ -30,15 +39,38 @@ const ModelConfigsPage: React.FC = () => {
     const [form] = Form.useForm();
     const [providerSel, setProviderSel] = useState<string>('openai_compatible');
 
+    // 普通用户可管理的项目（owner）；admin 不需要
+    useEffect(() => {
+        if (isAdmin) return;
+        projectsApi.getMyProjects()
+            .then((ps) => setMyProjects(ps))
+            .catch(() => setMyProjects([]));
+    }, [isAdmin]);
+
     const load = async () => {
         setLoading(true);
         try {
-            const [rs, ps] = await Promise.all([
-                modelConfigsApi.list({ purpose: activePurpose }),
-                modelConfigsApi.listProviders(),
-            ]);
-            setRows(rs);
-            setProviders(ps);
+            if (isAdmin) {
+                const [rs, ps] = await Promise.all([
+                    modelConfigsApi.list({ purpose: activePurpose }),
+                    modelConfigsApi.listProviders(),
+                ]);
+                setRows(rs);
+                setProviders(ps);
+            } else {
+                // 普通用户：全局行（只读展示，默认项可见）+ 自己拥有项目的配置
+                const [globalRs, ps] = await Promise.all([
+                    modelConfigsApi.list({ purpose: activePurpose, scope: 'global' }),
+                    modelConfigsApi.listProviders(),
+                ]);
+                const projectRs = await Promise.all(
+                    myProjects.map((p) =>
+                        modelConfigsApi.list({ purpose: activePurpose, scope: 'project', project_id: p.id })
+                            .catch(() => [] as ModelConfigRow[])),
+                );
+                setRows([...globalRs, ...projectRs.flat()]);
+                setProviders(ps);
+            }
         } catch (err: any) {
             message.error(err.response?.data?.error?.message || '加载失败');
         } finally {
@@ -46,7 +78,11 @@ const ModelConfigsPage: React.FC = () => {
         }
     };
 
-    useEffect(() => { load(); }, [activePurpose]);
+    useEffect(() => { load(); }, [activePurpose, isAdmin, myProjects.length]);
+
+    // 权限判定：该行当前用户是否可管理（编辑/设默认/删除）
+    const canManage = (row: ModelConfigRow) =>
+        isAdmin || (row.scope === 'project' && !!row.project_id && myProjects.some((p) => p.id === row.project_id));
 
     const providerMeta = useMemo(
         () => providers.find((p) => p.id === providerSel),
@@ -56,8 +92,12 @@ const ModelConfigsPage: React.FC = () => {
     const openCreate = () => {
         setEditing(null);
         form.resetFields();
+        // 普通用户默认项目作用域（全局仅 admin 可建，避免 403）
+        const defaultScope = isAdmin ? 'global' : 'project';
         form.setFieldsValue({
-            scope: 'global', purpose: activePurpose, provider: 'openai_compatible',
+            scope: defaultScope,
+            project_id: !isAdmin && myProjects.length === 1 ? myProjects[0].id : undefined,
+            purpose: activePurpose, provider: 'openai_compatible',
             base_url: providers.find((p) => p.id === 'openai_compatible')?.default_base_url || '',
         });
         setProviderSel('openai_compatible');
@@ -76,6 +116,10 @@ const ModelConfigsPage: React.FC = () => {
 
     const handleSave = async () => {
         const values = await form.validateFields();
+        if (values.scope === 'global' && !isAdmin) {
+            message.error('全局模型配置需要管理员权限：普通用户请选择「项目」作用域');
+            return;
+        }
         const payload = {
             scope: values.scope,
             project_id: values.scope === 'project' ? values.project_id : null,
@@ -173,8 +217,11 @@ const ModelConfigsPage: React.FC = () => {
     };
 
     const purposeWatch = Form.useWatch('purpose', form);
+    const scopeWatch = Form.useWatch('scope', form);
     const isEmbedding = purposeWatch === 'embedding';
     const isExtract = purposeWatch === 'extract';
+    const projectName = (pid?: number | null) =>
+        myProjects.find((p) => p.id === pid)?.name || (pid ? `项目#${pid}` : '');
 
     return (
         <div style={{ padding: 24 }}>
@@ -206,20 +253,33 @@ const ModelConfigsPage: React.FC = () => {
                                     <span>{row.name}</span>
                                     {row.is_default && <Tag color="green">默认</Tag>}
                                     {!row.enabled && <Tag color="red">停用</Tag>}
-                                    <Tag>{row.scope === 'global' ? '全局' : `项目#${row.project_id}`}</Tag>
+                                    <Tag>{row.scope === 'global' ? '全局' : projectName(row.project_id)}</Tag>
+                                    {!canManage(row) && <Tag>只读</Tag>}
                                 </Space>
                             }
                             actions={[
                                 <Button key="test" size="small" type="link" icon={<ApiOutlined />}
                                         loading={testingId === row.id}
                                         onClick={() => handleTest(row)}>测试连接</Button>,
-                                <Button key="default" size="small" type="link"
-                                        icon={row.is_default ? <StarFilled style={{ color: '#F59E0B' }} /> : <StarOutlined />}
-                                        disabled={row.is_default}
-                                        onClick={() => handleSetDefault(row)}>设为默认</Button>,
-                                <Button key="edit" size="small" type="link" onClick={() => openEdit(row)}>编辑</Button>,
-                                <Button key="del" size="small" type="link" danger
-                                        disabled={row.is_default} onClick={() => handleDelete(row)}>删除</Button>,
+                                <Tooltip key="default" title={canManage(row) ? '' : '全局默认由管理员设置，项目配置需为项目 owner'}>
+                                    <Button key="default" size="small" type="link"
+                                            icon={row.is_default ? <StarFilled style={{ color: '#F59E0B' }} /> : <StarOutlined />}
+                                            disabled={row.is_default || !canManage(row)}
+                                            onClick={() => handleSetDefault(row)}>设为默认</Button>
+                                </Tooltip>,
+                                canManage(row) ? (
+                                    <Button key="edit" size="small" type="link" onClick={() => openEdit(row)}>编辑</Button>
+                                ) : (
+                                    <span key="ro" style={{ fontSize: 12, color: '#999' }}>
+                                        {row.scope === 'global' ? '管理员管理' : '项目 owner 可管理'}
+                                    </span>
+                                ),
+                                canManage(row) ? (
+                                    <Button key="del" size="small" type="link" danger
+                                            disabled={row.is_default} onClick={() => handleDelete(row)}>删除</Button>
+                                ) : (
+                                    <span key="ro2" />
+                                ),
                             ]}
                         >
                             <p style={{ margin: '4px 0' }}>
@@ -267,10 +327,21 @@ const ModelConfigsPage: React.FC = () => {
                         <Select disabled={!!editing}
                                 options={PURPOSES.map((p) => ({ value: p.key, label: `${p.label} — ${p.hint}` }))} />
                     </Form.Item>
-                    <Form.Item name="scope" label="作用域" rules={[{ required: true }]}>
-                        <Select disabled={!!editing}
-                                options={[{ value: 'global', label: '全局' }, { value: 'project', label: '项目' }]} />
+                    <Form.Item name="scope" label="作用域" rules={[{ required: true }]}
+                               extra={isAdmin ? undefined : '普通用户仅可创建项目级配置（需为项目 owner）'}>
+                        <Select disabled={!!editing || !isAdmin}
+                                options={isAdmin
+                                    ? [{ value: 'global', label: '全局' }, { value: 'project', label: '项目' }]
+                                    : [{ value: 'project', label: '项目（我的项目）' }]} />
                     </Form.Item>
+                    {scopeWatch === 'project' && !editing && (
+                        <Form.Item name="project_id" label="所属项目" rules={[{ required: true, message: '请选择项目' }]}>
+                            <Select
+                                placeholder="选择要应用该模型配置的项目"
+                                options={myProjects.map((p) => ({ value: p.id, label: p.name }))}
+                            />
+                        </Form.Item>
+                    )}
                     <Form.Item name="name" label="配置名称" rules={[{ required: true }]}>
                         <Input placeholder="如：GLM-抽取-方舟" />
                     </Form.Item>

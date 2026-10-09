@@ -2842,7 +2842,7 @@ const OntologyBuilderPage: React.FC = () => {
                             <div className="py-4">
                                 <div className="flex items-center justify-between mb-3 p-2 bg-gray-50 rounded border border-gray-100">
                                     <span className="text-xs text-gray-500">当前抽取模型</span>
-                                    <ModelPicker />
+                                    <ModelPicker projectId={Number(projectId)} />
                                 </div>
                                 <p className="text-gray-600 mb-4">请选择构建骨架（类结构）的方式：</p>
                                 <div className="space-y-3">
