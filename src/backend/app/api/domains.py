@@ -23,10 +23,27 @@ router = APIRouter(prefix="/api/domains", tags=["domains"])
 def get_all_domains(db: Session = Depends(get_db)):
     """
     获取所有知识域列表
-    用于前端下拉选择
+    用于前端下拉选择；附带 project_count（全部项目数，含未发布，与删除接口校验口径一致）
     """
+    from sqlalchemy import func
+
+    counts = dict(
+        db.query(Project.domain_id, func.count(Project.id))
+        .group_by(Project.domain_id)
+        .all()
+    )
     domains = db.query(KnowledgeDomain).order_by(KnowledgeDomain.name).all()
-    return domains
+    return [
+        KnowledgeDomainResponse(
+            id=d.id,
+            name=d.name,
+            description=d.description,
+            created_at=d.created_at,
+            updated_at=d.updated_at,
+            project_count=counts.get(d.id, 0),
+        )
+        for d in domains
+    ]
 
 
 @router.post("", response_model=KnowledgeDomainResponse, status_code=status.HTTP_201_CREATED)

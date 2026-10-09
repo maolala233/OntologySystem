@@ -12,8 +12,6 @@ import {
 } from '@ant-design/icons';
 import Navbar from '../components/Layout/Navbar';
 import { getDomains, createDomain, updateDomain, deleteDomain, getDomainProjects, migrateProjectsBatch, KnowledgeDomain, ProjectInDomain } from '../api/domains';
-import { projectsApi } from '../api/projects';
-import { ProjectData } from '../types/ontology';
 
 const { TextArea } = Input;
 const { Text } = Typography;
@@ -43,13 +41,13 @@ const DomainManagementPage: React.FC = () => {
         setLoading(true);
         try {
             const allDomains = await getDomains();
-            const allProjects = await projectsApi.getPublicProjects();
-            
+
             const domainStats: DomainWithCount[] = allDomains.map(domain => ({
                 ...domain,
-                projectCount: allProjects.filter(p => p.domain_id === domain.id).length,
+                // 后端返回的项目总数（含未发布），与删除校验口径一致
+                projectCount: domain.project_count ?? 0,
             }));
-            
+
             setDomains(domainStats);
         } catch (error: any) {
             message.error('加载知识域失败');
@@ -156,8 +154,15 @@ const DomainManagementPage: React.FC = () => {
                 items: migrationItems,
             });
             
-            const actionType = deletingDomain === targetDomain ? '迁移' : '迁移';
-            message.success(`已${actionType} ${migrationItems.length} 个项目`);
+            const isDeleteFlow = !!(deletingDomain && deletingDomain.id === targetDomain.id);
+            
+            if (isDeleteFlow) {
+                // 删除流程：项目迁移完成后域内已清空，随即删除知识域
+                await deleteDomain(targetDomain.id);
+                message.success(`已迁移 ${migrationItems.length} 个项目并删除知识域「${targetDomain.name}」`);
+            } else {
+                message.success(`已迁移 ${migrationItems.length} 个项目`);
+            }
             
             setIsMigrateDrawerOpen(false);
             setIsDeleteModalOpen(false);
@@ -189,10 +194,25 @@ const DomainManagementPage: React.FC = () => {
             setDeletingDomain(null);
             loadDomains();
         } catch (error: any) {
-            if (error.response?.data?.detail) {
-                message.error(typeof error.response.data.detail === 'string' 
-                    ? error.response.data.detail 
-                    : error.response.data.detail.message);
+            const detail = error.response?.data?.detail;
+            // 兜底：如果后端发现域内仍有项目（计数过期/并发新增），自动转入迁移流程而不是直接报错
+            if (detail && typeof detail === 'object' && detail.project_count > 0) {
+                setDeletingDomain(deletingDomain);
+                setMigratingDomain(deletingDomain);
+                setIsDeleteModalOpen(false);
+                try {
+                    const projects = await getDomainProjects(deletingDomain.id);
+                    setDomainProjects(projects);
+                    setIsMigrateDrawerOpen(true);
+                } catch (innerError: any) {
+                    message.error('加载项目列表失败');
+                }
+                return;
+            }
+            if (detail) {
+                message.error(typeof detail === 'string' 
+                    ? detail 
+                    : detail.message);
             } else {
                 message.error('删除失败，请稍后重试');
             }
@@ -413,7 +433,7 @@ const DomainManagementPage: React.FC = () => {
                                 onClick={handleConfirmMigrate}
                                 danger={!!deletingDomain}
                             >
-                                {deletingDomain ? '确认迁移' : '确认迁移'}
+                                {deletingDomain ? '迁移并删除' : '确认迁移'}
                             </Button>
                         </Space>
                     </div>
@@ -423,8 +443,8 @@ const DomainManagementPage: React.FC = () => {
                     <p className="text-gray-600">
                         {deletingDomain ? (
                             <>
-                                知识域「<Text strong>{migratingDomain?.name}</Text>」中有 <Text strong>{migratingDomain?.projectCount}</Text> 个已发布的本体项目。
-                                删除前需要将这些项目迁移到其他知识域。
+                                知识域「<Text strong>{migratingDomain?.name}</Text>」中有 <Text strong>{migratingDomain?.projectCount}</Text> 个本体项目。
+                                删除前需要将这些项目迁移到其他知识域，迁移完成后将删除该知识域。
                             </>
                         ) : (
                             <>

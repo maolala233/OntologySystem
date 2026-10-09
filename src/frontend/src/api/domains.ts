@@ -9,6 +9,7 @@ export interface KnowledgeDomain {
     description: string | null;
     created_at: string;
     updated_at: string;
+    project_count?: number;  // 项目总数（含未发布），与删除校验口径一致
 }
 
 export interface KnowledgeDomainCreate {

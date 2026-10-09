@@ -28,6 +28,8 @@ class KnowledgeDomainResponse(KnowledgeDomainBase):
     id: int
     created_at: datetime
     updated_at: datetime
+    # 项目总数（含未发布），与删除接口的校验口径一致（Project.domain_id）
+    project_count: int = 0
 
     class Config:
         from_attributes = True
