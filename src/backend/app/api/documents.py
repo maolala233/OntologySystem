@@ -135,24 +135,34 @@ async def upload_documents(
         db.commit()
         for d in saved:
             db.refresh(d)
-        # M3-2：auto_parse → parse 队列（每文档独立任务，失败隔离 04 §2.4）
+        # M3-2：auto_parse → 派发解析（优先 Celery parse 队列；无 worker 时进程内执行，
+        # 保证单进程部署上传后也能解析，失败隔离 04 §2.4）
         task_ids: dict[int, str] = {}
+        inline_count = 0
         if auto_parse:
-            from app.tasks.parse_tasks import parse_document
+            from app.tasks.parse_tasks import dispatch_parse
 
             for d in saved:
                 try:
-                    task_ids[d.id] = parse_document.delay(d.id).id
-                except Exception as e:  # noqa: BLE001 —— broker 不可达不阻断上传
+                    res = dispatch_parse(d.id)
+                    task_ids[d.id] = res["task_id"]
+                    if res["mode"] == "inline":
+                        inline_count += 1
+                except Exception as e:  # noqa: BLE001 —— 派发兜底不阻断上传
                     logger.warning(f"[documents] 文档 {d.id} 解析任务派发失败（可手动 POST parse 重试）: {e}")
         logger.info(f"[documents] 项目 {project_id} 上传 {len(saved)} 个文档 by user {current_user.id}"
-                    + (f"，派发 {len(task_ids)} 个解析任务" if auto_parse else ""))
+                    + (f"，派发 {len(task_ids)} 个解析任务（{inline_count} 个进程内执行）" if auto_parse else ""))
+        if saved and inline_count == len(saved):
+            msg = f"已存储 {len(saved)} 个文档，未检测到解析 worker，已在本服务进程内自动解析"
+        elif inline_count:
+            msg = f"已存储 {len(saved)} 个文档，解析任务已派发（{inline_count} 个进程内执行）"
+        else:
+            msg = f"已存储 {len(saved)} 个文档，解析任务已派发"
         return {
             "status": "success",
             "saved": [{**_doc_out(d), "task_id": task_ids.get(d.id)} for d in saved],
             "auto_parse": auto_parse,
-            "message": (f"已存储 {len(saved)} 个文档，解析任务已派发"
-                        if task_ids else f"已存储 {len(saved)} 个文档"),
+            "message": msg,
         }
     finally:
         for s in staged:
@@ -313,15 +323,16 @@ def reparse_document(
                        detail={"allowed": sorted(allowed_backends)})
     chunk_params = {k: v for k, v in (("chunk_size", body.get("chunk_size")),
                                       ("overlap_ratio", body.get("overlap_ratio"))) if v is not None}
-    from app.tasks.parse_tasks import parse_document
+    from app.tasks.parse_tasks import dispatch_parse
 
     try:
-        task_id = parse_document.delay(doc_id, backend=backend, chunk_params=chunk_params or None).id
-    except Exception as e:  # noqa: BLE001 —— broker 不可达
+        res = dispatch_parse(doc_id, backend=backend, chunk_params=chunk_params or None)
+    except Exception as e:  # noqa: BLE001 —— 兜底
         logger.error(f"[documents] 文档 {doc_id} 解析任务派发失败: {e}")
         raise APIError("解析任务派发失败（任务队列不可用）", code="TASK_DISPATCH_FAILED", http_status=503)
-    return {"status": "success", "task_id": task_id,
-            "message": "解析任务已派发；进度请订阅 parse-events"}
+    return {"status": "success", "task_id": res["task_id"], "mode": res["mode"],
+            "message": ("解析任务已派发；进度请订阅 parse-events" if res["mode"] == "celery"
+                        else "未检测到解析 worker，已在本服务进程内执行解析")}
 
 
 @router.get("/{doc_id}/chunks", dependencies=[Depends(require_module("documents"))])
