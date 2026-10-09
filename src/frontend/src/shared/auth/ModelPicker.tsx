@@ -1,6 +1,7 @@
 /**
  * ModelPicker - 构建器内的模型快捷切换（M2，docs/design/05 §6.10）
- * 展示当前生效的抽取/对话模型默认项，可一键切换默认（admin / 项目 owner）；
+ * 只展示抽取模型默认项，可一键切换默认（admin / 项目 owner）；
+ * 对话模型在问答页与 /admin/model-configs 管理，不在此混列。
  * 管理入口跳转 /admin/model-configs。
  */
 import React, { useEffect, useMemo, useState } from 'react';
@@ -17,11 +18,7 @@ const ModelPicker: React.FC = () => {
     const load = async () => {
         setLoading(true);
         try {
-            const [extractRows, chatRows] = await Promise.all([
-                modelConfigsApi.list({ purpose: 'extract' }),
-                modelConfigsApi.list({ purpose: 'chat' }),
-            ]);
-            setRows([...extractRows, ...chatRows]);
+            setRows(await modelConfigsApi.list({ purpose: 'extract' }));
         } catch {
             // 静默：工具条组件不打断主流程
         } finally {
@@ -32,13 +29,12 @@ const ModelPicker: React.FC = () => {
     useEffect(() => { load(); }, []);
 
     const items = useMemo(() => {
-        const grouped = ['extract', 'chat'].map((purpose) => ({
-            key: `group-${purpose}`,
-            type: 'group' as const,
-            label: purpose === 'extract' ? '抽取模型' : '对话模型',
-            children: rows
-                .filter((r) => r.purpose === purpose)
-                .map((r) => ({
+        return [
+            {
+                key: 'group-extract',
+                type: 'group' as const,
+                label: '抽取模型',
+                children: rows.map((r) => ({
                     key: String(r.id),
                     label: (
                         <span>
@@ -47,9 +43,7 @@ const ModelPicker: React.FC = () => {
                         </span>
                     ),
                 })),
-        }));
-        return [
-            ...grouped,
+            },
             { type: 'divider' as const },
             { key: 'manage', icon: <SettingOutlined />, label: '管理模型配置…' },
         ];
@@ -66,7 +60,7 @@ const ModelPicker: React.FC = () => {
         if (!row) return;
         try {
             await modelConfigsApi.setDefault(row.id);
-            message.success(`已将「${row.name}」设为 ${row.purpose === 'extract' ? '抽取' : '对话'}默认模型`);
+            message.success(`已将「${row.name}」设为抽取默认模型`);
             load();
         } catch (err: any) {
             message.error(err.response?.data?.error?.message || '切换失败');
