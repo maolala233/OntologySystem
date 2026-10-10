@@ -1,8 +1,9 @@
 import os
+import time
 
 import bcrypt
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import (
@@ -30,6 +31,7 @@ from app.api import (
     versions,
 )
 from app.core.config import cleanup_dir_if_exceeded, ensure_dirs, settings, start_periodic_cleanup
+from app.core.logging import logger
 from app.infrastructure.database import SessionLocal, UploadedDocument, User, init_db
 
 # 多 worker 部署（UVICORN_WORKERS>1）时必须由启动命令先跑一次预初始化
@@ -74,6 +76,22 @@ finally:
 start_periodic_cleanup(interval_seconds=600)
 
 app = FastAPI(title="AI 本体构建系统 API", version="1.0.0")
+
+
+@app.middleware("http")
+async def access_log_middleware(request: Request, call_next):
+    """请求访问日志：终端 + 按天文件双通道（app/core/logging.py 统一配置）。
+    /health 心跳不记录防噪音；异常带堆栈落日志后再抛出。"""
+    t0 = time.time()
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception(f"{request.method} {request.url.path} -> 500")
+        raise
+    if request.url.path != "/health":
+        cost_ms = int((time.time() - t0) * 1000)
+        logger.info(f"{request.method} {request.url.path} -> {response.status_code} ({cost_ms}ms)")
+    return response
 
 # M0 安全收口：CORS 由 "*" 改白名单（docs/design/01 §8），来源列表经 .env CORS_ORIGINS 配置
 app.add_middleware(
@@ -136,4 +154,5 @@ if __name__ == '__main__':
         limit_concurrency=100,
         timeout_keep_alive=30,
         log_level="info",
+        log_config=None,  # 日志统一走 app/core/logging.py（终端+按天文件），uvicorn 不再自带配置
     )

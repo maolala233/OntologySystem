@@ -3,6 +3,7 @@
 数据库连接优先级：环境变量 ALEMBIC_DATABASE_URL > settings.DATABASE_URL（src/backend/.env）。
 R1 baseline 之后的表结构演进一律新增 revision（docs/design/02 §6 的 R2-R7 分批）。
 """
+import logging
 import os
 from logging.config import fileConfig
 
@@ -14,8 +15,12 @@ from app.infrastructure.database import Base
 
 config = context.config
 
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+# fileConfig 会按 ini 的 [logger_*] 全量重建日志并清掉已挂 handler（disable_existing_loggers
+# 默认 True）——应用进程内 init_db() 跑迁移时会因此杀掉 app/core/logging.py 的终端+按天
+# 文件双通道，启动后业务日志全部静默。应用进程内 root 已有统一配置，跳过；
+# 仅独立 CLI（alembic revision/upgrade）时使用 ini 日志配置。
+if config.config_file_name is not None and not logging.getLogger().handlers:
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 
