@@ -18,7 +18,7 @@ export interface ReportResult {
 
 export async function generateReport(
     projectId: number,
-    body: { kind: 'report' | 'ppt'; topic: string; max_slides?: number; use_template?: boolean },
+    body: { kind: 'report' | 'ppt'; topic: string; max_slides?: number; use_template?: boolean; include_inferred?: boolean },
 ): Promise<ReportResult> {
     const resp = await apiClient.post(`/api/projects/${projectId}/reports/generate`, body, {
         timeout: 360_000,  // LLM 生成可能超过 90s

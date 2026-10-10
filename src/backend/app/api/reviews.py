@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api", tags=["reviews"])
 
 ITEM_TYPES = ("entity_merge", "new_class", "low_confidence_entity",
               "low_confidence_relation", "conflict_value", "conflict_type",
-              "conflict_relationship", "missing_evidence")
+              "conflict_relationship", "missing_evidence", "conflict_axiom")
 
 
 def _serialize(r: ReviewItem, detail: bool = False) -> dict:

@@ -31,6 +31,7 @@ const TYPE_LABEL: Record<string, string> = {
     conflict_type: '类型冲突',
     conflict_relationship: '关系冲突',
     missing_evidence: '缺证据',
+    conflict_axiom: '公理违例',
 };
 
 /** 0.793 → "79%"；无效值返回 null */
@@ -78,6 +79,15 @@ function humanSummary(item: ReviewItem): string {
         }
         case 'conflict_relationship':
             return `「${p.subject_label || '?'}」与「${p.object_label || '?'}」之间的关系在不同文档中描述不一致，请判断`;
+        case 'conflict_axiom': {
+            const prop = p.property_name || '';
+            const vals = Array.isArray(p.conflicting_values) ? p.conflicting_values : [];
+            if (prop === 'owl:disjointWith') {
+                const cls = p.sources?.[0]?.class || '';
+                return `实体「${p.sources?.[0]?.label || ''}」被归入的类别「${cls}」同时落在互斥类别（${vals.join('、')}）的层级内，请判断真实归属`;
+            }
+            return `关系「${prop}」的取值与本体声明的公理（函数性/基数）不符（${vals.join('、')}），请核实`;
+        }
         case 'new_class':
             return `从文档中发现了新类别「${p.label || ''}」，它不在当前本体骨架中，请决定是否加入`;
         default:
@@ -205,6 +215,46 @@ const FriendlyPayload: React.FC<{
                             </div>
                         ))}
                         {vals.length === 0 && <div className="text-sm text-gray-500">详见下方原始数据</div>}
+                    </div>
+                </div>
+            );
+        }
+        case 'conflict_axiom': {
+            const prop = p.property_name || '';
+            const vals: any[] = Array.isArray(p.conflicting_values) ? p.conflicting_values : [];
+            const steps = p.guide?.steps as string[] | undefined;
+            const isDisjoint = prop === 'owl:disjointWith';
+            return (
+                <div className="space-y-3">
+                    <div className="p-3 bg-purple-50 border border-purple-100 rounded text-sm">
+                        {isDisjoint ? (
+                            <>
+                                本体骨架中声明了互斥类别 <Text strong>「{vals.join('」「')}」</Text>，
+                                但实体 <Text strong>「{p.sources?.[0]?.label || ''}」</Text>
+                                （当前类别：{p.sources?.[0]?.class || '未知'}）同时落在了它们的层级内。
+                            </>
+                        ) : (
+                            <>
+                                关系 <Text strong>「{prop}」</Text> 在本体中声明了公理约束（函数性/基数），
+                                但实例数据与之不符（{vals.length} 个客体：{vals.join('、')}）。
+                            </>
+                        )}
+                    </div>
+                    {vals.length > 0 && (
+                        <div className="flex flex-wrap gap-2">
+                            {vals.map((v, i) => <Tag key={i} color="purple">{String(v)}</Tag>)}
+                        </div>
+                    )}
+                    {steps && steps.length > 0 && (
+                        <div>
+                            <Text type="secondary" className="text-xs">排查建议</Text>
+                            <ol className="list-decimal pl-5 text-sm text-gray-700 space-y-1">
+                                {steps.map((s, i) => <li key={i}>{s}</li>)}
+                            </ol>
+                        </div>
+                    )}
+                    <div className="text-sm text-gray-600">
+                        核实后在骨架编辑中修正实体类别或关系；若公理本身声明有误，可在节点/边详情面板调整后「通过」关闭本项。
                     </div>
                 </div>
             );

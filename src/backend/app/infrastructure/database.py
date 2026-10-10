@@ -326,7 +326,7 @@ class ReviewItem(Base):
     project_id = Column(Integer, nullable=False)
     item_type = Column(Enum("entity_merge", "new_class", "low_confidence_entity",
                             "low_confidence_relation", "conflict_value", "conflict_type",
-                            "conflict_relationship", "missing_evidence",
+                            "conflict_relationship", "missing_evidence", "conflict_axiom",
                             name="review_item_type"), nullable=False)
     payload = Column(JSON, nullable=False)
     reason = Column(String(255), nullable=True)
@@ -835,4 +835,46 @@ def _register_graph_rows_listener() -> None:
 
 
 _register_graph_rows_listener()
+
+
+class OntologyRule(Base):
+    """推理规则（蕴含推理期 R1）：IF 主语类-[谓词]->宾语类 THEN 推断[结论谓词]。
+
+    与公理互补：公理=约束（校验违例），规则=产生式（推导新关系）。推导结果一律落
+    reasoning_results 且 source='rule'，绝不写回 relations 行表——事实与推理物理分离。
+    """
+    __tablename__ = "ontology_rules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, nullable=False, index=True)
+    name = Column(String(128), nullable=False)
+    if_subject_class = Column(String(128), nullable=False)
+    if_predicate = Column(String(128), nullable=False)
+    if_object_class = Column(String(128), nullable=False)
+    then_predicate = Column(String(128), nullable=False)
+    enabled = Column(Boolean, nullable=False, server_default="1")
+    created_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))
+
+
+class ReasoningResult(Base):
+    """推理结果行表（蕴含推理期）：仅存「推导出的」三元组，原始事实不进此表。
+
+    source: 'owlrl'/'rdfs' = owlrl 语义闭包蕴含；'rule' = 自定义规则。同一项目
+    每次 run 覆盖式替换（latest-only），batch_id 标记批次。subject/predicate/object
+    同存 uri 与 label，便于前端免联查直显。
+    """
+    __tablename__ = "reasoning_results"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, nullable=False, index=True)
+    batch_id = Column(String(36), nullable=False, index=True)
+    source = Column(String(64), nullable=False)
+    rule_name = Column(String(128), nullable=True)
+    subject_uri = Column(String(512), nullable=False)
+    subject_label = Column(String(255), nullable=False, server_default="")
+    predicate_uri = Column(String(512), nullable=False)
+    predicate_label = Column(String(255), nullable=False, server_default="")
+    object_uri = Column(String(512), nullable=False)
+    object_label = Column(String(255), nullable=False, server_default="")
+    created_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))
 

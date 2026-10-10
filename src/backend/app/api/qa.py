@@ -89,6 +89,7 @@ class QaRequest(BaseModel):
     question: str = Field(min_length=1, max_length=MAX_QUESTION_LEN)
     top_k: int = 12
     use_graph: bool = True
+    use_inferred: bool = True  # 注入语义推理引用（来源标注区分，不与事实混排）
     stream: bool = True
     knowledge_domain: str | None = None  # 可选知识域过滤（表达式内强制 project_id）
     conversation_id: str | None = None  # 对话分组（R8）：同会话多轮归属一个 uuid
@@ -118,6 +119,7 @@ def ask_question(
         question=question,
         top_k=max(1, min(body.top_k, 30)),
         use_graph=body.use_graph,
+        use_inferred=body.use_inferred,
         knowledge_domain=body.knowledge_domain,
     )
     llm = _build_llm(db, project_id, body.model_config_id)

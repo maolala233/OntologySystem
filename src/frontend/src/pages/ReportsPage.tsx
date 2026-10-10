@@ -29,6 +29,7 @@ export default function ReportsPage() {
     const [chips, setChips] = useState<string[]>([]);
     const [chipsLoading, setChipsLoading] = useState(false);
     const [maxSlides, setMaxSlides] = useState(8);
+    const [includeInferred, setIncludeInferred] = useState(false);
     const [busy, setBusy] = useState(false);
     const [result, setResult] = useState<ReportResult | null>(null);
     const [elapsed, setElapsed] = useState(0);
@@ -147,6 +148,7 @@ export default function ReportsPage() {
                 topic: topic.trim(),
                 max_slides: maxSlides,
                 use_template: kind === 'ppt' && useTemplate && templateInfo.exists,
+                include_inferred: includeInferred,
             });
             setResult(r);
         } catch (e: any) {
@@ -154,7 +156,7 @@ export default function ReportsPage() {
         } finally {
             setBusy(false);
         }
-    }, [projectId, kind, topic, maxSlides]);
+    }, [projectId, kind, topic, maxSlides, includeInferred]);
 
     const download = (url: string) => window.open(url, '_blank');
 
@@ -205,6 +207,16 @@ export default function ReportsPage() {
                             {busy && kind === 'report' && (
                                 <span className="text-xs text-gray-400">全文生成约需 1~2 分钟，请稍候</span>
                             )}
+                        </div>
+                        {/* 推理附录（语义推理产物，生成后确定性拼接，不进 LLM 正文材料） */}
+                        <div className="mt-2 flex items-center gap-1.5">
+                            <Checkbox checked={includeInferred} disabled={busy}
+                                onChange={e => setIncludeInferred(e.target.checked)}>
+                                附录：推理衍生事实
+                            </Checkbox>
+                            <Tooltip title="在报告末尾（PPT 为附录页）追加「推理衍生事实」表：系统基于本体公理/规则自动推导的结论，已标注为语义推理产物、非原始事实记载；正文分析不使用该内容。">
+                                <QuestionCircleOutlined className="text-gray-300 text-xs" />
+                            </Tooltip>
                         </div>
 
                         {/* PPT 自定义模板上传（占位符协议自动填写） */}

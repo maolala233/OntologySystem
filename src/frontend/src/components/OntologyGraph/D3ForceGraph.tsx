@@ -63,6 +63,26 @@ const DARK_THEME = {
 
 const EDGE_CLICK_WIDTH = 20;
 
+// 边公理摘要（2 期可视化）：悬停标签追加后缀；带公理的边整条换紫色描边
+const edgeAxiomSuffix = (data: any): string => {
+    const ax = data?.axioms || {};
+    const parts: string[] = [];
+    if (ax.functional) parts.push('函数');
+    if (ax.transitive) parts.push('传递');
+    if (ax.symmetric) parts.push('对称');
+    if (ax.inverse_of) parts.push(`逆:${ax.inverse_of}`);
+    if (data?.min_cardinality != null || data?.max_cardinality != null) {
+        parts.push(`[${data?.min_cardinality ?? 0}..${data?.max_cardinality ?? '*'}]`);
+    }
+    return parts.length ? ' · ' + parts.join(' ') : '';
+};
+
+const edgeHasAxiom = (data: any): boolean => {
+    const ax = data?.axioms || {};
+    return !!(ax.functional || ax.transitive || ax.symmetric || ax.inverse_of ||
+        data?.min_cardinality != null || data?.max_cardinality != null);
+};
+
 interface D3ForceGraphProps {
     nodes: OntologyNode[];
     edges: OntologyEdge[];
@@ -248,8 +268,10 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
     }, [nodeTheme]);
 
     const getEdgeColor = useCallback((d: any) => {
+        // 带公理的关系边用紫色描边，与互斥徽标同色系（浅色深紫/深色亮紫）
+        if (edgeHasAxiom(d.data)) return theme === 'dark' ? '#B585F2' : '#8F5BD9';
         return isInstanceEdge(d) ? T.edgeInstance : T.edge;
-    }, [isInstanceEdge, T]);
+    }, [isInstanceEdge, T, theme]);
 
     const getEdgeDash = useCallback((d: any) => {
         return isInstanceEdge(d) ? "4,4" : "none";
@@ -307,6 +329,25 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                 .style("pointer-events", "none")
                 .style("opacity", 0)
                 .text(truncateLabel(classLabel, 10))
+                .transition()
+                .delay(200)
+                .duration(300)
+                .style("opacity", 1);
+        }
+
+        // 公理徽标：类节点声明了 disjointWith → 紫色 ⇎ 徽标（2 期可视化）
+        const disjointCount = (d.originalNode?.data?.axioms?.disjoint_with || []).length;
+        if (isClass && disjointCount > 0) {
+            nodeG.append("text")
+                .attr("class", "node-axiom-badge")
+                .attr("text-anchor", "middle")
+                .attr("dy", nodeRadius + 12)
+                .style("fill", '#B585F2')
+                .style("font-size", "9px")
+                .style("font-weight", "600")
+                .style("pointer-events", "none")
+                .style("opacity", 0)
+                .text(`⇎ 互斥×${disjointCount}`)
                 .transition()
                 .delay(200)
                 .duration(300)
@@ -481,7 +522,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             .attr("marker-end", (d: any) => getEdgeMarker(d));
 
         linkMerge.each(function (this: SVGPathElement, d: any) {
-            const edgeLabel = d.data?.label || d.data?.relation || '';
+            const edgeLabel = (d.data?.label || d.data?.relation || '') + edgeAxiomSuffix(d.data);
             select(this)
                 .on("click", (event: MouseEvent) => {
                     event.stopPropagation();
@@ -595,7 +636,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                 const midScreenX = _zt.applyX(midPoint.x);
                 const midScreenY = _zt.applyY(midPoint.y);
 
-                const edgeLabel = d.data?.label || d.data?.relation || '';
+                const edgeLabel = (d.data?.label || d.data?.relation || '') + edgeAxiomSuffix(d.data);
                 const labelGroupId = `edge-label-${d.id}`;
                 let labelGroup = svg.select<SVGGElement>(`g#${labelGroupId}`);
                 if (labelGroup.empty()) {
@@ -736,6 +777,28 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             const shape = nodeG.select(".node-shape");
             if (!shape.empty()) {
                 shape.attr("filter", d.id === highlightNodeId ? `url(#${uid}-glow-selected)` : null);
+            }
+            // 公理徽标同步：节点数据更新（如编辑面板保存互斥类）时，enter 路径不会重跑，这里增量维护
+            const badgeText = `⇎ 互斥×${(d.originalNode?.data?.axioms?.disjoint_with || []).length}`;
+            const showBadge = d.type === NODE_TYPES.CLASS
+                && (d.originalNode?.data?.axioms?.disjoint_with || []).length > 0;
+            const existingBadge = nodeG.select(".node-axiom-badge");
+            if (showBadge) {
+                if (!existingBadge.empty()) {
+                    existingBadge.text(badgeText);
+                } else {
+                    nodeG.append("text")
+                        .attr("class", "node-axiom-badge")
+                        .attr("text-anchor", "middle")
+                        .attr("dy", d.radius + 12)
+                        .style("fill", '#B585F2')
+                        .style("font-size", "9px")
+                        .style("font-weight", "600")
+                        .style("pointer-events", "none")
+                        .text(badgeText);
+                }
+            } else if (!existingBadge.empty()) {
+                existingBadge.remove();
             }
         });
 

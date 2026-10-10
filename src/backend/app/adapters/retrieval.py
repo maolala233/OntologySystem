@@ -14,7 +14,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.infrastructure.database import Entity, ProvenanceRecord, Relation, UploadedDocument
+from app.infrastructure.database import Entity, ProvenanceRecord, ReasoningResult, Relation, UploadedDocument
 from app.infrastructure.llm_client import LLMClient
 from app.infrastructure.vector_client import VectorStoreManager
 
@@ -25,6 +25,11 @@ MAX_SOURCES = 10
 # 图事实在融合结果中的名额上限：结构化三元组仅作关系类问题的补充，
 # 原文切片（向量/关键词）才是内容问答的主要证据来源
 MAX_GRAPH_FACTS = 3
+# 语义推理引用名额上限：推理结果是推导产物（非已确认事实），只做补充证据，
+# 不得挤占事实类引用；引用卡与 LLM 上下文中都带"语义推理"标注。
+# 事实满额时为推理保留 2 个名额（事实压缩到 MAX_SOURCES-2）
+MAX_INFERRED_SOURCES = 4
+MAX_INFERRED_RESERVED = 2
 
 
 class RetrievedSource(BaseModel):
@@ -34,7 +39,7 @@ class RetrievedSource(BaseModel):
     quote: str
     char_start: int | None = None
     char_end: int | None = None
-    ref_type: str = "vector_chunk"  # vector_chunk | graph_edge | graph_node
+    ref_type: str = "vector_chunk"  # vector_chunk | graph_edge | graph_node | keyword_chunk | inference
     score: float = 0.0
     source_document_id: int | None = None  # 前端跳文档预览用
 
@@ -53,6 +58,7 @@ class RetrievalQuery(BaseModel):
     question: str
     top_k: int = 12
     use_graph: bool = True
+    use_inferred: bool = True  # 是否注入语义推理引用（来源标注区分，不与事实混排）
     max_expansion_hops: int = 2
     knowledge_domain: str | None = None  # 向量过滤表达式（权限隔离强制 project_id）
 
@@ -275,6 +281,44 @@ def _keyword_sources(query: RetrievalQuery, db: Session) -> list[RetrievedSource
     return out
 
 
+def _inference_sources(query: RetrievalQuery, db: Session) -> list[RetrievedSource]:
+    """路径 C 补充：语义推理引用（reasoning_results 最新批次，IDF 无需——三元组文本短，
+    直接用问题词项命中率打分）。推导产物不得冒充事实：doc_file/ref_type 双标注，
+    quote 尾部带"语义推理产物"提示，前端引用卡按 inference 类型着色。"""
+    terms = [t for t in _question_terms(query.question) if len(t) >= 2]
+    if not terms:
+        return []
+    rows = (
+        db.query(ReasoningResult)
+        .filter(ReasoningResult.project_id == query.project_id)
+        .order_by(ReasoningResult.id.desc())
+        .limit(5000)
+        .all()
+    )
+    if not rows:
+        return []
+    scored: list[tuple[int, ReasoningResult]] = []
+    for r in rows:
+        text = f"{r.subject_label}{r.predicate_label}{r.object_label}"
+        hits = sum(1 for t in terms if t in text)
+        if hits:
+            scored.append((hits, r))
+    if not scored:
+        return []
+    scored.sort(key=lambda x: (x[0], x[1].id), reverse=True)
+    out: list[RetrievedSource] = []
+    for hits, r in scored[:MAX_INFERRED_SOURCES]:
+        # 规则推理带规则名；蕴含推理标档位（owlrl/rdfs）
+        origin = f"规则「{r.rule_name}」" if r.rule_name else f"蕴含推理（{r.source}）"
+        out.append(RetrievedSource(
+            doc_file="语义推理（非原始事实）",
+            quote=f"{r.subject_label} —[{r.predicate_label}]→ {r.object_label}（{origin}推导，语义推理产物）",
+            ref_type="inference",
+            score=round(min(0.8, 0.3 + 0.12 * hits), 4),
+        ))
+    return out
+
+
 def retrieve(query: RetrievalQuery, db: Session | None = None) -> list[RetrievedSource]:
     """双路召回 + proximity 融合（07 §4）。db 为 None 时仅向量路径。
 
@@ -334,7 +378,20 @@ def retrieve(query: RetrievalQuery, db: Session | None = None) -> list[Retrieved
         return out
 
     fused = _dedup(graph_facts)[:MAX_GRAPH_FACTS] + _dedup(text_hits)
-    return fused[:MAX_SOURCES]
+    result = fused[:MAX_SOURCES]
+    # 语义推理引用垫底补充（不与事实混排）：
+    # 推理引用有保留名额——事实满额时压缩事实到 8 条，保证层级/归属类问题
+    # 能拿到推理证据；事实不足时推理最多补 MAX_INFERRED_SOURCES 条
+    if db is not None and query.use_inferred:
+        try:
+            inferred = _inference_sources(query, db)
+        except Exception as e:
+            logger.warning(f"[retrieval] 推理引用注入失败，忽略：{e}")
+            inferred = []
+        if inferred:
+            result = result[:MAX_SOURCES - MAX_INFERRED_RESERVED]
+            result.extend(inferred[:min(MAX_INFERRED_SOURCES, MAX_SOURCES - len(result))])
+    return result
 
 
 _QA_SYSTEM_PROMPT = """你是一位专业的本体知识问答助手，基于提供的上下文信息回答用户问题。
@@ -343,6 +400,9 @@ _QA_SYSTEM_PROMPT = """你是一位专业的本体知识问答助手，基于提
 1. 只根据提供的上下文回答，不要编造信息。
 2. 在回答中使用 [1][2][3] 等标号标注引用来源，标号放在相关语句的末尾。
 3. 如果上下文中没有相关信息，请如实告知用户。
+4. 来源为"语义推理"的引用是系统从本体公理/规则推导出的结论（非原文事实）：
+   可用于回答类型归属、层级关系类问题，引用时保留 [n] 标注，表述上与原文事实区分
+   （如"根据语义推理"），不要说成文档记载的内容。
 
 【引用格式说明】：[1] 表示引用第 1 条参考信息，以此类推。
 """

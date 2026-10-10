@@ -20,6 +20,7 @@ from app.api import (
     ontology,
     publications,
     qa,
+    reasoning,
     reports,
     resolution,
     reviews,
@@ -107,6 +108,7 @@ app.include_router(model_configs.router)  # M2：模型配置
 app.include_router(documents.router)  # M3-1：文档上传/秒传/预签名（03 §7）
 app.include_router(extraction.router)  # M3-4/5：Schema/Instance 抽取 + 任务进度/SSE/取消（03 §8）
 app.include_router(resolution.router)  # M3-5：实体消解与冲突（03 §9）
+app.include_router(reasoning.router)  # 推理期 R1/R3：蕴含推理（owlrl）+ 规则引擎
 app.include_router(reviews.router)  # M3-6：审核队列与裁决（03 §11，状态机 pending→claimed→终态）
 app.include_router(versions.router)  # M3-6：版本/快照/diff/回滚/时间轴（03 §11，04 §9）
 app.include_router(publications.router)  # M3-6：发布与公共区只读（03 §12，04 §10）

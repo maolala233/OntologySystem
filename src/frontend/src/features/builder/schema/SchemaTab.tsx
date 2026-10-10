@@ -16,6 +16,7 @@ import {
     Tag,
     Divider,
     Switch,
+    InputNumber,
     Tree,
     Input as AntInput,
     Dropdown,
@@ -557,7 +558,8 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
             type: node.data?.type || 'owl:Class',
             // 抽取链路把定义写在 data.definition，展示/编辑统一到 description（description 优先，定义兜底）
             description: node.data?.description || node.data?.definition || '',
-            properties: directPropsArray
+            properties: directPropsArray,
+            disjoint_with: node.data?.axioms?.disjoint_with || [],
         });
     };
 
@@ -569,6 +571,14 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
         form.setFieldsValue({
             label: edge.data?.label || edge.data?.relation || '',
             relation: edge.data?.relation || edge.data?.label || '',
+            axioms: {
+                functional: !!edge.data?.axioms?.functional,
+                transitive: !!edge.data?.axioms?.transitive,
+                symmetric: !!edge.data?.axioms?.symmetric,
+                inverse_of: edge.data?.axioms?.inverse_of || '',
+            },
+            min_cardinality: edge.data?.min_cardinality ?? null,
+            max_cardinality: edge.data?.max_cardinality ?? null,
         });
     };
 
@@ -607,7 +617,8 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
     const handleSaveProperties = (values: any) => {
         if (!selectedElement) return;
 
-        const { label, type, properties, relation, description } = values;
+        const { label, type, properties, relation, description, disjoint_with,
+                axioms, min_cardinality, max_cardinality } = values;
         const isNode = 'position' in selectedElement;
 
         if (isNode) {
@@ -634,6 +645,10 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                 // 双写 definition：与抽取产物字段保持一致，避免编辑后丢定义
                                 definition: description || '',
                                 properties: propsObj,
+                                axioms: {
+                                    ...(node.data?.axioms || {}),
+                                    disjoint_with: disjoint_with || [],
+                                },
                             },
                         };
                     }
@@ -646,6 +661,24 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                 setHighlightNodeId(null);
             }
         } else {
+            // 边公理：开关类字段全量回写（取消勾选即移除），互逆/基数留空即清除
+            const ax = axioms || {};
+            const nextAxioms: Record<string, any> = { ...(selectedElement as any).data?.axioms };
+            nextAxioms.functional = !!ax.functional;
+            nextAxioms.transitive = !!ax.transitive;
+            nextAxioms.symmetric = !!ax.symmetric;
+            if (ax.inverse_of) {
+                nextAxioms.inverse_of = ax.inverse_of;
+            } else {
+                delete nextAxioms.inverse_of;
+            }
+            if (!nextAxioms.functional && !nextAxioms.transitive &&
+                !nextAxioms.symmetric && !nextAxioms.inverse_of) {
+                delete nextAxioms.functional;
+                delete nextAxioms.transitive;
+                delete nextAxioms.symmetric;
+            }
+
             setEdges((eds) =>
                 eds.map((edge) => {
                     if (edge.id === selectedElement.id) {
@@ -655,6 +688,9 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                 ...edge.data,
                                 label: label || relation,
                                 relation: relation || label,
+                                axioms: nextAxioms,
+                                min_cardinality: min_cardinality ?? null,
+                                max_cardinality: max_cardinality ?? null,
                             },
                         };
                     }
@@ -2141,6 +2177,35 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                                 />
                                             </Form.Item>
 
+                                            {(() => {
+                                                const nodeType = (selectedElement as any)?.data?.type || '';
+                                                if (!isClassType(nodeType)) return null;
+                                                const classOptions = nodes
+                                                    .filter((n: any) => n.id !== (selectedElement as any)?.id && isClassType(n.data?.type))
+                                                    .map((n: any) => ({ label: n.data?.label || n.id, value: n.data?.label || n.id }));
+                                                return (
+                                                    <Form.Item
+                                                        name="disjoint_with"
+                                                        label={
+                                                            <span>
+                                                                互斥类（disjointWith）
+                                                                <Tooltip title="声明的类之间不能有共同实例。实例抽取后若同一实体落在互斥类层级内，冲突检测会生成「公理违例」审核项。">
+                                                                    <InfoCircleOutlined className="text-gray-400 text-sm ml-1" />
+                                                                </Tooltip>
+                                                            </span>
+                                                        }
+                                                    >
+                                                        <Select
+                                                            mode="tags"
+                                                            placeholder="选择或输入与本类互斥的类"
+                                                            options={classOptions}
+                                                            tokenSeparators={[',']}
+                                                            allowClear
+                                                        />
+                                                    </Form.Item>
+                                                );
+                                            })()}
+
                                             {selectedElement?.data?.source_document && (
                                                 <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
                                                     <div className="flex items-center gap-2 mb-2">
@@ -2307,6 +2372,47 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                                     }
                                                 />
                                             </Form.Item>
+
+                                            <div className="flex items-center gap-2 mt-2 mb-3 pb-2 border-b border-gray-100">
+                                                <span className="font-medium text-gray-700">关系公理</span>
+                                                <Tooltip title="公理会在实例抽取后的「冲突检测」中自动校验：函数性=每个主体至多一个客体；互逆=两条关系互为反向；基数限定客体数量范围。">
+                                                    <InfoCircleOutlined className="text-gray-400 text-sm" />
+                                                </Tooltip>
+                                            </div>
+
+                                            <div className="grid grid-cols-3 gap-2 mb-3">
+                                                <Form.Item name={['axioms', 'functional']} valuePropName="checked" className="mb-0">
+                                                    <Switch size="small" checkedChildren="函数性" unCheckedChildren="函数性" />
+                                                </Form.Item>
+                                                <Form.Item name={['axioms', 'transitive']} valuePropName="checked" className="mb-0">
+                                                    <Switch size="small" checkedChildren="传递性" unCheckedChildren="传递性" />
+                                                </Form.Item>
+                                                <Form.Item name={['axioms', 'symmetric']} valuePropName="checked" className="mb-0">
+                                                    <Switch size="small" checkedChildren="对称性" unCheckedChildren="对称性" />
+                                                </Form.Item>
+                                            </div>
+
+                                            <Form.Item name={['axioms', 'inverse_of']} label="互逆关系（inverseOf）">
+                                                <AutoComplete
+                                                    options={edges
+                                                        .filter((e: any) => e.id !== (selectedElement as any)?.id && (e.data?.label || e.data?.relation))
+                                                        .map((e: any) => ({ label: e.data?.label || e.data?.relation, value: e.data?.label || e.data?.relation }))}
+                                                    placeholder="选择互为反向的关系（可留空）"
+                                                    filterOption={(inputValue, option) =>
+                                                        option!.label.toLowerCase().includes(inputValue.toLowerCase())
+                                                    }
+                                                    allowClear
+                                                />
+                                            </Form.Item>
+
+                                            <div className="flex gap-3">
+                                                <Form.Item name="min_cardinality" label="最小基数（min）" className="flex-1">
+                                                    <InputNumber min={0} placeholder="不限制" className="w-full" />
+                                                </Form.Item>
+                                                <Form.Item name="max_cardinality" label="最大基数（max）" className="flex-1">
+                                                    <InputNumber min={0} placeholder="不限制" className="w-full" />
+                                                </Form.Item>
+                                            </div>
                                         </>
 
                                     <div className="flex justify-end gap-2 mt-6 pt-4 border-t border-gray-100">

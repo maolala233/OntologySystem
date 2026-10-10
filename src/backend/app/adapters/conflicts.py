@@ -5,6 +5,7 @@
 #   RELATIONSHIP 同(subject,predicate)多客体，且谓词在 TBox 声明为单值（one-to-one/many-to-one）
 #   TEMPORAL     平台自建：valid_from/valid_until 区间重叠且属性值不一致
 #   LOGICAL      SHACL 校验（M3-6 接 adapters/exporting，本期返回空）
+#   AXIOM        平台自建（公理 2 期）：disjointWith 违例 / 函数性多值 / 基数超限不足
 # 纯函数可测；物化为 review_items(item_type='conflict_*') 由服务层（tasks/resolution）完成。
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ class ConflictType(str, Enum):
     RELATIONSHIP = "relationship"
     TEMPORAL = "temporal"    # 平台自建：valid_from/valid_until 区间重叠
     LOGICAL = "logical"      # 平台自建：SHACL 校验失败项转审核
+    AXIOM = "axiom"          # 平台自建：TBox 公理违例（互斥/函数性/基数）
 
 
 class ResolutionStrategy(str, Enum):
@@ -244,15 +246,180 @@ def detect_temporal_conflicts(ents: list[dict]) -> list[ConflictRecord]:
     return out
 
 
+def _class_closure(class_label: str, classes_by_label: dict, classes_by_id: dict) -> set[str]:
+    """实体类型的祖先闭包（parent_classes 混存 id/label，两者都能解析），含自身。
+
+    闭包统一收敛为 class label：id 解析到类后追加其 label，供与
+    disjoint_with / cardinality_restrictions 里存 label 的公理比对。
+    """
+    seen: set[str] = set()
+    stack = [class_label]
+    while stack:
+        cur = stack.pop()
+        if not cur or cur in seen:
+            continue
+        seen.add(cur)
+        info = classes_by_label.get(cur) or classes_by_id.get(cur)
+        if info:
+            if info.get("label"):
+                stack.append(info["label"])
+            stack.extend(info.get("parent_classes") or [])
+    return seen
+
+
+def detect_axiom_conflicts(ents: list[dict], rels: list[dict], ents_by_id: dict,
+                           schema: dict | None = None,
+                           entity_index: dict | None = None) -> list[ConflictRecord]:
+    """AXIOM（公理 2 期）：画布/TBox 声明的公理在 ABox 实例上的违例检测。
+
+    schema：项目 graph_data.schema，需含
+      - classes[].{label, id, parent_classes, disjoint_with}
+      - object_properties[].{label, functional, cardinality_restrictions:[{class,min,max}]}
+    entity_index：{实体id: {uri,label,class_label}} 全量索引（含类节点/已合并），
+      供关系主体解析；缺省回退 ents_by_id（仅活跃实体）。
+    检查三类：
+      1. disjointWith：实体类型闭包同时命中互斥类对 → 违例
+      2. functional：函数性谓词同主体指向 ≥2 个不同客体 → 违例
+      3. 基数：谓词在主体所属类上声明 min/max，实例客体数越界 → 超限/不足
+    """
+    schema = schema or {}
+    classes = [c for c in (schema.get("classes") or []) if isinstance(c, dict)]
+    classes_by_label = {c.get("label"): c for c in classes if c.get("label")}
+    classes_by_id = {c.get("id"): c for c in classes if c.get("id")}
+    obj_props = {op.get("label"): op for op in (schema.get("object_properties") or [])
+                 if isinstance(op, dict) and op.get("label")}
+    records: list[ConflictRecord] = []
+
+    # ── 1) disjointWith ──
+    disjoint_pairs = set()
+    for c in classes:
+        for peer in (c.get("disjoint_with") or []):
+            if peer and peer != c.get("label"):
+                disjoint_pairs.add(frozenset((c["label"], peer)))
+    if disjoint_pairs:
+        for e in ents:
+            if not e["class_label"]:
+                continue
+            closure = _class_closure(e["class_label"], classes_by_label, classes_by_id)
+            for pair in disjoint_pairs:
+                if pair <= closure:
+                    a, b = sorted(pair)
+                    records.append(ConflictRecord(
+                        conflict_type=ConflictType.AXIOM,
+                        severity="high",
+                        entity_uri=e["uri"],
+                        property_name="owl:disjointWith",
+                        conflicting_values=sorted(pair),
+                        sources=[{"uri": e["uri"], "label": e["label"],
+                                  "class": e["class_label"]}],
+                        recommended_action=ResolutionStrategy.MANUAL_REVIEW,
+                        guide=_guide([
+                            f"实体「{e['label']}」的类型「{e['class_label']}」同时落在互斥类"
+                            f"「{a}」与「{b}」的层级内，违反 disjointWith 公理",
+                            "确认实体真实归属并修正类标注；若互斥声明有误，在画布节点公理中调整",
+                        ]),
+                    ))
+
+    # ── 2) 函数性 / 3) 基数：按 (subject, predicate) 聚合关系 ──
+    func_preds = {p for p, op in obj_props.items() if op.get("functional")}
+    card_preds: dict[str, list[dict]] = {}
+    for p, op in obj_props.items():
+        restrs = [r for r in (op.get("cardinality_restrictions") or [])
+                  if isinstance(r, dict) and (r.get("min") is not None or r.get("max") is not None)]
+        if restrs:
+            card_preds[p] = restrs
+    if not func_preds and not card_preds:
+        return records
+
+    rel_groups: dict[tuple, list[dict]] = {}
+    for r in rels:
+        if r["subject_id"] is not None:
+            rel_groups.setdefault((r["subject_id"], normalize_label(r["predicate"])),
+                                  []).append(r)
+
+    for (s_id, _pred_norm), members in rel_groups.items():
+        pred = members[0]["predicate"]
+        prop_def = obj_props.get(pred) or {}
+        subject = (entity_index or {}).get(s_id) or ents_by_id.get(s_id, {})
+        subj_label = subject.get("label") or members[0].get("subject_label") or str(s_id)
+        distinct_objs = sorted({r["object_label"] for r in members if r["object_label"]})
+        if not distinct_objs:
+            continue
+
+        # 函数性：同主体多客体
+        if pred in func_preds and len(distinct_objs) >= 2:
+            records.append(ConflictRecord(
+                conflict_type=ConflictType.AXIOM,
+                severity="high",
+                entity_uri=str(subject.get("uri") or s_id),
+                property_name=pred,
+                conflicting_values=distinct_objs,
+                sources=[{"object": o, "predicate": pred} for o in distinct_objs],
+                recommended_action=ResolutionStrategy.MANUAL_REVIEW,
+                guide=_guide([
+                    f"关系「{pred}」声明为函数性（每个主体至多一个客体），"
+                    f"但「{subj_label}」指向 {len(distinct_objs)} 个客体：{'、'.join(distinct_objs)}",
+                    "核对各关系证据原句，保留正确客体；若关系本就多值，请在画布边公理中取消函数性",
+                ]),
+            ))
+
+        # 基数：主体类型闭包命中声明类
+        restrs = card_preds.get(pred)
+        if not restrs:
+            continue
+        closure = (_class_closure(subject.get("class_label") or "", classes_by_label,
+                                  classes_by_id)
+                   if subject else set())
+        applicable = next((r for r in restrs if r.get("class") in closure), None)
+        if applicable is None:
+            continue
+        count = len(distinct_objs)
+        rmin, rmax = applicable.get("min"), applicable.get("max")
+        if rmax is not None and count > int(rmax):
+            records.append(ConflictRecord(
+                conflict_type=ConflictType.AXIOM,
+                severity="medium",
+                entity_uri=str(subject.get("uri") or s_id),
+                property_name=pred,
+                conflicting_values=distinct_objs,
+                sources=[{"object": o, "predicate": pred} for o in distinct_objs],
+                recommended_action=ResolutionStrategy.MANUAL_REVIEW,
+                guide=_guide([
+                    f"「{subj_label}」的关系「{pred}」有 {count} 个客体，"
+                    f"超过类「{applicable['class']}」上声明的最大基数 {int(rmax)}",
+                    "确认多余客体的证据来源，删除错误关系或将边基数上限调大",
+                ]),
+            ))
+        elif rmin is not None and count < int(rmin):
+            records.append(ConflictRecord(
+                conflict_type=ConflictType.AXIOM,
+                severity="low",
+                entity_uri=str(subject.get("uri") or s_id),
+                property_name=pred,
+                conflicting_values=distinct_objs,
+                sources=[{"object": o, "predicate": pred} for o in distinct_objs],
+                recommended_action=ResolutionStrategy.MANUAL_REVIEW,
+                guide=_guide([
+                    f"「{subj_label}」的关系「{pred}」只有 {count} 个客体，"
+                    f"少于类「{applicable['class']}」上声明的最小基数 {int(rmin)}",
+                    "可能为抽取遗漏：核对原文补齐关系，或确认后调低最小基数",
+                ]),
+            ))
+    return records
+
+
 def detect_conflicts(entities: list, relations: list,
                      types: tuple[ConflictType, ...] = (
                          ConflictType.VALUE, ConflictType.TYPE, ConflictType.RELATIONSHIP),
                      source_credibility: dict[str, float] | None = None,
-                     object_properties: dict | None = None) -> list[ConflictRecord]:
+                     object_properties: dict | None = None,
+                     schema: dict | None = None,
+                     entity_index: dict | None = None) -> list[ConflictRecord]:
     """冲突检测主入口（04 §6：消解之后运行，消解减少假冲突）。
 
-    entities/relations：行表行或 dict；object_properties 供 RELATIONSHIP 单值判定。
-    critical 严重度强制 MANUAL_REVIEW（当前实现 VALUE/TEMPORAL=high，未到 critical）。
+    entities/relations：行表行或 dict；object_properties 供 RELATIONSHIP 单值判定；
+    schema（graph_data.schema）供 AXIOM 公理校验。
+    critical 严重度强制 MANUAL_REVIEW。
     """
     ents = [_as_ent(e) for e in (entities or [])]
     ents = [e for e in ents if e["label"] and e["status"] != "merged"]
@@ -267,6 +434,9 @@ def detect_conflicts(entities: list, relations: list,
         records.extend(detect_relationship_conflicts(rels, ents_by_id, object_properties))
     if ConflictType.TEMPORAL in types:
         records.extend(detect_temporal_conflicts(ents))
+    if ConflictType.AXIOM in types:
+        records.extend(detect_axiom_conflicts(ents, rels, ents_by_id, schema,
+                                              entity_index=entity_index))
     # critical 强制人工（当前无 critical 判定源；预留策略钩子）
     for rec in records:
         if rec.severity == "critical":
@@ -276,4 +446,4 @@ def detect_conflicts(entities: list, relations: list,
 
 __all__ = ["ConflictType", "ResolutionStrategy", "ConflictRecord", "detect_conflicts",
            "detect_value_conflicts", "detect_type_conflicts", "detect_relationship_conflicts",
-           "detect_temporal_conflicts"]
+           "detect_temporal_conflicts", "detect_axiom_conflicts"]

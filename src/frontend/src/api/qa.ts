@@ -10,7 +10,7 @@ export interface QaSource {
     quote: string;
     char_start: number | null;
     char_end: number | null;
-    ref_type: 'vector_chunk' | 'graph_edge' | 'graph_node' | 'keyword_chunk';
+    ref_type: 'vector_chunk' | 'graph_edge' | 'graph_node' | 'keyword_chunk' | 'inference';
     score: number;
     source_document_id: number | null;
     /** 溯源详情端点附加字段 */
@@ -61,6 +61,7 @@ export interface AskStreamHandlers {
 export interface AskOptions {
     top_k?: number;
     use_graph?: boolean;
+    use_inferred?: boolean;
     knowledge_domain?: string | null;
     conversation_id?: string | null;
     model_config_id?: number | null;
@@ -81,6 +82,7 @@ export async function askQuestionStream(
             stream: true,
             top_k: options?.top_k ?? 12,
             use_graph: options?.use_graph ?? true,
+            use_inferred: options?.use_inferred ?? true,
             ...(options?.knowledge_domain ? { knowledge_domain: options.knowledge_domain } : {}),
             ...(options?.conversation_id ? { conversation_id: options.conversation_id } : {}),
             ...(options?.model_config_id ? { model_config_id: options.model_config_id } : {}),
@@ -168,6 +170,7 @@ export async function askQuestionJson(
         stream: false,
         top_k: options?.top_k ?? 12,
         use_graph: options?.use_graph ?? true,
+        use_inferred: options?.use_inferred ?? true,
         ...(options?.knowledge_domain ? { knowledge_domain: options.knowledge_domain } : {}),
     });
     return resp.data;

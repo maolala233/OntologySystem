@@ -29,6 +29,7 @@ from app.infrastructure.database import (
     OntologyVersion,
     Project,
     ProvenanceRecord,
+    ReasoningResult,
     UploadedDocument,
     User,
 )
@@ -295,12 +296,14 @@ def _tool_specs(ctx: McpContext) -> list[dict]:
         },
         {
             "name": "query_graph",
-            "description": "执行只读 Cypher（白名单：禁 CREATE/DELETE/SET/MERGE/CALL 等，超时 5s）；自动限定 project_id",
+            "description": "执行只读 Cypher（白名单：禁 CREATE/DELETE/SET/MERGE/CALL 等，超时 5s）；自动限定 project_id。include_inferred=true 时附带语义推理衍生三元组（独立 inferred 字段，非 Cypher 查询结果）",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "cypher": {"type": "string", "description": "只读 Cypher，可用 $project_id 参数"},
                     "params": {"type": "object", "default": {}},
+                    "include_inferred": {"type": "boolean", "default": False,
+                                         "description": "附带最新推理批次的衍生三元组（语义推理产物，标注推导方式，至多 50 条）"},
                 },
                 "required": ["cypher"],
             },
@@ -521,7 +524,24 @@ def _t_query_graph(ctx: McpContext, db: Session, args: dict) -> dict:
     except Exception as e:
         raise _rpc_error(ERR_INVALID_PARAMS, f"Cypher 执行失败：{e}")
     _audit(ctx, db, "mcp.read", "query_graph", args)
-    return _text_content({"rows": rows[:200], "row_count": len(rows)})
+    out: dict = {"rows": rows[:200], "row_count": len(rows)}
+    # 推理衍生三元组（可选）：独立 inferred 字段返回，不与 Cypher 查询结果混排——
+    # 语义推理产物不得冒充事实，供调用方在答案中显式区分来源
+    if args.get("include_inferred"):
+        try:
+            from app.api.reports import _inference_origin, _inference_rows
+
+            inferred_rows = _inference_rows(db, ctx.project.id)
+            out["inferred"] = [
+                {"subject": r.subject_label, "predicate": r.predicate_label,
+                 "object": r.object_label, "origin": _inference_origin(r)}
+                for r in inferred_rows[:50]
+            ]
+            out["inferred_count"] = len(inferred_rows)
+            out["inference_note"] = "inferred 为语义推理产物（本体公理/规则推导），非原始事实记载"
+        except Exception as e:
+            logger.warning(f"[mcp] 推理三元组附带失败，忽略：{e}")
+    return _text_content(out)
 
 
 def _t_get_ontology_schema(ctx: McpContext, db: Session, args: dict) -> dict:

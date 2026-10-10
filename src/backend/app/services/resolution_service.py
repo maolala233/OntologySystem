@@ -27,6 +27,7 @@ _CONFLICT_ITEM_TYPE = {
     ConflictType.TYPE: "conflict_type",
     ConflictType.RELATIONSHIP: "conflict_relationship",
     ConflictType.TEMPORAL: "conflict_value",  # 04 §6：temporal 归入 conflict_value(kind=temporal)
+    ConflictType.AXIOM: "conflict_axiom",     # 公理 2 期：TBox 公理违例转审核
 }
 
 
@@ -163,6 +164,16 @@ def run_conflict_detection(project_id: int, db: Optional[Session] = None,
             Entity.status != "merged",
         ).all()
         rels = db.query(Relation).filter(Relation.project_id == project_id).all()
+        # 行表 relation 无 label 列：用全量实体索引（含类节点/已合并）富化主客体标签，
+        # 否则按客体聚合的检测（RELATIONSHIP/AXIOM 函数性、基数）全部空转
+        entity_index = {e.id: {"uri": str(e.uri or ""), "label": e.label or "",
+                               "class_label": e.class_label or ""}
+                        for e in db.query(Entity).filter(Entity.project_id == project_id).all()}
+        rel_dicts = [{"subject_id": r.subject_id, "predicate": r.predicate,
+                      "object_id": r.object_id,
+                      "subject_label": (entity_index.get(r.subject_id) or {}).get("label", ""),
+                      "object_label": (entity_index.get(r.object_id) or {}).get("label", "")}
+                     for r in rels]
         object_properties = {}
         proj = db.query(Project).filter(Project.id == project_id).first()
         schema = (proj.graph_data or {}).get("schema") if proj else None
@@ -170,16 +181,20 @@ def run_conflict_detection(project_id: int, db: Optional[Session] = None,
             object_properties = {op.get("label"): op for op in
                                  (schema.get("object_properties") or [])
                                  if isinstance(op, dict) and op.get("label")}
+        else:
+            schema = None
         want_types = tuple(
-            t for t in (ConflictType(x) for x in (types or ["value", "type", "relationship"])))
-        records = detect_conflicts(ents, rels, types=want_types,
-                                   object_properties=object_properties)
+            t for t in (ConflictType(x) for x in
+                        (types or ["value", "type", "relationship", "axiom"])))
+        records = detect_conflicts(ents, rel_dicts, types=want_types,
+                                   object_properties=object_properties, schema=schema,
+                                   entity_index=entity_index)
 
         # 物化去重：同 entity_uri+property+values 的待审冲突项不重复生成
         existing = db.query(ReviewItem).filter(
             ReviewItem.project_id == project_id,
             ReviewItem.item_type.in_(["conflict_value", "conflict_type",
-                                      "conflict_relationship"]),
+                                      "conflict_relationship", "conflict_axiom"]),
             ReviewItem.status == "pending",
         ).all()
         seen_keys = {

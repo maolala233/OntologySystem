@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 from app.api.qa import _ensure_qa_access
 from app.core.deps import ensure_module, get_current_user, get_db, require_any_module
 from app.core.exceptions import APIError
-from app.infrastructure.database import Entity, Project, Relation, UploadedDocument, User
+from app.infrastructure.database import Entity, Project, ReasoningResult, Relation, UploadedDocument, User
 from app.infrastructure.llm_client import LLMClient
 from app.infrastructure.minio_client import get_minio_client
 from app.core.config import settings
@@ -43,6 +43,7 @@ class ReportRequest(BaseModel):
     topic: str = Field(min_length=1, max_length=300)  # 分析主题（必填，面向业务）
     max_slides: int = Field(default=8, ge=3, le=MAX_SLIDES_LIMIT)
     use_template: bool = False  # kind=ppt 时使用已上传的自定义模板
+    include_inferred: bool = False  # 附加「推理衍生事实」附录（语义推理产物，不进正文）
 
 
 def _template_key(project_id: int) -> str:
@@ -234,6 +235,64 @@ def _context_text(ctx: dict) -> str:
         lines.append(f"  · {c['class']}（{c['count']} 个实例）：{names}")
     lines.append("- 主要关系谓词：" + (", ".join(f"{r['predicate']}({r['count']})" for r in ctx["top_relations"]) or "无"))
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------- 推理附录
+
+MAX_APPENDIX_ROWS = 50  # 附录表格至多展示的推理衍生三元组条数
+
+
+def _inference_rows(db: Session, project_id: int) -> list[ReasoningResult]:
+    """最新推理批次的全部衍生三元组（latest-only 语义，一次 run 覆盖前次）。"""
+    batch = (db.query(ReasoningResult.batch_id)
+             .filter(ReasoningResult.project_id == project_id)
+             .order_by(ReasoningResult.id.desc()).limit(1).first())
+    if not batch:
+        return []
+    return (db.query(ReasoningResult)
+            .filter(ReasoningResult.project_id == project_id,
+                    ReasoningResult.batch_id == batch.batch_id)
+            .order_by(ReasoningResult.id.asc()).all())
+
+
+def _inference_origin(r: ReasoningResult) -> str:
+    return f"规则「{r.rule_name}」" if r.rule_name else f"蕴含推理（{r.source}）"
+
+
+def _inference_cell(v: str) -> str:
+    # markdown 表格防串列：竖线替换为斜杠
+    return (v or "").replace("|", "／")
+
+
+def _inference_appendix_md(rows: list[ReasoningResult]) -> str:
+    """附录 markdown（确定性拼接，不经 LLM）：推理产物不得冒充事实——
+    正文生成完全不使用本节数据，仅在报告末尾以表格披露并注明非原始事实记载。"""
+    lines = [
+        "## 附录：推理衍生事实（语义推理产物，非原始事实记载）",
+        "",
+        "以下结论由系统基于本体公理与自定义规则自动推导，"
+        "不是文档原文记载，仅供延伸参考；正文分析未使用本节内容：",
+        "",
+        "| # | 主体 | 关系 | 客体 | 推导方式 |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for i, r in enumerate(rows[:MAX_APPENDIX_ROWS], 1):
+        lines.append(f"| {i} | {_inference_cell(r.subject_label)} | {_inference_cell(r.predicate_label)} "
+                     f"| {_inference_cell(r.object_label)} | {_inference_origin(r)} |")
+    if len(rows) > MAX_APPENDIX_ROWS:
+        lines.append("")
+        lines.append(f"> 共 {len(rows)} 条推导结果，本表至多展示 {MAX_APPENDIX_ROWS} 条。")
+    return "\n".join(lines)
+
+
+def _inference_appendix_slide(rows: list[ReasoningResult]) -> dict:
+    """PPT 附录页大纲（确定性追加，置于结尾页之前）：标题即声明产物性质。"""
+    bullets = ["以下为语义推理产物（非原始事实记载），仅供延伸参考"]
+    for r in rows[:4]:
+        bullets.append(f"{r.subject_label} —[{r.predicate_label}]→ {r.object_label}（{_inference_origin(r)}）")
+    if len(rows) > 4:
+        bullets.append(f"共 {len(rows)} 条推导结果，此处展示前 4 条")
+    return {"title": "附录：推理衍生事实", "bullets": bullets}
 
 
 # ---------------------------------------------------------------- LLM 生成
@@ -1046,6 +1105,14 @@ def generate_report(
         content = _llm_call(llm, REPORT_SYSTEM, material)
         title_match = re.search(r"^#\s+(.+)$", content, re.M)
         title = (title_match.group(1).strip() if title_match else "本体分析报告")[:80]
+        # 附录在 LLM 生成后确定性拼接：推理产物不进正文材料，避免冒充事实
+        if body.include_inferred:
+            try:
+                rows = _inference_rows(db, project_id)
+                if rows:
+                    content = content.rstrip() + "\n\n---\n\n" + _inference_appendix_md(rows)
+            except Exception as e:
+                logger.warning(f"[reports] 推理附录生成失败，忽略：{e}")
         md_bytes = content.encode("utf-8")
         docx_bytes = _markdown_to_docx(content, title=title, project_name=proj.name,
                                        entity_total=ctx["entity_total"],
@@ -1059,6 +1126,14 @@ def generate_report(
     else:
         raw = _llm_call(llm, PPT_SYSTEM, material + f"\n页数上限：{body.max_slides}")
         outline = _parse_ppt_outline(raw)
+        # 附录页确定性追加（置于结尾内容之前，不参与 LLM 大纲）
+        if body.include_inferred:
+            try:
+                rows = _inference_rows(db, project_id)
+                if rows:
+                    outline["slides"].append(_inference_appendix_slide(rows))
+            except Exception as e:
+                logger.warning(f"[reports] 推理附录页生成失败，忽略：{e}")
         if body.use_template:
             if get_minio_client().stat_object(settings.MINIO_BUCKET_EXPORTS,
                                               _template_key(project_id)) is None:
@@ -1081,7 +1156,8 @@ def generate_report(
     result["latency_ms"] = int((time.time() - t0) * 1000)
     log_action(db, user.id, "report.generate", resource_type="project",
                resource_id=str(project_id),
-               detail={"kind": body.kind, "latency_ms": result["latency_ms"]})
+               detail={"kind": body.kind, "latency_ms": result["latency_ms"],
+                       "include_inferred": body.include_inferred})
     db.commit()
     return result
 

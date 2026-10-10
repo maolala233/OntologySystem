@@ -943,6 +943,7 @@ def _check_export_permission(db_project: Project, current_user: User) -> None:
 def export_project(
     project_id: int,
     format: str = Query("turtle", description="导出格式：turtle/ntriples/rdfxml/jsonld/trig/owl/json"),
+    include_inferred: bool = Query(False, description="仅 turtle：附加语义推理分节（横幅分隔，非原始事实）"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -960,6 +961,23 @@ def export_project(
     if not db_project:
         raise HTTPException(status_code=404, detail="Project not found")
     _check_export_permission(db_project, current_user)
+    # 推理期 R2：turtle 可附推理分节（事实与推理横幅分隔）
+    if include_inferred and fmt == ExportFormat.TURTLE:
+        from urllib.parse import quote as _q
+
+        from app.services.reasoning_service import export_ttl_with_inference
+
+        content = export_ttl_with_inference(db, db_project, profile="owlrl")
+        project_name = db_project.name
+        encoded_filename = _q(f"ontology_{project_name}_inferred.ttl", safe='')
+        ascii_filename = f"ontology_project_{db_project.id}_inferred.ttl"
+        return Response(
+            content=content,
+            media_type="text/turtle; charset=utf-8",
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}; filename=\"{ascii_filename}\"",
+            },
+        )
     return _build_export_response(db_project, fmt)
 
 
@@ -1081,6 +1099,7 @@ def build_schema_from_graph_data(nodes: list[dict], edges: list[dict]) -> dict:
 
     class_info = {}
     node_id_to_label = {}
+    nodes_by_id = {str(n['id']): n for n in nodes}
 
     for node in nodes:
         node_type = node.get('data', {}).get('type', '')
@@ -1160,6 +1179,7 @@ def build_schema_from_graph_data(nodes: list[dict], edges: list[dict]) -> dict:
             "id": node_id,
             "label": info['label'],
             "parent_classes": info['parent_classes'],
+            "disjoint_with": (nodes_by_id.get(node_id, {}).get('data', {}).get('axioms') or {}).get('disjoint_with') or [],
             "data_properties": all_properties,
             "direct_properties": direct_props,
             "inherited_properties": inherited_props,
@@ -1209,6 +1229,21 @@ def build_schema_from_graph_data(nodes: list[dict], edges: list[dict]) -> dict:
                 object_properties[-1]["cardinality"] = edge_data['cardinality']
             if edge_data.get('description'):
                 object_properties[-1]["description"] = edge_data['description']
+            # ★ 公理：关系特征 + 互逆 + 基数随 schema 带出（校验/MCP 下游消费）
+            axioms = edge_data.get('axioms') or {}
+            for flag in ('functional', 'transitive', 'symmetric'):
+                if axioms.get(flag):
+                    object_properties[-1][flag] = True
+            if axioms.get('inverse_of'):
+                object_properties[-1]["inverse_of"] = axioms['inverse_of']
+            min_card = edge_data.get('min_cardinality')
+            max_card = edge_data.get('max_cardinality')
+            if min_card is not None or max_card is not None:
+                object_properties[-1]["cardinality_restrictions"] = [{
+                    "class": src_label,
+                    "min": min_card,
+                    "max": max_card,
+                }]
 
     logger.info(f"[build_schema_from_graph_data] 构建完成：{len(classes)} 个类，{len(object_properties)} 个 ObjectProperty")
 
@@ -1354,6 +1389,36 @@ def generate_ttl_from_graph_data(nodes: list[dict], edges: list[dict]) -> str:
                     generated_id = f"prop_{abs(hash(label)) % 10000}"
                 existing_obj_properties[relation] = (generated_id, label)
 
+    # ---- 公理导出 ①：类间互斥（owl:disjointWith，按 label 引用目标类）----
+    label_to_uri = {}
+    for node in nodes:
+        node_data = node.get('data', {})
+        if is_owl_class_type(node_data.get('type', 'owl:Class')):
+            label_to_uri[node_data.get('label', '')] = node_uris[str(node['id'])]
+
+    for node in nodes:
+        node_data = node.get('data', {})
+        disjoint = (node_data.get('axioms') or {}).get('disjoint_with') or []
+        src_uri = node_uris.get(str(node['id']))
+        if not src_uri:
+            continue
+        for peer_label in disjoint:
+            peer_uri = label_to_uri.get(peer_label)
+            if peer_uri is not None and peer_uri != src_uri:
+                g.add((src_uri, OWL.disjointWith, peer_uri))
+
+    # ---- 公理导出 ②：关系特征 + 互逆 + 基数 Restriction ----
+    prop_uri_by_label = {}  # 关系 label -> objprop URI（inverseOf 解析用，先收集）
+    edge_axioms_by_label = {}  # 关系 label -> (edge_data, source_id)
+    for edge in edges:
+        edge_data = edge.get('data', {})
+        relation_label = edge.get('label') or edge_data.get('label') or 'relatedTo'
+        relation = edge_data.get('relation', relation_label)
+        if relation in ('rdf:type', 'type', 'subClassOf', 'subclass_of'):
+            continue
+        if relation_label not in edge_axioms_by_label:
+            edge_axioms_by_label[relation_label] = edge_data
+
     for edge in edges:
         source_id = str(edge['source'])
         target_id = str(edge['target'])
@@ -1387,6 +1452,45 @@ def generate_ttl_from_graph_data(nodes: list[dict], edges: list[dict]) -> str:
                 g.add((objprop_uri, RDF.type, OWL.ObjectProperty))
                 g.add((objprop_uri, RDFS.label, Literal(relation_label, lang="zh")))
                 g.add((source_uri, objprop_uri, target_uri))
+                prop_uri_by_label[relation_label] = objprop_uri
+
+    # 关系特征公理（functional/transitive/symmetric/inverseOf）与基数 Restriction
+    for relation_label, edge_data in edge_axioms_by_label.items():
+        objprop_uri = prop_uri_by_label.get(relation_label)
+        if objprop_uri is None:
+            continue
+        axioms = edge_data.get('axioms') or {}
+        if axioms.get('functional'):
+            g.add((objprop_uri, RDF.type, OWL.FunctionalProperty))
+        if axioms.get('transitive'):
+            g.add((objprop_uri, RDF.type, OWL.TransitiveProperty))
+        if axioms.get('symmetric'):
+            g.add((objprop_uri, RDF.type, OWL.SymmetricProperty))
+        inverse_label = str(axioms.get('inverse_of') or '').strip()
+        inverse_uri = prop_uri_by_label.get(inverse_label)
+        if inverse_uri is not None and inverse_uri != objprop_uri:
+            g.add((objprop_uri, OWL.inverseOf, inverse_uri))
+
+        src_uri = None
+        for edge in edges:
+            lbl = edge.get('label') or edge.get('data', {}).get('label') or 'relatedTo'
+            if lbl == relation_label and str(edge['source']) in node_uris:
+                src_uri = node_uris[str(edge['source'])]
+                break
+        if src_uri is None:
+            continue
+        min_card = edge_data.get('min_cardinality')
+        max_card = edge_data.get('max_cardinality')
+        if min_card is None and max_card is None:
+            continue
+        restriction = ex[f"restr_{abs(hash(f'{relation_label}_{str(src_uri)}')) % 100000}"]
+        g.add((src_uri, RDFS.subClassOf, restriction))
+        g.add((restriction, RDF.type, OWL.Restriction))
+        g.add((restriction, OWL.onProperty, objprop_uri))
+        if min_card is not None:
+            g.add((restriction, OWL.minCardinality, Literal(int(min_card))))
+        if max_card is not None:
+            g.add((restriction, OWL.maxCardinality, Literal(int(max_card))))
 
     return g.serialize(format="turtle")
 
@@ -1506,6 +1610,9 @@ def extract_schema_from_ttl(ttl_content: str) -> dict:
         for range_ in g.objects(prop, RDFS.range):
             class_uris.add(range_)
 
+    # ★ 公理：基数 Restriction 节点不是类，排除出类集合
+    class_uris = {u for u in class_uris if (u, RDF.type, OWL.Restriction) not in g}
+
     # ★ 第一步：先收集所有类的直接属性和父类关系
     class_info = {}  # cls_id -> {'label': str, 'parent_classes': list, 'direct_properties': list}
 
@@ -1518,11 +1625,23 @@ def extract_schema_from_ttl(ttl_content: str) -> dict:
             if hasattr(obj, 'language') and obj.language == 'zh':
                 break
 
-        # 获取父类
+        # 获取父类（基数 Restriction 不是类，跳过）
         parent_classes = []
         for parent in g.objects(cls, RDFS.subClassOf):
+            if (parent, RDF.type, OWL.Restriction) in g:
+                continue
             parent_id = str(parent).split('#')[-1] if '#' in str(parent) else str(parent).split('/')[-1]
             parent_classes.append(parent_id)
+
+        # ★ 公理：类间互斥（owl:disjointWith）——记为对端的 label
+        disjoint_with = []
+        for peer in g.objects(cls, OWL.disjointWith):
+            peer_label = None
+            for obj in g.objects(peer, RDFS.label):
+                peer_label = str(obj)
+                if hasattr(obj, 'language') and obj.language == 'zh':
+                    break
+            disjoint_with.append(peer_label or (str(peer).split('#')[-1] if '#' in str(peer) else str(peer).split('/')[-1]))
 
         # 获取数据属性 - 通过 rdfs:domain 关联
         direct_properties = []
@@ -1534,6 +1653,7 @@ def extract_schema_from_ttl(ttl_content: str) -> dict:
             'label': label,
             'parent_classes': parent_classes,
             'direct_properties': list(set(direct_properties)),
+            'disjoint_with': disjoint_with,
         }
 
     # ★ 第二步：递归计算每个类的继承属性
@@ -1597,6 +1717,7 @@ def extract_schema_from_ttl(ttl_content: str) -> dict:
             "id": cls_id,
             "label": info['label'],
             "parent_classes": info['parent_classes'],
+            "disjoint_with": info.get('disjoint_with') or [],
             "data_properties": all_properties,  # 所有属性（用于实例提取）
             "direct_properties": direct_props,  # 直接定义的属性
             "inherited_properties": inherited_props,  # 继承的属性
@@ -1629,11 +1750,66 @@ def extract_schema_from_ttl(ttl_content: str) -> dict:
             "domain": domains[0] if domains else "",
             "range": ranges[0] if ranges else "",
         }
+        # ★ 公理：关系特征（函数性/传递/对称）与互逆
+        if (prop, RDF.type, OWL.FunctionalProperty) in g:
+            prop_def["functional"] = True
+        if (prop, RDF.type, OWL.TransitiveProperty) in g:
+            prop_def["transitive"] = True
+        if (prop, RDF.type, OWL.SymmetricProperty) in g:
+            prop_def["symmetric"] = True
+        for inv in g.objects(prop, OWL.inverseOf):
+            inv_label = None
+            for obj in g.objects(inv, RDFS.label):
+                inv_label = str(obj)
+                if hasattr(obj, 'language') and obj.language == 'zh':
+                    break
+            prop_def["inverse_of"] = inv_label or (str(inv).split('#')[-1] if '#' in str(inv) else str(inv).split('/')[-1])
         object_properties.append(prop_def)
         object_property_defs[prop_id] = prop_def
 
         # 同时通过 label 建立索引，方便后续查找
         object_property_defs[label] = prop_def
+
+    # ★ 公理：基数 Restriction（挂在 rdfs:subClassOf 链上的 owl:Restriction）
+    # 形如 <类> rdfs:subClassOf [ a owl:Restriction; owl:onProperty <谓词>;
+    #                              owl:minCardinality/maxCardinality N ].
+    # 还原为 prop_def["cardinality_restrictions"]: [{class, min, max}]
+    prop_uri_to_label = {}
+    for prop in g.subjects(RDF.type, OWL.ObjectProperty):
+        label_objs = list(g.objects(prop, RDFS.label))
+        zh = [o for o in label_objs if hasattr(o, 'language') and o.language == 'zh']
+        prop_uri_to_label[str(prop)] = str(zh[0]) if zh else (str(label_objs[0]) if label_objs else
+            (str(prop).split('#')[-1] if '#' in str(prop) else str(prop).split('/')[-1]))
+    for cls_uri, restriction in g.subject_objects(RDFS.subClassOf):
+        if (restriction, RDF.type, OWL.Restriction) not in g:
+            continue
+        on_props = list(g.objects(restriction, OWL.onProperty))
+        if not on_props:
+            continue
+        prop_label = prop_uri_to_label.get(str(on_props[0]))
+        if prop_label is None:
+            continue
+        mins = list(g.objects(restriction, OWL.minCardinality))
+        maxs = list(g.objects(restriction, OWL.maxCardinality))
+        if not mins and not maxs:
+            continue
+        cls_id = str(cls_uri).split('#')[-1] if '#' in str(cls_uri) else str(cls_uri).split('/')[-1]
+        on_prop_id = str(on_props[0]).split('#')[-1] if '#' in str(on_props[0]) else str(on_props[0]).split('/')[-1]
+        prop_def = object_property_defs.get(prop_label) or object_property_defs.get(on_prop_id)
+        if prop_def is None:
+            continue
+        # 类名优先用 label（前端/校验/导出均以 label 为主键）
+        cls_label = None
+        for obj in g.objects(cls_uri, RDFS.label):
+            cls_label = str(obj)
+            if hasattr(obj, 'language') and obj.language == 'zh':
+                break
+        restr = prop_def.setdefault("cardinality_restrictions", [])
+        restr.append({
+            "class": cls_label or cls_id,
+            "min": int(mins[0]) if mins else None,
+            "max": int(maxs[0]) if maxs else None,
+        })
 
     # ★ 新增：提取类之间的实际关系边（类节点通过 ObjectProperty 连接到其他类节点）
     # 这些关系边在 TTL 中表现为：类节点以某个 ObjectProperty 作为谓词，指向另一个类节点
@@ -1686,6 +1862,49 @@ def extract_schema_from_ttl(ttl_content: str) -> dict:
         "datatype_properties": list(datatype_prop_domains.values()),
         "class_relations": class_relations,  # ★ 新增：类之间的实际关系边
     }
+
+
+def _restriction_for(g, prop, domain_list) -> tuple:
+    """取谓词的基数 Restriction：(min, max)。优先 domain 类上的声明，否则取全局第一条。"""
+    fallback = None
+    for restr in g.subjects(OWL.onProperty, prop):
+        if (restr, RDF.type, OWL.Restriction) not in g:
+            continue
+        mins = list(g.objects(restr, OWL.minCardinality))
+        maxs = list(g.objects(restr, OWL.maxCardinality))
+        pair = (int(mins[0]) if mins else None, int(maxs[0]) if maxs else None)
+        if pair == (None, None):
+            continue
+        for dom in domain_list:
+            if (dom, RDFS.subClassOf, restr) in g:
+                return pair
+        if fallback is None:
+            fallback = pair
+    return fallback or (None, None)
+
+
+def _edge_axiom_data(g, prop, domain_list) -> dict:
+    """收集一条 ObjectProperty 的公理（特征/互逆/基数），供画布边 data 回写。"""
+    out: dict = {}
+    axioms = {}
+    if (prop, RDF.type, OWL.FunctionalProperty) in g:
+        axioms["functional"] = True
+    if (prop, RDF.type, OWL.TransitiveProperty) in g:
+        axioms["transitive"] = True
+    if (prop, RDF.type, OWL.SymmetricProperty) in g:
+        axioms["symmetric"] = True
+    for inv in g.objects(prop, OWL.inverseOf):
+        inv_label_objs = list(g.objects(inv, RDFS.label))
+        axioms["inverse_of"] = str(inv_label_objs[0]) if inv_label_objs else (
+            str(inv).split('#')[-1] if '#' in str(inv) else str(inv).split('/')[-1])
+    if axioms:
+        out["axioms"] = axioms
+    min_card, max_card = _restriction_for(g, prop, domain_list)
+    if min_card is not None:
+        out["min_cardinality"] = min_card
+    if max_card is not None:
+        out["max_cardinality"] = max_card
+    return out
 
 
 def convert_ttl_to_graph_data(ttl_content: str):
@@ -1849,6 +2068,19 @@ def convert_ttl_to_graph_data(ttl_content: str):
         if description:
             node_data["description"] = description
 
+        # ★ 公理：类间互斥（owl:disjointWith）回写节点 data，前端可编辑
+        if node_type_category == "owl:Class":
+            disjoint = []
+            for peer in g.objects(uri, OWL.disjointWith):
+                peer_label = None
+                for obj in g.objects(peer, RDFS.label):
+                    peer_label = str(obj)
+                    if hasattr(obj, 'language') and obj.language == 'zh':
+                        break
+                disjoint.append(peer_label or (str(peer).split('#')[-1] if '#' in str(peer) else str(peer).split('/')[-1]))
+            if disjoint:
+                node_data["axioms"] = {"disjoint_with": disjoint}
+
         nodes.append({
             "id": node_id,
             "type": "custom",
@@ -1895,6 +2127,9 @@ def convert_ttl_to_graph_data(ttl_content: str):
             if not range_uri.startswith(xsd_namespace) and range_uri != str(RDFS.Literal):
                 class_uris.add(range_)
 
+    # ★ 公理：基数 Restriction 节点不是类，排除出类集合（避免画布出现 restr_xxx 伪类）
+    class_uris = {u for u in class_uris if (u, RDF.type, OWL.Restriction) not in g}
+
     logger.info(f"[convert_ttl_to_graph_data] 收集到 {len(class_uris)} 个类（含 owl:Class, rdfs:Class 和隐式类）")
 
     # 添加所有类节点
@@ -1933,17 +2168,19 @@ def convert_ttl_to_graph_data(ttl_content: str):
         if domain and range_:
             source_id = add_node(domain[0], "owl:Class")
             target_id = add_node(range_[0], "owl:Class")
+            edge_data = {
+                "label": prop_label,
+                "relation": prop_label,
+                "prop_id": prop_id,
+            }
+            edge_data.update(_edge_axiom_data(g, prop, domain))
             edges.append({
                 "id": f"e_{source_id}_{target_id}_{prop_label}",
                 "source": source_id,
                 "target": target_id,
                 "label": prop_label,
                 "type": "custom",
-                "data": {
-                    "label": prop_label,
-                    "relation": prop_label,
-                    "prop_id": prop_id,
-                },
+                "data": edge_data,
             })
 
     # ★ 新增：rdf:Property（对象属性）domain → range 边
@@ -2047,17 +2284,19 @@ def convert_ttl_to_graph_data(ttl_content: str):
                         # 检查是否已存在相同的边（避免重复）
                         existing_edge_ids = {e['id'] for e in edges}
                         if edge_id not in existing_edge_ids:
+                            edge_data = {
+                                "label": rel_label,
+                                "relation": rel_label,
+                                "prop_id": pred_id,
+                            }
+                            edge_data.update(_edge_axiom_data(g, URIRef(pred_uri), [cls_uri]))
                             edges.append({
                                 "id": edge_id,
                                 "source": cls_id,
                                 "target": obj_id,
                                 "label": rel_label,
                                 "type": "custom",
-                                "data": {
-                                    "label": rel_label,
-                                    "relation": rel_label,
-                                    "prop_id": pred_id,
-                                },
+                                "data": edge_data,
                             })
                             logger.info(f"[convert_ttl_to_graph_data] 添加类间 ObjectProperty 边：{cls_id} -> {obj_id} ({rel_label})")
 

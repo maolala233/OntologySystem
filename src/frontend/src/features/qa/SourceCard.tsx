@@ -9,6 +9,7 @@ export const REF_TYPE_LABEL: Record<string, string> = {
     graph_edge: '图关系',
     graph_node: '图节点',
     keyword_chunk: '关键词切片',
+    inference: '语义推理',
 };
 
 export default function SourceCard({ index, source, highlighted }: {
@@ -20,6 +21,8 @@ export default function SourceCard({ index, source, highlighted }: {
         if (source.doc_url) window.open(source.doc_url, '_blank');
     };
 
+    const isInferred = source.ref_type === 'inference';
+
     // 清理 PDF 解析残留：表格换行符、分隔线（如 [---|---]）、连续空白
     const quote = source.quote?.trim()
         ?.replace(/<br\s*\/?>/gi, ' ')
@@ -30,11 +33,17 @@ export default function SourceCard({ index, source, highlighted }: {
         <div className={`p-2 bg-white border rounded-lg text-xs transition-all ${
             highlighted
                 ? 'border-blue-400 ring-2 ring-blue-200 shadow-sm'
-                : 'border-gray-200 hover:border-blue-300'
+                : isInferred
+                    ? 'border-purple-200 hover:border-purple-300'
+                    : 'border-gray-200 hover:border-blue-300'
         }`}>
             <div className="flex items-center gap-1.5 mb-1 flex-wrap">
                 <Tag color="purple" className="mr-0">[{index + 1}]</Tag>
-                <Tag color="geekblue" className="mr-0">{REF_TYPE_LABEL[source.ref_type] ?? source.ref_type}</Tag>
+                {isInferred ? (
+                    <Tag color="magenta" className="mr-0">{REF_TYPE_LABEL[source.ref_type] ?? source.ref_type}</Tag>
+                ) : (
+                    <Tag color="geekblue" className="mr-0">{REF_TYPE_LABEL[source.ref_type] ?? source.ref_type}</Tag>
+                )}
                 <span className="text-gray-600 font-medium flex items-center gap-1">
                     <FileTextOutlined />{source.doc_file || '未知文件'}
                 </span>

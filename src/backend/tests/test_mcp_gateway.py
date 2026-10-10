@@ -3,6 +3,7 @@
 #       tools/list 权限矩阵（viewer 8 读 / editor 10 工具）、写工具拒写（viewer/已发布）、
 #       query_graph 只读白名单（CREATE/CALL/注释注入被拒）、限流、审计留痕、令牌管理 API。
 # 跑在真实开发库上（同 test_authz_contract 约定）；测试用户/项目/令牌 fixture 创建并清理。
+import json
 import re
 import uuid
 
@@ -516,3 +517,99 @@ def test_token_plaintext_only_once_and_hint_masked(env):
     row = db.query(McpToken).filter(McpToken.id == body["id"]).first()
     assert row is not None and row.token_hash == _hash_token(body["token"])
     assert row.token_hash != body["token"]
+
+
+# ---------------------------------------------------------------- R8：query_graph 推理三元组附带
+
+class _FakeResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def data(self):
+        return self._rows
+
+
+class _FakeTx:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def run(self, cypher, params):
+        return _FakeResult(self._rows)
+
+    def commit(self):
+        return None
+
+
+class _FakeSession:
+    def __init__(self, rows):
+        self._tx = _FakeTx(rows)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def begin_transaction(self, timeout=None):
+        return self._tx
+
+
+class _FakeDriver:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def session(self):
+        return _FakeSession(self._rows)
+
+
+def test_query_graph_inferred_schema_exposed(env):
+    """tools/list 中 query_graph 声明 include_inferred 参数。"""
+    resp = _rpc("tools/list", {}, token=env["viewer_token"])
+    tools = resp.json()["result"]["tools"]
+    spec = next(t for t in tools if t["name"] == "query_graph")
+    assert "include_inferred" in spec["inputSchema"]["properties"]
+
+
+def test_query_graph_include_inferred(env, monkeypatch):
+    """include_inferred=true：rows（Cypher 结果）与 inferred（推理产物）分字段返回，
+    origin 标注推导方式，note 声明非原始事实。"""
+    from app.infrastructure.database import ReasoningResult
+    import app.api.mcp_gateway as gw
+
+    db = env["db"]
+    pid = env["project"].id
+    rows = [
+        ReasoningResult(project_id=pid, batch_id=f"{M5_TAG}-r8b", source="owlrl",
+                        rule_name=None, subject_uri="ex:a", subject_label="个人投资者",
+                        predicate_uri="rdf:type", predicate_label="类型",
+                        object_uri="ex:c", object_label="投资者"),
+        ReasoningResult(project_id=pid, batch_id=f"{M5_TAG}-r8b", source="rule",
+                        rule_name="持有即投资", subject_uri="ex:a", subject_label="个人投资者",
+                        predicate_uri="ex:p", predicate_label="投资",
+                        object_uri="ex:b", object_label="理财产品"),
+    ]
+    db.add_all(rows)
+    db.commit()
+    monkeypatch.setattr(gw.neo4j_client, "driver",
+                        _FakeDriver([{"n": {"label": "金豆一号"}}]))
+    try:
+        resp = _call("query_graph", {"cypher": "MATCH (n) RETURN n LIMIT 1",
+                                     "include_inferred": True}, env["viewer_token"])
+        assert resp.status_code == 200, resp.text
+        payload = json.loads(resp.json()["result"]["content"][0]["text"])
+        assert payload["rows"] == [{"n": {"label": "金豆一号"}}]
+        assert payload["inferred_count"] == 2
+        origins = {(i["subject"], i["object"], i["origin"]) for i in payload["inferred"]}
+        assert ("个人投资者", "投资者", "蕴含推理（owlrl）") in origins
+        assert ("个人投资者", "理财产品", "规则「持有即投资」") in origins
+        assert "非原始事实记载" in payload["inference_note"]
+
+        # 默认关闭：不带 include_inferred 时无 inferred 字段
+        resp2 = _call("query_graph", {"cypher": "MATCH (n) RETURN n LIMIT 1"},
+                      env["viewer_token"])
+        payload2 = json.loads(resp2.json()["result"]["content"][0]["text"])
+        assert "inferred" not in payload2 and "inference_note" not in payload2
+    finally:
+        db.query(ReasoningResult).filter(ReasoningResult.project_id == pid).delete(
+            synchronize_session=False)
+        db.commit()

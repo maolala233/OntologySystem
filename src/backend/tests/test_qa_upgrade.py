@@ -53,7 +53,7 @@ def _stub_result(**overrides) -> QAResult:
 @pytest.fixture()
 def mock_llm(monkeypatch):
     """替换 QA 端点的检索与 LLM 构建（离线确定性；真实链路由 integration 用例覆盖）。"""
-    monkeypatch.setattr("app.api.qa._build_llm", lambda db, pid: None)
+    monkeypatch.setattr("app.api.qa._build_llm", lambda db, pid, mid=None: None)
     monkeypatch.setattr("app.api.qa.query_with_reasoning", lambda query, db=None, llm=None: _stub_result())
 
     def _fake_iter(query, db=None, llm=None):
@@ -253,7 +253,7 @@ def test_qa_sse_error_event_on_failure(env, monkeypatch):
         yield ("meta", {"source_count": 0})
         raise RuntimeError("检索后端炸了")
 
-    monkeypatch.setattr("app.api.qa._build_llm", lambda db, pid: None)
+    monkeypatch.setattr("app.api.qa._build_llm", lambda db, pid, mid=None: None)
     monkeypatch.setattr("app.api.qa.iter_answer", _boom_iter)
     resp = client.post(f"/api/projects/{env['draft'].id}/qa", headers=_auth(env["admin_tok"]),
                        json={"question": "异常问题", "stream": True})

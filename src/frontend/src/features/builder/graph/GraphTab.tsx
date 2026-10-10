@@ -11,7 +11,7 @@ import {
 import type { MenuProps, TreeProps } from 'antd';
 import {
     ApartmentOutlined, CheckCircleOutlined, CloudServerOutlined, ClusterOutlined, DeleteOutlined,
-    EditOutlined, ExportOutlined, EyeOutlined, ExpandOutlined, LeftOutlined, MoreOutlined,
+    EditOutlined, ExperimentOutlined, ExportOutlined, EyeOutlined, ExpandOutlined, LeftOutlined, MoreOutlined,
     PlusOutlined, RadarChartOutlined, RightOutlined, SaveOutlined, SearchOutlined,
     ShrinkOutlined, ThunderboltOutlined, UnorderedListOutlined,
 } from '@ant-design/icons';
@@ -26,6 +26,7 @@ import DetailDrawer from '../../graph-explorer/DetailDrawer';
 import RagSyncModal from '../components/RagSyncModal';
 import TaskProgressModal from '../components/TaskProgressModal';
 import ExportDialog from '../components/ExportDialog';
+import ReasoningModal from '../components/ReasoningModal';
 
 const CLASS_TYPES = new Set(['owl:Class', 'Class']);
 
@@ -43,6 +44,8 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
     // 实例抽取框架选择（框架复用）：空 = 当前画布框架；数字 = 历史框架版本快照
     const [instOpen, setInstOpen] = useState(false);
     const [instVersion, setInstVersion] = useState<number | undefined>(undefined);
+    // 推理分析（推理期 R1：蕴含推理 + 规则引擎）
+    const [reasoningOpen, setReasoningOpen] = useState(false);
     const [versionOptions, setVersionOptions] = useState<{ value: number; label: string }[]>([]);
     const [instStarting, setInstStarting] = useState(false);
     // 与骨架编辑统一的画布数据与实例展开状态
@@ -771,6 +774,9 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                         </Tooltip>
                         <Button icon={<ClusterOutlined />} onClick={startResolution}>消解分析</Button>
                         <Button icon={<RadarChartOutlined />} onClick={detectConflicts}>冲突检测</Button>
+                        <Tooltip title="语义蕴含推理（OWL-RL/RDFS）+ 自定义规则推理；结果与原始事实分开存放">
+                            <Button icon={<ExperimentOutlined />} onClick={() => setReasoningOpen(true)}>推理分析</Button>
+                        </Tooltip>
                         <Tooltip title={hasUnsavedChanges ? '保存修改（含拖拽布局）' : '保存当前抽取结果'}>
                             <Button
                                 icon={<SaveOutlined />}
@@ -1095,6 +1101,12 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                 open={progressOpen}
                 onClose={() => setProgressOpen(false)}
                 onCompleted={() => refresh()}
+            />
+
+            <ReasoningModal
+                projectId={projectId}
+                open={reasoningOpen}
+                onClose={() => setReasoningOpen(false)}
             />
         </div>
     );

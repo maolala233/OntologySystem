@@ -165,7 +165,7 @@ def list_conflicts(
     q = db.query(ReviewItem).filter(
         ReviewItem.project_id == project_id,
         ReviewItem.item_type.in_(["conflict_value", "conflict_type",
-                                  "conflict_relationship"]),
+                                  "conflict_relationship", "conflict_axiom"]),
     )
     if status:
         q = q.filter(ReviewItem.status == status)
