@@ -25,6 +25,7 @@ import { projectsApi } from '../api/projects';
 import type { ProjectData } from '../types/ontology';
 import MarkdownAnswer from '../features/qa/MarkdownAnswer';
 import SourceCard from '../features/qa/SourceCard';
+import { uuid } from '../utils/uuid';
 
 interface QaTurn {
     question: string;
@@ -162,7 +163,7 @@ export default function QaPage() {
         // 新对话：客户端生成 uuid，首问后即成会话（后端按此分组落库）
         let convId = activeConvId;
         if (!convId) {
-            convId = crypto.randomUUID();
+            convId = uuid();
             setActiveConvId(convId);
         }
         setQuestion('');
