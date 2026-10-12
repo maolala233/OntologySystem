@@ -168,11 +168,11 @@ def _docling_convert(content: bytes, filename: str, ocr: bool):
         converter = DocumentConverter(format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)})
         result = converter.convert(tmp.name)
         return result.document.export_to_markdown()
-    except Exception:  # noqa: BLE001 —— docling 任何失败（网络/格式/内存）都降级 native
+    except Exception as e:  # noqa: BLE001 —— docling 任何失败（网络/格式/内存）都降级 native
         _docling_broken["flag"] = True
         from app.core.logging import logger
 
-        logger.warning("[parsing] docling 不可用（模型下载或转换失败），本次进程内降级 native 解析")
+        logger.warning(f"[parsing] docling 不可用（{type(e).__name__}: {e}），本次进程内降级 native 解析")
         return None
     finally:
         try:

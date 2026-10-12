@@ -94,7 +94,7 @@ services:
       - ./logs:/app/logs
       - ./uploads:/app/uploads
       - ./temp:/app/temp
-      - ./volumes/docling-models:/opt/docling-models:ro
+      - ./models:/opt/docling-models:ro
       # Oxigraph 嵌入式数据目录：写入只允许 worker-rdf（RocksDB 独占锁）
       - ./volumes/oxigraph:/data/oxigraph:ro
     depends_on:
@@ -133,13 +133,17 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
       DOCLING_ARTIFACTS_PATH: /opt/docling-models
+      # ---- 向量库（解析后向量化入库；缺省回落镜像内 .env 的远程地址）----
+      MILVUS_HOST: standalone
+      MILVUS_PORT: "19530"
+      MILVUS_COLLECTION_NAME: knowledge_graph_rag
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./logs:/app/logs
       - ./uploads:/app/uploads
       - ./temp:/app/temp
-      - ./volumes/docling-models:/opt/docling-models:ro
+      - ./models:/opt/docling-models:ro
     depends_on:
       mysql:
         condition: service_healthy

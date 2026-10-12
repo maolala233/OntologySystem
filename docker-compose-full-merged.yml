@@ -1,0 +1,747 @@
+# ==============================================================================
+# OntologySystem 一键启动 · 单文件合并版（docker compose config 渲染生成）
+# 由 docker-compose-full.yml(include) + docker-compose-middleware.yml 合并而成：
+#   无 include → 任意 compose v2 版本都不会报 conflicting network default；
+#   只有一个 networks 块（name: ontology-network）。
+# 用法（在 /opt/myk/ontology/service 下，相对路径挂载都基于当前目录）：
+#   docker-compose -f docker-compose-full-merged.yml up -d
+# 注意：${VAR:-默认值} 已在此文件中固化为默认值；要改密码/内存上限直接改本文件。
+# ==============================================================================
+name: ontologysystem
+services:
+  backend:
+    command:
+      - sh
+      - -c
+      - python -c 'from app.infrastructure.database import init_db; init_db()' && exec python main.py
+    container_name: ontology-backend
+    depends_on:
+      minio-business:
+        condition: service_healthy
+        required: true
+      mysql:
+        condition: service_healthy
+        required: true
+      neo4j:
+        condition: service_healthy
+        required: true
+      redis:
+        condition: service_healthy
+        required: true
+      standalone:
+        condition: service_healthy
+        required: true
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      DOCLING_ARTIFACTS_PATH: /opt/docling-models
+      EMBEDDING_API_KEY: ""
+      EMBEDDING_BASE_URL: ""
+      EMBEDDING_DIM: "1024"
+      EMBEDDING_MODEL: ""
+      MILVUS_COLLECTION_NAME: knowledge_graph_rag
+      MILVUS_HOST: standalone
+      MILVUS_PORT: "19530"
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_BUCKET_EXPORTS: ontology-exports
+      MINIO_BUCKET_PARSED: ontology-parsed
+      MINIO_BUCKET_UPLOADS: ontology-uploads
+      MINIO_ENDPOINT: minio-business:9000
+      MINIO_SECRET_KEY: minioadmin
+      MYSQL_DATABASE: ontology_db
+      MYSQL_HOST: mysql
+      MYSQL_PASSWORD: password
+      MYSQL_PORT: "3306"
+      MYSQL_USER: root
+      NEO4J_PASSWORD: password
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USERNAME: neo4j
+      PRESTART_INIT_DONE: "1"
+      REDIS_URL: redis://redis:6379/0
+      SEMANTICA_TRIPLET_BACKEND: oxigraph
+      SEMANTICA_TRIPLET_PATH: /data/oxigraph
+      TZ: Asia/Shanghai
+      UVICORN_WORKERS: "2"
+      VECTOR_STORE_DIMENSION: "1024"
+      VECTOR_STORE_MILVUS_HOST: standalone
+      VECTOR_STORE_MILVUS_PORT: "19530"
+      VLLM_API_KEY: EMPTY
+      VLLM_BASE_URL: ""
+      VLLM_MODEL: ""
+    image: ontology-backend:latest
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 3001
+        published: "3002"
+        protocol: tcp
+    restart: always
+    volumes:
+      - type: bind
+        source: /home/lenovo/Documents/PythonProject/OntologySystem/TTL
+        target: /app/TTL
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/lenovo/Documents/PythonProject/OntologySystem/logs
+        target: /app/logs
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/lenovo/Documents/PythonProject/OntologySystem/uploads
+        target: /app/uploads
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/lenovo/Documents/PythonProject/OntologySystem/temp
+        target: /app/temp
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/lenovo/Documents/PythonProject/OntologySystem/models
+        target: /opt/docling-models
+        read_only: true
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/lenovo/Documents/PythonProject/OntologySystem/volumes/oxigraph
+        target: /data/oxigraph
+        read_only: true
+        bind:
+          create_host_path: true
+  beat:
+    command:
+      - celery
+      - -A
+      - app.tasks.celery_app
+      - beat
+      - -l
+      - info
+    container_name: ontology-beat
+    depends_on:
+      mysql:
+        condition: service_healthy
+        required: true
+      redis:
+        condition: service_healthy
+        required: true
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      MYSQL_DATABASE: ontology_db
+      MYSQL_HOST: mysql
+      MYSQL_PASSWORD: password
+      MYSQL_PORT: "3306"
+      MYSQL_USER: root
+      REDIS_URL: redis://redis:6379/0
+      TZ: Asia/Shanghai
+    image: ontology-backend:latest
+    networks:
+      default: null
+    restart: always
+    volumes:
+      - type: bind
+        source: /home/lenovo/Documents/PythonProject/OntologySystem/logs
+        target: /app/logs
+        bind:
+          create_host_path: true
+  etcd:
+    command:
+      - etcd
+      - -advertise-client-urls=http://127.0.0.1:2379
+      - -listen-client-urls
+      - http://0.0.0.0:2379
+      - --data-dir
+      - /etcd
+    container_name: milvus-etcd
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_SNAPSHOT_COUNT: "10000"
+      TZ: Asia/Shanghai
+    healthcheck:
+      test:
+        - CMD
+        - etcdctl
+        - endpoint
+        - health
+      timeout: 20s
+      interval: 30s
+      retries: 3
+    image: quay.io/coreos/etcd:v3.5.5
+    logging:
+      driver: json-file
+      options:
+        max-file: "3"
+        max-size: 10m
+    mem_limit: "268435456"
+    networks:
+      default: null
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /home/lenovo/Documents/PythonProject/OntologySystem/volumes/etcd
+        target: /etcd
+        bind:
+          create_host_path: true
+  frontend:
+    container_name: ontology-frontend
+    depends_on:
+      backend:
+        condition: service_started
+        required: true
+    image: ontology-frontend:latest
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 80
+        published: "3080"
+        protocol: tcp
+    restart: always
+  minio:
+    command:
+      - minio
+      - server
+      - /minio_data
+      - --console-address
+      - :9001
+    container_name: milvus-minio
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      TZ: Asia/Shanghai
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -f
+        - http://localhost:9000/minio/health/live
+      timeout: 20s
+      interval: 30s
+      retries: 3
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    logging:
+      driver: json-file
+      options:
+        max-file: "3"
+        max-size: 10m
+    mem_limit: "268435456"
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 9000
+        published: "9002"
+        protocol: tcp
+      - mode: ingress
+        target: 9001
+        published: "9003"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /home/lenovo/Documents/PythonProject/OntologySystem/volumes/minio
+        target: /minio_data
+        bind:
+          create_host_path: true
+  minio-business:
+    command:
+      - minio
+      - server
+      - /data
+      - --console-address
+      - :9001
+    container_name: minio-onto
+    environment:
+      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: minioadmin
+      TZ: Asia/Shanghai
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -f
+        - http://localhost:9000/minio/health/live
+      timeout: 10s
+      interval: 15s
+      retries: 5
+      start_period: 20s
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/minio/minio:RELEASE.2024-06-13T22-53-53Z
+    logging:
+      driver: json-file
+      options:
+        max-file: "3"
+        max-size: 10m
+    mem_limit: "335544320"
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 9000
+        published: "9010"
+        protocol: tcp
+      - mode: ingress
+        target: 9001
+        published: "9011"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /home/lenovo/Documents/PythonProject/OntologySystem/volumes/minio-business
+        target: /data
+        bind:
+          create_host_path: true
+  minio-init:
+    container_name: minio-init
+    depends_on:
+      minio-business:
+        condition: service_healthy
+        required: true
+    entrypoint:
+      - /bin/sh
+      - -c
+      - ' mc alias set local http://minio-business:9000 minioadmin minioadmin && mc mb --ignore-existing local/ontology-uploads && mc mb --ignore-existing local/ontology-parsed && mc mb --ignore-existing local/ontology-exports && echo ''buckets ready'' '
+    image: minio/mc:RELEASE.2024-06-12T14-34-03Z
+    logging:
+      driver: json-file
+      options:
+        max-file: "3"
+        max-size: 10m
+    mem_limit: "67108864"
+    networks:
+      default: null
+    restart: "no"
+  mysql:
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+08:00
+      - --max-connections=200
+      - --innodb-buffer-pool-size=256M
+      - --performance-schema=OFF
+    container_name: mysql-onto
+    environment:
+      MYSQL_DATABASE: ontology_db
+      MYSQL_ROOT_PASSWORD: password
+      TZ: Asia/Shanghai
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent
+      timeout: 5s
+      interval: 10s
+      retries: 12
+      start_period: 40s
+    image: mysql:8.0
+    logging:
+      driver: json-file
+      options:
+        max-file: "3"
+        max-size: 10m
+    mem_limit: "671088640"
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 3306
+        published: "3309"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /home/lenovo/Documents/PythonProject/OntologySystem/volumes/mysql
+        target: /var/lib/mysql
+        bind:
+          create_host_path: true
+  neo4j:
+    container_name: neo4j-onto
+    environment:
+      NEO4J_AUTH: neo4j/password
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*
+      NEO4J_dbms_transaction_timeout: 120s
+      NEO4J_dbms_unmanaged__extension__classes: n10s.endpoint=/rdf
+      NEO4J_server_memory_heap_initial__size: 256m
+      NEO4J_server_memory_heap_max__size: 1G
+      NEO4J_server_memory_pagecache_size: 256M
+      TZ: Asia/Shanghai
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - cypher-shell -u neo4j -p password 'RETURN 1' || exit 1
+      timeout: 10s
+      interval: 15s
+      retries: 10
+      start_period: 1m0s
+    image: neo4j:5.26.17
+    logging:
+      driver: json-file
+      options:
+        max-file: "3"
+        max-size: 10m
+    mem_limit: "2147483648"
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 7474
+        published: "7474"
+        protocol: tcp
+      - mode: ingress
+        target: 7687
+        published: "7687"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /home/lenovo/Documents/PythonProject/OntologySystem/volumes/neo4j/plugins
+        target: /plugins
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/lenovo/Documents/PythonProject/OntologySystem/volumes/neo4j/data
+        target: /data
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/lenovo/Documents/PythonProject/OntologySystem/volumes/neo4j/logs
+        target: /logs
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/lenovo/Documents/PythonProject/OntologySystem/volumes/neo4j/file
+        target: /mnt/file
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/lenovo/Documents/PythonProject/OntologySystem/volumes/neo4j/import
+        target: /var/lib/neo4j/import
+        bind:
+          create_host_path: true
+  redis:
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --save
+      - ""
+      - --maxmemory
+      - 192mb
+      - --maxmemory-policy
+      - noeviction
+    container_name: redis-onto
+    environment:
+      TZ: Asia/Shanghai
+    healthcheck:
+      test:
+        - CMD
+        - redis-cli
+        - ping
+      timeout: 5s
+      interval: 10s
+      retries: 5
+    image: redis:7-alpine
+    logging:
+      driver: json-file
+      options:
+        max-file: "3"
+        max-size: 10m
+    mem_limit: "268435456"
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 6379
+        published: "6379"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /home/lenovo/Documents/PythonProject/OntologySystem/volumes/redis
+        target: /data
+        bind:
+          create_host_path: true
+  standalone:
+    command:
+      - milvus
+      - run
+      - standalone
+    container_name: milvus-standalone
+    depends_on:
+      etcd:
+        condition: service_healthy
+        required: true
+      minio:
+        condition: service_healthy
+        required: true
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+      TZ: Asia/Shanghai
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -f
+        - http://localhost:9091/healthz
+      timeout: 20s
+      interval: 30s
+      retries: 3
+      start_period: 1m30s
+    image: milvusdb/milvus:v2.3.5
+    logging:
+      driver: json-file
+      options:
+        max-file: "3"
+        max-size: 10m
+    mem_limit: "2147483648"
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 19530
+        published: "19530"
+        protocol: tcp
+      - mode: ingress
+        target: 9091
+        published: "9091"
+        protocol: tcp
+    restart: unless-stopped
+    security_opt:
+      - seccomp:unconfined
+    volumes:
+      - type: bind
+        source: /home/lenovo/Documents/PythonProject/OntologySystem/volumes/milvus
+        target: /var/lib/milvus
+        bind:
+          create_host_path: true
+  worker-extract:
+    command:
+      - celery
+      - -A
+      - app.tasks.celery_app
+      - worker
+      - -Q
+      - extract
+      - -c
+      - "8"
+      - -l
+      - info
+      - -n
+      - extract@%h
+    container_name: ontology-worker-extract
+    depends_on:
+      mysql:
+        condition: service_healthy
+        required: true
+      redis:
+        condition: service_healthy
+        required: true
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_ENDPOINT: minio-business:9000
+      MINIO_SECRET_KEY: minioadmin
+      MYSQL_DATABASE: ontology_db
+      MYSQL_HOST: mysql
+      MYSQL_PASSWORD: password
+      MYSQL_PORT: "3306"
+      MYSQL_USER: root
+      REDIS_URL: redis://redis:6379/0
+      TZ: Asia/Shanghai
+      VLLM_API_KEY: EMPTY
+      VLLM_BASE_URL: ""
+      VLLM_MODEL: ""
+    image: ontology-backend:latest
+    networks:
+      default: null
+    restart: always
+    volumes:
+      - type: bind
+        source: /home/lenovo/Documents/PythonProject/OntologySystem/logs
+        target: /app/logs
+        bind:
+          create_host_path: true
+  worker-graph:
+    command:
+      - celery
+      - -A
+      - app.tasks.celery_app
+      - worker
+      - -Q
+      - graph,export
+      - -c
+      - "2"
+      - -l
+      - info
+      - -n
+      - graph@%h
+    container_name: ontology-worker-graph
+    depends_on:
+      mysql:
+        condition: service_healthy
+        required: true
+      neo4j:
+        condition: service_healthy
+        required: true
+      redis:
+        condition: service_healthy
+        required: true
+      standalone:
+        condition: service_healthy
+        required: true
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      MILVUS_HOST: standalone
+      MILVUS_PORT: "19530"
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_ENDPOINT: minio-business:9000
+      MINIO_SECRET_KEY: minioadmin
+      MYSQL_DATABASE: ontology_db
+      MYSQL_HOST: mysql
+      MYSQL_PASSWORD: password
+      MYSQL_PORT: "3306"
+      MYSQL_USER: root
+      NEO4J_PASSWORD: password
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USERNAME: neo4j
+      REDIS_URL: redis://redis:6379/0
+      TZ: Asia/Shanghai
+      VECTOR_STORE_DIMENSION: "1024"
+    image: ontology-backend:latest
+    networks:
+      default: null
+    restart: always
+    volumes:
+      - type: bind
+        source: /home/lenovo/Documents/PythonProject/OntologySystem/logs
+        target: /app/logs
+        bind:
+          create_host_path: true
+  worker-parse:
+    command:
+      - celery
+      - -A
+      - app.tasks.celery_app
+      - worker
+      - -Q
+      - parse
+      - -c
+      - "4"
+      - -l
+      - info
+      - -n
+      - parse@%h
+    container_name: ontology-worker-parse
+    depends_on:
+      minio-business:
+        condition: service_healthy
+        required: true
+      mysql:
+        condition: service_healthy
+        required: true
+      redis:
+        condition: service_healthy
+        required: true
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      DOCLING_ARTIFACTS_PATH: /opt/docling-models
+      MILVUS_COLLECTION_NAME: knowledge_graph_rag
+      MILVUS_HOST: standalone
+      MILVUS_PORT: "19530"
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_ENDPOINT: minio-business:9000
+      MINIO_SECRET_KEY: minioadmin
+      MYSQL_DATABASE: ontology_db
+      MYSQL_HOST: mysql
+      MYSQL_PASSWORD: password
+      MYSQL_PORT: "3306"
+      MYSQL_USER: root
+      REDIS_URL: redis://redis:6379/0
+      TZ: Asia/Shanghai
+    image: ontology-backend:latest
+    networks:
+      default: null
+    restart: always
+    volumes:
+      - type: bind
+        source: /home/lenovo/Documents/PythonProject/OntologySystem/logs
+        target: /app/logs
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/lenovo/Documents/PythonProject/OntologySystem/uploads
+        target: /app/uploads
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/lenovo/Documents/PythonProject/OntologySystem/temp
+        target: /app/temp
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/lenovo/Documents/PythonProject/OntologySystem/models
+        target: /opt/docling-models
+        read_only: true
+        bind:
+          create_host_path: true
+  worker-rdf:
+    command:
+      - celery
+      - -A
+      - app.tasks.celery_app
+      - worker
+      - -Q
+      - rdf
+      - -c
+      - "1"
+      - -l
+      - info
+      - -n
+      - rdf@%h
+    container_name: ontology-worker-rdf
+    depends_on:
+      mysql:
+        condition: service_healthy
+        required: true
+      redis:
+        condition: service_healthy
+        required: true
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      MYSQL_DATABASE: ontology_db
+      MYSQL_HOST: mysql
+      MYSQL_PASSWORD: password
+      MYSQL_PORT: "3306"
+      MYSQL_USER: root
+      REDIS_URL: redis://redis:6379/0
+      SEMANTICA_TRIPLET_BACKEND: oxigraph
+      SEMANTICA_TRIPLET_PATH: /data/oxigraph
+      TZ: Asia/Shanghai
+    image: ontology-backend:latest
+    networks:
+      default: null
+    restart: always
+    volumes:
+      - type: bind
+        source: /home/lenovo/Documents/PythonProject/OntologySystem/logs
+        target: /app/logs
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/lenovo/Documents/PythonProject/OntologySystem/volumes/oxigraph
+        target: /data/oxigraph
+        bind:
+          create_host_path: true
+networks:
+  default:
+    name: ontology-network

@@ -489,6 +489,163 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+  backend:
+    image: ontology-backend:latest
+    container_name: ontology-backend
+    ports:
+    - 3001:3001
+    environment:
+      TZ: Asia/Shanghai
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USERNAME: neo4j
+      NEO4J_PASSWORD: password
+      MYSQL_HOST: mysql
+      MYSQL_PORT: '3306'
+      MYSQL_USER: root
+      MYSQL_PASSWORD: password
+      MYSQL_DATABASE: ontology_db
+      MILVUS_HOST: standalone
+      MILVUS_PORT: '19530'
+      MILVUS_COLLECTION_NAME: knowledge_graph_rag
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      MINIO_ENDPOINT: minio-business:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET_UPLOADS: ontology-uploads
+      MINIO_BUCKET_PARSED: ontology-parsed
+      MINIO_BUCKET_EXPORTS: ontology-exports
+      SEMANTICA_TRIPLET_BACKEND: oxigraph
+      SEMANTICA_TRIPLET_PATH: /data/oxigraph
+      VECTOR_STORE_MILVUS_HOST: standalone
+      VECTOR_STORE_MILVUS_PORT: '19530'
+      VECTOR_STORE_DIMENSION: '1024'
+      VLLM_API_KEY: ${VLLM_API_KEY:-EMPTY}
+      VLLM_BASE_URL: ${VLLM_BASE_URL:-}
+      VLLM_MODEL: ${VLLM_MODEL:-}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-1024}
+      DOCLING_ARTIFACTS_PATH: /opt/docling-models
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-2}
+      PRESTART_INIT_DONE: '1'
+    command: sh -c "python -c 'from app.infrastructure.database import init_db; init_db()' && exec python main.py"
+    volumes:
+    - ./TTL:/app/TTL
+    - ./logs:/app/logs
+    - ${DOCKER_VOLUME_DIRECTORY:-.}/models:/opt/docling-models:ro
+    - ./uploads:/app/uploads
+    - ./temp:/app/temp
+    - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/oxigraph:/data/oxigraph:ro
+    restart: always
+  worker-parse:
+    image: ontology-backend:latest
+    container_name: ontology-worker-parse
+    restart: always
+    command: celery -A app.tasks.celery_app worker -Q parse -c 4 -l info -n parse@%h
+    environment:
+      TZ: Asia/Shanghai
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      MYSQL_HOST: mysql
+      MYSQL_PORT: '3306'
+      MYSQL_PASSWORD: password
+      MINIO_ENDPOINT: minio-business:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      DOCLING_ARTIFACTS_PATH: /opt/docling-models
+    volumes:
+    - ./logs:/app/logs
+    - ./uploads:/app/uploads
+    - ./temp:/app/temp
+    - ${DOCKER_VOLUME_DIRECTORY:-.}/models:/opt/docling-models:ro
+  worker-extract:
+    image: ontology-backend:latest
+    container_name: ontology-worker-extract
+    restart: always
+    command: celery -A app.tasks.celery_app worker -Q extract -c 8 -l info -n extract@%h
+    environment:
+      TZ: Asia/Shanghai
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      MYSQL_HOST: mysql
+      MYSQL_PORT: '3306'
+      MYSQL_PASSWORD: password
+      MINIO_ENDPOINT: minio-business:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      VLLM_API_KEY: ${VLLM_API_KEY:-EMPTY}
+      VLLM_BASE_URL: ${VLLM_BASE_URL:-}
+      VLLM_MODEL: ${VLLM_MODEL:-}
+    volumes:
+    - ./logs:/app/logs
+  worker-graph:
+    image: ontology-backend:latest
+    container_name: ontology-worker-graph
+    restart: always
+    command: celery -A app.tasks.celery_app worker -Q graph,export -c 2 -l info -n graph@%h
+    environment:
+      TZ: Asia/Shanghai
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      MYSQL_HOST: mysql
+      MYSQL_PORT: '3306'
+      MYSQL_PASSWORD: password
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USERNAME: neo4j
+      NEO4J_PASSWORD: password
+      MILVUS_HOST: standalone
+      MILVUS_PORT: '19530'
+      VECTOR_STORE_DIMENSION: '1024'
+      MINIO_ENDPOINT: minio-business:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    volumes:
+    - ./logs:/app/logs
+  worker-rdf:
+    image: ontology-backend:latest
+    container_name: ontology-worker-rdf
+    restart: always
+    command: celery -A app.tasks.celery_app worker -Q rdf -c 1 -l info -n rdf@%h
+    environment:
+      TZ: Asia/Shanghai
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      MYSQL_HOST: mysql
+      MYSQL_PORT: '3306'
+      MYSQL_PASSWORD: password
+      SEMANTICA_TRIPLET_BACKEND: oxigraph
+      SEMANTICA_TRIPLET_PATH: /data/oxigraph
+    volumes:
+    - ./logs:/app/logs
+    - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/oxigraph:/data/oxigraph
+  beat:
+    image: ontology-backend:latest
+    container_name: ontology-beat
+    restart: always
+    command: celery -A app.tasks.celery_app beat -l info
+    environment:
+      TZ: Asia/Shanghai
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      MYSQL_HOST: mysql
+      MYSQL_PORT: '3306'
+      MYSQL_PASSWORD: password
+    volumes:
+    - ./logs:/app/logs
+  frontend:
+    image: ontology-frontend:latest
+    container_name: ontology-frontend
+    ports:
+    - 3080:80
+    restart: always
 
 networks:
   default:
