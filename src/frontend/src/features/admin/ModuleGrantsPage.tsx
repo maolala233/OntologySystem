@@ -20,7 +20,7 @@ type Matrix = Record<string, Record<string, CellState>>; // userId -> moduleCode
 
 const NEXT_STATE: Record<CellState, CellState> = { default: 'allow', allow: 'deny', deny: 'default' };
 const STATE_META: Record<CellState, { label: string; icon: React.ReactNode; cls: string; tip: string }> = {
-    default: { label: '默', icon: <MinusOutlined />, cls: 'bg-gray-100 text-gray-400 hover:bg-gray-200', tip: '默认（跟随模块开关）' },
+    default: { label: '默', icon: <MinusOutlined />, cls: 'bg-gray-100 text-gray-500 hover:bg-gray-200', tip: '默认（跟随模块开关）' },
     allow: { label: '许', icon: <CheckOutlined />, cls: 'bg-[#5B8DEF] text-white hover:bg-[#4a7de0]', tip: '允许（显式开通）' },
     deny: { label: '拒', icon: <CloseOutlined />, cls: 'bg-red-100 text-red-500 hover:bg-red-200', tip: '拒绝（显式关闭）' },
 };
@@ -270,7 +270,7 @@ const ModuleGrantsPage: React.FC = () => {
         <div className="flex items-center justify-between mb-3">
             <Space size={16} className="!flex-wrap text-xs text-gray-500">
                 <span className="flex items-center gap-1">
-                    <span className="w-4 h-4 rounded bg-gray-100 inline-flex items-center justify-center text-gray-400 text-[10px]">默</span>跟随模块默认
+                    <span className="w-4 h-4 rounded bg-gray-100 inline-flex items-center justify-center text-gray-500 text-[10px]">默</span>跟随模块默认
                 </span>
                 <span className="flex items-center gap-1">
                     <span className="w-4 h-4 rounded bg-[#5B8DEF] inline-flex items-center justify-center text-white text-[10px]">许</span>允许
@@ -321,7 +321,7 @@ const ModuleGrantsPage: React.FC = () => {
                                     )}
                                 </Space>
                             </div>
-                            <div className="text-xs text-gray-400 mt-2 min-h-[32px] leading-relaxed">
+                            <div className="text-xs text-gray-500 mt-2 min-h-[32px] leading-relaxed">
                                 {r.description || '暂无描述'}
                                 <span className="ml-2 whitespace-nowrap">· {r.module_codes.length} 个模块</span>
                             </div>
@@ -351,7 +351,7 @@ const ModuleGrantsPage: React.FC = () => {
                 { title: '工具模块', mods: toolModules },
             ].map((group) => (
                 <div key={group.title}>
-                    <div className="text-[11px] text-gray-400 mb-1.5 flex items-center gap-1">
+                    <div className="text-[11px] text-gray-500 mb-1.5 flex items-center gap-1">
                         {group.title === '工具模块' && <ToolOutlined />}
                         {group.title}
                     </div>
@@ -360,7 +360,7 @@ const ModuleGrantsPage: React.FC = () => {
                             <Checkbox key={m.code} checked={roleForm.module_codes.includes(m.code)}
                                 onChange={(e) => toggleRoleModule(m.code, e.target.checked)}>
                                 <span className="text-sm">{group.title === '工具模块' ? (TOOL_LABELS[m.code] ?? m.name) : m.name}</span>
-                                <span className="text-[10px] text-gray-400 ml-1">{m.code}</span>
+                                <span className="text-[10px] text-gray-500 ml-1">{m.code}</span>
                             </Checkbox>
                         ))}
                     </div>

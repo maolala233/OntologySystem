@@ -128,6 +128,12 @@ class ExtractionResult(BaseModel):
     low_confidence_count: int = 0
     promote_candidates: list[dict] = Field(default_factory=list)
     cache_hits: int = 0
+    # O2 增强（默认 0/空，向后兼容）
+    coref_stats: dict = Field(default_factory=dict)       # B10 指代消解 L0 统计
+    pattern_filled_count: int = 0                         # B11 pattern 直抽补全数
+    pattern_calibrated_count: int = 0                     # B11 pattern 校准降置信数
+    # O3-B15：闸门违例明细（{kind,label,detail}，定向修复 pick_worst_chunks 消费）
+    gate_violations: list[dict] = Field(default_factory=list)
 
 
 class SchemaExtractionResult(BaseModel):
@@ -799,13 +805,17 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
                       use_cache: bool = True,
                       llm_call: Optional[Callable] = None,
                       progress_cb: Optional[Callable] = None,
-                      cancel_cb: Optional[Callable] = None) -> ExtractionResult:
+                      cancel_cb: Optional[Callable] = None,
+                      coref_enabled: bool = False,
+                      pattern_enabled: bool = False) -> ExtractionResult:
     """ABox 抽取（04 §4）：分块并行 → 严格闸门（apply_gate）→ 统计。
 
     tbox_summary：{"classes": {类名: [别名]}, "object_properties": {谓词: {domain, range}}}
     （与 schema_gate.apply_gate 的 tbox 同形；chunks 定位文本内部自动构建）。
     strict_gate=False 时闸门只做归一不拦违例（调试用）。
     model_config_id：显式指定 model_configs 行（用户个人选择，API 层已校验可见性）。
+    coref_enabled：O2-B10 指代消解 L0（闸门前按 chunk 合并代词/简称提及，可关闭）。
+    pattern_enabled：O2-B11 pattern 层（结构化属性直抽补全 + LLM 值校准，可关闭）。
     """
     from app.adapters.schema_gate import PromotePolicy, apply_gate
 
@@ -892,6 +902,28 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
             if progress_cb is not None:
                 progress_cb(done, len(prepared), cache_hits)
 
+    # O2-B10 指代消解 L0：闸门前按 chunk 合并代词/简称提及（失败静默，不影响主抽取）
+    if coref_enabled and raw_entities:
+        from app.adapters.coref import apply_coref, run_coref_ll0
+
+        mapping, cstats = run_coref_ll0(
+            chunks, raw_entities, raw_relations, llm_call, cancel_cb=cancel_cb,
+            use_cache=use_cache,
+            cache_key_fn=lambda _m, s, u: _cache_key(model_name, s, u),
+            cache_get=_cache_get, cache_put=_cache_put)
+        raw_entities, raw_relations, _relabeled = apply_coref(
+            raw_entities, raw_relations, mapping)
+        result.coref_stats = cstats
+
+    # O2-B11 pattern 层：结构化属性直抽补全 + LLM 值校准（毫秒级正则，零 LLM 成本）
+    if pattern_enabled and raw_entities:
+        from app.adapters.pattern_extract import fill_and_calibrate
+
+        raw_entities, p_filled, p_cal = fill_and_calibrate(
+            raw_entities, chunks, tbox_summary)
+        result.pattern_filled_count = p_filled
+        result.pattern_calibrated_count = p_cal
+
     # 严格闸门（04 §4.1）：类/谓词四级匹配 + domain/range + evidence 定位 + confidence 阈值
     tbox = {"classes": tbox_summary.get("classes") or {},
             "object_properties": tbox_summary.get("object_properties") or {},
@@ -915,6 +947,7 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
     result.entities = _dedupe_entities([i for i in gate.passed
                                         if isinstance(i, ExtractedEntity)])
     result.relations = [i for i in gate.passed if isinstance(i, ExtractedRelation)]
+    result.gate_violations = [v.model_dump() for v in gate.violations[:500]]
     result.cache_hits = cache_hits
     return result
 

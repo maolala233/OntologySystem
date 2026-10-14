@@ -31,7 +31,7 @@ function JsonLeaf({ value }: { value: unknown }) {
     if (typeof value === 'string') return <span className="text-emerald-600 break-all">"{value}"</span>;
     if (typeof value === 'number') return <span className="text-blue-600">{String(value)}</span>;
     if (typeof value === 'boolean') return <span className="text-orange-500">{String(value)}</span>;
-    if (value === null || value === undefined) return <span className="text-gray-400 italic">null</span>;
+    if (value === null || value === undefined) return <span className="text-gray-500 italic">null</span>;
     return <span className="text-gray-600">{String(value)}</span>;
 }
 
@@ -54,11 +54,11 @@ function JsonNode({ name, value, depth = 0 }: { name?: string; value: unknown; d
         <div className="leading-6">
             <button type="button" onClick={() => setOpen(o => !o)}
                 className="inline-flex items-center gap-1 text-left hover:bg-gray-50 rounded px-0.5 -ml-0.5">
-                <CaretRightOutlined className={`text-[10px] text-gray-400 transition-transform ${open ? 'rotate-90' : ''}`} />
+                <CaretRightOutlined className={`text-[10px] text-gray-500 transition-transform ${open ? 'rotate-90' : ''}`} />
                 {name !== undefined && <span className="text-gray-800">{name}</span>}
-                <span className="text-gray-400">{openB}</span>
+                <span className="text-gray-500">{openB}</span>
                 {!open && (
-                    <span className="text-gray-400 text-xs">
+                    <span className="text-gray-500 text-xs">
                         {entries.length} 项 <span>{closeB}</span>
                     </span>
                 )}
@@ -68,7 +68,7 @@ function JsonNode({ name, value, depth = 0 }: { name?: string; value: unknown; d
                     <div className="ml-3 border-l border-gray-100 pl-3">
                         {entries.map(([k, v]) => <JsonNode key={k} name={k} value={v} depth={depth + 1} />)}
                     </div>
-                    <div className="text-gray-400">{closeB}</div>
+                    <div className="text-gray-500">{closeB}</div>
                 </>
             )}
         </div>
@@ -93,7 +93,7 @@ function ResultBody({ text }: { text: string }) {
             <div className="p-3 overflow-auto max-h-96 font-mono text-[12px]">
                 {parsed !== null ? <JsonNode value={parsed} /> : <pre className="whitespace-pre-wrap">{text}</pre>}
             </div>
-            {copied && <span className="absolute bottom-1.5 right-2 text-[11px] text-gray-400">已复制</span>}
+            {copied && <span className="absolute bottom-1.5 right-2 text-[11px] text-gray-500">已复制</span>}
         </div>
     );
 }
@@ -444,12 +444,12 @@ export default function McpConsolePage() {
                 </div>
 
                 <div>
-                    <div className="text-xs text-gray-400 mb-1">传输方式</div>
+                    <div className="text-xs text-gray-500 mb-1">传输方式</div>
                     <Select value="http" disabled className="w-full" options={[{ value: 'http', label: 'HTTP (Streamable)' }]} />
                 </div>
 
                 <div>
-                    <div className="text-xs text-gray-400 mb-1">端点</div>
+                    <div className="text-xs text-gray-500 mb-1">端点</div>
                     <div className="flex gap-1">
                         <Tooltip title="默认按页面地址自动推导；容器化/反向代理部署可直接改为实际可达地址（如 https://域名/mcp）">
                             <Input size="small" value={endpoint}
@@ -471,7 +471,7 @@ export default function McpConsolePage() {
                 </div>
 
                 <div>
-                    <div className="text-xs text-gray-400 mb-1 flex items-center justify-between">
+                    <div className="text-xs text-gray-500 mb-1 flex items-center justify-between">
                         <span>sk-mcp- 令牌</span>
                         <Button size="small" type="link" className="!px-0 !text-[11px]" icon={<PlusOutlined />}
                             onClick={() => { setIssuedPlain(null); setIssueOpen(true); }}>签发</Button>
@@ -486,10 +486,10 @@ export default function McpConsolePage() {
                             value: t.id,
                             label: `${t.name}（${t.token_hint}）`,
                         }))}
-                        notFoundContent={<span className="text-xs text-gray-400">暂无令牌，点击「签发」创建</span>}
+                        notFoundContent={<span className="text-xs text-gray-500">暂无令牌，点击「签发」创建</span>}
                     />
                     {selectedToken && (
-                        <div className="text-[11px] text-gray-400 mt-1 flex items-center justify-between">
+                        <div className="text-[11px] text-gray-500 mt-1 flex items-center justify-between">
                             <span>
                                 {selectedToken.can_write ? '读写' : '只读'}
                                 {' · '}项目 #{selectedToken.project_id}
@@ -525,14 +525,14 @@ export default function McpConsolePage() {
                             <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
                             <span className="font-mono text-sm text-gray-800">{serverInfo.name ?? 'mcp-server'}</span>
                         </div>
-                        <div className="text-[11px] text-gray-400 mt-1">
+                        <div className="text-[11px] text-gray-500 mt-1">
                             Version: {serverInfo.version ?? '-'}
                             {protocolVersion && ` · 协议 ${protocolVersion}`}
                         </div>
                     </div>
                 )}
 
-                <div className="mt-auto border-t border-gray-100 pt-2 text-[11px] text-gray-400 leading-relaxed">
+                <div className="mt-auto border-t border-gray-100 pt-2 text-[11px] text-gray-500 leading-relaxed">
                     明文令牌仅在签发时展示一次（本页内存留存）；对外服务请把
                     <span className="font-mono text-gray-500"> Authorization: Bearer sk-mcp-*</span>
                     配入任意支持 Streamable HTTP 的 MCP 客户端。
@@ -570,7 +570,7 @@ export default function McpConsolePage() {
                                         <li>端点默认为 <span className="font-mono">{effEndpoint}</span>（host 随访问地址自动推导；容器化/反代部署可在左栏改，HTTP Streamable，无状态 POST-only）</li>
                                         <li>把端点 + 令牌配到下方任意一种客户端 / 自己的 agent 里</li>
                                     </ol>
-                                    <div className="mt-2 text-xs text-gray-400">
+                                    <div className="mt-2 text-xs text-gray-500">
                                         令牌绑定单项目（数据隔离）；只读令牌不暴露写入工具；限流：读 60 次/分、写 20 次/分。
                                         {bearer ? ' 已检测到当前选中令牌，下方示例已代入。' : ' 尚未选令牌，示例中用占位符表示，替换为你的明文即可。'}
                                     </div>
@@ -693,7 +693,7 @@ asyncio.run(main())`} />
                                 </div>
                                 <div className="flex-1 overflow-auto p-2 min-h-0">
                                     {filteredTools.length === 0 ? (
-                                        <div className="text-xs text-gray-400 text-center py-10">
+                                        <div className="text-xs text-gray-500 text-center py-10">
                                             {connected ? '没有匹配的工具' : '连接后展示该令牌可见的 MCP 工具'}
                                         </div>
                                     ) : (
@@ -728,7 +728,7 @@ asyncio.run(main())`} />
                             <section className="flex-1 min-w-0 overflow-auto p-4">
                                 {!selectedTool ? (
                                     <div className="h-full flex items-center justify-center">
-                                        <div className="border border-gray-200 rounded-xl bg-white px-8 py-6 text-gray-400 shadow-sm">
+                                        <div className="border border-gray-200 rounded-xl bg-white px-8 py-6 text-gray-500 shadow-sm">
                                             <ThunderboltOutlined className="mr-2" />
                                             从左侧选择一个工具，查看详情并调用
                                         </div>
@@ -740,14 +740,14 @@ asyncio.run(main())`} />
 
                                         <div className="space-y-3 mb-4">
                                             {schemaProps.length === 0 && (
-                                                <div className="text-xs text-gray-400">该工具无入参，直接运行即可</div>
+                                                <div className="text-xs text-gray-500">该工具无入参，直接运行即可</div>
                                             )}
                                             {schemaProps.map(([key, prop]) => (
                                                 <div key={key}>
                                                     <div className="text-xs mb-1">
                                                         <span className="font-mono text-gray-700">{key}</span>
                                                         {requiredKeys.includes(key) && <span className="text-red-400"> *</span>}
-                                                        {prop.description && <span className="ml-2 text-gray-400">{prop.description}</span>}
+                                                        {prop.description && <span className="ml-2 text-gray-500">{prop.description}</span>}
                                                     </div>
                                                     {prop.enum ? (
                                                         <Select
@@ -817,7 +817,7 @@ asyncio.run(main())`} />
                                 </div>
                                 <div className="flex-1 overflow-auto p-2 min-h-0">
                                     {resources.length === 0 ? (
-                                        <div className="text-xs text-gray-400 text-center py-10">
+                                        <div className="text-xs text-gray-500 text-center py-10">
                                             {connected ? '点击 List Resources 列出资源' : '连接后可浏览该项目的 MCP 资源'}
                                         </div>
                                     ) : (
@@ -833,7 +833,7 @@ asyncio.run(main())`} />
                                                     <span className="text-sm text-gray-800">{r.name ?? r.uri}</span>
                                                     {r.mimeType && <Tag className="!text-[10px] !m-0">{r.mimeType}</Tag>}
                                                 </div>
-                                                <div className="font-mono text-[11px] text-gray-400 mt-0.5">{r.uri}</div>
+                                                <div className="font-mono text-[11px] text-gray-500 mt-0.5">{r.uri}</div>
                                                 {r.description && <div className="text-[11px] text-gray-500 mt-0.5">{r.description}</div>}
                                             </div>
                                         ))
@@ -843,16 +843,16 @@ asyncio.run(main())`} />
                             <section className="flex-1 min-w-0 overflow-auto p-4">
                                 {!selectedResource ? (
                                     <div className="h-full flex items-center justify-center">
-                                        <div className="border border-gray-200 rounded-xl bg-white px-8 py-6 text-gray-400 shadow-sm">
+                                        <div className="border border-gray-200 rounded-xl bg-white px-8 py-6 text-gray-500 shadow-sm">
                                             点击左侧资源读取内容
                                         </div>
                                     </div>
                                 ) : (
                                     <div className="max-w-3xl mx-auto">
                                         <div className="text-base text-gray-800">{selectedResource.name ?? selectedResource.uri}</div>
-                                        <div className="font-mono text-xs text-gray-400 mb-3">{selectedResource.uri}</div>
+                                        <div className="font-mono text-xs text-gray-500 mb-3">{selectedResource.uri}</div>
                                         {readingRes ? (
-                                            <div className="text-sm text-gray-400">读取中…</div>
+                                            <div className="text-sm text-gray-500">读取中…</div>
                                         ) : resourceText ? (
                                             <>
                                                 <div className="text-sm mb-2">
@@ -887,7 +887,7 @@ asyncio.run(main())`} />
                                             : `失败：${pingResult.msg}`}
                                     </div>
                                 )}
-                                <div className="mt-6 text-xs text-gray-400">
+                                <div className="mt-6 text-xs text-gray-500">
                                     限流：读 60 次/分 · 写 20 次/分（每令牌）；认证失败返回 JSON-RPC error -32001
                                 </div>
                             </div>
@@ -914,8 +914,8 @@ asyncio.run(main())`} />
                                             className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-xs text-left border transition-colors ${
                                                 expandedHistory === h.id ? 'bg-gray-50 border-gray-200' : 'border-transparent hover:bg-gray-50'
                                             }`}>
-                                            <CaretRightOutlined className={`text-[10px] text-gray-400 transition-transform ${expandedHistory === h.id ? 'rotate-90' : ''}`} />
-                                            <span className="text-gray-400">{h.seq}.</span>
+                                            <CaretRightOutlined className={`text-[10px] text-gray-500 transition-transform ${expandedHistory === h.id ? 'rotate-90' : ''}`} />
+                                            <span className="text-gray-500">{h.seq}.</span>
                                             <span className="font-mono text-gray-700">{h.method}</span>
                                             <span className={`ml-auto ${h.ok ? 'text-green-500' : 'text-red-400'}`}>{h.ok ? '✓' : '✗'}</span>
                                             <span className="text-gray-300">{h.at}</span>
@@ -923,11 +923,11 @@ asyncio.run(main())`} />
                                         {expandedHistory === h.id && (
                                             <div className="mx-2 mb-2 p-2 bg-gray-50 border border-gray-100 rounded-md grid grid-cols-2 gap-3 font-mono text-[11px]">
                                                 <div className="min-w-0">
-                                                    <div className="text-gray-400 mb-1">请求</div>
+                                                    <div className="text-gray-500 mb-1">请求</div>
                                                     <div className="overflow-auto max-h-32"><JsonNode value={h.request} depth={2} /></div>
                                                 </div>
                                                 <div className="min-w-0">
-                                                    <div className="text-gray-400 mb-1">响应</div>
+                                                    <div className="text-gray-500 mb-1">响应</div>
                                                     <div className="overflow-auto max-h-32">
                                                         {h.response ? <JsonNode value={h.response} depth={2} /> : <span className="text-gray-300">-</span>}
                                                     </div>
@@ -983,7 +983,7 @@ asyncio.run(main())`} />
                             </div>
                         )}
                         {!isAdmin && (
-                            <div className="text-xs text-gray-400">
+                            <div className="text-xs text-gray-500">
                                 持有人为当前账号（{currentUser?.username}）；令牌仅能访问你为成员的项目
                             </div>
                         )}

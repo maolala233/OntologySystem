@@ -149,7 +149,7 @@ export const versionsApi = {
 // ── 发布/公共区 ──
 
 export const publishApi = {
-    publish: async (projectId: number, body?: { note?: string; label?: string }) => {
+    publish: async (projectId: number, body?: { note?: string; label?: string; unacceptable_regressions?: boolean }) => {
         const response = await apiClient.post(`/api/projects/${projectId}/publish`, body || {});
         return response.data as {
             publication_id: number; version_no: number; status: string; warnings: string[];
@@ -168,6 +168,42 @@ export const publishApi = {
 
     assetDetail: async (projectId: number) => {
         const response = await apiClient.get(`/api/assets/${projectId}`);
+        return response.data;
+    },
+};
+
+// ── 本体健康记分卡（O2-F7，口径见 docs/design/09 §3） ──
+
+export interface ScorecardTrendPoint {
+    month: string;
+    approved: number;
+    rejected: number;
+    pass_rate: number | null;
+}
+
+export interface Scorecard {
+    consistency_violations: number;
+    cycles: number;
+    dangling_refs: number;
+    dangling_domain_range: string[];
+    naming_consistency: number;
+    naming_bad: string[];
+    evidence_closure_rate: number;
+    evidence_dangling: string[];
+    evidence_missing_count: number;
+    instance_coverage: number;
+    orphan_classes: string[];
+    orphan_count: number;
+    schema_checks: { passed: boolean; error_count: number; warning_count: number };
+    review_trend: ScorecardTrendPoint[];
+    pending_reviews: number;
+    class_count: number;
+    instance_count: number;
+}
+
+export const scorecardApi = {
+    get: async (projectId: number): Promise<Scorecard> => {
+        const response = await apiClient.get(`/api/projects/${projectId}/scorecard`);
         return response.data;
     },
 };

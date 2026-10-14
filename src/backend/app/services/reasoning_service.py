@@ -151,25 +151,6 @@ def _build_fact_graph(db: Session, project: Project) -> tuple[Graph, dict[str, s
     return g, label_by_uri
 
 
-def _build_fact_graph(db: Session, project: Project) -> tuple[Graph, dict[str, str]]:
-    """事实图 = TBox（画布 TTL）+ ABox（entities/relations 行表）。返回 (图, uri→label 映射)。"""
-    from app.api.ontology import generate_ttl_from_graph_data
-
-    graph_data = project.graph_data if isinstance(project.graph_data, dict) else {}
-    nodes = graph_data.get("nodes") or []
-    edges = graph_data.get("edges") or []
-
-    g = Graph()
-    # ── TBox：复用统一 TTL 生成（含公理导出：disjointWith / 特征 / 基数 Restriction）──
-    tbox_ttl = generate_ttl_from_graph_data(nodes, edges)
-    g.parse(data=tbox_ttl, format="turtle")
-    label_by_uri = {str(s): str(lbl) for s, _, lbl in g.triples((None, RDFS.label, None))}
-
-    # ── ABox：实例 + 实例关系 ──
-    label_by_uri.update(_abox_into_graph(g, db, project))
-    return g, label_by_uri
-
-
 def _class_closure(class_label: str, parent_map: dict[str, list[str]]) -> set[str]:
     """类标签 → 自身 + 全部祖先标签（规则匹配用，带环保护）。"""
     closure = {class_label}

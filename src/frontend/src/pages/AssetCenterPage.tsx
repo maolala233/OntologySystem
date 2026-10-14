@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
+import { PROJECT_STATUS, PUBLISHED_TAG } from '../shared/projectStatus';
 import { Card, Empty, Spin, message, Tag, Input, Select, Button } from 'antd';
-import { EyeOutlined, UserOutlined, NodeIndexOutlined, AppstoreOutlined, DatabaseOutlined, ArrowLeftOutlined, CheckCircleOutlined } from '@ant-design/icons';
+import { EyeOutlined, UserOutlined, NodeIndexOutlined, AppstoreOutlined, DatabaseOutlined, ArrowLeftOutlined, CheckCircleOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Layout/Navbar';
 import TechHero, { TECH_COLORS, GraphMotif } from '../components/TechHero';
@@ -33,6 +34,7 @@ const AssetCenterPage: React.FC = () => {
     const [projects, setProjects] = useState<ProjectData[]>([]);
     const [filteredProjects, setFilteredProjects] = useState<ProjectData[]>([]);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const [searchText, setSearchText] = useState('');
     const [sortBy, setSortBy] = useState<'latest' | 'nodes'>('latest');
 
@@ -65,8 +67,10 @@ const AssetCenterPage: React.FC = () => {
             }));
             
             setDomains(domainStats);
+            setLoadError(null);
         } catch (error: any) {
-            message.error('加载知识域失败');
+            const d = error?.response?.data?.message || error?.response?.data?.detail || error?.message;
+            setLoadError(String(d || '未知错误'));
         } finally {
             setLoading(false);
         }
@@ -85,8 +89,10 @@ const AssetCenterPage: React.FC = () => {
             }
             
             setProjects(filtered);
+            setLoadError(null);
         } catch (error: any) {
-            message.error('加载项目失败');
+            const d = error?.response?.data?.message || error?.response?.data?.detail || error?.message;
+            setLoadError(String(d || '未知错误'));
         } finally {
             setLoading(false);
         }
@@ -150,6 +156,17 @@ const AssetCenterPage: React.FC = () => {
             {loading ? (
                 <div className="flex justify-center items-center h-96">
                     <Spin size="large" />
+                </div>
+            ) : loadError ? (
+                <div className="flex flex-col items-center justify-center h-96 px-4">
+                    <Empty
+                        description={`知识域加载失败：${loadError}`}
+                        image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    >
+                        <Button type="primary" icon={<ReloadOutlined />} onClick={loadDomainsWithProjects}>
+                            重试
+                        </Button>
+                    </Empty>
                 </div>
             ) : domains.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-96 px-4">
@@ -245,7 +262,7 @@ const AssetCenterPage: React.FC = () => {
                         
                         {selectedDomain && selectedDomain.id !== 0 && (
                             <div className="flex items-center gap-3 pl-3 border-l border-gray-200">
-                                <div className="flex items-center justify-center w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500">
+                                <div className="flex items-center justify-center w-10 h-10 rounded-full bg-[#5B8DEF]">
                                     <DatabaseOutlined className="text-white text-lg" />
                                 </div>
                                 <div>
@@ -260,8 +277,8 @@ const AssetCenterPage: React.FC = () => {
                     
                     {/* 统计和排序栏 */}
                     <div className="flex items-center gap-4 w-full sm:w-auto">
-                        <div className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-full">
-                            <span className="text-indigo-600 font-semibold">{filteredProjects.length}</span>
+                        <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 rounded-full">
+                            <span className="text-[#5B8DEF] font-semibold">{filteredProjects.length}</span>
                             <span className="text-gray-600 text-sm">个本体</span>
                         </div>
                         <Select
@@ -282,10 +299,21 @@ const AssetCenterPage: React.FC = () => {
                 <div className="flex justify-center items-center h-96">
                     <Spin size="large" tip="加载中..." />
                 </div>
+            ) : loadError ? (
+                <div className="flex flex-col items-center justify-center h-96 px-4">
+                    <Empty
+                        description={`本体加载失败：${loadError}`}
+                        image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    >
+                        <Button type="primary" icon={<ReloadOutlined />} onClick={loadProjectsByDomain}>
+                            重试
+                        </Button>
+                    </Empty>
+                </div>
             ) : filteredProjects.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-96 px-4 bg-white rounded-2xl shadow-sm border border-gray-100">
                     <div className="w-20 h-20 mb-4 rounded-full bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center">
-                        <DatabaseOutlined className="text-4xl text-gray-400" />
+                        <DatabaseOutlined className="text-4xl text-gray-500" />
                     </div>
                     <Empty
                         description={
@@ -343,9 +371,9 @@ const AssetCenterPage: React.FC = () => {
                                             </Tag>
                                         )}
                                         {/* 发布标签 */}
-                                        <Tag color="green" className="font-medium shadow-sm border-0 bg-green-500 text-white">
+                                        <Tag color={PUBLISHED_TAG.color} className="font-medium shadow-sm border-0 bg-purple-500 text-white">
                                             <CheckCircleOutlined className="mr-0.5" />
-                                            已发布
+                                            {PUBLISHED_TAG.text}
                                         </Tag>
                                     </div>
 

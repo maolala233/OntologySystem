@@ -8,6 +8,9 @@ import { authAPI } from './auth';
 export interface ExtractTaskProgress {
     task_id?: string;
     status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+    /** 后端规范字段：0-100（Redis progress:{task_id} 键，见 app/tasks/progress.py） */
+    percent?: number;
+    /** 旧字段兼容：0-1（已废弃，读取处会换算成百分数） */
     progress?: number;
     message?: string;
     detail?: string;

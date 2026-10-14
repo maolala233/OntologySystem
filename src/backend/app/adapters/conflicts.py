@@ -437,6 +437,12 @@ def detect_conflicts(entities: list, relations: list,
     if ConflictType.AXIOM in types:
         records.extend(detect_axiom_conflicts(ents, rels, ents_by_id, schema,
                                               entity_index=entity_index))
+    if ConflictType.LOGICAL in types:
+        # O2-B6：SHACL 验证实装（画布公理 → shapes，pyshacl 查违例）
+        from app.adapters.shacl_checks import detect_shacl_conflicts
+
+        records.extend(detect_shacl_conflicts(ents, rels, schema,
+                                              entity_index=entity_index))
     # critical 强制人工（当前无 critical 判定源；预留策略钩子）
     for rec in records:
         if rec.severity == "critical":
@@ -446,4 +452,4 @@ def detect_conflicts(entities: list, relations: list,
 
 __all__ = ["ConflictType", "ResolutionStrategy", "ConflictRecord", "detect_conflicts",
            "detect_value_conflicts", "detect_type_conflicts", "detect_relationship_conflicts",
-           "detect_temporal_conflicts", "detect_axiom_conflicts"]
+           "detect_temporal_conflicts", "detect_axiom_conflicts", "detect_shacl_conflicts"]

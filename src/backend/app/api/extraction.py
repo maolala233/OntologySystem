@@ -94,6 +94,14 @@ def start_schema_extraction(
         else:
             guidance = guidance.strip()
 
+    # O3-B12：启用中的 Competency Questions 注入 guidance（用户显式 guidance 优先，CQ 追加在后）
+    try:
+        from app.services.cq_service import guidance_from_cqs
+
+        guidance = guidance_from_cqs(db, project_id, guidance)
+    except Exception:  # CQ 注入失败不阻塞抽取
+        pass
+
     q = (db.query(DocumentChunk)
          .join(UploadedDocument, DocumentChunk.document_id == UploadedDocument.id)
          .filter(UploadedDocument.project_id == project_id,

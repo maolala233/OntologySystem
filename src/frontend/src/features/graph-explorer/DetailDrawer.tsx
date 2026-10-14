@@ -110,7 +110,7 @@ function EvidenceCards({ rows, projectId }: { projectId: number; rows: ProvRow[]
     return (
         <div className="space-y-2">
             {rows.map((p) => (
-                <div key={p.id} className="border-l-4 border-amber-400 bg-amber-50/40 rounded-r px-3 py-2">
+                <div key={p.id} className="border border-amber-200/70 bg-amber-50/40 rounded px-3 py-2">
                     <div className="flex items-center gap-2 flex-wrap mb-1 text-xs text-gray-500">
                         <Text strong className="text-gray-700">{p.document_name || '未知文档'}</Text>
                         {p.chunk_index != null &&
@@ -376,7 +376,7 @@ export const NodeDetailContent: React.FC<{
                             )}
                         {Object.keys(nodeDetail.raw_props).length > 0 && (
                             <details className="mt-2">
-                                <summary className="text-xs text-gray-400 cursor-pointer">内部字段（{Object.keys(nodeDetail.raw_props).length}）</summary>
+                                <summary className="text-xs text-gray-500 cursor-pointer">内部字段（{Object.keys(nodeDetail.raw_props).length}）</summary>
                                 <pre className="text-[10px] bg-gray-50 p-2 rounded overflow-auto max-h-32">
                                     {JSON.stringify(nodeDetail.raw_props, null, 2)}
                                 </pre>

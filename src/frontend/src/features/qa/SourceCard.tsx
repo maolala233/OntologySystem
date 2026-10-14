@@ -47,13 +47,13 @@ export default function SourceCard({ index, source, highlighted }: {
                 <span className="text-gray-600 font-medium flex items-center gap-1">
                     <FileTextOutlined />{source.doc_file || '未知文件'}
                 </span>
-                {source.score > 0 && <span className="text-gray-400 ml-auto">{(source.score * 100).toFixed(0)}%</span>}
+                {source.score > 0 && <span className="text-gray-500 ml-auto">{(source.score * 100).toFixed(0)}%</span>}
             </div>
             {quote && (
                 <div className="text-gray-500 leading-relaxed line-clamp-3 pl-1">{quote}</div>
             )}
             {source.char_start != null && (
-                <div className="text-gray-400 mt-1">原文定位：第 {source.char_start}–{source.char_end ?? source.char_start} 字符</div>
+                <div className="text-gray-500 mt-1">原文定位：第 {source.char_start}–{source.char_end ?? source.char_start} 字符</div>
             )}
             {source.doc_url && (
                 <Button size="small" type="link" className="!px-0 !text-[11px]" onClick={openDetail}>

@@ -2,7 +2,7 @@
 # M5 实装：向量召回（Milvus，项目/知识域过滤表达式）+ 图扩展（行表 relations BFS）
 # + proximity 融合 + 溯源引用（provenance_records evidence/char 定位）
 # + LLM 接地答案（非流式 QAResult / 流式 token 生成器）。
-# 现有 services/rag_engine.py 双路实现保留为旧链路；本模块为 03 §15 新 QA 契约的后端。
+# 本模块为 03 §15 新 QA 契约的后端（旧 services/rag_engine.py 已于 O1-B4 删除）。
 
 from __future__ import annotations
 
@@ -51,6 +51,9 @@ class QAResult(BaseModel):
     confidence: float = 0.0
     model: str | None = None
     latency_ms: int = 0
+    # O3-B15 QA 自修复：失败检测→换策略重试 ≤2 轮；repair_rounds>0 即发生过修复
+    repair_rounds: int = 0
+    failed: bool = False
 
 
 class RetrievalQuery(BaseModel):
@@ -463,6 +466,70 @@ def query_with_reasoning(query: RetrievalQuery, db: Session | None = None,
     )
 
 
+def query_with_repair(query: RetrievalQuery, db: Session | None = None,
+                      llm: LLMClient | None = None) -> QAResult:
+    """带自修复的问答（O3-B15①）：常规流水线失败检测 → 换策略重试，最多 2 轮。
+
+    失败判定：检索 0 引用 / LLM 生成异常回退聚合 / 答案为"未检索到"兜底话术。
+    修复策略（确定性，不引框架）：R1 核心词重述 + top_k×2 + 关推理引用；
+    R2 最宽召回（top_k 上限 + 图扩展 + 推理引用）。修复成功 repair_rounds=轮数。
+    """
+    t0 = time.time()
+    result = query_with_reasoning(query, db=db, llm=llm)
+    llm_failed = any("LLM 生成失败" in r for r in result.reasoning_path)
+    if not _is_failed(result, llm_failed):
+        return result
+
+    strategies = [
+        # R1：核心词重述 + 扩大召回 + 只看事实
+        RetrievalQuery(project_id=query.project_id,
+                       question=_core_question(query.question),
+                       top_k=min(30, max(query.top_k * 2, 20)),
+                       use_graph=query.use_graph, use_inferred=False,
+                       max_expansion_hops=query.max_expansion_hops,
+                       knowledge_domain=query.knowledge_domain),
+        # R2：最宽召回（原始问题 + 推理引用）
+        RetrievalQuery(project_id=query.project_id,
+                       question=query.question, top_k=30,
+                       use_graph=True, use_inferred=True,
+                       max_expansion_hops=query.max_expansion_hops,
+                       knowledge_domain=query.knowledge_domain),
+    ]
+    for round_no, q2 in enumerate(strategies, start=1):
+        result = query_with_reasoning(q2, db=db, llm=llm)
+        llm_failed = any("LLM 生成失败" in r for r in result.reasoning_path)
+        result.repair_rounds = round_no
+        result.latency_ms = int((time.time() - t0) * 1000)
+        result.reasoning_path = [f"自修复第 {round_no} 轮：{_strategy_label(q2, query)}"] + result.reasoning_path
+        if not _is_failed(result, llm_failed):
+            return result
+    result.failed = True
+    result.latency_ms = int((time.time() - t0) * 1000)
+    return result
+
+
+def _is_failed(result: QAResult, llm_failed: bool) -> bool:
+    if llm_failed:
+        return True
+    if not result.sources:
+        return True
+    return result.answer.strip().startswith(("未检索到足够的相关信息", "根据检索到的信息"))
+
+
+def _core_question(question: str) -> str:
+    """核心词重述：去掉疑问框架词，只留实体/关系词（提升向量与关键词命中率）。"""
+    import re
+    q = re.sub(r"(请问|一下|什么|哪些|哪个|如何|怎么|怎样|是否|多少|有没有|介绍一下|说明|谢谢|吗|呢|吧|的)", " ", question)
+    q = re.sub(r"\s+", " ", q).strip()
+    return q or question
+
+
+def _strategy_label(repaired: RetrievalQuery, original: RetrievalQuery) -> str:
+    if repaired.question != original.question:
+        return "核心词重述 + 扩大召回 + 关推理引用"
+    return "最宽召回（top_k=30 + 图扩展 + 推理引用）"
+
+
 def iter_answer(query: RetrievalQuery, db: Session | None = None,
                 llm: LLMClient | None = None) -> Iterator[tuple[str, Any]]:
     """流式问答（SSE 后端，07 §4）：yield ("token", str) 增量 ... ("done", QAResult)。
@@ -474,6 +541,7 @@ def iter_answer(query: RetrievalQuery, db: Session | None = None,
     yield ("meta", {"source_count": len(sources)})
     if not sources or llm is None:
         result = query_with_reasoning(query, db=db, llm=llm)
+        result.failed = not result.sources  # O3-B16：空引用问答计失败轨迹
         yield ("token", result.answer)
         yield ("done", result)
         return
@@ -503,4 +571,4 @@ def iter_answer(query: RetrievalQuery, db: Session | None = None,
 
 
 __all__ = ["RetrievedSource", "QAResult", "RetrievalQuery", "retrieve", "query_with_reasoning",
-           "iter_answer", "_milvus_expr"]
+           "query_with_repair", "iter_answer", "_milvus_expr"]

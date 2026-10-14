@@ -380,7 +380,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             const arrowInstance = theme === 'dark' ? '#5B8DEF' : '#e0c8b8';
             const arrowHl = T.edgeHighlight;
             const glowSelected = theme === 'dark' ? '#F2B950' : '#409eff';
-            const glowHover = theme === 'dark' ? '#5AC8FA' : '#66b1ff';
+            const glowHover = theme === 'dark' ? '#5AC8FA' : '#5AC8FA'; // F6：浅深两主题统一品牌 hover 青（与 graph-explorer colors.ts 一致）
             svg.append("defs").attr("class", "markers").attr("data-theme", theme)
                 .html(`
                     <marker id="${uid}-arrowhead-class" markerWidth="7" markerHeight="5.5" refX="6.5" refY="2.75" orient="auto">

@@ -13,8 +13,9 @@ from app.tasks.celery_app import celery_app
                  bind=True, max_retries=0, acks_late=True)
 def drain_rdf_outbox(self, limit: int = 20) -> dict:
     """消费 publication.created / ttl.rebuild → Oxigraph 命名图（02 §5 worker-rdf）。"""
+    from app.adapters.stores import rebuild_rdf_named_graphs
     from app.infrastructure.database import OutboxEvent, Project, SessionLocal
-    from app.services.oxigraph_sink import delete_project_graphs, write_project_graphs
+    from app.services.oxigraph_sink import delete_project_graphs
 
     db = SessionLocal()
     processed = failed = 0
@@ -33,9 +34,7 @@ def drain_rdf_outbox(self, limit: int = 20) -> dict:
                     if proj is None:
                         pass  # 项目已删除：跳过
                     else:
-                        res = write_project_graphs(db, ev.aggregate_id)
-                        if not res.get("ok"):
-                            raise RuntimeError(res.get("error", "oxigraph write failed"))
+                        rebuild_rdf_named_graphs(ev.aggregate_id)  # O1-B5：收口到 stores 封装
                 ev.status = "processed"
                 ev.processed_at = datetime.datetime.utcnow()
                 db.commit()

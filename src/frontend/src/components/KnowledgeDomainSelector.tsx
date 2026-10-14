@@ -180,8 +180,16 @@ const KnowledgeDomainSelector: React.FC<KnowledgeDomainSelectorProps> = ({
                 width={450}
             >
                 <div className="py-4">
+                    <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 mb-4 text-sm text-gray-700">
+                        <p className="font-medium text-blue-800 mb-1">什么是「知识域」？</p>
+                        <p>
+                            知识域就像图书馆里的「书架分类」：告诉系统这个项目属于哪个业务领域（如 IT 架构、医疗健康）。
+                            它决定了 ① 项目的归属分类，② 发布后在资产中心里按领域被检索到。
+                            填不确定也没关系，先选一个最接近的，后续可随时修改。
+                        </p>
+                    </div>
                     <p className="text-gray-500 text-sm mb-4">
-                        创建一个新的知识域分类，用于标识本体项目所属的知识领域。
+                        没有合适的分类？直接在下方输入新名称即可创建。
                     </p>
                     <Form form={createDomainForm} layout="vertical">
                         <Form.Item

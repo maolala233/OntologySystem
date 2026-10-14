@@ -49,6 +49,9 @@ check Milvus "$HOST_IP" 19530
 [ "$fail" -eq 0 ] || echo "  （有端口不通；也可以先起来看具体报错）"
 
 echo "== 3. 启动 uvicorn =="
+# 日志目录必须放在 --reload 监听树（src/backend）之外：uvicorn 以 watch_filter=None
+# 监听一切文件变更，log 文件写入会再次触发检测（自激刷屏循环），见 app/core/logging.py
+export ONTOLOGY_LOG_DIR="${ONTOLOGY_LOG_DIR:-../../logs}"
 echo "   接口 http://$HOST_IP:$PORT    文档 http://$HOST_IP:$PORT/docs"
 echo "   注意 --reload：每次改代码都会重新 import main.py，"
 echo "   而 main.py 在 import 时就执行 init_db()（建表 + 自动迁移 + 密码哈希迁移），"

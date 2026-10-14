@@ -18,7 +18,7 @@ interface MarkdownAnswerProps {
 /** 引用角标：n 在溯源范围内可点击，否则灰显纯文本 */
 function CitationMark({ n, active, onCite }: { n: number; active: boolean; onCite: (n: number) => void }) {
     if (!active) {
-        return <sup className="text-[10px] text-gray-400 mx-0.5">[{n}]</sup>;
+        return <sup className="text-[10px] text-gray-500 mx-0.5">[{n}]</sup>;
     }
     return (
         <sup>

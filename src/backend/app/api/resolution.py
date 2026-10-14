@@ -137,11 +137,11 @@ def detect_conflicts_endpoint(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """显式触发冲突检测（04 §6；value/type/relationship 默认，temporal 可选）。"""
+    """显式触发冲突检测（04 §6；value/type/relationship 默认，temporal/axiom/logical 可选）。"""
     require_project_role(project_id, "editor", current_user, db)
     _load_project_or_404(project_id, db)
     body = body or {}
-    allowed = {"value", "type", "relationship", "temporal"}
+    allowed = {"value", "type", "relationship", "temporal", "axiom", "logical"}
     types = body.get("types") or ["value", "type", "relationship"]
     if not isinstance(types, list) or any(t not in allowed for t in types):
         raise APIError(f"types 取值限 {sorted(allowed)}", code="INVALID_TYPES",
@@ -167,6 +167,54 @@ def list_conflicts(
         ReviewItem.item_type.in_(["conflict_value", "conflict_type",
                                   "conflict_relationship", "conflict_axiom"]),
     )
+    if status:
+        q = q.filter(ReviewItem.status == status)
+    rows = q.order_by(ReviewItem.id.desc()).limit(200).all()
+    return {"items": [
+        {"id": r.id, "item_type": r.item_type, "status": r.status, "payload": r.payload,
+         "reason": r.reason, "priority": r.priority,
+         "created_at": r.created_at.isoformat() if r.created_at else None}
+        for r in rows]}
+
+
+@router.post("/axiom-suggestions/run", dependencies=[Depends(require_module("resolution"))])
+def run_axiom_suggestions_endpoint(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """公理建议扫描（O2-B8）：统计推断 functional/inverse_of/disjoint_with 候选，
+    每个候选带实例统计证据，物化为 review_items(item_type='axiom_suggestion')。"""
+    require_project_role(project_id, "editor", current_user, db)
+    _load_project_or_404(project_id, db)
+    from app.services.axiom_suggestion_service import run_axiom_suggestions
+
+    stats = run_axiom_suggestions(db, project_id)
+    return stats
+
+
+@router.get("/axiom-suggestions", dependencies=[Depends(require_module("resolution"))])
+def list_axiom_suggestions(
+    project_id: int,
+    status: str | None = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """公理建议列表 = review_items(item_type='axiom_suggestion')（批准即写入画布公理）。"""
+    require_project_role(project_id, "viewer", current_user, db)
+    _load_project_or_404(project_id, db)
+    q = db.query(ReviewItem).filter(
+        ReviewItem.project_id == project_id,
+        ReviewItem.item_type == "axiom_suggestion",
+    )
+    if status:
+        q = q.filter(ReviewItem.status == status)
+    rows = q.order_by(ReviewItem.id.desc()).limit(200).all()
+    return {"items": [
+        {"id": r.id, "status": r.status, "payload": r.payload, "reason": r.reason,
+         "priority": r.priority,
+         "created_at": r.created_at.isoformat() if r.created_at else None}
+        for r in rows]}
     if status:
         q = q.filter(ReviewItem.status == status)
     rows = q.order_by(ReviewItem.id.desc()).limit(200).all()

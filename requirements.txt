@@ -13,6 +13,8 @@ bcrypt>=4.0.0
 # 大模型与 AI 相关
 openai>=1.0.0
 rdflib>=7.0.0
+pyshacl>=0.25.0
+owlrl>=7.1.0
 
 # 向量数据库与环境配置 (针对您的RAG功能)
 pymilvus>=2.3.0

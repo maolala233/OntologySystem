@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from typing import Any, Optional
 
@@ -12,6 +13,43 @@ from app.tasks.celery_app import celery_app
 from app.tasks.progress import finish_task_progress, set_task_progress
 
 _CANCEL_KEY = "cancel:extract:{task_id}"
+
+
+def _batch_plan(chunk_count: int, batch_size: int) -> dict:
+    """批次规划（O1-B1 纯函数，便于单测）。
+
+    chunk_limit 的语义是进度/预估粒度（一批多少切片），不再是截断上限：
+    全量切片都会被处理，SSE 按 batch_no/batches_total 汇报批次进度。
+    """
+    size = max(1, int(batch_size or 0))
+    batches = max(1, math.ceil(chunk_count / size)) if chunk_count > 0 else 0
+    return {"chunks_total": chunk_count, "batch_size": size, "batches_total": batches}
+
+
+def _batch_no(done: int, batch_size: int, batches_total: int) -> int:
+    """done（已完成切片数）→ 当前批次号（1-based，封顶 batches_total）。"""
+    if done <= 0 or batches_total <= 0:
+        return 1
+    return min(batches_total, (done - 1) // max(1, batch_size) + 1)
+
+
+def _eta_seconds(done: int, total: int, elapsed: float) -> Optional[int]:
+    """按已完成比例线性外推剩余秒数；done=0 或已全部完成时返回 None。"""
+    if done <= 0 or total <= done or elapsed < 0:
+        return None
+    return int(elapsed / done * (total - done))
+
+
+def _humanize_seconds(s: Optional[int]) -> str:
+    """剩余秒数 → 人话（"约 40 秒"/"约 3 分钟"），None 返回空串。"""
+    if s is None:
+        return ""
+    if s < 60:
+        return f"约 {max(s, 1)} 秒"
+    minutes = s // 60
+    if minutes < 60:
+        return f"约 {minutes} 分钟"
+    return f"约 {minutes // 60} 小时 {minutes % 60} 分"
 
 
 def _redis_url() -> str:
@@ -203,7 +241,8 @@ def run_schema_extraction(self, project_id: int,
     try:
         db = SessionLocal()
         try:
-            # 1) 读切片（项目未删文档；document_ids 可选过滤）
+            # 1) 读切片（项目未删文档；document_ids 可选过滤）——O1-B1：全量读取，不再
+            #    limit(chunk_limit) 静默截断；chunk_limit 只作为批次/预估粒度
             q = (db.query(DocumentChunk, UploadedDocument.filename)
                  .join(UploadedDocument, DocumentChunk.document_id == UploadedDocument.id)
                  .filter(UploadedDocument.project_id == project_id,
@@ -211,28 +250,38 @@ def run_schema_extraction(self, project_id: int,
                  .order_by(UploadedDocument.id, DocumentChunk.chunk_index))
             if document_ids:
                 q = q.filter(UploadedDocument.id.in_(document_ids))
-            rows = q.limit(chunk_limit).all()
+            rows = q.all()
             if not rows:
                 finish_task_progress(task_id, "failed", "项目没有可用的已解析切片",
                                      stats={"project_id": project_id})
                 return {"status": "failed", "reason": "no_chunks"}
             chunks = [{"index": i, "text": r.text, "doc": fname}
                       for i, (r, fname) in enumerate(rows)]
+            plan = _batch_plan(len(chunks), chunk_limit)
+            t0 = time.monotonic()
             set_task_progress(task_id, "extracting", 5,
-                              f"读取到 {len(chunks)} 个切片，开始抽取",
-                              {"project_id": project_id, "chunks_total": len(chunks)},
+                              f"读取到 {len(chunks)} 个切片，分 {plan['batches_total']} 批开始抽取",
+                              {"project_id": project_id, **plan},
                               queue="extract")
 
-            # 2) LLM 并行抽取（缺陷 #5/#2/#9 在 adapters/extraction 内）
+            # 2) LLM 并行抽取（缺陷 #5/#2/#9 在 adapters/extraction 内；全量切片单次
+            #    归并+跨切片缝合，保证 200+ 批次边界的类间关系不漏缝）
             from app.adapters.extraction import extract_schema
 
             def _progress(done: int, total: int, cache_hits: int) -> None:
                 _cancel_check()
+                eta_s = _eta_seconds(done, total, time.monotonic() - t0)
+                eta = _humanize_seconds(eta_s)
                 set_task_progress(
                     task_id, "extracting", 5 + int(85 * done / max(total, 1)),
-                    f"骨架抽取中 {done}/{total}",
+                    f"骨架抽取中 {done}/{total}"
+                    f"（批次 {_batch_no(done, plan['batch_size'], plan['batches_total'])}"
+                    f"/{plan['batches_total']}）{('，剩余' + eta) if eta else ''}",
                     {"project_id": project_id, "chunks_done": done,
-                     "chunks_total": total, "cache_hits": cache_hits},
+                     "chunks_total": total, "cache_hits": cache_hits,
+                     "batch_no": _batch_no(done, plan['batch_size'], plan['batches_total']),
+                     "batches_total": plan['batches_total'],
+                     "eta_seconds": eta_s},
                     queue="extract")
 
             def _stitch_progress(si: int, segs: int) -> None:
@@ -285,6 +334,10 @@ def run_schema_extraction(self, project_id: int,
             flag_modified(proj, "graph_data")  # 就地改 JSON 列必须显式标记
             db.commit()  # 触发 graph-rows 监听器 → entities/relations 双写
             version_no = _auto_version(db, project_id, "schema", "Schema 抽取")
+            # O1-B2：抽取完成自动出 TBox 机检报告（环/悬空 error，命名/层级 warning）
+            from app.adapters.schema_checks import run_schema_checks
+            checks = run_schema_checks({"classes": result.classes,
+                                        "object_properties": result.object_properties})
             stats = {"project_id": project_id,
                      "classes": len(result.classes),
                      "object_properties": len(result.object_properties),
@@ -293,12 +346,18 @@ def run_schema_extraction(self, project_id: int,
                      "cache_hits": result.cache_hits,
                      "stitched_relations": result.stitched_relations,
                      "version_no": version_no,
+                     "schema_checks": checks.summary(),
                      "warnings": result.warnings[:10]}
             stitch_note = (f"（含跨切片缝合 {result.stitched_relations} 条）"
                            if result.stitched_relations else "")
+            check_note = ""
+            if checks.error_count or checks.warning_count:
+                check_note = (f"；机检 {checks.error_count} 硬伤 / "
+                              f"{checks.warning_count} 提醒")
             finish_task_progress(task_id, "completed",
                                  f"骨架抽取完成：{len(result.classes)} 类 / "
-                                 f"{len(result.object_properties)} 关系{stitch_note}", stats=stats)
+                                 f"{len(result.object_properties)} 关系{stitch_note}{check_note}",
+                                 stats=stats)
             return {"status": "completed", **stats}
         finally:
             db.close()
@@ -314,8 +373,11 @@ class _TaskCancelled(Exception):
     """用户取消（cancel:extract 键触发）。"""
 
 
-def _load_chunks(db, project_id: int, document_ids=None, chunk_limit: int = 200):
-    """项目未删文档的切片（document_ids 可选过滤），按文档+序号稳定排序。"""
+def _load_chunks(db, project_id: int, document_ids=None):
+    """项目未删文档的全部切片（document_ids 可选过滤），按文档+序号稳定排序。
+
+    O1-B1：废除 chunk_limit 截断——超长项目（500+ 切片）必须完整抽取。
+    """
     from app.infrastructure.database import DocumentChunk, UploadedDocument
 
     q = (db.query(DocumentChunk, UploadedDocument.filename)
@@ -325,7 +387,7 @@ def _load_chunks(db, project_id: int, document_ids=None, chunk_limit: int = 200)
          .order_by(UploadedDocument.id, DocumentChunk.chunk_index))
     if document_ids:
         q = q.filter(UploadedDocument.id.in_(document_ids))
-    return q.limit(chunk_limit).all()
+    return q.all()
 
 
 def _tbox_from_graph(gd: dict) -> dict:
@@ -384,7 +446,7 @@ def run_instance_extraction(self, project_id: int,
     try:
         db = SessionLocal()
         try:
-            rows = _load_chunks(db, project_id, document_ids, chunk_limit)
+            rows = _load_chunks(db, project_id, document_ids)
             if not rows:
                 finish_task_progress(task_id, "failed", "项目没有可用的已解析切片",
                                      stats={"project_id": project_id})
@@ -397,6 +459,7 @@ def run_instance_extraction(self, project_id: int,
                 raise RuntimeError(f"项目不存在: {project_id}")
             gd = proj.graph_data if isinstance(proj.graph_data, dict) else {}
             tbox = _tbox_from_graph(gd)
+            source_gd = gd  # B7：反向属性从抽取所用框架的 schema 读取（版本快照时随快照）
             schema_source = "当前画布框架"
             if schema_version_no is not None:
                 from app.adapters.versioning import load_graph_for
@@ -418,34 +481,93 @@ def run_instance_extraction(self, project_id: int,
                                          stats={"project_id": project_id})
                     return {"status": "failed", "reason": "schema_snapshot_empty"}
                 tbox = snap_tbox
+                source_gd = snap_gd if isinstance(snap_gd, dict) else {}
                 schema_source = f"版本 v{schema_version_no} 快照框架"
             if not tbox:
                 finish_task_progress(task_id, "failed",
                                      "项目没有骨架（schema），请先完成骨架抽取或指定框架版本",
                                      stats={"project_id": project_id})
                 return {"status": "failed", "reason": "no_schema"}
+            plan = _batch_plan(len(chunks), chunk_limit)
+            t0 = time.monotonic()
             set_task_progress(task_id, "extracting", 5,
-                              f"读取到 {len(chunks)} 个切片，开始实例抽取（{schema_source}）",
-                              {"project_id": project_id, "chunks_total": len(chunks),
+                              f"读取到 {len(chunks)} 个切片，分 {plan['batches_total']} 批开始实例抽取（{schema_source}）",
+                              {"project_id": project_id, **plan,
                                "schema_version_no": schema_version_no},
                               queue="extract")
 
-            from app.adapters.extraction import extract_instances
+            from app.adapters.extraction import ExtractedEntity, ExtractedRelation, extract_instances
 
             def _progress(done: int, total: int, cache_hits: int) -> None:
                 _cancel_check()
+                eta_s = _eta_seconds(done, total, time.monotonic() - t0)
+                eta = _humanize_seconds(eta_s)
                 set_task_progress(
                     task_id, "extracting", 5 + int(75 * done / max(total, 1)),
-                    f"实例抽取中 {done}/{total}",
+                    f"实例抽取中 {done}/{total}"
+                    f"（批次 {_batch_no(done, plan['batch_size'], plan['batches_total'])}"
+                    f"/{plan['batches_total']}）{('，剩余' + eta) if eta else ''}",
                     {"project_id": project_id, "chunks_done": done,
-                     "chunks_total": total, "cache_hits": cache_hits},
+                     "chunks_total": total, "cache_hits": cache_hits,
+                     "batch_no": _batch_no(done, plan['batch_size'], plan['batches_total']),
+                     "batches_total": plan['batches_total'],
+                     "eta_seconds": eta_s},
                     queue="extract")
+
+            from app.core.config import settings as app_settings
 
             result = extract_instances(
                 chunks, tbox, base_uri=f"urn:onto:{project_id}",
                 strict_gate=strict_gate, promote_policy=promote_policy,
                 parallelism=parallelism, progress_cb=_progress, cancel_cb=_cancel_check,
-                model_config_id=model_config_id)
+                model_config_id=model_config_id,
+                coref_enabled=bool(app_settings.COREF_ENABLED),
+                pattern_enabled=bool(app_settings.PATTERN_LAYER_ENABLED))
+
+            # O2-B7 反向属性自动补全：声明了 inverse_of 的谓词对，写入一边补另一边
+            inverse_added = 0
+            source_schema = (source_gd or {}).get("schema") if isinstance(source_gd, dict) \
+                else None
+            if source_schema:
+                from app.adapters.inverse_props import expand_inverse_relations
+
+                result.relations, inverse_added = expand_inverse_relations(
+                    result.relations, source_schema)
+
+            # O3-B15 抽取定向修复：闸门违例率超阈值 → 违例最重 chunk 带反馈重抽回并
+            repair_stats: dict | None = None
+            try:
+                from app.services.extraction_repair import targeted_repair
+
+                _passed = len(result.entities) + len(result.relations)
+                if _passed + len(result.gate_violations) > 0 and result.gate_violations:
+                    def _reextract(idx: int, chunk_text: str, feedback: str) -> list[dict]:
+                        _doc = chunks[idx].get("doc") if 0 <= idx < len(chunks) else ""
+                        _r = extract_instances(
+                            [{"index": idx, "text": chunk_text, "doc": _doc}], tbox,
+                            base_uri=f"urn:onto:{project_id}", strict_gate=strict_gate,
+                            promote_policy=promote_policy, parallelism=1,
+                            model_config_id=model_config_id)
+                        return ([e.model_dump() for e in _r.entities]
+                                + [r.model_dump() for r in _r.relations])
+
+                    repair_stats = targeted_repair(chunks, result.gate_violations,
+                                                   reextract_fn=_reextract,
+                                                   passed_count=_passed)
+                    for item in repair_stats.get("recovered_entities") or []:
+                        if not isinstance(item, dict):
+                            continue
+                        item.pop("_repaired", None)
+                        item.pop("_repaired_chunk", None)
+                        try:
+                            if "predicate" in item:
+                                result.relations.append(ExtractedRelation(**item))
+                            elif item.get("label"):
+                                result.entities.append(ExtractedEntity(**item))
+                        except Exception:  # noqa: BLE001 —— 单条修复产物不合规即丢弃
+                            continue
+            except Exception as _rep_err:  # noqa: BLE001 —— 修复失败不阻塞抽取
+                repair_stats = {"error": str(_rep_err)[:200]}
 
             # 全部切片失败（如 LLM 连接中断）：不写画布，避免用空实例覆盖已有图谱
             if result.chunks_processed and len(result.warnings) >= result.chunks_processed \
@@ -487,6 +609,30 @@ def run_instance_extraction(self, project_id: int,
             db.commit()  # 触发 graph-rows 监听器 → entities/relations 双写
             version_no = _auto_version(db, project_id, "full", "实例抽取")
 
+            # O3-B13/B12 收尾钩子（全部非阻塞）：漂移物化审核项 + CQ 自动评测
+            drift_count = 0
+            cq_eval_id = None
+            try:
+                import logging
+
+                from app.infrastructure.database import CompetencyQuestion
+                from app.services.cq_service import evaluate_cqs
+                from app.services.impact_service import materialize_drift_reviews
+
+                drift_count = len(materialize_drift_reviews(db, project_id, gd))
+                cq_rows = db.query(CompetencyQuestion).filter(
+                    CompetencyQuestion.project_id == project_id,
+                    CompetencyQuestion.enabled.is_(True)).all()
+                if cq_rows:
+                    _eval = evaluate_cqs(db, project_id, trigger="auto_post_extract",
+                                         created_by=None)
+                    cq_eval_id = _eval.id if _eval is not None else None
+                db.commit()
+            except Exception as _hook_err:  # noqa: BLE001
+                db.rollback()
+                logging.getLogger(__name__).warning(
+                    f"[extract] O3 收尾钩子失败（不阻塞）: {_hook_err}")
+
             stats = {"project_id": project_id,
                      "instances": len(result.entities),
                      "relations": len(result.relations),
@@ -499,10 +645,19 @@ def run_instance_extraction(self, project_id: int,
                      "review_items_created": review_created,
                      "version_no": version_no,
                      "schema_version_no": schema_version_no,
+                     "inverse_relations_added": inverse_added,
+                     "coref": result.coref_stats,
+                     "pattern_filled": result.pattern_filled_count,
+                     "pattern_calibrated": result.pattern_calibrated_count,
+                     "repair": repair_stats,
+                     "drift_reviews_created": drift_count,
+                     "cq_evaluation_id": cq_eval_id,
                      "warnings": result.warnings[:10]}
             finish_task_progress(task_id, "completed",
                                  f"实例抽取完成（{schema_source}）：{len(result.entities)} 实体 / "
-                                 f"{len(result.relations)} 关系", stats=stats)
+                                 f"{len(result.relations)} 关系"
+                                 + (f"（含反向补全 {inverse_added} 条）" if inverse_added else ""),
+                                 stats=stats)
             return {"status": "completed", **stats}
         finally:
             db.close()
@@ -654,13 +809,19 @@ def _materialize_gate_reviews(db, project_id: int, result) -> int:
         created += 1
 
     for cand in result.promote_candidates or []:
-        if cand.get("kind") not in ("unknown_class",):
-            continue  # new_predicate 无对应审核类型，M3-6 扩展
-        _add("new_class",
-             {"label": cand.get("label"), "chunk_indices": cand.get("chunk_indices"),
-              "policy": cand.get("policy"), "auto_promoted": cand.get("auto_promoted")},
-             f"新类型「{cand.get('label')}」待审入 TBox",
-             priority="high" if cand.get("auto_promoted") else "medium")
+        if cand.get("kind") == "unknown_class":
+            _add("new_class",
+                 {"label": cand.get("label"), "chunk_indices": cand.get("chunk_indices"),
+                  "policy": cand.get("policy"), "auto_promoted": cand.get("auto_promoted")},
+                 f"新类型「{cand.get('label')}」待审入 TBox",
+                 priority="high" if cand.get("auto_promoted") else "medium")
+        elif cand.get("kind") == "unknown_predicate":
+            # O1-B3：新谓词物化审核项（此前被静默跳过），批准后回写 TBox
+            _add("new_predicate",
+                 {"label": cand.get("label"), "chunk_indices": cand.get("chunk_indices"),
+                  "policy": cand.get("policy"), "auto_promoted": cand.get("auto_promoted")},
+                 f"新关系「{cand.get('label')}」待审入 TBox",
+                 priority="high" if cand.get("auto_promoted") else "medium")
     for e in result.entities:
         if (e.confidence or 0.0) < LOW_CONFIDENCE_THRESHOLD:
             _add("low_confidence_entity",

@@ -67,7 +67,7 @@ const LoginPage: React.FC = () => {
                     <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl mb-4">
                         <span className="text-white font-bold text-2xl">O</span>
                     </div>
-                    <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                    <h1 className="text-3xl font-bold text-[#5B8DEF]">
                         本体建模
                     </h1>
                     <p className="text-gray-500 mt-2">企业级语义知识及本体治理平台</p>
@@ -88,10 +88,11 @@ const LoginPage: React.FC = () => {
                                         rules={[{ required: true, message: '请输入用户名' }]}
                                     >
                                         <Input
-                                            prefix={<UserOutlined className="text-gray-400" />}
+                                            prefix={<UserOutlined className="text-gray-500" />}
                                             placeholder="用户名"
+                                            autoComplete="username"
                                             className="rounded-lg"
-                                        />
+                                            />
                                     </Form.Item>
 
                                     <Form.Item
@@ -99,10 +100,11 @@ const LoginPage: React.FC = () => {
                                         rules={[{ required: true, message: '请输入密码' }]}
                                     >
                                         <Input.Password
-                                            prefix={<LockOutlined className="text-gray-400" />}
+                                            prefix={<LockOutlined className="text-gray-500" />}
                                             placeholder="密码"
+                                            autoComplete="current-password"
                                             className="rounded-lg"
-                                        />
+                                            />
                                     </Form.Item>
 
                                     <Form.Item>
@@ -111,7 +113,7 @@ const LoginPage: React.FC = () => {
                                             htmlType="submit"
                                             loading={loading}
                                             block
-                                            className="h-12 rounded-lg bg-gradient-to-r from-blue-500 to-purple-600 border-0 hover:from-blue-600 hover:to-purple-700"
+                                            className="h-12 rounded-lg"
                                         >
                                             登录
                                         </Button>
@@ -129,10 +131,11 @@ const LoginPage: React.FC = () => {
                                         rules={[{ required: true, message: '请输入用户名' }]}
                                     >
                                         <Input
-                                            prefix={<UserOutlined className="text-gray-400" />}
+                                            prefix={<UserOutlined className="text-gray-500" />}
                                             placeholder="用户名"
+                                            autoComplete="username"
                                             className="rounded-lg"
-                                        />
+                                            />
                                     </Form.Item>
 
 
@@ -145,10 +148,11 @@ const LoginPage: React.FC = () => {
                                         ]}
                                     >
                                         <Input.Password
-                                            prefix={<LockOutlined className="text-gray-400" />}
+                                            prefix={<LockOutlined className="text-gray-500" />}
                                             placeholder="密码"
+                                            autoComplete="new-password"
                                             className="rounded-lg"
-                                        />
+                                            />
                                     </Form.Item>
 
                                     <Form.Item
@@ -167,10 +171,11 @@ const LoginPage: React.FC = () => {
                                         ]}
                                     >
                                         <Input.Password
-                                            prefix={<LockOutlined className="text-gray-400" />}
+                                            prefix={<LockOutlined className="text-gray-500" />}
                                             placeholder="确认密码"
+                                            autoComplete="new-password"
                                             className="rounded-lg"
-                                        />
+                                            />
                                     </Form.Item>
 
                                     <Form.Item>
@@ -179,7 +184,7 @@ const LoginPage: React.FC = () => {
                                             htmlType="submit"
                                             loading={loading}
                                             block
-                                            className="h-12 rounded-lg bg-gradient-to-r from-blue-500 to-purple-600 border-0 hover:from-blue-600 hover:to-purple-700"
+                                            className="h-12 rounded-lg"
                                         >
                                             注册
                                         </Button>

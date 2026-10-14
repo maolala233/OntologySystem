@@ -8,9 +8,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import (
     auth,
+    cqs,
     documents,
     domains,
     env_configs,
+    evolution,
     extraction,
     graph_edit,
     graph_view,
@@ -19,6 +21,7 @@ from app.api import (
     model_configs,
     modules,
     ontology,
+    ontology_imports,
     publications,
     qa,
     reasoning,
@@ -138,6 +141,9 @@ app.include_router(mcp_gateway.router)  # M5：MCP 网关（HTTP Streamable，03
 app.include_router(mcp_tokens.router)  # M5：MCP 令牌管理（admin，03 §16）
 app.include_router(mcp_tokens.router_self)  # M5+：MCP 令牌自助管理（登录用户限本人令牌）
 app.include_router(env_configs.router)  # 环境配置（admin）：中间件连接参数 UI 可改
+app.include_router(cqs.router)  # O3-B12：Competency Question 资产 CRUD + 自动评测
+app.include_router(evolution.router)  # O3-B16：QA 失败轨迹分析 → 进化建议
+app.include_router(ontology_imports.router)  # O3-B17：本体导入 + schema 对齐建议
 
 
 @app.get('/health')

@@ -34,110 +34,6 @@ import { confirmLeaveUnsaved } from '../../utils/unsavedGuard';
 
 const { Sider, Content } = Layout;
 
-const UserManagement: React.FC = () => {
-    const [users, setUsers] = useState<any[]>([]);
-    const [loading, setLoading] = useState(false);
-    const [resetModalVisible, setResetModalVisible] = useState(false);
-    const [resetUserId, setResetUserId] = useState<number | null>(null);
-    const [resetUsername, setResetUsername] = useState('');
-    const [newPassword, setNewPassword] = useState('');
-
-    const fetchUsers = async () => {
-        setLoading(true);
-        try {
-            const data = await authAPI.getUsers();
-            setUsers(data);
-        } catch {
-            message.error('获取用户列表失败');
-        }
-        setLoading(false);
-    };
-
-    useEffect(() => {
-        fetchUsers();
-    }, []);
-
-    const handleResetPassword = async () => {
-        if (!resetUserId || !newPassword) {
-            message.error('请输入新密码');
-            return;
-        }
-        if (newPassword.length < 6) {
-            message.error('密码长度不能少于6位');
-            return;
-        }
-        try {
-            await authAPI.resetPassword(resetUserId, newPassword);
-            message.success(`用户 ${resetUsername} 密码重置成功`);
-            setResetModalVisible(false);
-            setNewPassword('');
-        } catch {
-            message.error('密码重置失败');
-        }
-    };
-
-    const columns = [
-        { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
-        { title: '用户名', dataIndex: 'username', key: 'username' },
-        {
-            title: '状态',
-            dataIndex: 'is_active',
-            key: 'is_active',
-            render: (active: boolean) => (
-                <Tag color={active ? 'green' : 'red'}>{active ? '正常' : '禁用'}</Tag>
-            ),
-        },
-        {
-            title: '操作',
-            key: 'action',
-            width: 120,
-            render: (_: any, record: any) => (
-                <Button
-                    size="small"
-                    type="link"
-                    onClick={() => {
-                        setResetUserId(record.id);
-                        setResetUsername(record.username);
-                        setNewPassword('');
-                        setResetModalVisible(true);
-                    }}
-                >
-                    重置密码
-                </Button>
-            ),
-        },
-    ];
-
-    return (
-        <div>
-            <Table
-                columns={columns}
-                dataSource={users}
-                rowKey="id"
-                loading={loading}
-                pagination={false}
-                size="small"
-            />
-            <Modal
-                title={`重置密码 - ${resetUsername}`}
-                open={resetModalVisible}
-                onCancel={() => setResetModalVisible(false)}
-                onOk={handleResetPassword}
-                okText="确认重置"
-            >
-                <div className="py-2">
-                    <div className="mb-1 text-sm font-medium">新密码</div>
-                    <Input.Password
-                        value={newPassword}
-                        onChange={e => setNewPassword(e.target.value)}
-                        placeholder="请输入新密码（至少6位）"
-                    />
-                </div>
-            </Modal>
-        </div>
-    );
-};
-
 const AppLayout: React.FC = () => {
     const navigate = useNavigate();
     const location = useLocation();
@@ -201,7 +97,6 @@ const AppLayout: React.FC = () => {
     };
 
     const [passwordModalVisible, setPasswordModalVisible] = useState(false);
-    const [userManagementVisible, setUserManagementVisible] = useState(false);
 
     // 测试连通性状态
 
@@ -341,10 +236,6 @@ const AppLayout: React.FC = () => {
                         onOpenChange={keys => setOpenMenus(keys as string[])}
                         items={allMenuItems}
                         onClick={({ key }) => {
-                            if (key === 'user-management') {
-                                setUserManagementVisible(true);
-                                return;
-                            }
                             if (key === location.pathname) return;
                             confirmLeaveUnsaved(() => navigate(key));
                         }}
@@ -427,15 +318,6 @@ const AppLayout: React.FC = () => {
                 </div>
             </Modal>
 
-            <Modal
-                title="用户管理"
-                open={userManagementVisible}
-                onCancel={() => setUserManagementVisible(false)}
-                footer={null}
-                width={700}
-            >
-                <UserManagement />
-            </Modal>
             {/* 本体问答已改为独立页面 /qa（R8）；QaDrawer 组件保留供其他入口复用 */}
 
             {/* 主内容区 */}

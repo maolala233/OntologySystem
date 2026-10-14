@@ -111,13 +111,42 @@ def run_parse(document_id: int, backend: str = "auto",
         db.close()
 
 
+# 向量入库时间预算：embedding API（OpenAI SDK 默认无超时，单次可挂 600s）或 Milvus
+# 抖动时，解析终态（completed/failed 进度事件）不能被无限期挡住——SSE 订阅方会一直
+# 心跳到 10 分钟超时。超预算后解析先落终态，入库线程继续在后台写完。
+VECTOR_SYNC_BUDGET_SECONDS = 120.0
+
+
 def _sync_chunks_to_vector(doc: UploadedDocument, chunks) -> int:
     """切片 embedding 写入 Milvus（project_id 表达式隔离 QA 召回，07 §4）。
 
     重解析先清该文档旧向量防陈旧内容；任何向量库故障只记日志不阻断解析落库。
+    带 VECTOR_SYNC_BUDGET_SECONDS 时间预算：超时后返回 0 并放后台线程续写。
     """
     if not chunks:
         return 0
+    import threading
+
+    result = {"count": 0}
+
+    def _work():
+        try:
+            result["count"] = _sync_chunks_to_vector_now(doc, chunks)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[pipeline] 向量入库失败（不阻断解析）doc={doc.id}: {e}")
+
+    th = threading.Thread(target=_work, name=f"vec-sync-{doc.id}", daemon=True)
+    th.start()
+    th.join(VECTOR_SYNC_BUDGET_SECONDS)
+    if th.is_alive():
+        logger.warning(f"[pipeline] 文档 {doc.id} 向量入库超 {VECTOR_SYNC_BUDGET_SECONDS:.0f}s "
+                       f"预算，解析先落终态（入库线程后台续写）")
+        return 0
+    return result["count"]
+
+
+def _sync_chunks_to_vector_now(doc: UploadedDocument, chunks) -> int:
+    """向量入库的实际执行体（由 _sync_chunks_to_vector 在线程内调用）。"""
     try:
         from app.infrastructure.vector_client import VectorStoreManager
         vm = VectorStoreManager()

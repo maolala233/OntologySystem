@@ -111,7 +111,7 @@ const FriendlyPayload: React.FC<{
         !text ? null : (
             <div>
                 <Text type="secondary" className="text-xs">{title}</Text>
-                <Paragraph className="!mb-0 mt-1 p-2 bg-amber-50 border-l-4 border-amber-400 rounded-r text-gray-800"
+                <Paragraph className="!mb-0 mt-1 p-2 bg-amber-50 border border-amber-200/70 rounded text-gray-800"
                            style={{ fontSize: 13 }}>{String(text).replace(/^\[chunk \d+ 摘要\]\s*/, '')}</Paragraph>
             </div>
         )

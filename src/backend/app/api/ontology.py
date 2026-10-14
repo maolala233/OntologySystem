@@ -155,6 +155,52 @@ def update_project(
     return db_project
 
 
+@router.get("/{project_id}/schema-checks")
+def schema_checks_report(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """TBox 机检报告（O1-B2）：对当前画布 schema 实时跑五类规则检查。
+
+    error（类层次环/悬空父类/自父）会阻断发布；warning 是启发式建议。
+    返回 {passed, error_count, warning_count, issues[]}。
+    """
+    from app.adapters.schema_checks import run_schema_checks
+    from app.core.deps import require_project_role
+    from app.core.exceptions import NotFoundError
+
+    require_project_role(project_id, "viewer", current_user, db)
+    proj = db.query(Project).filter(Project.id == project_id).first()
+    if proj is None:
+        raise NotFoundError(f"项目不存在: {project_id}")
+    gd = proj.graph_data if isinstance(proj.graph_data, dict) else {}
+    report = run_schema_checks(gd.get("schema"))
+    return report.summary()
+
+
+@router.get("/{project_id}/scorecard")
+def project_scorecard(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """本体健康记分卡（O2-F7）：实时聚合 B2/B6/B9 与审核工作流指标。
+
+    口径见 docs/design/09 §3；前端每个指标有悬停解释。
+    """
+    from app.core.deps import require_project_role
+    from app.core.exceptions import NotFoundError
+    from app.services.scorecard_service import compute_scorecard
+
+    require_project_role(project_id, "viewer", current_user, db)
+    proj = db.query(Project).filter(Project.id == project_id).first()
+    if proj is None:
+        raise NotFoundError(f"项目不存在: {project_id}")
+    gd = proj.graph_data if isinstance(proj.graph_data, dict) else {}
+    return compute_scorecard(db, project_id, gd)
+
+
 @router.post("/{project_id}/schema/import-from", dependencies=[Depends(require_module("schema_build"))])
 def import_schema_from_project(
     project_id: int,

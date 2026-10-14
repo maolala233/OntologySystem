@@ -170,7 +170,18 @@ const DocumentsTab: React.FC<Props> = ({ projectId, onChanged }) => {
                                 disabled={!d.storage_key}
                                 onClick={() => documentsApi.download(projectId, d.id, d.filename).catch(() => message.error('原件下载失败'))} />
                     </Tooltip>
-                    <Popconfirm title="确认删除该文档？" onConfirm={() => handleDelete(d)}>
+                    <Popconfirm
+                        title="确认删除该文档？"
+                        description={(
+                            <div className="max-w-[240px]">
+                                <div className="font-medium mb-0.5">影响范围说明</div>
+                                <div>该文档的解析结果、全部分块及其证据引用将一并删除；</div>
+                                <div>已抽取的图谱数据不受影响，但相关溯源记录将无法再定位到原文。</div>
+                            </div>
+                        )}
+                        okText="删除" okButtonProps={{ danger: true }} cancelText="取消"
+                        onConfirm={() => handleDelete(d)}
+                    >
                         <Button size="small" danger icon={<DeleteOutlined />} />
                     </Popconfirm>
                 </Space>
@@ -261,7 +272,7 @@ const DocumentsTab: React.FC<Props> = ({ projectId, onChanged }) => {
                                 : c.text}</div>
                         </div>
                     ))}
-                    {chunks.length === 0 && !chunksLoading && <div className="text-gray-400">无分块</div>}
+                    {chunks.length === 0 && !chunksLoading && <div className="text-gray-500">无分块</div>}
                     {nextCursor != null && (
                         <Button block loading={chunksLoading} onClick={loadMoreChunks}>加载更多</Button>
                     )}

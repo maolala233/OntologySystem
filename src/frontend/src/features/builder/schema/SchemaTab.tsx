@@ -51,12 +51,11 @@ import {
     LoadingOutlined,
     FileDoneOutlined,
     ClearOutlined,
-    MessageOutlined,
-    BookOutlined,
     SendOutlined,
     ThunderboltOutlined,
     AuditOutlined,
     ExportOutlined,
+    DashboardOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { OntologyNode, OntologyEdge, DataPropertyDef } from '../../../types/ontology';
@@ -64,7 +63,6 @@ import { projectsApi } from '../../../api/projects';
 import { getLayoutedElements } from '../../../utils/layoutUtils';
 import { modelConfigsApi } from '../../../api/model-configs';
 import ModelPicker from '../../../shared/auth/ModelPicker';
-import { getDomains, KnowledgeDomain } from '../../../api/domains';
 import apiClient from '../../../api/client';
 import { extractionApi } from '../../../api/extraction';
 import { reviewsApi, versionsApi } from '../../../api/governance';
@@ -74,6 +72,9 @@ import ExportDialog from '../components/ExportDialog';
 import { NodeDetailContent } from '../../graph-explorer/DetailDrawer';
 import { graphApi } from '../../../api/graphview';
 import { setUnsavedGuard } from '../../../utils/unsavedGuard';
+import { humanizeEta } from '../../../shared/format';
+import CqPanel from './CqPanel';
+import { QuestionCircleOutlined } from '@ant-design/icons';
 
 const { TreeNode } = Tree;
 const { TextArea } = Input;
@@ -185,9 +186,9 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
     // 固定邻域高亮（"在画布中聚焦"）：持续版悬停效果；点击画布其他节点/空白即恢复
     const [neighborhoodPinId, setNeighborhoodPinId] = useState<string | null>(null);
     const [isDomainModalOpen, setIsDomainModalOpen] = useState(false);
-    
-    // GraphRAG 问答相关状态
-    const [isQAModalOpen, setIsQAModalOpen] = useState(false);
+
+    // 评测问题（CQ）管理抽屉（O3-F8）：CQ 约束抽取 + 发布门控
+    const [isCqDrawerOpen, setIsCqDrawerOpen] = useState(false);
     // 从其他项目导入框架（跨项目框架复用）
     const [isImportModalOpen, setIsImportModalOpen] = useState(false);
     const [importProjects, setImportProjects] = useState<{ id: number; name: string }[]>([]);
@@ -195,14 +196,7 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
     const [importVersions, setImportVersions] = useState<{ value: number; label: string }[]>([]);
     const [importVersionNo, setImportVersionNo] = useState<number | 'current'>('current');
     const [importing, setImporting] = useState(false);
-    const [qaQuestion, setQaQuestion] = useState('');
-    const [qaAnswer, setQaAnswer] = useState('');
-    const [qaReferences, setQaReferences] = useState<any[]>([]);
-    const [isQALoading, setIsQALoading] = useState(false);
-    const [selectedQADomains, setSelectedQADomains] = useState<number[]>([]);
-    const [availableDomains, setAvailableDomains] = useState<KnowledgeDomain[]>([]);
-    const [isDomainsLoading, setIsDomainsLoading] = useState(false);
-    
+
     // 文档管理相关状态
     const [uploadedDocuments, setUploadedDocuments] = useState<any[]>([]);
     const [isDocumentModalOpen, setIsDocumentModalOpen] = useState(false);
@@ -216,6 +210,7 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
     const [taskMessage, setTaskMessage] = useState<string>('');
     const [taskDetail, setTaskDetail] = useState<string>('');
     const [taskStatus, setTaskStatus] = useState<'pending' | 'running' | 'completed' | 'failed' | 'cancelled'>('pending');
+    const [taskStats, setTaskStats] = useState<Record<string, any>>({});
     const [ssePendingReviews, setSsePendingReviews] = useState<number | null>(null);
     const [isProgressModalOpen, setIsProgressModalOpen] = useState(false);
     const [eventSource, setEventSource] = useState<EventSource | null>(null);
@@ -1200,6 +1195,7 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
         setTaskMessage(data?.message || '');
         setTaskDetail(data?.detail || '');
         setTaskStatus(data?.status || 'running');
+        setTaskStats(data?.stats || {});
 
         if (data?.status === 'completed') {
             // 保持弹窗打开：展示完成摘要 + 待人工确认数（审核工作台闸门）
@@ -1468,79 +1464,6 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
     const instanceCount = nodes.filter(n => n.data?.type === 'owl:NamedIndividual').length;
 
 
-    // ==================== GraphRAG 问答相关函数 ====================
-
-    // 加载知识域列表（用于问答多选）
-    const loadAvailableDomains = useCallback(async () => {
-        setIsDomainsLoading(true);
-        try {
-            const domains = await getDomains();
-            setAvailableDomains(domains);
-        } catch (error: any) {
-            message.error('加载知识域列表失败');
-        } finally {
-            setIsDomainsLoading(false);
-        }
-    }, []);
-
-    // 打开问答 Modal
-    const handleOpenQAModal = useCallback(() => {
-        setIsQAModalOpen(true);
-        loadAvailableDomains();
-    }, [loadAvailableDomains]);
-
-    // 发送问题
-    const handleSendQuestion = useCallback(async () => {
-        if (!projectId || !qaQuestion.trim()) {
-            message.warning('请输入问题');
-            return;
-        }
-
-        setIsQALoading(true);
-        try {
-            // 构建选中的知识域字符串（逗号分隔）
-            const selectedDomainsStr = selectedQADomains.length > 0
-                ? selectedQADomains.map(id => {
-                    const domain = availableDomains.find(d => d.id === id);
-                    return domain?.name || '';
-                }).filter(Boolean).join(',')
-                : undefined;
-
-            const response = await projectsApi.qaQuery(Number(projectId), qaQuestion, {
-                selected_domains: selectedDomainsStr,
-                top_k: 5,
-            });
-
-            setQaAnswer(response.answer || '未生成回答');
-            setQaReferences(response.references || []);
-        } catch (error: any) {
-            const errorDetail = error.response?.data?.detail || error.message || '未知错误';
-            message.error(`问答失败：${errorDetail}`);
-            setQaAnswer('问答失败，请稍后重试');
-        } finally {
-            setIsQALoading(false);
-        }
-    }, [projectId, qaQuestion, selectedQADomains, availableDomains]);
-
-    // 知识域多选切换
-    const handleQADomainToggle = useCallback((domainId: number) => {
-        setSelectedQADomains(prev => {
-            if (prev.includes(domainId)) {
-                return prev.filter(id => id !== domainId);
-            } else {
-                return [...prev, domainId];
-            }
-        });
-    }, []);
-
-    // 清空问答状态
-    const handleClearQA = useCallback(() => {
-        setQaQuestion('');
-        setQaAnswer('');
-        setQaReferences([]);
-        setSelectedQADomains([]);
-    }, []);
-
     // 取消任务
     const handleCancelTask = useCallback(async () => {
         if (!projectId || !currentTaskId) return;
@@ -1597,18 +1520,30 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
     // 两步抽取（04 §3.2）：第 1 步=抽取框架（类/关系），第 2 步=抽取实例；第 2 步以存在类节点为门槛
     const hasSchema = nodes.some((n) => isClassType(n.data?.type));
 
+    // F5（09 §2）：治理功能按「导入导出 / 治理 / 测试」三分组，≤3 组可见
     const moreMenuItems: MenuProps['items'] = [
-        { key: 'reextract-schema', icon: <CloudUploadOutlined />, label: '重新抽取框架' },
-        { key: 'save-version', icon: <CloudUploadOutlined />, label: '存为版本快照（框架复用）' },
-        { key: 'import-ttl', icon: <FileTextOutlined />, label: '导入 TTL / JSON' },
-        { key: 'import-project', icon: <CloudDownloadOutlined />, label: '从其他项目导入框架' },
-        { type: 'divider' },
-        { key: 'export', icon: <ExportOutlined />, label: '导出图谱…' },
-        { type: 'divider' },
-        { key: 'qa', icon: <MessageOutlined />, label: 'GraphRAG 问答测试' },
-        { key: 'domain', icon: <DatabaseOutlined />, label: `知识域：${currentProjectDomain?.name || '未设置'}` },
-        { type: 'divider' },
-        { key: 'clear', icon: <ClearOutlined />, label: '清空画布', danger: true },
+        {
+            key: 'group-import-export',
+            type: 'group',
+            label: '导入导出',
+            children: [
+                { key: 'import-ttl', icon: <FileTextOutlined />, label: '导入 TTL / JSON' },
+                { key: 'import-project', icon: <CloudDownloadOutlined />, label: '从其他项目导入框架' },
+                { key: 'export', icon: <ExportOutlined />, label: '导出图谱…' },
+            ],
+        },
+        {
+            key: 'group-governance',
+            type: 'group',
+            label: '治理',
+            children: [
+                { key: 'reextract-schema', icon: <CloudUploadOutlined />, label: '重新抽取框架' },
+                { key: 'save-version', icon: <CloudUploadOutlined />, label: '存为版本快照（框架复用）' },
+                { key: 'domain', icon: <DatabaseOutlined />, label: `知识域：${currentProjectDomain?.name || '未设置'}` },
+                { key: 'scorecard', icon: <DashboardOutlined />, label: '本体健康记分卡' },
+                { key: 'clear', icon: <ClearOutlined />, label: '清空画布', danger: true },
+            ],
+        },
     ];
 
     const handleMoreMenuClick: MenuProps['onClick'] = ({ key }) => {
@@ -1653,11 +1588,11 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
             case 'export':
                 setExportOpen(true);
                 break;
-            case 'qa':
-                handleOpenQAModal();
-                break;
             case 'domain':
                 handleOpenDomainModal();
+                break;
+            case 'scorecard':
+                navigate(`/projects/${projectId}/scorecard`);
                 break;
             case 'clear':
                 Modal.confirm({
@@ -1679,10 +1614,6 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                         setManualExpandedKeys(new Set());
                         setTreeSearchValue('');
                         setUploadedDocuments([]);
-                        setQaQuestion('');
-                        setQaAnswer('');
-                        setQaReferences([]);
-                        setSelectedQADomains([]);
                         setTaskProgress(0);
                         setTaskMessage('');
                         setTaskDetail('');
@@ -1774,7 +1705,7 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                         type="primary"
                                         icon={<ThunderboltOutlined />}
                                         onClick={handleSchemaButtonClick}
-                                        className="bg-indigo-600 hover:bg-indigo-700 border-none"
+                                       
                                     >
                                         AI 抽取框架
                                     </Button>
@@ -1798,7 +1729,6 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                     loading={loading}
                                     type={hasUnsavedChanges ? 'primary' : 'default'}
                                     ghost={hasUnsavedChanges}
-                                    className={hasUnsavedChanges ? 'bg-blue-600' : ''}
                                     style={!hasUnsavedChanges ? { background: 'transparent', borderColor: '#2A3550', color: '#E6EAF2' } : undefined}
                                 >
                                     保存
@@ -1889,7 +1819,7 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                     value={treeSearchValue}
                                     onChange={(e) => setTreeSearchValue(e.target.value)}
                                     allowClear
-                                    prefix={<SearchOutlined className="text-gray-400" />}
+                                    prefix={<SearchOutlined className="text-gray-500" />}
                                 />
                                 {availableDocuments.length > 0 && (
                                     <Select
@@ -2027,6 +1957,11 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                         列表
                                     </Button>
                                 </Tooltip>
+                                <Tooltip title="评测问题（CQ）：告诉系统该抽什么、发布前用这些问题验收新版本">
+                                    <Button size="small" type="primary" ghost icon={<QuestionCircleOutlined />} onClick={() => setIsCqDrawerOpen(true)}>
+                                        评测问题
+                                    </Button>
+                                </Tooltip>
                             </div>
                         </div>
 
@@ -2051,9 +1986,12 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                                 ? <>已检测到 {uploadedDocuments.length} 个已上传文档，可直接 AI 抽取类、属性与关系；<br />框架确认后，前往「实例探索」Tab 进行第 2 步实例抽取。</>
                                                 : <>先在「文档解析」Tab 上传并解析文档；回到本页基于文档 AI 抽取类、属性与关系，<br />框架确认后，前往「实例探索」Tab 进行第 2 步实例抽取。</>}
                                     </p>
-                                    <Button type="primary" size="large" icon={<ThunderboltOutlined />} onClick={handleSchemaButtonClick} className="bg-indigo-600 hover:bg-indigo-700 border-none">
+                                    <Button type="primary" size="large" icon={<ThunderboltOutlined />} onClick={handleSchemaButtonClick}>
                                         {docsLoaded && uploadedDocuments.length > 0 ? 'AI 抽取框架' : docsLoaded ? '去上传文档并抽取' : 'AI 抽取框架'}
                                     </Button>
+                                    <div className="text-xs mt-2" style={{ color: '#8B94AB' }}>
+                                        抽取通常需要几分钟（视文档数量与篇幅）；进度弹窗会显示分片批次与预计剩余时间
+                                    </div>
                                 </div>
                             </div>
                         )}
@@ -2189,8 +2127,8 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                                         label={
                                                             <span>
                                                                 互斥类（disjointWith）
-                                                                <Tooltip title="声明的类之间不能有共同实例。实例抽取后若同一实体落在互斥类层级内，冲突检测会生成「公理违例」审核项。">
-                                                                    <InfoCircleOutlined className="text-gray-400 text-sm ml-1" />
+                                                                <Tooltip title="互斥类：两类不能是同一个东西。例：「个人」和「企业机构」互斥——一个实体不能既是个人又是企业。实例抽取后若同一实体落在互斥类层级内，冲突检测会生成「公理违例」审核项。">
+                                                                    <InfoCircleOutlined className="text-gray-500 text-sm ml-1" />
                                                                 </Tooltip>
                                                             </span>
                                                         }
@@ -2225,10 +2163,10 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                             {inheritedProperties.length > 0 && (
                                                 <div className="mb-4">
                                                     <div className="flex items-center gap-2 mb-2 pb-2 border-b border-gray-100">
-                                                        <TagsOutlined className="text-gray-400" />
+                                                        <TagsOutlined className="text-gray-500" />
                                                         <span className="font-medium text-gray-500">继承属性（只读）</span>
                                                         <Tooltip title="这些属性从父类继承，不可直接编辑。如需修改，请编辑父类节点。">
-                                                            <InfoCircleOutlined className="text-gray-400 text-sm" />
+                                                            <InfoCircleOutlined className="text-gray-500 text-sm" />
                                                         </Tooltip>
                                                     </div>
                                                     {inheritedProperties.map((prop, index) => (
@@ -2263,7 +2201,7 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                                 <TagsOutlined className="text-purple-500" />
                                                 <span className="font-medium text-gray-700">直接属性</span>
                                                 <Tooltip title="这些是当前节点直接定义的属性，可以编辑和删除。">
-                                                    <InfoCircleOutlined className="text-gray-400 text-sm" />
+                                                    <InfoCircleOutlined className="text-gray-500 text-sm" />
                                                 </Tooltip>
                                             </div>
                                             
@@ -2302,7 +2240,7 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                                                 </Form.Item>
                                                                 <MinusCircleOutlined
                                                                     onClick={() => remove(name)}
-                                                                    className="text-gray-400 hover:text-red-500 cursor-pointer mt-2 flex-shrink-0"
+                                                                    className="text-gray-500 hover:text-red-500 cursor-pointer mt-2 flex-shrink-0"
                                                                 />
                                                             </div>
                                                         );
@@ -2327,7 +2265,7 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                         <Button icon={<DeleteOutlined />} danger onClick={deleteSelectedElement}>
                                             删除
                                         </Button>
-                                        <Button type="primary" htmlType="submit" className="bg-blue-600">
+                                        <Button type="primary" htmlType="submit">
                                             保存
                                         </Button>
                                     </div>
@@ -2376,19 +2314,26 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                             <div className="flex items-center gap-2 mt-2 mb-3 pb-2 border-b border-gray-100">
                                                 <span className="font-medium text-gray-700">关系公理</span>
                                                 <Tooltip title="公理会在实例抽取后的「冲突检测」中自动校验：函数性=每个主体至多一个客体；互逆=两条关系互为反向；基数限定客体数量范围。">
-                                                    <InfoCircleOutlined className="text-gray-400 text-sm" />
+                                                    <InfoCircleOutlined className="text-gray-500 text-sm" />
                                                 </Tooltip>
                                             </div>
 
                                             <div className="grid grid-cols-3 gap-2 mb-3">
+                                                {/* 术语人话层（O3-F10）：术语 + 开关旁直接给出白话解释 */}
                                                 <Form.Item name={['axioms', 'functional']} valuePropName="checked" className="mb-0">
-                                                    <Switch size="small" checkedChildren="函数性" unCheckedChildren="函数性" />
+                                                    <Tooltip title="函数性：每个 X 只能有一个 Y。例：一个人的「身份证号」只能有一个——勾选后，若某实例被抽出两个不同取值，会生成冲突审核项。">
+                                                        <Switch size="small" checkedChildren="函数性" unCheckedChildren="函数性" />
+                                                    </Tooltip>
                                                 </Form.Item>
                                                 <Form.Item name={['axioms', 'transitive']} valuePropName="checked" className="mb-0">
-                                                    <Switch size="small" checkedChildren="传递性" unCheckedChildren="传递性" />
+                                                    <Tooltip title="传递性：A→B、B→C，则 A→C。例：「位于」有传递性——A 位于 B、B 位于 C，可推出 A 位于 C。">
+                                                        <Switch size="small" checkedChildren="传递性" unCheckedChildren="传递性" />
+                                                    </Tooltip>
                                                 </Form.Item>
                                                 <Form.Item name={['axioms', 'symmetric']} valuePropName="checked" className="mb-0">
-                                                    <Switch size="small" checkedChildren="对称性" unCheckedChildren="对称性" />
+                                                    <Tooltip title="对称性：A→B 等价于 B→A。例：「同事」「相邻」是对称的——A 是 B 的同事，B 也是 A 的同事。">
+                                                        <Switch size="small" checkedChildren="对称性" unCheckedChildren="对称性" />
+                                                    </Tooltip>
                                                 </Form.Item>
                                             </div>
 
@@ -2426,7 +2371,7 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                         <Button icon={<DeleteOutlined />} danger onClick={deleteSelectedElement}>
                                             删除
                                         </Button>
-                                        <Button type="primary" htmlType="submit" className="bg-blue-600">
+                                        <Button type="primary" htmlType="submit">
                                             保存
                                         </Button>
                                     </div>
@@ -2465,14 +2410,13 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                                 size="small"
                                                 type={activeTemplate === tpl.key ? 'primary' : 'default'}
                                                 onClick={() => applyGuidanceTemplate(tpl.key)}
-                                                className={activeTemplate === tpl.key ? 'bg-indigo-600' : ''}
-                                            >
+                                                >
                                                 {tpl.label}
                                             </Button>
                                         </Tooltip>
                                     ))}
                                 </div>
-                                <div className="text-xs text-gray-400 mt-1.5">
+                                <div className="text-xs text-gray-500 mt-1.5">
                                     {GUIDANCE_TEMPLATES.find(t => t.key === activeTemplate)?.desc}
                                 </div>
                             </div>
@@ -2657,6 +2601,15 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                     </div>
                                 )}
                                 
+                                {/* 分片级进度（O1-B1/F4：批次 + 线性外推剩余时间） */}
+                                {taskStatus !== 'completed' && Number(taskStats?.chunks_total) > 0 && (
+                                    <div className="text-xs text-gray-500">
+                                        分片 {taskStats.chunks_done ?? 0}/{taskStats.chunks_total}
+                                        {taskStats.batches_total ? ` · 批次 ${taskStats.batch_no ?? '-'}/${taskStats.batches_total}` : ''}
+                                        {humanizeEta(taskStats.eta_seconds) ? ` · 预计剩余 ${humanizeEta(taskStats.eta_seconds)}` : ''}
+                                    </div>
+                                )}
+                                
                                 {/* 详细信息 */}
                                 {taskDetail && (
                                     <div className="p-3 bg-gray-50 rounded-lg">
@@ -2685,7 +2638,7 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
 
                                 {/* 任务 ID */}
                                 {currentTaskId && (
-                                    <div className="text-xs text-gray-400">
+                                    <div className="text-xs text-gray-500">
                                         任务 ID: {currentTaskId.slice(0, 8)}...{currentTaskId.slice(-4)}
                                     </div>
                                 )}
@@ -2711,7 +2664,7 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                         <Spin tip="加载中..." />
                                     </div>
                                 ) : uploadedDocuments.length === 0 ? (
-                                    <div className="text-center py-8 text-gray-400">
+                                    <div className="text-center py-8 text-gray-500">
                                         <FileTextOutlined className="text-4xl mb-2" />
                                         <p>暂无已上传文档</p>
                                         <p className="text-sm mt-1 mb-4">文档上传统一在「文档解析」Tab 完成</p>
@@ -2760,7 +2713,7 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                                         <tr key={doc.id} className="hover:bg-gray-50">
                                                             <td className="px-3 py-2">
                                                                 <div className="flex items-center gap-2">
-                                                                    <FileTextOutlined className="text-gray-400" />
+                                                                    <FileTextOutlined className="text-gray-500" />
                                                                     <span className="truncate max-w-xs">{doc.file_name}</span>
                                                                 </div>
                                                             </td>
@@ -2799,7 +2752,7 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                     </div>
                                     <div className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg mb-3">
                                         <div className="flex items-center gap-2">
-                                            <EyeOutlined className={vlConfigured ? "text-purple-500" : "text-gray-400"} />
+                                            <EyeOutlined className={vlConfigured ? "text-purple-500" : "text-gray-500"} />
                                             <span className="text-sm font-medium text-gray-700">VL 视觉解析</span>
                                             {!vlConfigured && <Tag color="orange" className="text-xs">未配置</Tag>}
                                         </div>
@@ -2823,7 +2776,6 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                                 type="primary"
                                                 icon={<ThunderboltOutlined />}
                                                 onClick={handleStartSchemaExtractionFromModal}
-                                                className="bg-indigo-600 hover:bg-indigo-700"
                                             >
                                                 开始骨架提取
                                             </Button>
@@ -2866,7 +2818,6 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                     <Button 
                                         type="primary" 
                                         onClick={() => handleSaveDomain(selectedDomainId, selectedDomainName)}
-                                        className="bg-indigo-600 hover:bg-indigo-700"
                                     >
                                         保存
                                     </Button>
@@ -2913,168 +2864,22 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                         ]}
                                     />
                                 </div>
-                                <div className="text-xs text-gray-400">
+                                <div className="text-xs text-gray-500">
                                     导入会替换本项目的框架层（类与类间关系），保留已有实例；导入仅更新画布并标记为未保存，需点击「保存」才会落库并同步图数据库。
                                 </div>
                             </div>
                         </Modal>
 
-                        {/* GraphRAG 问答 Modal */}
-                        <Modal
-                            title={
-                                <div className="flex items-center gap-2">
-                                    <MessageOutlined className="text-green-500" />
-                                    <span>GraphRAG 问答测试</span>
-                                </div>
-                            }
-                            open={isQAModalOpen}
-                            onCancel={() => {
-                                setIsQAModalOpen(false);
-                                handleClearQA();
-                            }}
-                            footer={null}
-                            width={700}
+                        {/* 评测问题（CQ）管理抽屉（O3-F8） */}
+                        <Drawer
+                            title="评测问题（Competency Questions）"
+                            width={720}
+                            open={isCqDrawerOpen}
+                            onClose={() => setIsCqDrawerOpen(false)}
+                            destroyOnClose
                         >
-                            <div className="py-2">
-                                {/* 知识域多选区域 */}
-                                <div className="mb-4">
-                                    <div className="flex items-center gap-2 mb-2">
-                                        <BookOutlined className="text-indigo-500" />
-                                        <span className="font-medium text-gray-700">选择知识域（多选）</span>
-                                    </div>
-                                    <div className="text-xs text-gray-500 mb-2">
-                                        选择要检索的知识域范围，不选择则默认在所有知识域中检索
-                                    </div>
-                                    {isDomainsLoading ? (
-                                        <div className="flex justify-center py-4">
-                                            <Spin size="small" />
-                                        </div>
-                                    ) : availableDomains.length === 0 ? (
-                                        <div className="text-center py-4 text-gray-400 text-sm">
-                                            暂无可用知识域
-                                        </div>
-                                    ) : (
-                                        <div className="flex flex-wrap gap-2 max-h-32 overflow-auto p-2 border border-gray-200 rounded-lg bg-gray-50">
-                                            {availableDomains.map((domain) => (
-                                                <Tag
-                                                    key={domain.id}
-                                                    color={selectedQADomains.includes(domain.id) ? 'blue' : 'default'}
-                                                    className={`cursor-pointer transition-all ${
-                                                        selectedQADomains.includes(domain.id)
-                                                            ? 'border-blue-500 text-blue-600'
-                                                            : 'border-gray-300 hover:border-gray-400'
-                                                    }`}
-                                                    onClick={() => handleQADomainToggle(domain.id)}
-                                                >
-                                                    {domain.name}
-                                                    {selectedQADomains.includes(domain.id) && (
-                                                        <CheckCircleOutlined className="ml-1 text-blue-500" />
-                                                    )}
-                                                </Tag>
-                                            ))}
-                                        </div>
-                                    )}
-                                </div>
-
-                                {/* 问题输入区域 */}
-                                <div className="mb-4">
-                                    <div className="flex items-center gap-2 mb-2">
-                                        <SendOutlined className="text-blue-500" />
-                                        <span className="font-medium text-gray-700">问题</span>
-                                    </div>
-                                    <TextArea
-                                        value={qaQuestion}
-                                        onChange={(e) => setQaQuestion(e.target.value)}
-                                        placeholder="请输入您的问题，例如：什么是本体论？"
-                                        rows={3}
-                                        disabled={isQALoading}
-                                        onPressEnter={(e) => {
-                                            if (!e.shiftKey) {
-                                                e.preventDefault();
-                                                handleSendQuestion();
-                                            }
-                                        }}
-                                    />
-                                    <div className="flex justify-end mt-2">
-                                        <Button
-                                            type="primary"
-                                            icon={isQALoading ? <LoadingOutlined spin /> : <SendOutlined />}
-                                            onClick={handleSendQuestion}
-                                            loading={isQALoading}
-                                            disabled={!qaQuestion.trim()}
-                                            className="bg-green-600 hover:bg-green-700"
-                                        >
-                                            {isQALoading ? '生成中...' : '发送问题'}
-                                        </Button>
-                                    </div>
-                                </div>
-
-                                {/* 答案显示区域 */}
-                                {qaAnswer && (
-                                    <div className="mb-4">
-                                        <div className="flex items-center gap-2 mb-2">
-                                            <CheckCircleOutlined className="text-green-500" />
-                                            <span className="font-medium text-gray-700">答案</span>
-                                        </div>
-                                        <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
-                                            <div className="text-sm text-gray-800 whitespace-pre-wrap">{qaAnswer}</div>
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* 溯源引用区域 */}
-                                {qaReferences && qaReferences.length > 0 && (
-                                    <div>
-                                        <div className="flex items-center gap-2 mb-2">
-                                            <BookOutlined className="text-purple-500" />
-                                            <span className="font-medium text-gray-700">溯源引用 ({qaReferences.length})</span>
-                                        </div>
-                                        <div className="max-h-48 overflow-auto space-y-2">
-                                            {qaReferences.map((ref, index) => (
-                                                <div
-                                                    key={ref.id}
-                                                    className="p-2 bg-gray-50 border border-gray-200 rounded-lg text-sm"
-                                                >
-                                                    <div className="flex items-center gap-2 mb-1">
-                                                        <Tag color="purple" className="font-medium">[{index + 1}]</Tag>
-                                                        <span className="text-gray-600 font-medium">{ref.file}</span>
-                                                    </div>
-                                                    <div className="text-gray-500 pl-8 line-clamp-2">
-                                                        {ref.quote}
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* 空状态提示 */}
-                                {!qaAnswer && !isQALoading && (
-                                    <div className="text-center py-8 text-gray-400">
-                                        <MessageOutlined className="text-4xl mb-2" />
-                                        <p>请输入问题开始问答</p>
-                                        <p className="text-sm mt-1">支持基于知识图谱的 RAG 检索和溯源</p>
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* 底部操作区 */}
-                            <div className="flex justify-between items-center pt-4 border-t border-gray-200">
-                                <Button
-                                    onClick={handleClearQA}
-                                    icon={<ClearOutlined />}
-                                    disabled={isQALoading || (!qaAnswer && qaReferences.length === 0)}
-                                >
-                                    清空
-                                </Button>
-                                <Button onClick={() => {
-                                    setIsQAModalOpen(false);
-                                    handleClearQA();
-                                }}>
-                                    关闭
-                                </Button>
-                            </div>
-                        </Modal>
+                            <CqPanel projectId={Number(projectId)} open={isCqDrawerOpen} />
+                        </Drawer>
 
                         {/* RAGFlow 注入配置 Modal */}
                     </div>

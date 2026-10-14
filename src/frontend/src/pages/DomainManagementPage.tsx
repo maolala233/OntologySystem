@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { PROJECT_STATUS, PUBLISHED_TAG } from '../shared/projectStatus';
 import { 
     Card, Button, Empty, Spin, Modal, Form, Input, message, 
     Tag, Space, Table, Select, Typography, Drawer
@@ -472,7 +473,7 @@ const DomainManagementPage: React.FC = () => {
                                         <div className="flex items-center gap-2">
                                             <Text strong>{name}</Text>
                                             {record.is_published && (
-                                                <Tag color="green">已发布</Tag>
+                                                <Tag color={PUBLISHED_TAG.color}>{PUBLISHED_TAG.text}</Tag>
                                             )}
                                         </div>
                                     ),

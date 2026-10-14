@@ -18,6 +18,7 @@ import McpConsolePage from './pages/McpConsolePage';
 import BuilderPage from './features/builder/BuilderPage';
 import AssetCenterPage from './pages/AssetCenterPage';
 import AssetDetailPage from './pages/AssetDetailPage';
+import ScorecardPage from './pages/ScorecardPage';
 import DomainManagementPage from './pages/DomainManagementPage';
 import UserAdminPage from './features/admin/UserAdminPage';
 import ModuleGrantsPage from './features/admin/ModuleGrantsPage';
@@ -34,7 +35,7 @@ const RedirectBuilder: React.FC = () => {
 
 function App() {
     return (
-        <ConfigProvider locale={zhCN}>
+        <ConfigProvider locale={zhCN} theme={{ token: { colorPrimary: '#5B8DEF' } }}>
             <BrowserRouter>
                 <Routes>
                     {/* 公开路由 */}
@@ -57,6 +58,8 @@ function App() {
                         <Route path="projects/:projectId/graph" element={<BuilderPage />} />
                         <Route path="projects/:projectId/timeline" element={<BuilderPage />} />
                         <Route path="projects/:projectId" element={<Navigate to="documents" replace />} />
+                        {/* O2-F7 本体健康记分卡（实时聚合机检与审核指标） */}
+                        <Route path="projects/:projectId/scorecard" element={<ScorecardPage />} />
                         {/* 旧路由兼容重定向 */}
                         <Route path="ontology-builder" element={<Navigate to="/my-projects" replace />} />
                         <Route path="ontology-builder/:projectId" element={<RedirectBuilder />} />

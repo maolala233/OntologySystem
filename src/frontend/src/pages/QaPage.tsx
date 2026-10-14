@@ -2,7 +2,9 @@
 // 左侧：新建对话 + 历史对话列表（按会话分组）；右侧：项目/模型选择 + 流式对话 + 引用溯源。
 // 与 QaDrawer 共用 MarkdownAnswer（[n] 角标点击定位）与 SourceCard。
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Input, Popover, Select, Spin, Tag, Tooltip, message } from 'antd';
+import { Button, Input, Popconfirm, Popover, Select, Spin, Tag, Tooltip, message } from 'antd';
+import { QA_LAST_PROJECT_ID_KEY } from '../shared/keys';
+import { PROJECT_STATUS, PUBLISHED_TAG } from '../shared/projectStatus';
 import {
     ClearOutlined,
     DeleteOutlined,
@@ -36,7 +38,7 @@ interface QaTurn {
     streaming: boolean;
 }
 
-const CONV_ID_KEY = 'qa_last_project_id';
+const CONV_ID_KEY = QA_LAST_PROJECT_ID_KEY;
 
 export default function QaPage() {
     const [projects, setProjects] = useState<ProjectData[]>([]);
@@ -252,10 +254,10 @@ export default function QaPage() {
                         新建对话
                     </Button>
                 </div>
-                <div className="px-3 pb-1 text-xs text-gray-400">历史对话（{conversations.length}）</div>
+                <div className="px-3 pb-1 text-xs text-gray-500">历史对话（{conversations.length}）</div>
                 <div className="flex-1 overflow-auto px-2 pb-2">
                     {conversations.length === 0 ? (
-                        <div className="text-xs text-gray-400 text-center py-6">暂无历史对话</div>
+                        <div className="text-xs text-gray-500 text-center py-6">暂无历史对话</div>
                     ) : (
                         conversations.map(c => (
                             <div
@@ -269,15 +271,25 @@ export default function QaPage() {
                             >
                                 <div className="flex items-center justify-between gap-1">
                                     <span className="text-sm text-gray-800 truncate flex-1">{c.title}</span>
-                                    <Tooltip title="删除对话">
-                                        <Button
-                                            size="small" type="text" className="!px-1 opacity-0 group-hover:opacity-100"
-                                            icon={<DeleteOutlined className="text-gray-400 hover:text-red-500" />}
-                                            onClick={e => { e.stopPropagation(); removeConversation(c.id); }}
-                                        />
-                                    </Tooltip>
+                                    <Popconfirm
+                                        title="删除这条对话？"
+                                        description="删除后不可恢复"
+                                        okText="删除"
+                                        okButtonProps={{ danger: true }}
+                                        cancelText="取消"
+                                        onConfirm={e => { e?.stopPropagation(); removeConversation(c.id); }}
+                                        onCancel={e => e?.stopPropagation()}
+                                    >
+                                        <Tooltip title="删除对话">
+                                            <Button
+                                                size="small" type="text" className="!px-1"
+                                                icon={<DeleteOutlined className="text-gray-500 hover:text-red-500" />}
+                                                onClick={e => e.stopPropagation()}
+                                            />
+                                        </Tooltip>
+                                    </Popconfirm>
                                 </div>
-                                <div className="text-[11px] text-gray-400 mt-0.5 flex justify-between">
+                                <div className="text-[11px] text-gray-500 mt-0.5 flex justify-between">
                                     <span>{c.message_count} 轮</span>
                                     <span>{c.last_time?.slice(0, 16).replace('T', ' ')}</span>
                                 </div>
@@ -301,12 +313,12 @@ export default function QaPage() {
                         options={projects.map(p => ({ value: p.id, label: p.name }))}
                     />
                     {activeProject && (
-                        <Tag color={activeProject.is_published ? 'green' : 'orange'} className="mr-0">
-                            {activeProject.is_published ? '已发布' : '草稿'}
+                        <Tag color={activeProject.is_published ? PUBLISHED_TAG.color : PROJECT_STATUS.draft.color} className="mr-0">
+                            {activeProject.is_published ? PUBLISHED_TAG.text : PROJECT_STATUS.draft.text}
                         </Tag>
                     )}
                     <div className="flex-1" />
-                    <span className="text-xs text-gray-400">对话模型</span>
+                    <span className="text-xs text-gray-500">对话模型</span>
                     <Select
                         value={modelId ?? undefined}
                         onChange={v => setModelId(v)}
@@ -318,14 +330,14 @@ export default function QaPage() {
                             value: m.id,
                             label: `${m.name}${m.is_default ? ' · 默认' : ''}`,
                         }))}
-                        notFoundContent={<span className="text-xs text-gray-400">暂无可用模型，请在管理后台「模型配置」添加</span>}
+                        notFoundContent={<span className="text-xs text-gray-500">暂无可用模型，请在管理后台「模型配置」添加</span>}
                     />
                 </div>
 
                 {/* 消息区 */}
                 <div className="flex-1 overflow-auto px-6 py-4">
                     {turns.length === 0 && (
-                        <div className="h-full flex flex-col items-center justify-center text-gray-400">
+                        <div className="h-full flex flex-col items-center justify-center text-gray-500">
                             <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-2xl mb-4">O</div>
                             <p className="text-gray-600">基于本体知识图谱的检索问答</p>
                             <p className="text-xs mt-1">回答带 [n] 引用角标，点击角标可定位到对应溯源引用卡</p>
@@ -353,7 +365,7 @@ export default function QaPage() {
                                                         sourceCount={turn.sources.length}
                                                         onCite={handleCite}
                                                     />
-                                                    {turn.streaming && <LoadingOutlined className="ml-1 text-gray-400 text-xs" />}
+                                                    {turn.streaming && <LoadingOutlined className="ml-1 text-gray-500 text-xs" />}
                                                 </>
                                             ) : (
                                                 <div className="text-sm text-gray-800">
@@ -363,7 +375,7 @@ export default function QaPage() {
                                         </div>
                                     )}
                                     {turn.done && (
-                                        <div className="flex items-center gap-2 mt-1.5 text-[11px] text-gray-400 flex-wrap">
+                                        <div className="flex items-center gap-2 mt-1.5 text-[11px] text-gray-500 flex-wrap">
                                             {turn.done.confidence > 0 && (
                                                 <Tag color={turn.done.confidence >= 0.6 ? 'green' : 'orange'} className="mr-0">
                                                     置信度 {(turn.done.confidence * 100).toFixed(0)}%

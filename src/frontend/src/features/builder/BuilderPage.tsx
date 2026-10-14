@@ -1,7 +1,7 @@
 /**
  * 构建器薄壳（05 §7）：路由参数 + Tab 容器 + 项目数据预取。
  * 四 Tab：文档解析 / 骨架编辑 / 实例探索 / 时间轴（URL 可分享，05 §2）。
- * 画布交互全部在 SchemaTab（迁移自原 3587 行 OntologyBuilderPage，逻辑不动）。
+ * 画布交互全部在 SchemaTab。
  */
 import React, { lazy, Suspense, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -12,6 +12,7 @@ import {
 } from '@ant-design/icons';
 
 import { useBuilderStore } from './store';
+import { PROJECT_STATUS } from '../../shared/projectStatus';
 import { confirmLeaveUnsaved } from '../../utils/unsavedGuard';
 
 const DocumentsTab = lazy(() => import('./documents/DocumentsTab'));
@@ -19,11 +20,10 @@ const SchemaTab = lazy(() => import('./schema/SchemaTab'));
 const GraphTab = lazy(() => import('./graph/GraphTab'));
 const TimelineTab = lazy(() => import('./timeline/TimelineTab'));
 
+// 状态映射唯一权威在 shared/projectStatus；构建器中发布态补充只读提示
 const STATUS_TAG: Record<string, { color: string; text: string }> = {
-    draft: { color: 'default', text: '草稿' },
-    building: { color: 'processing', text: '构建中' },
-    ready: { color: 'green', text: '就绪' },
-    published: { color: 'purple', text: '已发布·只读' },
+    ...PROJECT_STATUS,
+    published: { ...PROJECT_STATUS.published, text: '已发布·只读' },
 };
 
 const BuilderPage: React.FC = () => {
@@ -58,25 +58,33 @@ const BuilderPage: React.FC = () => {
         );
     }
 
+    // Tab 副标题（O3-F10 Jordan 引导链）：首次使用者不看文档也知道每个 Tab 干什么
+    const tabLabel = (icon: React.ReactNode, text: string, hint: string) => (
+        <span className="inline-flex flex-col items-start leading-tight">
+            <span>{icon}{text}</span>
+            <span className="text-[10px] text-gray-400 font-normal">{hint}</span>
+        </span>
+    );
+
     const tabItems = [
         {
             key: 'documents',
-            label: <span><CloudUploadOutlined className="mr-1" />文档解析</span>,
+            label: tabLabel(<CloudUploadOutlined className="mr-1" />, '文档解析', '上传资料，AI 解析'),
             children: <DocumentsTab projectId={pid} onChanged={() => loadProject(pid)} />,
         },
         {
             key: 'schema',
-            label: <span><NodeIndexOutlined className="mr-1" />骨架编辑</span>,
+            label: tabLabel(<NodeIndexOutlined className="mr-1" />, '骨架编辑', '定义类、属性和关系'),
             children: <SchemaTab projectId={String(pid)} />,
         },
         {
             key: 'graph',
-            label: <span><DatabaseOutlined className="mr-1" />实例探索</span>,
+            label: tabLabel(<DatabaseOutlined className="mr-1" />, '实例探索', '抽取并查看图谱数据'),
             children: <GraphTab projectId={pid} onChanged={() => loadProject(pid)} />,
         },
         {
             key: 'timeline',
-            label: <span><FieldTimeOutlined className="mr-1" />时间轴</span>,
+            label: tabLabel(<FieldTimeOutlined className="mr-1" />, '时间轴', '版本对比与发布门控'),
             children: <TimelineTab projectId={pid} onChanged={() => loadProject(pid)} />,
         },
     ];
@@ -107,7 +115,7 @@ const BuilderPage: React.FC = () => {
                 </Spin>
             </div>
 
-            <Suspense fallback={<div className="p-10 text-center text-gray-400"><Spin /> 模块加载中…</div>}>
+            <Suspense fallback={<div className="p-10 text-center text-gray-500"><Spin /> 模块加载中…</div>}>
                 <Tabs
                     activeKey={activeTab}
                     onChange={(key) => confirmLeaveUnsaved(() => navigate(`/projects/${pid}/${key}`))}

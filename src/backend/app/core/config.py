@@ -80,6 +80,10 @@ class Settings(BaseSettings):
     # 嵌入式 RDF 存储（M4 接入；RocksDB 独占锁 → 仅 worker-rdf 写）
     OXIGRAPH_PATH: str = "./data/oxigraph"
 
+    # ===== O2 抽取质量开关（docs/design/09 O2-B10/B11；.env 可关）=====
+    COREF_ENABLED: bool = True            # B10 指代消解 L0（每 chunk 一次 LLM 指代链）
+    PATTERN_LAYER_ENABLED: bool = True    # B11 pattern 层（结构化属性直抽补全+校准）
+
     @property
     def cors_origins_list(self) -> list:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]

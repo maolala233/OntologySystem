@@ -9,15 +9,18 @@ import {
     SearchOutlined,
     SortAscendingOutlined,
     DeleteFilled,
+    ReloadOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { Segmented } from 'antd';
 import { useAuthStore } from '../shared/auth/authStore';
+import { PROJECT_STATUS, PUBLISHED_TAG } from '../shared/projectStatus';
 import Navbar from '../components/Layout/Navbar';
 import TechHero, { TECH_COLORS, GraphMotif } from '../components/TechHero';
 import { projectsApi } from '../api/projects';
 import { ProjectData } from '../types/ontology';
 import KnowledgeDomainSelector from '../components/KnowledgeDomainSelector';
+import confirmImpact from '../utils/impactConfirm';
 
 const TC = TECH_COLORS;
 
@@ -28,6 +31,7 @@ const MyProjectsPage: React.FC = () => {
     const navigate = useNavigate();
     const [projects, setProjects] = useState<ProjectData[]>([]);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [editingProject, setEditingProject] = useState<ProjectData | null>(null);
@@ -57,9 +61,11 @@ const MyProjectsPage: React.FC = () => {
         projectsApi.getMyProjects(isSuperAdmin ? scope : undefined)
             .then((data) => {
                 setProjects(data);
+                setLoadError(null);
             })
             .catch((error: any) => {
-                message.error('加载项目失败');
+                const detail = error?.response?.data?.message || error?.response?.data?.detail || error?.message;
+                setLoadError(String(detail || '未知错误'));
             })
             .finally(() => {
                 setLoading(false);
@@ -126,12 +132,15 @@ const MyProjectsPage: React.FC = () => {
     };
 
     const handleDeleteProject = (projectId: number) => {
-        Modal.confirm({
-            title: '确认删除',
-            content: '删除后无法恢复，确定要删除这个项目吗？',
-            okText: '确定',
-            cancelText: '取消',
-            okButtonProps: { danger: true },
+        confirmImpact({
+            title: '确认删除项目',
+            impact: [
+                '项目内已上传的全部文档将一并删除，且无法恢复；',
+                'AI 抽取出的本体框架与实例图谱数据将一并删除；',
+                '待处理与历史审核项、评测记录、版本快照将一并删除；',
+                '若已发布到资产中心，公共区的展示也会随之消失。',
+            ],
+            okText: '确认删除',
             onOk: async () => {
                 try {
                     await projectsApi.deleteProject(projectId);
@@ -154,12 +163,13 @@ const MyProjectsPage: React.FC = () => {
             message.warning('请先选择要删除的项目');
             return;
         }
-        Modal.confirm({
-            title: '批量删除确认',
-            content: `确定要删除选中的 ${selectedIds.size} 个项目吗？删除后无法恢复。`,
-            okText: '确定删除',
-            cancelText: '取消',
-            okButtonProps: { danger: true },
+        confirmImpact({
+            title: `批量删除 ${selectedIds.size} 个项目`,
+            impact: [
+                `${selectedIds.size} 个项目内的文档、图谱数据、审核项与版本快照将一并删除，且无法恢复；`,
+                '已发布到资产中心的项目，公共区展示也会随之消失。',
+            ],
+            okText: '确认删除',
             onOk: async () => {
                 let successCount = 0;
                 let failCount = 0;
@@ -293,7 +303,7 @@ const MyProjectsPage: React.FC = () => {
                 {projects.length > 0 && (
                     <div className="mb-4 flex flex-wrap items-center gap-3">
                         <Input
-                            prefix={<SearchOutlined className="text-gray-400" />}
+                            prefix={<SearchOutlined className="text-gray-500" />}
                             placeholder="搜索项目名称..."
                             value={searchText}
                             onChange={e => setSearchText(e.target.value)}
@@ -323,6 +333,17 @@ const MyProjectsPage: React.FC = () => {
                     <div className="flex justify-center items-center h-96">
                         <Spin size="large" />
                     </div>
+                ) : loadError ? (
+                    <div className="flex flex-col items-center justify-center h-96 px-4">
+                        <Empty
+                            description={`项目加载失败：${loadError}`}
+                            image={Empty.PRESENTED_IMAGE_SIMPLE}
+                        >
+                            <Button type="primary" icon={<ReloadOutlined />} onClick={loadProjects}>
+                                重试
+                            </Button>
+                        </Empty>
+                    </div>
                 ) : projects.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-96 px-4">
                         <Empty
@@ -333,7 +354,7 @@ const MyProjectsPage: React.FC = () => {
                                 type="primary"
                                 icon={<PlusOutlined />}
                                 onClick={() => setIsModalOpen(true)}
-                                className="bg-blue-600"
+                               
                             >
                                 创建项目
                             </Button>
@@ -359,7 +380,7 @@ const MyProjectsPage: React.FC = () => {
                                 >
                                     <span className="text-sm text-gray-500">全选</span>
                                 </Checkbox>
-                                <span className="text-xs text-gray-400">共 {filteredAndSortedProjects.length} 个项目</span>
+                                <span className="text-xs text-gray-500">共 {filteredAndSortedProjects.length} 个项目</span>
                                 {selectedIds.size > 0 && (
                                     <>
                                         <div className="flex-1" />
@@ -387,12 +408,15 @@ const MyProjectsPage: React.FC = () => {
                                 const isSelected = selectedIds.has(project.id);
                                 return (
                                     <div key={project.id} className="relative">
-                                        <div
-                                            className={`absolute top-3 left-3 z-10 w-6 h-6 flex items-center justify-center rounded-full transition-all duration-200 ${isSelected ? 'bg-blue-500' : 'bg-white/70 hover:bg-white shadow-sm'}`}
+                                        <button
+                                            type="button"
+                                            aria-pressed={isSelected}
+                                            aria-label={`选择项目 ${project.name}`}
+                                            className={`absolute top-3 left-3 z-10 w-6 h-6 flex items-center justify-center rounded-full transition-all duration-200 cursor-pointer ${isSelected ? 'bg-blue-500' : 'bg-white/70 hover:bg-white shadow-sm'}`}
                                             onClick={(e) => { e.stopPropagation(); toggleSelect(project.id); }}
                                         >
-                                            <Checkbox checked={isSelected} className="[&_.ant-checkbox-inner]:border-gray-400" />
-                                        </div>
+                                            <Checkbox checked={isSelected} className="[&_.ant-checkbox-inner]:border-gray-400 pointer-events-none" tabIndex={-1} aria-hidden />
+                                        </button>
                                         <Card
                                             hoverable
                                             className={`mp-card shadow-sm cursor-pointer ${isSelected ? 'ring-2 ring-blue-500 ring-offset-1' : ''}`}
@@ -427,7 +451,7 @@ const MyProjectsPage: React.FC = () => {
                                                     onClick={() => navigate(`/projects/${project.id}/documents`)}
                                                     className="text-xs sm:text-sm"
                                                 >
-                                                    <span className="hidden sm:inline">查看</span>
+                                                    <span className="hidden sm:inline">打开</span>
                                                 </Button>,
                                                 <Button
                                                     type="text"
@@ -436,14 +460,6 @@ const MyProjectsPage: React.FC = () => {
                                                     className="text-xs sm:text-sm"
                                                 >
                                                     <span className="hidden sm:inline">信息</span>
-                                                </Button>,
-                                                <Button
-                                                    type="text"
-                                                    icon={<EditOutlined />}
-                                                    onClick={() => navigate(`/projects/${project.id}/documents`)}
-                                                    className="text-xs sm:text-sm"
-                                                >
-                                                    <span className="hidden sm:inline">编辑</span>
                                                 </Button>,
                                                 <Button
                                                     type="text"
@@ -466,8 +482,8 @@ const MyProjectsPage: React.FC = () => {
                                                             {project.name}
                                                         </span>
                                                         {project.is_published && (
-                                                            <Tag color="green" className="ml-2 flex-shrink-0">
-                                                                已发布
+                                                            <Tag color={PUBLISHED_TAG.color} className="ml-2 flex-shrink-0">
+                                                                {PUBLISHED_TAG.text}
                                                             </Tag>
                                                         )}
                                                     </div>
@@ -493,7 +509,7 @@ const MyProjectsPage: React.FC = () => {
                                                             </span>
                                                         </div>
                                                         {project.created_at && (
-                                                            <div className="text-xs text-gray-400 mt-1">
+                                                            <div className="text-xs text-gray-500 mt-1">
                                                                 {new Date(project.created_at).toLocaleDateString('zh-CN')}
                                                             </div>
                                                         )}
@@ -553,7 +569,7 @@ const MyProjectsPage: React.FC = () => {
                     <Form.Item>
                         <Space className="w-full justify-end">
                             <Button onClick={() => setIsModalOpen(false)}>取消</Button>
-                            <Button type="primary" htmlType="submit" className="bg-blue-600">
+                            <Button type="primary" htmlType="submit">
                                 创建
                             </Button>
                         </Space>
@@ -596,7 +612,7 @@ const MyProjectsPage: React.FC = () => {
                                 setEditingProject(null);
                                 editForm.resetFields();
                             }}>取消</Button>
-                            <Button type="primary" htmlType="submit" className="bg-blue-600">
+                            <Button type="primary" htmlType="submit">
                                 保存
                             </Button>
                         </Space>

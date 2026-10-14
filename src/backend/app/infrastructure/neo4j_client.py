@@ -99,6 +99,25 @@ class Neo4jClient:
     def _delete_project_data(tx, project_id):
         tx.run("MATCH (n) WHERE n.project_id = $project_id DETACH DELETE n", project_id=project_id)
 
+    def upsert_node(self, project_id: int, node_data: dict, domain: str = None) -> bool:
+        """单节点增量 MERGE（O1-B5：entity.upsert 事件投影，MERGE 键 {id, project_id} 幂等）。"""
+        if not self.driver:
+            logger.error("Neo4j driver not initialized")
+            return False
+        with self.driver.session() as session:
+            session.execute_write(self._create_node_with_provenance, project_id, node_data, domain)
+        return True
+
+    def upsert_edge(self, project_id: int, edge_data: dict, domain: str = None) -> bool:
+        """单边增量 MERGE（O1-B5：relation.upsert 事件投影，两端节点须已存在）。"""
+        if not self.driver:
+            logger.error("Neo4j driver not initialized")
+            return False
+        with self.driver.session() as session:
+            session.execute_write(self._create_relationship_with_provenance,
+                                  project_id, edge_data, domain)
+        return True
+
     @staticmethod
     def _create_node_with_provenance(tx, project_id, node_data, domain: str = None):
         """
@@ -2115,7 +2134,7 @@ class Neo4jClient:
                 "subject": subject,
                 "value": value,
                 "properties": properties,
-                "matched_props": matched_props,  # ★ 保留原始 matched_props 供 rag_engine.py 使用
+                "matched_props": matched_props,
             })
             
             # 构建 quote

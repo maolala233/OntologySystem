@@ -511,7 +511,7 @@ const OntologyCanvas: React.FC<{ projectId: number }> = ({ projectId }) => {
                                 </Form.Item>
                             ))}
 
-                            <div className="mt-4 p-2 bg-gray-50 rounded text-xs text-gray-400">
+                            <div className="mt-4 p-2 bg-gray-50 rounded text-xs text-gray-500">
                                 提示：如需添加新属性字段，请直接修改生成的 TTL 或联系管理员开启高级编辑模式。
                             </div>
                         </>

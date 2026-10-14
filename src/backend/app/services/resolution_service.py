@@ -28,6 +28,7 @@ _CONFLICT_ITEM_TYPE = {
     ConflictType.RELATIONSHIP: "conflict_relationship",
     ConflictType.TEMPORAL: "conflict_value",  # 04 §6：temporal 归入 conflict_value(kind=temporal)
     ConflictType.AXIOM: "conflict_axiom",     # 公理 2 期：TBox 公理违例转审核
+    ConflictType.LOGICAL: "conflict_axiom",   # O2-B6：SHACL 违例与公理违例同一审核通道（kind=logical）
 }
 
 
@@ -185,7 +186,7 @@ def run_conflict_detection(project_id: int, db: Optional[Session] = None,
             schema = None
         want_types = tuple(
             t for t in (ConflictType(x) for x in
-                        (types or ["value", "type", "relationship", "axiom"])))
+                        (types or ["value", "type", "relationship", "axiom", "logical"])))
         records = detect_conflicts(ents, rel_dicts, types=want_types,
                                    object_properties=object_properties, schema=schema,
                                    entity_index=entity_index)

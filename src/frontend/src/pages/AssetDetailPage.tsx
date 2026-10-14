@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { PROJECT_STATUS, PUBLISHED_TAG } from '../shared/projectStatus';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Button, Spin, message, Descriptions, Tag, Card, Modal, Input, Tooltip, Tree } from 'antd';
 import type { TreeProps } from 'antd';
@@ -258,7 +259,7 @@ const AssetDetailPage: React.FC = () => {
                     <div className="space-y-6">
                         <div>
                             <h1 className="text-2xl font-bold text-gray-800 mb-2">{project.name}</h1>
-                            <Tag color="green">已发布</Tag>
+                            <Tag color={PUBLISHED_TAG.color}>{PUBLISHED_TAG.text}</Tag>
                         </div>
                         <Card title="项目描述" size="small">
                             <p className="text-gray-600 text-sm">{project.description || '暂无描述'}</p>
@@ -275,7 +276,7 @@ const AssetDetailPage: React.FC = () => {
                         </Card>
                         <Card title="创建者" size="small">
                             <div className="flex items-center space-x-2">
-                                <UserOutlined className="text-gray-400" />
+                                <UserOutlined className="text-gray-500" />
                                 <span className="text-gray-700">{project.owner?.username || '未知'}</span>
                             </div>
                         </Card>
@@ -380,7 +381,7 @@ const AssetDetailPage: React.FC = () => {
                                         value={treeSearchValue}
                                         onChange={(e) => setTreeSearchValue(e.target.value)}
                                         allowClear
-                                        prefix={<SearchOutlined className="text-gray-400" />}
+                                        prefix={<SearchOutlined className="text-gray-500" />}
                                     />
                                 </div>
                                 <div className="flex-1 overflow-auto p-2">

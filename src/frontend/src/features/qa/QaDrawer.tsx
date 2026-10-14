@@ -2,6 +2,7 @@
 // SSE 流式对话（打字机渲染）+ 引用溯源列表（evidence 原句 + char 定位 + 文档预签名链接）
 // + 置信度/推理路径展示 + 问答历史。项目选择器内置（默认取 URL 中的项目）。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { PROJECT_STATUS, PUBLISHED_TAG } from '../../shared/projectStatus';
 import { Button, Drawer, Empty, Input, Popover, Spin, Tag, Tooltip, message } from 'antd';
 import {
     BookOutlined,
@@ -246,7 +247,7 @@ export default function QaDrawer({ open, onClose, projectId: initialProjectId }:
                 <div className="px-4 py-3 border-b border-gray-100 max-h-56 overflow-auto shrink-0">
                     <div className="text-xs text-gray-500 mb-2">选择问答项目</div>
                     {projects.length === 0 ? (
-                        <div className="text-sm text-gray-400 py-4 text-center">暂无可用项目</div>
+                        <div className="text-sm text-gray-500 py-4 text-center">暂无可用项目</div>
                     ) : (
                         projects.map(p => (
                             <div
@@ -260,8 +261,8 @@ export default function QaDrawer({ open, onClose, projectId: initialProjectId }:
                             >
                                 <div className="flex items-center justify-between">
                                     <span className="text-sm font-medium text-gray-800">{p.name}</span>
-                                    <Tag color={p.is_published ? 'green' : 'orange'}>
-                                        {p.is_published ? '已发布' : (p as any).status === 'published' ? '已发布' : '草稿'}
+                                    <Tag color={p.is_published ? PUBLISHED_TAG.color : PROJECT_STATUS.draft.color}>
+                                        {p.is_published ? PUBLISHED_TAG.text : (p as any).status === 'published' ? PUBLISHED_TAG.text : PROJECT_STATUS.draft.text}
                                     </Tag>
                                 </div>
                                 {p.description && (
@@ -280,13 +281,13 @@ export default function QaDrawer({ open, onClose, projectId: initialProjectId }:
                     {history === null ? (
                         <Spin size="small" />
                     ) : history.length === 0 ? (
-                        <div className="text-sm text-gray-400 py-2">暂无历史</div>
+                        <div className="text-sm text-gray-500 py-2">暂无历史</div>
                     ) : (
                         history.map(h => (
                             <div key={h.id} className="py-1.5 border-b border-gray-100 last:border-0">
                                 <div className="text-sm text-gray-800">Q：{h.question}</div>
                                 <div className="text-xs text-gray-500 line-clamp-2 mt-0.5">A：{h.answer}</div>
-                                <div className="text-[11px] text-gray-400 mt-0.5">
+                                <div className="text-[11px] text-gray-500 mt-0.5">
                                     {h.model || '-'} · {h.latency_ms}ms · 引用 {h.sources?.length ?? 0} 条
                                 </div>
                             </div>
@@ -298,7 +299,7 @@ export default function QaDrawer({ open, onClose, projectId: initialProjectId }:
             {/* 对话区 */}
             <div className="flex-1 overflow-auto px-4 py-3">
                 {turns.length === 0 && !showSelector && !historyOpen && (
-                    <div className="h-full flex flex-col items-center justify-center text-gray-400">
+                    <div className="h-full flex flex-col items-center justify-center text-gray-500">
                         <BookOutlined className="text-4xl mb-3" />
                         <p>基于本体知识图谱的检索问答</p>
                         <p className="text-xs mt-1">回答带 [n] 引用角标，点击角标可定位到对应溯源引用卡</p>
@@ -325,7 +326,7 @@ export default function QaDrawer({ open, onClose, projectId: initialProjectId }:
                                                 sourceCount={turn.sources.length}
                                                 onCite={handleCite}
                                             />
-                                            {turn.streaming && <LoadingOutlined className="ml-1 text-gray-400 text-xs" />}
+                                            {turn.streaming && <LoadingOutlined className="ml-1 text-gray-500 text-xs" />}
                                         </>
                                     ) : (
                                         <div className="text-sm text-gray-800">
@@ -335,7 +336,7 @@ export default function QaDrawer({ open, onClose, projectId: initialProjectId }:
                                 </div>
                             )}
                             {turn.done && (
-                                <div className="flex items-center gap-2 mt-1.5 text-[11px] text-gray-400 flex-wrap">
+                                <div className="flex items-center gap-2 mt-1.5 text-[11px] text-gray-500 flex-wrap">
                                     {turn.done.confidence > 0 && (
                                         <Tag color={turn.done.confidence >= 0.6 ? 'green' : 'orange'} className="mr-0">
                                             置信度 {(turn.done.confidence * 100).toFixed(0)}%

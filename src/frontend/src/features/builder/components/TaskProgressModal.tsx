@@ -9,6 +9,7 @@ import { Modal, Progress, Button, Space, Typography, Alert } from 'antd';
 import { AuditOutlined, StopOutlined } from '@ant-design/icons';
 
 import { extractionApi } from '../../../api/extraction';
+import { humanizeEta } from '../../../shared/format';
 import { reviewsApi } from '../../../api/governance';
 
 const { Text } = Typography;
@@ -33,6 +34,7 @@ const TaskProgressModal: React.FC<Props> = ({
     const [message, setMessage] = useState('排队中...');
     const [detail, setDetail] = useState('');
     const [status, setStatus] = useState('queued');
+    const [stats, setStats] = useState<Record<string, any>>({});
     const [pendingReviews, setPendingReviews] = useState<number | null>(null);
     const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -49,7 +51,10 @@ const TaskProgressModal: React.FC<Props> = ({
             try {
                 const p = await extractionApi.getTask(projectId, taskId);
                 if (stopped) return;
-                setProgress(p.progress || 0);
+                const pct = typeof p.percent === 'number' ? p.percent
+                    : typeof p.progress === 'number' ? p.progress * 100 : 0;
+                setProgress(Math.max(0, Math.min(100, pct)));
+                setStats(p.stats || {});
                 setMessage(p.message || '');
                 setDetail(p.detail || '');
                 setStatus(p.status);
@@ -125,6 +130,15 @@ const TaskProgressModal: React.FC<Props> = ({
                 percent={progress}
                 status={status === 'failed' ? 'exception' : status === 'completed' ? 'success' : 'active'}
             />
+            {status !== 'completed' && Number(stats?.chunks_total) > 0 && (
+                <div className="mt-1">
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                        分片 {stats.chunks_done ?? 0}/{stats.chunks_total}
+                        {stats.batches_total ? ` · 批次 ${stats.batch_no ?? '-'}/${stats.batches_total}` : ''}
+                        {humanizeEta(stats.eta_seconds) ? ` · 预计剩余 ${humanizeEta(stats.eta_seconds)}` : ''}
+                    </Text>
+                </div>
+            )}
             <div className="mt-2">
                 <Text strong>{message || status}</Text>
                 {detail && (

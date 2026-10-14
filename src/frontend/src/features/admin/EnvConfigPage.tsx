@@ -138,7 +138,7 @@ const EnvConfigPage: React.FC = () => {
                                 <span className="flex items-center gap-2">
                                     <span style={{ color: meta.color }}>{meta.icon}</span>
                                     <span className="font-semibold">{meta.title}</span>
-                                    <span className="tk-mono text-[10px] tracking-widest text-gray-400 uppercase">
+                                    <span className="tk-mono text-[10px] tracking-widest text-gray-500 uppercase">
                                         {service}
                                     </span>
                                 </span>
@@ -180,7 +180,7 @@ const EnvConfigPage: React.FC = () => {
                                                         </Tag>
                                                     )}
                                                 </span>
-                                                <span className="tk-mono text-[10px] text-gray-400">{f.key}</span>
+                                                <span className="tk-mono text-[10px] text-gray-500">{f.key}</span>
                                             </div>
 
                                             {f.kind === 'switch' ? (
@@ -204,7 +204,7 @@ const EnvConfigPage: React.FC = () => {
                                                     onChange={(e) => setValue(f.key, e.target.value)}
                                                 />
                                             )}
-                                            {f.help && <div className="text-xs text-gray-400 mt-1">{f.help}</div>}
+                                            {f.help && <div className="text-xs text-gray-500 mt-1">{f.help}</div>}
                                         </div>
                                     );
                                 })}

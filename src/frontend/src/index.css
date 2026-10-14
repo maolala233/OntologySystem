@@ -163,6 +163,16 @@ body,
   animation-delay: 4s;
 }
 
+/* F6 无障碍：前庭障碍用户关减动效（blob 背景漂浮 / tk-scan 扫描线） */
+@media (prefers-reduced-motion: reduce) {
+  .animate-blob,
+  .animation-delay-2000,
+  .animation-delay-4000,
+  .tk-scan {
+    animation: none !important;
+  }
+}
+
 /* React Flow 自定义样式 */
 .react-flow__node {
   font-size: 14px;

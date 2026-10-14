@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import datetime
+import logging
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
@@ -21,6 +22,8 @@ from app.infrastructure.database import (
     User,
 )
 from app.services.audit_service import log_action, put_outbox
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["publications"])
 
@@ -71,6 +74,93 @@ def publish(project_id: int, body: dict | None = None,
 
     gd = proj.graph_data or {}
     health = quality_gate(gd)
+    # 门禁 3：TBox 机检硬伤（类层次环/悬空父类引用/自父）阻断发布（O1-B2）
+    if not health["passed"]:
+        raise APIError("TBox 机检未通过，修复后重试发布", code="SCHEMA_CHECKS_FAILED",
+                       http_status=400,
+                       detail={"errors": health.get("errors", []),
+                               "warnings": health.get("warnings", [])})
+
+    # 门禁 4：TBox 证据闭合（O2-B9）——悬空证据引用阻断发布
+    from app.services.evidence_closure import tbox_evidence_closure
+
+    closure = tbox_evidence_closure(db, project_id, gd)
+    if not closure["passed"]:
+        raise APIError(
+            f"TBox 证据闭合检查未通过：{len(closure['dangling'])} 个悬空证据引用"
+            "（引用的切片已不存在），修复或补抽证据后重试",
+            code="EVIDENCE_CLOSURE_FAILED", http_status=400,
+            detail={"dangling": closure["dangling"][:20]})
+
+    # 门禁 5：CQ 配对评估（O3-B14）——项目配置了启用 CQ 且存在正式基线版本时生效。
+    # 候选 vN-cK（不覆盖正式版本）；接受条件 = 零硬伤 + 非平局胜场严格更多；
+    # 门控输入显式声明 unacceptable_regressions（发布请求体，缺省 False）。
+    from app.adapters.versioning import create_candidate_version, latest_official_version
+    from app.infrastructure.database import CompetencyQuestion
+    from app.services import gate_service
+
+    unacceptable_regressions = bool(body.get("unacceptable_regressions", False))
+    cq_count = (db.query(CompetencyQuestion)
+                .filter(CompetencyQuestion.project_id == project_id,
+                        CompetencyQuestion.enabled.is_(True)).count())
+    impact_summary = None
+    if cq_count > 0:
+        baseline_ver = latest_official_version(db, project_id)
+        if baseline_ver is not None:
+            # O3-B13：发布影响分析（预览数字进响应，失败不阻断）
+            try:
+                from app.services.impact_service import publish_impact
+
+                impact_summary = publish_impact(db, proj, gd)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"[publish] 影响分析失败（不阻断）：{exc}")
+            mode = ("gt" if db.query(CompetencyQuestion)
+                    .filter(CompetencyQuestion.project_id == project_id,
+                            CompetencyQuestion.enabled.is_(True),
+                            CompetencyQuestion.answer_criteria.isnot(None)).first()
+                    else "llm_judge")
+            candidate = create_candidate_version(
+                db, proj, "full", current_user.id,
+                label=f"候选发布 v{baseline_ver.version_no + 1}-c1",
+                description="发布门控候选（配对评估）")
+            db.flush()
+            try:
+                if mode == "llm_judge":
+                    from app.adapters.provider import build_legacy_llm_config
+                    from app.infrastructure.llm_client import LLMClient
+
+                    cfg = build_legacy_llm_config(db, project_id)
+                    judge_llm = LLMClient(api_key=cfg.get("api_key"),
+                                          base_url=cfg.get("base_url"),
+                                          model=cfg.get("model"))
+                else:
+                    judge_llm = None
+                evaluation = gate_service.run_gate_evaluation(
+                    db, proj, baseline_ver, gd, mode,
+                    unacceptable_regressions=unacceptable_regressions,
+                    created_by=current_user.id, judge_llm=judge_llm)
+                evaluation.candidate_version_id = candidate.id
+                db.flush()
+            except APIError:
+                raise
+            except Exception as exc:  # noqa: BLE001 —— 评估基础设施故障可重试（幂等）
+                db.rollback()
+                raise APIError(f"门控评估执行失败，可安全重试：{exc}",
+                               code="GATE_EVAL_FAILED", http_status=503)
+            candidate.gate_status = ("passed" if evaluation.verdict == "pass"
+                                     else "rejected")
+            db.commit()
+            if evaluation.verdict != "pass":
+                raise APIError(
+                    f"发布门控未通过：CQ 配对评估 胜 {evaluation.wins} / 平 {evaluation.ties}"
+                    f" / 负 {evaluation.losses}，硬伤 {evaluation.hard_failures}。"
+                    "旧版本保持生效，修复后重试发布。",
+                    code="GATE_REJECTED", http_status=400,
+                    detail={"evaluation_id": evaluation.id,
+                            "mode": mode, "wins": evaluation.wins,
+                            "ties": evaluation.ties, "losses": evaluation.losses,
+                            "hard_failures": evaluation.hard_failures,
+                            "results": (evaluation.results or [])[:20]})
 
     # 落版本 + publication 快照 + 记录 + 状态机
     ver = create_version(db, proj, "publication", current_user.id,
@@ -118,7 +208,74 @@ def publish(project_id: int, body: dict | None = None,
     except Exception:  # noqa: BLE001 —— broker 不可达时由 beat 兜底
         pass
     return {"publication_id": pub.id, "version_no": ver.version_no,
-            "status": "published", "warnings": health["warnings"] + sync_warnings}
+            "status": "published", "warnings": health["warnings"] + sync_warnings,
+            "impact": impact_summary}
+
+
+@router.get("/api/projects/{project_id}/publish/impact",
+            dependencies=[Depends(require_module("publish"))])
+def publish_impact_preview(project_id: int,
+                           current_user: User = Depends(get_current_user),
+                           db: Session = Depends(get_db)):
+    """发布影响分析预览（O3-B13）：相对正式基线版本的 diff/波及面/待审项/TBox 漂移。"""
+    require_project_role(project_id, "editor", current_user, db)
+    proj = _project_or_404(project_id, db)
+    from app.services.impact_service import publish_impact
+
+    return publish_impact(db, proj)
+
+
+@router.get("/api/projects/{project_id}/gate/evaluations")
+def list_gate_evaluations(project_id: int, limit: int = 20,
+                          current_user: User = Depends(get_current_user),
+                          db: Session = Depends(get_db)):
+    """配对门控记录列表（O3-B14，可审计）。"""
+    require_project_role(project_id, "viewer", current_user, db)
+    _project_or_404(project_id, db)
+    from app.infrastructure.database import GateEvaluation
+    from app.services.gate_service import serialize_evaluation
+
+    rows = (db.query(GateEvaluation)
+            .filter(GateEvaluation.project_id == project_id)
+            .order_by(GateEvaluation.id.desc())
+            .limit(max(1, min(limit, 100))).all())
+    return {"items": [serialize_evaluation(r) for r in rows], "total": len(rows)}
+
+
+@router.get("/api/projects/{project_id}/gate/evaluations/{evaluation_id}")
+def get_gate_evaluation(project_id: int, evaluation_id: int,
+                        current_user: User = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
+    require_project_role(project_id, "viewer", current_user, db)
+    from app.infrastructure.database import GateEvaluation
+    from app.services.gate_service import serialize_evaluation
+
+    row = (db.query(GateEvaluation)
+           .filter(GateEvaluation.project_id == project_id,
+                   GateEvaluation.id == evaluation_id).first())
+    if row is None:
+        raise NotFoundError(f"门控记录不存在: {evaluation_id}")
+    return serialize_evaluation(row)
+
+
+@router.post("/api/projects/{project_id}/versions/candidate")
+def create_candidate(project_id: int, body: dict | None = None,
+                     current_user: User = Depends(get_current_user),
+                     db: Session = Depends(get_db)):
+    """手动/自动产生候选版本 vN-cK（O3-B14）：复用快照机制，不覆盖正式版本。"""
+    require_project_role(project_id, "editor", current_user, db)
+    proj = _project_or_404(project_id, db)
+    from app.adapters.versioning import create_candidate_version, latest_official_version
+
+    baseline = latest_official_version(db, project_id)
+    base_no = baseline.version_no if baseline is not None else 0
+    ver = create_candidate_version(
+        db, proj, "full", current_user.id,
+        label=(body or {}).get("label") or f"候选 v{base_no + 1}-c1",
+        description="候选版本（配对门控）")
+    db.commit()
+    return {"version_id": ver.id, "version_no": ver.version_no, "label": ver.label,
+            "is_candidate": True, "gate_status": ver.gate_status}
 
 
 @router.post("/api/projects/{project_id}/unpublish",

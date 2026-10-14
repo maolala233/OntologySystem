@@ -1,7 +1,7 @@
 /**
  * shared/auth/authStore - 登录用户与模块授权状态（M1，docs/design/05 §4.3）
  * 数据源：GET /api/auth/me（user + modules[]）。
- * 兼容说明：localStorage 'user' 同步维护，供暂未迁移的旧组件（OntologyBuilderPage 等）读取。
+ * 兼容说明：localStorage 'user' 同步维护，供暂未迁移的旧组件（AppLayout、SchemaTab）读取。
  */
 import { create } from 'zustand';
 import { authAPI } from '../../api/auth';

@@ -121,12 +121,11 @@ const RagSyncModal: React.FC<Props> = ({ projectId, open, onClose }) => {
                         <Input.Password placeholder="ragflow-xxxxxxxxxxxx" />
                     </Form.Item>
                     <div className="mb-1">
-                        <Button size="small" onClick={handleFetchRagflowInfo} loading={fetchingRagflow}
-                            className="bg-blue-500 hover:bg-blue-600 text-white border-none"
+                        <Button size="small" type="primary" onClick={handleFetchRagflowInfo} loading={fetchingRagflow}
                         >
                             获取RAGFlow信息
                         </Button>
-                        <span className="text-gray-400 text-xs ml-2">填写地址和API Key后点击，自动获取知识库列表</span>
+                        <span className="text-gray-500 text-xs ml-2">填写地址和API Key后点击，自动获取知识库列表</span>
                     </div>
                     <Form.Item name="kb_id" label="知识库" rules={[{ required: true, message: '请选择知识库' }]}>
                         <Select placeholder="点击上方按钮获取知识库列表" showSearch optionFilterProp="label"
@@ -136,7 +135,7 @@ const RagSyncModal: React.FC<Props> = ({ projectId, open, onClose }) => {
                                 <Select.Option key={ds.id} value={ds.id} label={ds.name}>
                                     <div className="flex justify-between">
                                         <span>{ds.name}</span>
-                                        <span className="text-gray-400 text-xs">{ds.id}</span>
+                                        <span className="text-gray-500 text-xs">{ds.id}</span>
                                     </div>
                                 </Select.Option>
                             ))}

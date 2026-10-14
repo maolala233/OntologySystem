@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.adapters.provider import build_legacy_llm_config
-from app.adapters.retrieval import QAResult, RetrievalQuery, iter_answer, query_with_reasoning
+from app.adapters.retrieval import QAResult, RetrievalQuery, iter_answer, query_with_repair
 from app.core.config import settings
 from app.core.deps import get_current_user, get_db, require_module
 from app.core.exceptions import APIError, ProjectForbiddenError
@@ -126,7 +126,7 @@ def ask_question(
 
     if not body.stream:
         t0 = time.time()
-        result = query_with_reasoning(query, db=db, llm=llm)
+        result = query_with_repair(query, db=db, llm=llm)
         hist = _save_history(db, project_id, user.id, question, result,
                              conversation_id=conversation_id)
         log_action(db, user.id, "qa.ask", resource_type="project", resource_id=str(project_id),
@@ -140,6 +140,8 @@ def ask_question(
             "reasoning_path": result.reasoning_path,
             "model": result.model,
             "latency_ms": result.latency_ms,
+            "repair_rounds": result.repair_rounds,
+            "failed": result.failed,
             "history_id": hist.id,
             "conversation_id": conversation_id,
         }
@@ -154,6 +156,13 @@ def ask_question(
 def _save_history(db: Session, project_id: int, user_id: int | None,
                   question: str, result: QAResult,
                   conversation_id: str | None = None) -> QaHistory:
+    # O3-B15/B16：status 记录 ok/repaired/failed——failed 是 B16 进化分析的数据源
+    if result.failed:
+        status = "failed"
+    elif result.repair_rounds > 0:
+        status = "repaired"
+    else:
+        status = "ok"
     hist = QaHistory(
         project_id=project_id,
         user_id=user_id,
@@ -164,11 +173,29 @@ def _save_history(db: Session, project_id: int, user_id: int | None,
         model=result.model,
         latency_ms=result.latency_ms,
         confidence=result.confidence,
+        status=status,
+        repaired_rounds=result.repair_rounds,
+        error=None,
     )
     db.add(hist)
     db.commit()
     db.refresh(hist)
     return hist
+
+
+def _save_failed_history(db: Session, project_id: int, user_id: int | None,
+                         question: str, error: str,
+                         conversation_id: str | None = None) -> None:
+    """SSE 中断等异常路径也要落失败轨迹（B16 数据源完整性）。"""
+    try:
+        db.add(QaHistory(project_id=project_id, user_id=user_id,
+                         conversation_id=conversation_id,
+                         question=question[:2000], answer=None, sources=None,
+                         status="failed", error=str(error)[:2000]))
+        db.commit()
+    except Exception as exc:  # noqa: BLE001 —— 记录失败不掩盖原异常
+        logger.warning(f"[qa] 失败轨迹落库失败：{exc}")
+        db.rollback()
 
 
 def _sse(event: str, data: dict) -> str:
@@ -214,6 +241,8 @@ def _sse_stream(db: Session, project_id: int, user: User, question: str,
         })
     except Exception as e:  # SSE 已发出 200，只能以 error 事件收尾
         logger.error(f"[qa] SSE 流失败：{e}")
+        _save_failed_history(db, project_id, user.id, question, str(e),
+                             conversation_id=conversation_id)
         yield _sse("error", {"message": f"问答服务异常：{e}"})
 
 

@@ -35,9 +35,16 @@ def _handle_graph_event(db, ev) -> str:
         if not ok:
             raise RuntimeError("Neo4j delete_project_data 返回失败")
         return "neo4j deleted"
-    if et in ("project.graph_rebuilt", "publication.created",
-              "entity.upsert", "relation.upsert"):
-        # 幂等全量重建（MERGE 语义）；entity/relation 级事件收敛为项目级重建
+    if et in ("entity.upsert", "relation.upsert"):
+        # O1-B5：实体/关系级事件走增量 MERGE，不再整项目全量重建
+        from app.adapters.stores import OutboxEvent, sync_to_neo4j
+
+        n = sync_to_neo4j([OutboxEvent(
+            aggregate_type=str(ev.aggregate_type), aggregate_id=ev.aggregate_id,
+            event_type=et, payload=ev.payload or {}, trace_id=ev.trace_id)])
+        return f"neo4j incremental x{n}"
+    if et in ("project.graph_rebuilt", "publication.created"):
+        # 项目级事件：幂等全量重建（DETACH+MERGE 语义）
         proj = db.query(Project).filter(Project.id == ev.aggregate_id).first()
         if proj is None:
             return "skipped: project gone"
@@ -48,8 +55,14 @@ def _handle_graph_event(db, ev) -> str:
             raise RuntimeError("Neo4j sync_graph 返回失败")
         return "neo4j synced"
     if et == "chunk.vectorize":
-        # Milvus 向量化（chunks 嵌入）归 M5 问答链路接入时发事件；此处占位
-        return "skipped: vectorize deferred"
+        # O1-B5：向量化事件接线 Milvus（payload.records = VectorRecord 同形 dict）
+        records = (ev.payload or {}).get("records") or []
+        if not records:
+            return "skipped: vectorize payload empty"
+        from app.adapters.stores import VectorRecord, sync_to_milvus
+
+        n = sync_to_milvus([VectorRecord(**r) for r in records])
+        return f"milvus upserted {n}"
     return f"skipped: unknown {et}"
 
 

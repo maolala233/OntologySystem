@@ -32,7 +32,7 @@ const Navbar: React.FC<NavbarProps> = ({
                 {onSearch && (
                     <Input
                         placeholder="搜索项目或本体..."
-                        prefix={<SearchOutlined className="text-gray-400" />}
+                        prefix={<SearchOutlined className="text-gray-500" />}
                         onChange={(e) => onSearch(e.target.value)}
                         className="w-32 sm:w-48 lg:w-64"
                         allowClear
@@ -43,7 +43,7 @@ const Navbar: React.FC<NavbarProps> = ({
                         type="primary"
                         icon={<PlusOutlined />}
                         onClick={onCreateProject}
-                        className="bg-blue-600 hover:bg-blue-700 flex-shrink-0"
+                        className="flex-shrink-0"
                         size="middle"
                     >
                         <span className="hidden sm:inline">新建项目</span>

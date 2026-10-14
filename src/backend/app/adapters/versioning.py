@@ -368,7 +368,13 @@ def timeline(db: Session, project_id: int, entity_uri: str | None = None,
 
 
 def quality_gate(gd: dict) -> dict:
-    """TBox 健康检查（04 §10 发布门禁）：只警告不阻断；返回 {passed, warnings}。"""
+    """TBox 健康检查（04 §10 发布门禁，O1-B2 接入机检器）：返回 {passed, warnings, errors}。
+
+    机检 error（类层次环/悬空父类/自父）→ passed=False，发布被阻断；
+    机检 warning 与既有告警只提示不阻断。
+    """
+    from app.adapters.schema_checks import run_schema_checks
+
     schema = gd.get("schema") or {}
     classes = {c.get("label") for c in schema.get("classes") or [] if c.get("label")}
     warnings: list[str] = []
@@ -385,13 +391,66 @@ def quality_gate(gd: dict) -> dict:
                      and (n.get("data") or {}).get("class_label") not in classes} - {None})
     if orphan:
         warnings.append(f"实例引用了未定义类: {'、'.join(orphan[:8])}")
-    return {"passed": bool(classes), "warnings": warnings}
+    # O2-B9：TBox 证据缺失提示（悬空引用的阻断检查在发布门禁 evidence_closure，需查库）
+    no_evidence_cls = [c.get("label") for c in schema.get("classes") or []
+                       if isinstance(c, dict) and c.get("label") and not c.get("evidence")]
+    if no_evidence_cls:
+        warnings.append(f"{len(no_evidence_cls)} 个类没有证据锚点: "
+                        f"{'、'.join(str(x) for x in no_evidence_cls[:8])}")
+    no_evidence_op = [op_.get("label") for op_ in schema.get("object_properties") or []
+                      if isinstance(op_, dict) and op_.get("label") and not op_.get("evidence")]
+    if no_evidence_op:
+        warnings.append(f"{len(no_evidence_op)} 个关系没有证据锚点: "
+                        f"{'、'.join(str(x) for x in no_evidence_op[:8])}")
+    checks = run_schema_checks(schema)
+    errors = [f"[{i.rule}] {i.message}" for i in checks.issues if i.severity == "error"]
+    warnings += [f"[{i.rule}] {i.message}" for i in checks.issues if i.severity == "warning"]
+    return {"passed": bool(classes) and not errors,
+            "warnings": warnings, "errors": errors}
+
+
+def create_candidate_version(db: Session, project, kind: str, created_by: int,
+                             label: str | None = None,
+                             description: str | None = None,
+                             graph_data: dict | None = None) -> OntologyVersion:
+    """候选版本 vN-cK（O3-B14）：与 create_version 同机制（快照入 MinIO），但
+    is_candidate=True 且**不更新** project.current_version_id —— 候选不覆盖正式版本。"""
+    from app.infrastructure.database import GraphSnapshot, OntologyVersion
+
+    gd = graph_data if graph_data is not None else (project.graph_data or {})
+    version_no = next_version_no(db, project.id)
+    key, node_count, edge_count, checksum = put_snapshot(
+        project.id, version_no,
+        {"project_id": project.id, "version_no": version_no, "kind": kind,
+         "candidate": True, "created_at": datetime.utcnow().isoformat(), "graph_data": gd})
+    row = OntologyVersion(
+        project_id=project.id, version_no=version_no, label=label, kind=kind,
+        full_snapshot_key=key, stats=graph_stats(gd), checksum=checksum,
+        created_by=created_by, description=description,
+        is_candidate=True, gate_status="pending")
+    db.add(row)
+    db.flush()
+    db.add(GraphSnapshot(project_id=project.id, version_id=row.id, purpose="version",
+                         storage_key=key, node_count=node_count, edge_count=edge_count,
+                         checksum=checksum))
+    return row
+
+
+def latest_official_version(db: Session, project_id: int) -> Optional["OntologyVersion"]:
+    """最近的正式（非候选）版本 —— 配对门控的 baseline。"""
+    from app.infrastructure.database import OntologyVersion
+
+    return (db.query(OntologyVersion)
+            .filter(OntologyVersion.project_id == project_id,
+                    OntologyVersion.is_candidate.is_(False))
+            .order_by(OntologyVersion.version_no.desc()).first())
 
 
 __all__ = [
     "VersionKind", "VersionDiff", "VersionSnapshot",
     "CLASS_TYPES", "ABOX_TYPES", "compute_checksum", "snapshot_key", "put_snapshot",
     "get_snapshot_json", "graph_stats", "next_version_no", "create_version",
+    "create_candidate_version", "latest_official_version",
     "load_graph_for", "diff_graphs", "diff_versions", "restore_version",
     "entity_history", "timeline", "quality_gate",
 ]

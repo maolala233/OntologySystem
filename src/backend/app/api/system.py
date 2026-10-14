@@ -14,8 +14,8 @@ router = APIRouter(prefix="/api/system", tags=["system"])
 
 # ==============================================================================
 # M0 新增：统一健康检查（docs/design/03 §17）
-# 五灯 = mysql/neo4j/milvus/redis/minio（各 2s 超时，互不阻塞）；
-# oxigraph 为嵌入式（M4 接入），本阶段固定 pending。
+# 六灯 = mysql/neo4j/milvus/redis/minio/oxigraph（各 2s 超时，互不阻塞）；
+# oxigraph 为嵌入式（O1-B5 起以数据目录可写性真实探测，不再固定 pending）。
 # ==============================================================================
 def _check_mysql() -> dict:
     import time
@@ -105,9 +105,29 @@ def _check_minio() -> dict:
     return {"status": "ok", "latency_ms": int((time.perf_counter() - t0) * 1000)}
 
 
+def _check_oxigraph() -> dict:
+    """Oxigraph 灯（O1-B5 恢复真实状态）：数据目录存在且可写 = ok。
+
+    RocksDB 独占锁被 worker-rdf 持有时无法在 API 进程打开 Store 探测，
+    故以目录可写性为准（写不出 = 投影链路必挂，如实报 down）。
+    """
+    import os
+    import time
+    from app.core.config import settings
+
+    t0 = time.perf_counter()
+    path = settings.OXIGRAPH_PATH
+    os.makedirs(path, exist_ok=True)  # 首次部署目录尚不存在：能建出来即可写
+    probe = os.path.join(path, ".healthcheck")
+    with open(probe, "w", encoding="utf-8") as f:
+        f.write("ok")
+    os.remove(probe)
+    return {"status": "ok", "latency_ms": int((time.perf_counter() - t0) * 1000)}
+
+
 @router.get("/health")
 def system_health():
-    """平台健康检查（公开）：五灯 + oxigraph pending（M4 接入后转 ok）。"""
+    """平台健康检查（公开）：六灯全真实探测（O1-B5 起 oxigraph 不再是占位 pending）。"""
     from concurrent.futures import ThreadPoolExecutor
 
     checks = {
@@ -116,6 +136,7 @@ def system_health():
         "milvus": _check_milvus,
         "redis": _check_redis,
         "minio": _check_minio,
+        "oxigraph": _check_oxigraph,
     }
     results: Dict[str, Any] = {}
     with ThreadPoolExecutor(max_workers=len(checks)) as pool:
@@ -125,8 +146,7 @@ def system_health():
                 results[name] = fut.result(timeout=5)
             except Exception as exc:  # 探测失败不是 5xx：健康检查如实报告灯色
                 results[name] = {"status": "down", "error": str(exc)[:200]}
-    results["oxigraph"] = {"status": "pending"}  # M4：worker-rdf 接入嵌入式 Oxigraph
-    overall = "ok" if all(v.get("status") == "ok" for k, v in results.items() if k != "oxigraph") else "degraded"
+    overall = "ok" if all(v.get("status") == "ok" for v in results.values()) else "degraded"
     return {"status": overall, "checks": results}
 
 

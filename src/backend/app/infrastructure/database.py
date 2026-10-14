@@ -324,9 +324,11 @@ class ReviewItem(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     project_id = Column(Integer, nullable=False)
-    item_type = Column(Enum("entity_merge", "new_class", "low_confidence_entity",
-                            "low_confidence_relation", "conflict_value", "conflict_type",
-                            "conflict_relationship", "missing_evidence", "conflict_axiom",
+    item_type = Column(Enum("entity_merge", "new_class", "new_predicate",
+                            "low_confidence_entity", "low_confidence_relation",
+                            "conflict_value", "conflict_type", "conflict_relationship",
+                            "missing_evidence", "conflict_axiom", "axiom_suggestion",
+                            "schema_match_suggestion", "cq_suggestion",
                             name="review_item_type"), nullable=False)
     payload = Column(JSON, nullable=False)
     reason = Column(String(255), nullable=True)
@@ -363,6 +365,9 @@ class OntologyVersion(Base):
     parent_version_id = Column(Integer, nullable=True)
     created_by = Column(Integer, nullable=False)
     description = Column(String(500), nullable=True)
+    # O3-B14：候选版本 vN-cK（重抽/修改的候选），不更新 project.current_version_id
+    is_candidate = Column(Boolean, nullable=False, server_default="0")
+    gate_status = Column(String(16), nullable=True)  # pending | passed | rejected
     created_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))
 
     __table_args__ = (
@@ -483,6 +488,11 @@ class QaHistory(Base):
     model = Column(String(128), nullable=True)
     latency_ms = Column(Integer, nullable=True)
     confidence = Column(Numeric(4, 3), nullable=True)
+    # O3-B15/B16：自修复与失败轨迹数据源（R19 e9f0a1b2c3d4）
+    status = Column(Enum("ok", "repaired", "failed", name="qa_status"),
+                    nullable=False, server_default="ok")
+    repaired_rounds = Column(Integer, nullable=False, server_default="0")
+    error = Column(Text, nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))
 
 
@@ -878,3 +888,107 @@ class ReasoningResult(Base):
     object_label = Column(String(255), nullable=False, server_default="")
     created_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))
 
+
+
+# ══════════ O3 方法论产品化（docs/design/09 §2，R19 e9f0a1b2c3d4） ══════════
+
+class CompetencyQuestion(Base):
+    """Competency Question 资产（O3-B12）：项目级能力问题列表。
+
+    source: manual=人工录入；evolution=B16 失败问答进化建议批准生成。
+    answer_criteria 为可空 GT 答案要点（配对门控 GT 绝对评分用）。
+    """
+    __tablename__ = "competency_questions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, nullable=False, index=True)
+    question = Column(Text, nullable=False)
+    answer_criteria = Column(Text, nullable=True)
+    source = Column(Enum("manual", "evolution", name="cq_source"),
+                    nullable=False, server_default="manual")
+    sort_order = Column(Integer, nullable=False, server_default="0")
+    enabled = Column(Boolean, nullable=False, server_default="1")
+    created_by = Column(Integer, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))
+    updated_at = Column(DateTime, nullable=True)
+
+
+class CqEvaluation(Base):
+    """CQ 评测报告（O3-B12）：抽取后自动（trigger=auto_post_extract）或手动跑 CQ。
+
+    mode: retrieval=检索式跑通率/证据覆盖率（确定性，无 LLM）；gt/llm_judge 留给门控。
+    results: [{cq_id, question, answerable, coverage, source_count}]
+    """
+    __tablename__ = "cq_evaluations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, nullable=False, index=True)
+    trigger = Column(Enum("manual", "auto_post_extract", "publish_gate", name="cq_eval_trigger"),
+                     nullable=False, server_default="manual")
+    mode = Column(Enum("retrieval", "llm_judge", "gt", name="cq_eval_mode"),
+                  nullable=False, server_default="retrieval")
+    baseline_version_id = Column(Integer, nullable=True)
+    candidate_version_id = Column(Integer, nullable=True)
+    total_cq = Column(Integer, nullable=False, server_default="0")
+    answerable_count = Column(Integer, nullable=False, server_default="0")
+    coverage_rate = Column(Numeric(4, 3), nullable=False, server_default="0")
+    results = Column(JSON, nullable=True)
+    created_by = Column(Integer, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))
+
+
+class GateEvaluation(Base):
+    """发布门控配对评估记录（O3-B14）：候选 vN-cK vs 正式版本的 CQ 配对结论。
+
+    接受条件 = 零硬伤 + 非平局胜场严格更多；记录持久化可审计，幂等重试安全。
+    unacceptable_regressions 由门控输入显式声明（发布请求体，缺省 False）。
+    """
+    __tablename__ = "gate_evaluations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, nullable=False, index=True)
+    mode = Column(Enum("gt", "llm_judge", name="gate_eval_mode"), nullable=False)
+    baseline_version_id = Column(Integer, nullable=True)
+    candidate_version_id = Column(Integer, nullable=True)
+    wins = Column(Integer, nullable=False, server_default="0")
+    ties = Column(Integer, nullable=False, server_default="0")
+    losses = Column(Integer, nullable=False, server_default="0")
+    hard_failures = Column(Integer, nullable=False, server_default="0")
+    unacceptable_regressions = Column(Boolean, nullable=False, server_default="0")
+    verdict = Column(Enum("pass", "reject", name="gate_verdict"), nullable=False)
+    results = Column(JSON, nullable=True)
+    created_by = Column(Integer, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))
+
+
+class OntologyImport(Base):
+    """导入的标准本体（O3-B17）：OWL/TTL 文件作为项目基础可浏览可引用。
+
+    mappings: 批准的映射/合并 [{import_label, target_label, kind, similarity}]。
+    """
+    __tablename__ = "ontology_imports"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, nullable=False, index=True)
+    filename = Column(String(255), nullable=False)
+    storage_key = Column(String(512), nullable=True)
+    format = Column(String(16), nullable=False, server_default="ttl")
+    class_count = Column(Integer, nullable=False, server_default="0")
+    property_count = Column(Integer, nullable=False, server_default="0")
+    mappings = Column(JSON, nullable=True)
+    created_by = Column(Integer, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))
+
+
+class EvolutionReport(Base):
+    """失败问答进化分析报告（O3-B16）：聚合结论 + 物化的审核项 id 留痕。"""
+    __tablename__ = "evolution_reports"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, nullable=False, index=True)
+    failure_count = Column(Integer, nullable=False, server_default="0")
+    window_days = Column(Integer, nullable=False, server_default="7")
+    clusters = Column(JSON, nullable=True)
+    review_item_ids = Column(JSON, nullable=True)
+    created_by = Column(Integer, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))

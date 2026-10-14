@@ -1,13 +1,15 @@
 /**
  * 构建器 · 时间轴 Tab（05 §6.7）：版本时间轴（GET /versions）+ 双版本 diff + 回滚 +
- * 实体时间线（GET /timeline 双时间轴）。vis-timeline 渲染归 M4，本 Tab 用 antd 结构化呈现。
+ * 实体时间线（GET /timeline 双时间轴）+ 发布门控/影响分析（O3-B13/B14/F9）。
+ * vis-timeline 渲染归 M4，本 Tab 用 antd 结构化呈现。
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-    Button, Card, Collapse, Empty, Input, Modal, Segmented, Select, Space, Spin, Table, Tag, Timeline as AntTimeline, message,
+    Alert, Button, Card, Collapse, Descriptions, Empty, Input, Modal, Segmented, Select, Space, Spin, Table, Tag, Timeline as AntTimeline, Tooltip, message,
 } from 'antd';
-import { RollbackOutlined, SearchOutlined } from '@ant-design/icons';
+import { RollbackOutlined, SearchOutlined, ThunderboltOutlined } from '@ant-design/icons';
 
+import { GateEvaluationRow, ImpactSummary, gateApi, impactApi } from '../../../api/cqs';
 import {
     DiffResult, InstanceBrief, InstanceModified, RelationRow, VersionRow, versionsApi,
 } from '../../../api/governance';
@@ -18,6 +20,17 @@ const KIND_META: Record<string, { color: string; label: string }> = {
     publication: { color: 'purple', label: '发布' },
     rollback: { color: 'orange', label: '回滚' },
     manual: { color: 'geekblue', label: '手动编辑' },
+};
+
+// 门控结论呈现（候选视角：win=候选胜）
+const GATE_VERDICT: Record<string, { color: string; text: string }> = {
+    pass: { color: 'success', text: '通过' },
+    reject: { color: 'error', text: '未通过' },
+};
+const RESULT_VERDICT: Record<string, { color: string; text: string }> = {
+    win: { color: 'success', text: '候选胜' },
+    loss: { color: 'error', text: '候选负' },
+    tie: { color: 'default', text: '平局' },
 };
 
 // ── diff 友好呈现 ─────────────────────────────────────────────
@@ -36,7 +49,7 @@ const SectionHeader = ({ title, added, removed, modified }: { title: string; add
             {added > 0 && <span className="text-green-600">+{added} 新增</span>}
             {removed > 0 && <span className="text-red-600">−{removed} 删除</span>}
             {modified > 0 && <span className="text-amber-600">~{modified} 变化</span>}
-            {!added && !removed && !modified && <span className="text-gray-400">无差异</span>}
+            {!added && !removed && !modified && <span className="text-gray-500">无差异</span>}
         </span>
     </div>
 );
@@ -130,7 +143,7 @@ interface Props {
 }
 
 const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
-    const [subTab, setSubTab] = useState<'versions' | 'entity'>('versions');
+    const [subTab, setSubTab] = useState<'versions' | 'entity' | 'gate'>('versions');
     const [versions, setVersions] = useState<VersionRow[]>([]);
     const [loading, setLoading] = useState(false);
     const [selA, setSelA] = useState<number | null>(null);
@@ -143,6 +156,11 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
     const [axis, setAxis] = useState<'valid' | 'transaction' | 'both'>('both');
     const [events, setEvents] = useState<Record<string, any>[]>([]);
     const [entityLoading, setEntityLoading] = useState(false);
+
+    // 发布门控/影响分析（O3-B13/B14/F9）
+    const [gates, setGates] = useState<GateEvaluationRow[]>([]);
+    const [impact, setImpact] = useState<ImpactSummary | null>(null);
+    const [gateLoading, setGateLoading] = useState(false);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -157,6 +175,22 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
     }, [projectId]);
 
     useEffect(() => { load(); }, [load]);
+
+    const loadGate = useCallback(async () => {
+        setGateLoading(true);
+        try {
+            const [g, imp] = await Promise.all([
+                gateApi.evaluations(projectId, 20),
+                impactApi.preview(projectId).catch(() => null),
+            ]);
+            setGates(g.items || []);
+            setImpact(imp);
+        } catch (e: any) {
+            message.error(e.response?.data?.error?.message || '加载门控记录失败');
+        } finally {
+            setGateLoading(false);
+        }
+    }, [projectId]);
 
     const options = versions.map((v) => ({ value: v.version_no, label: `v${v.version_no} ${KIND_META[v.kind]?.label || v.kind}` }));
 
@@ -236,10 +270,14 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
                 <Space>
                     <Segmented
                         value={subTab}
-                        onChange={(v) => setSubTab(v as any)}
+                        onChange={(v) => {
+                            setSubTab(v as any);
+                            if (v === 'gate') loadGate();
+                        }}
                         options={[
                             { value: 'versions', label: '版本时间轴' },
                             { value: 'entity', label: '实体时间线' },
+                            { value: 'gate', label: '发布门控' },
                         ]}
                     />
                     <Button icon={<SearchOutlined />} onClick={load}>刷新</Button>
@@ -358,10 +396,121 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
                 </Spin>
             )}
 
+            {subTab === 'gate' && (
+                <Spin spinning={gateLoading}>
+                    <Alert
+                        type="info" showIcon className="mb-4"
+                        message="发布前系统会拿「评测问题（CQ）」给新旧版本匿名对答：新版本出现硬伤或负场多于胜场时拒绝发布，旧版本继续生效。"
+                        description="维护 CQ 请前往「骨架编辑 → 评测问题」；发布时的影响分析也会在这里留痕。"
+                    />
+
+                    {/* 影响分析数字（相对最新正式基线） */}
+                    <div className="mb-4">
+                        <div className="font-medium mb-2">发布影响分析预览</div>
+                        {impact ? (
+                            <Descriptions size="small" bordered column={4}>
+                                <Descriptions.Item label="基线版本">{impact.has_baseline ? `#${impact.baseline_version_id}` : '无（首次发布落基线）'}</Descriptions.Item>
+                                <Descriptions.Item label="类变化">
+                                    +{impact.diff.classes.added} / −{impact.diff.classes.removed} / ~{impact.diff.classes.modified}
+                                </Descriptions.Item>
+                                <Descriptions.Item label="关系变化">
+                                    +{impact.diff.relations.added} / −{impact.diff.relations.removed} / ~{impact.diff.relations.modified}
+                                </Descriptions.Item>
+                                <Descriptions.Item label="实例变化">
+                                    +{impact.diff.instances.added} / −{impact.diff.instances.removed} / ~{impact.diff.instances.modified}
+                                </Descriptions.Item>
+                                <Descriptions.Item label="波及实例">{impact.affected.instances}</Descriptions.Item>
+                                <Descriptions.Item label="波及关系">{impact.affected.relations}</Descriptions.Item>
+                                <Descriptions.Item label="待审核项">
+                                    <span className={impact.affected.pending_reviews > 0 ? 'text-red-600 font-medium' : ''}>
+                                        {impact.affected.pending_reviews}
+                                    </span>
+                                </Descriptions.Item>
+                                <Descriptions.Item label="TBox 漂移">
+                                    {impact.drift?.length
+                                        ? <Tooltip title={impact.drift.map((d) => `${d.label}×${d.instance_count}`).join('、')}>{impact.drift.length} 类</Tooltip>
+                                        : '无'}
+                                </Descriptions.Item>
+                            </Descriptions>
+                        ) : (
+                            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无影响分析（可能尚无基线版本）" />
+                        )}
+                    </div>
+
+                    {/* 门控记录（可审计） */}
+                    <div className="font-medium mb-2">门控评估记录（{gates.length}）</div>
+                    {gates.length === 0 && !gateLoading && (
+                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无门控记录；发布（配置了启用 CQ 时）会自动产生" />
+                    )}
+                    <div className="space-y-3">
+                        {gates.map((g) => {
+                            const vm = GATE_VERDICT[g.verdict] || { color: 'default', text: g.verdict };
+                            return (
+                                <div key={g.id} className="border rounded p-3">
+                                    <Space wrap className="mb-2">
+                                        <Tag color={vm.color}>{vm.text}</Tag>
+                                        <Tag color="geekblue">{g.mode === 'gt' ? '绝对评分' : '匿名 A/B'}</Tag>
+                                        <span className="text-sm">胜 <b className="text-green-600">{g.wins}</b> ·
+                                            平 <b>{g.ties}</b> · 负 <b className="text-red-600">{g.losses}</b> ·
+                                            硬伤 <b className={g.hard_failures > 0 ? 'text-red-600' : ''}>{g.hard_failures}</b>
+                                        </span>
+                                        {g.unacceptable_regressions && <Tag color="red">零容忍模式</Tag>}
+                                        {g.candidate_version_id && <Tag>候选 #{g.candidate_version_id}</Tag>}
+                                        <span className="text-xs text-gray-500">
+                                            {g.created_at ? String(g.created_at).slice(0, 19).replace('T', ' ') : ''}
+                                        </span>
+                                    </Space>
+                                    {g.results?.length > 0 && (
+                                        <Collapse
+                                            size="small"
+                                            items={[{
+                                                key: 'detail',
+                                                label: `逐题明细（${g.results.length} 条）`,
+                                                children: (
+                                                    <Table
+                                                        size="small"
+                                                        rowKey={(r: any, i) => `${r.cq_id}-${i}`}
+                                                        dataSource={g.results}
+                                                        pagination={false}
+                                                        columns={[
+                                                            { title: '问题', dataIndex: 'question', ellipsis: true },
+                                                            {
+                                                                title: '结论', dataIndex: 'verdict', width: 96,
+                                                                render: (v: string, r: any) => (
+                                                                    <Space size={4}>
+                                                                        <Tag color={RESULT_VERDICT[v]?.color || 'default'}>
+                                                                            {RESULT_VERDICT[v]?.text || v || '—'}
+                                                                        </Tag>
+                                                                        {r.hard_failure && <Tag color="red">硬伤</Tag>}
+                                                                    </Space>
+                                                                ),
+                                                            },
+                                                            {
+                                                                title: '依据', key: 'why', ellipsis: true,
+                                                                render: (_: any, r: any) => (r.judge_reason
+                                                                    || (typeof r.delta === 'number'
+                                                                        ? `覆盖率 ${r.baseline_score} → ${r.candidate_score}（Δ${r.delta > 0 ? '+' : ''}${r.delta}）`
+                                                                        : '—')),
+                                                            },
+                                                        ] as any}
+                                                    />
+                                                ),
+                                            }]}
+                                        />
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                    <div className="mt-3">
+                        <Button size="small" icon={<ThunderboltOutlined />} onClick={loadGate}>刷新门控记录</Button>
+                    </div>
+                </Spin>
+            )}
+
             {subTab === 'entity' && (
                 <div>
-                    <Space wrap className="mb-4">
-                        <Input
+                    <Space wrap className="mb-4">                        <Input
                             style={{ width: 380 }}
                             placeholder="实体 URI（留空=全部实体）；可从实例详情复制"
                             value={entityUri}
@@ -390,7 +539,7 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
                                         <Tag color="cyan">{e.type}</Tag>
                                     </Space>
                                     <span className="ml-2 text-gray-700">{e.label}</span>
-                                    <span className="ml-2 text-xs text-gray-400">{e.uri}</span>
+                                    <span className="ml-2 text-xs text-gray-500">{e.uri}</span>
                                 </div>
                             ),
                         }))}

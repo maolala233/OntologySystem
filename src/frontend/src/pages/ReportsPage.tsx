@@ -16,6 +16,7 @@ import {
     type ReportResult,
 } from '../api/reports';
 import { projectsApi } from '../api/projects';
+import { QA_LAST_PROJECT_ID_KEY } from '../shared/keys';
 import type { ProjectData } from '../types/ontology';
 import { useLocation } from 'react-router-dom';
 import MarkdownAnswer from '../features/qa/MarkdownAnswer';
@@ -101,7 +102,7 @@ export default function ReportsPage() {
             try {
                 const list = await projectsApi.getSelectableProjects();
                 setProjects(list);
-                const saved = Number(localStorage.getItem('qa_last_project_id'));
+                const saved = Number(localStorage.getItem(QA_LAST_PROJECT_ID_KEY));
                 const pid = list.find(p => p.id === saved)?.id ?? list[0]?.id ?? null;
                 setProjectId(pid);
                 if (pid != null) {
@@ -118,7 +119,7 @@ export default function ReportsPage() {
     const onProjectChange = useCallback(async (pid: number) => {
         setProjectId(pid);
         setResult(null);
-        localStorage.setItem('qa_last_project_id', String(pid));
+        localStorage.setItem(QA_LAST_PROJECT_ID_KEY, String(pid));
         loadChips(pid);
         loadTemplateInfo(pid);
     }, [loadChips, loadTemplateInfo]);
@@ -179,7 +180,7 @@ export default function ReportsPage() {
                         />
                     </div>
                     <div className="mt-3">
-                        <div className="text-xs text-gray-400 mb-1.5">
+                        <div className="text-xs text-gray-500 mb-1.5">
                             围绕主题从知识图谱中提取相关实体、属性与关系作为证据，生成面向业务读者的分析
                         </div>
                         <div className="flex items-center gap-3 flex-wrap">
@@ -205,7 +206,7 @@ export default function ReportsPage() {
                                 {busy ? `生成中…（${elapsed}s）` : '生成'}
                             </Button>
                             {busy && kind === 'report' && (
-                                <span className="text-xs text-gray-400">全文生成约需 1~2 分钟，请稍候</span>
+                                <span className="text-xs text-gray-500">全文生成约需 1~2 分钟，请稍候</span>
                             )}
                         </div>
                         {/* 推理附录（语义推理产物，生成后确定性拼接，不进 LLM 正文材料） */}
@@ -254,7 +255,7 @@ export default function ReportsPage() {
                                             </Popconfirm>
                                         </>
                                     ) : (
-                                        <span className="text-xs text-gray-400">未上传 · 将使用系统默认模板（深蓝商务风）</span>
+                                        <span className="text-xs text-gray-500">未上传 · 将使用系统默认模板（深蓝商务风）</span>
                                     )}
                                     <div className="flex-1" />
                                     <Button size="small" type="link" className="!px-1 !text-[11px]"
@@ -265,13 +266,13 @@ export default function ReportsPage() {
                             </div>
                         )}
                         {chipsLoading && (
-                            <div className="flex items-center gap-1.5 mt-2 text-xs text-gray-400">
+                            <div className="flex items-center gap-1.5 mt-2 text-xs text-gray-500">
                                 <Spin size="small" /> 正在根据图谱内容生成主题建议…
                             </div>
                         )}
                         {!chipsLoading && chips.length > 0 && (
                             <div className="flex items-center gap-1.5 flex-wrap mt-2">
-                                <span className="text-xs text-gray-400">主题建议：</span>
+                                <span className="text-xs text-gray-500">主题建议：</span>
                                 {chips.map(c => (
                                     <Tag key={c} className="!m-0 cursor-pointer hover:border-blue-400 hover:text-blue-500"
                                         onClick={() => { if (!busy) setTopic(t => (t ? `${t.trim()}与${c}` : `${c}`)); }}>
@@ -298,7 +299,7 @@ export default function ReportsPage() {
                             <div className="flex items-center gap-2">
                                 <span className="font-semibold text-gray-800">{result.title}</span>
                                 <Tag color="blue">{result.kind === 'report' ? '分析报告' : '演示文稿'}</Tag>
-                                <span className="text-xs text-gray-400">{(result.latency_ms / 1000).toFixed(1)}s</span>
+                                <span className="text-xs text-gray-500">{(result.latency_ms / 1000).toFixed(1)}s</span>
                             </div>
                             <div className="flex gap-2">
                                 {Object.entries(result.downloads).map(([fmt, url]) => (
@@ -342,7 +343,7 @@ export default function ReportsPage() {
                 )}
 
                 {!result && !busy && (
-                    <div className="bg-white rounded-xl border border-dashed border-gray-300 p-12 text-center text-gray-400">
+                    <div className="bg-white rounded-xl border border-dashed border-gray-300 p-12 text-center text-gray-500">
                         填写分析主题后点击「生成」——系统会从项目图谱中检索与主题相关的实体、属性与关系，
                         撰写面向业务读者的主题分析报告或演示大纲
                     </div>

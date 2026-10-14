@@ -170,7 +170,7 @@ const ReasoningModal: React.FC<{
                     <Radio.Button value="rdfs">RDFS</Radio.Button>
                 </Radio.Group>
                 <Button type="primary" icon={<ExperimentOutlined />} loading={running}
-                        onClick={runReasoning} className="bg-blue-600">
+                        onClick={runReasoning}>
                     运行推理
                 </Button>
                 <Button icon={<DownloadOutlined />} onClick={exportInferred}>导出含推理 TTL</Button>
@@ -187,7 +187,7 @@ const ReasoningModal: React.FC<{
             {summary && (
                 <div className="flex flex-wrap items-center gap-2 mb-3 p-3 rounded" style={{ background: 'rgba(91,141,239,0.08)' }}>
                     <span className="text-sm">事实 <b>{summary.fact_triples}</b> 条</span>
-                    <span className="text-gray-400">→</span>
+                    <span className="text-gray-500">→</span>
                     <span className="text-sm">推理得出 <b style={{ color: '#B585F2' }}>{summary.inferred_total}</b> 条</span>
                     <Tag color="blue">OWL-RL/RDFS 蕴含 {summary.inferred_entailment}</Tag>
                     <Tag color="purple">规则推理 {summary.inferred_rule}</Tag>
@@ -198,7 +198,7 @@ const ReasoningModal: React.FC<{
             {/* 结果列表 */}
             <div className="flex items-center gap-2 mb-2">
                 <span className="text-sm font-medium">推理结果</span>
-                <span className="text-xs text-gray-400">（共 {total} 条，最多展示 {LIMIT} 条）</span>
+                <span className="text-xs text-gray-500">（共 {total} 条，最多展示 {LIMIT} 条）</span>
                 <div className="flex-1" />
                 <Radio.Group size="small" value={sourceFilter} onChange={(e) => { setSourceFilter(e.target.value); loadResults(e.target.value); }}>
                     <Radio.Button value={undefined}>全部</Radio.Button>
@@ -222,7 +222,7 @@ const ReasoningModal: React.FC<{
                                     {it.source === 'rule' && it.rule_name ? `规则·${it.rule_name}` : tag.label}
                                 </Tag>
                                 <span className="font-medium">{it.subject_label || it.subject_uri}</span>
-                                <span className="text-gray-400">—[{it.predicate_label}]→</span>
+                                <span className="text-gray-500">—[{it.predicate_label}]→</span>
                                 <span className="font-medium">{it.object_label || it.object_uri}</span>
                             </div>
                         );
@@ -281,7 +281,7 @@ const ReasoningModal: React.FC<{
                             <Switch size="small" checked={r.enabled} onChange={(v) => toggleRule(r, v)} />
                             <div className="flex-1">
                                 <div className="font-medium">{r.name}</div>
-                                <div className="text-xs text-gray-400">
+                                <div className="text-xs text-gray-500">
                                     {r.if_subject_class} —[{r.if_predicate}]→ {r.if_object_class}
                                     <span className="mx-1">⇒</span>
                                     <span style={{ color: '#B585F2' }}>{r.then_predicate}</span>

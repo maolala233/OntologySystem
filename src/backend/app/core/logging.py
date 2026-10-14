@@ -76,6 +76,12 @@ def setup_logging() -> logging.Logger:
     access_logger.addHandler(logging.NullHandler())
     access_logger.propagate = False
 
+    # uvicorn 0.47+ 的 --reload 父进程也会加载应用（run() 里 config.load_app()），
+    # root 已是 INFO：watchfiles 检测到变更会打 INFO，而 uvicorn 传给它的过滤器是
+    # None（logs 目录又在监听树内），这条 INFO 落进日志文件后再次被检测，形成
+    # ~0.4s 一轮的 "1 change detected" 自激刷屏循环——必须压回 WARNING
+    logging.getLogger("watchfiles.main").setLevel(logging.WARNING)
+
     removed = _sweep_stale_files()
     app_logger = logging.getLogger("ontology_system")
     app_logger.info(

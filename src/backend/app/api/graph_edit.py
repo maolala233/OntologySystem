@@ -292,10 +292,30 @@ def add_relation(project_id: int, body: dict,
                  "_source": "manual", "_created_by": current_user.username},
     }
     edges.append(edge)
+
+    # O2-B7：声明了 inverse_of 的谓词对，手动写入一边自动补另一边（双向一致）
+    inverse_added = None
+    from app.adapters.inverse_props import inverse_predicate_of
+
+    inv = inverse_predicate_of(predicate, gd.get("schema") or {})
+    if inv:
+        rev_dup = next((e for e in edges if str(e.get("source")) == dst
+                        and str(e.get("target")) == src
+                        and _edge_relation(e) == inv), None)
+        if rev_dup is None:
+            inv_edge = {
+                "id": f"edge_{secrets.token_hex(6)}", "source": dst, "target": src,
+                "data": {"label": inv, "relation": inv,
+                         "_source": "manual", "_created_by": current_user.username,
+                         "_inverse_of_edge": edge["id"]},
+            }
+            edges.append(inv_edge)
+            inverse_added = inv_edge["id"]
+
     project.graph_data = gd
     res = _commit_edit(db, project, current_user,
                        f"手动：新增关系「{_label_of(nodes, src)} →{predicate}→ {_label_of(nodes, dst)}」")
-    return {"edge_id": edge["id"], **res}
+    return {"edge_id": edge["id"], "inverse_edge_id": inverse_added, **res}
 
 
 @router.patch("/relations/{edge_id}")
@@ -327,17 +347,41 @@ def update_relation(project_id: int, edge_id: str, body: dict,
     data["relation"] = predicate
     data["label"] = predicate
     edge["data"] = data
+
+    # O2-B7：谓词变更后自动逆边跟随重同步（删旧逆边、按新谓词补新逆边）
+    edges[:] = [e for e in edges
+                if str((e.get("data") or {}).get("_inverse_of_edge") or "") != str(edge_id)]
+    inv_edge_id = None
+    from app.adapters.inverse_props import inverse_predicate_of
+
+    inv = inverse_predicate_of(predicate, gd.get("schema") or {})
+    if inv:
+        rev_dup = next((e for e in edges if e is not edge
+                        and str(e.get("source")) == edge.get("target")
+                        and str(e.get("target")) == edge.get("source")
+                        and _edge_relation(e) == inv), None)
+        if rev_dup is None:
+            inv_edge = {
+                "id": f"edge_{secrets.token_hex(6)}",
+                "source": edge.get("target"), "target": edge.get("source"),
+                "data": {"label": inv, "relation": inv,
+                         "_source": "manual", "_created_by": current_user.username,
+                         "_inverse_of_edge": edge_id},
+            }
+            edges.append(inv_edge)
+            inv_edge_id = inv_edge["id"]
+
     project.graph_data = gd
     res = _commit_edit(db, project, current_user,
                        f"手动：修改关系谓词「{old_pred}」→「{predicate}」")
-    return {"edge_id": edge_id, **res}
+    return {"edge_id": edge_id, "inverse_edge_id": inv_edge_id, **res}
 
 
 @router.delete("/relations/{edge_id}")
 def delete_relation(project_id: int, edge_id: str,
                     current_user: User = Depends(get_current_user),
                     db: Session = Depends(get_db)):
-    """手动删除关系边。"""
+    """手动删除关系边（O2-B7：删除带自动逆边的边时，逆边一并删除保持双向一致）。"""
     require_project_role(project_id, "editor", current_user, db)
     project = _project_or_404(project_id, db)
     gd = project.graph_data or {}
@@ -346,9 +390,19 @@ def delete_relation(project_id: int, edge_id: str,
     edge = _find_edge(edges, edge_id)
     pred = _edge_relation(edge)
     edges.remove(edge)
+    # O2-B7：该边的自动逆边（add/update 时带 _inverse_of_edge 标记）跟随删除
+    removed_inverse = 0
+    kept = []
+    for e in edges:
+        d = e.get("data") if isinstance(e.get("data"), dict) else {}
+        if str(d.get("_inverse_of_edge") or "") == str(edge_id):
+            removed_inverse += 1
+            continue
+        kept.append(e)
+    edges[:] = kept
     project.graph_data = gd
     src_label = _label_of(nodes, str(edge.get("source")))
     dst_label = _label_of(nodes, str(edge.get("target")))
     res = _commit_edit(db, project, current_user,
                        f"手动：删除关系「{src_label} →{pred}→ {dst_label}」")
-    return {"deleted": True, **res}
+    return {"deleted": True, "inverse_removed": removed_inverse, **res}

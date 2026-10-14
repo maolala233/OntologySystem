@@ -18,6 +18,7 @@ import {
 
 import { projectsApi } from '../../../api/projects';
 import { setUnsavedGuard } from '../../../utils/unsavedGuard';
+import confirmImpact from '../../../utils/impactConfirm';
 import { extractionApi } from '../../../api/extraction';
 import { versionsApi } from '../../../api/governance';
 import { graphApi, graphEditApi, GraphEditResult } from '../../../api/graphview';
@@ -27,6 +28,7 @@ import RagSyncModal from '../components/RagSyncModal';
 import TaskProgressModal from '../components/TaskProgressModal';
 import ExportDialog from '../components/ExportDialog';
 import ReasoningModal from '../components/ReasoningModal';
+import PublishDialog from './PublishDialog';
 
 const CLASS_TYPES = new Set(['owl:Class', 'Class']);
 
@@ -68,6 +70,7 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
     // 发布 / RAG 同步
     const [isPublished, setIsPublished] = useState(false);
     const [isRagModalOpen, setIsRagModalOpen] = useState(false);
+    const [publishDialogOpen, setPublishDialogOpen] = useState(false);
     // 保存（与骨架编辑同款）：拖拽布局等画布改动 → 更新当前抽取结果
     const [isSaving, setIsSaving] = useState(false);
     const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
@@ -538,6 +541,8 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
     // 统一导出弹窗（RDF 6 种序列化 + 平台 JSON）
     const [exportOpen, setExportOpen] = useState(false);
 
+    // 发布走「发布预检弹窗」（O3-F9：先看影响分析 + 门控结论，门控未过禁用发布）；
+    // 下线是破坏性操作，走统一影响范围确认模板（F10）。
     const handleTogglePublish = async () => {
         try {
             const p = await projectsApi.getProject(projectId);
@@ -554,32 +559,29 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                 });
                 return;
             }
-            const actionText = p.is_published ? '取消发布' : '发布资产';
-            const contentText = p.is_published
-                ? '取消发布后，该本体将从资产中心下架。确定吗？'
-                : '发布后，您的本体将在资产中心公开展示。确定要发布吗？';
-            Modal.confirm({
-                title: `确认${actionText}`,
-                content: contentText,
-                okText: `确定${actionText}`,
-                cancelText: '取消',
-                onOk: async () => {
-                    try {
-                        if (p.is_published) {
+            if (p.is_published) {
+                confirmImpact({
+                    title: '确认取消发布',
+                    impact: [
+                        '该本体将从资产中心下架，公共区用户不再能看到它；',
+                        '项目数据、版本与审核记录不受影响，可随时重新发布。',
+                    ],
+                    okText: '确认下线',
+                    onOk: async () => {
+                        try {
                             await projectsApi.unpublishProject(Number(projectId));
                             message.success('已取消发布');
-                        } else {
-                            await projectsApi.publishProject(Number(projectId));
-                            message.success('发布成功！已在资产中心公开展示');
+                            const updated = await projectsApi.getProject(projectId);
+                            setIsPublished(!!updated.is_published);
+                            onChanged?.();
+                        } catch (error: any) {
+                            message.error(error.response?.data?.error?.message || '取消发布失败');
                         }
-                        const updated = await projectsApi.getProject(projectId);
-                        setIsPublished(!!updated.is_published);
-                        onChanged?.();
-                    } catch (error: any) {
-                        message.error(error.response?.data?.detail || `${actionText}失败`);
-                    }
-                },
-            });
+                    },
+                });
+            } else {
+                setPublishDialogOpen(true);
+            }
         } catch (e: any) {
             message.error(e.message || '发布操作失败');
         }
@@ -685,7 +687,7 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                                     <div>置信度：{Number(selectedEdge.data.confidence).toFixed(2)}</div>
                                 )}
                                 {isTypeEdge ? (
-                                    <div className="text-xs text-gray-400">
+                                    <div className="text-xs text-gray-500">
                                         rdf:type 边（实例归属类）不支持在此编辑；如需调整类别请在实例详情里「编辑」。
                                     </div>
                                 ) : hasId ? (
@@ -711,12 +713,12 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                                                         loading={savingEdit}>删除关系</Button>
                                             </Popconfirm>
                                         </div>
-                                        <div className="text-xs text-gray-400">
+                                        <div className="text-xs text-gray-500">
                                             修改会记录到「时间轴」版本记录。
                                         </div>
                                     </>
                                 ) : (
-                                    <div className="text-xs text-gray-400">
+                                    <div className="text-xs text-gray-500">
                                         该关系缺少稳定 ID（旧数据），请先点击顶部「保存」后再编辑。
                                     </div>
                                 )}
@@ -772,6 +774,7 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                                 开始实例抽取
                             </Button>
                         </Tooltip>
+                        <span className="text-xs hidden lg:inline" style={{ color: '#8B94AB' }}>按分片批量抽取，进度弹窗显示批次与剩余时间</span>
                         <Button icon={<ClusterOutlined />} onClick={startResolution}>消解分析</Button>
                         <Button icon={<RadarChartOutlined />} onClick={detectConflicts}>冲突检测</Button>
                         <Tooltip title="语义蕴含推理（OWL-RL/RDFS）+ 自定义规则推理；结果与原始事实分开存放">
@@ -784,7 +787,6 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                                 loading={isSaving}
                                 type={hasUnsavedChanges ? 'primary' : 'default'}
                                 ghost={hasUnsavedChanges}
-                                className={hasUnsavedChanges ? 'bg-blue-600' : ''}
                                 style={!hasUnsavedChanges ? { background: 'transparent', borderColor: '#2A3550', color: '#E6EAF2' } : undefined}
                             >
                                 保存
@@ -849,7 +851,7 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                                     value={treeSearchValue}
                                     onChange={(e) => setTreeSearchValue(e.target.value)}
                                     allowClear
-                                    prefix={<SearchOutlined className="text-gray-400" />}
+                                    prefix={<SearchOutlined className="text-gray-500" />}
                                 />
                             </div>
                             <div className="flex-1 overflow-auto p-2">
@@ -976,7 +978,7 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                         ...versionOptions,
                     ]}
                 />
-                <div className="mt-2 text-xs text-gray-400">
+                <div className="mt-2 text-xs text-gray-500">
                     选历史版本时从该版本快照读取框架，抽取结果仍写回当前画布。
                 </div>
             </Modal>
@@ -1029,7 +1031,7 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                         </Form.List>
                     </Form.Item>
                 </Form>
-                <div className="text-xs text-gray-400 mt-2">
+                <div className="text-xs text-gray-500 mt-2">
                     保存后会同步行表与图数据库，并自动记录一个「手动编辑」版本。
                 </div>
             </Modal>
@@ -1073,7 +1075,7 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                                         (option?.value ?? '').toLowerCase().includes(input.toLowerCase())}
                                 />
                             </Form.Item>
-                            <div className="text-xs text-gray-400">
+                            <div className="text-xs text-gray-500">
                                 保存后会同步行表与图数据库，并自动记录一个「手动编辑」版本。
                             </div>
                         </Form>
@@ -1085,6 +1087,17 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                 projectId={Number(projectId)}
                 open={isRagModalOpen}
                 onClose={() => setIsRagModalOpen(false)}
+            />
+
+            <PublishDialog
+                projectId={Number(projectId)}
+                open={publishDialogOpen}
+                onClose={() => setPublishDialogOpen(false)}
+                onPublished={async () => {
+                    const updated = await projectsApi.getProject(projectId);
+                    setIsPublished(!!updated.is_published);
+                    onChanged?.();
+                }}
             />
 
             <ExportDialog

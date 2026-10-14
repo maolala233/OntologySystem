@@ -23,6 +23,7 @@ celery_app = Celery(
         "app.tasks.graph_tasks",    # M3-3 行表回填 + M4 outbox→Neo4j 消费（graph 队列）
         "app.tasks.extract_tasks",  # M3-4：Schema/Instance 抽取（extract 队列）
         "app.tasks.rdf_tasks",      # M4：outbox→Oxigraph 命名图（rdf 队列，唯一写者）
+        "app.tasks.evolution_tasks",  # O3-B16：QA 失败轨迹定时进化分析
     ],
 )
 
@@ -60,6 +61,9 @@ celery_app.conf.update(
                                "schedule": 30.0, "options": {"queue": "graph"}},
         "drain-outbox-rdf": {"task": "app.tasks.rdf_tasks.drain_rdf_outbox",
                              "schedule": 60.0, "options": {"queue": "rdf"}},
+        # O3-B16：每日失败问答进化分析（graph 队列，轻量 DB+LLM 任务）
+        "daily-evolution-scan": {"task": "app.tasks.evolution_tasks.daily_evolution_scan",
+                                 "schedule": 86400.0, "options": {"queue": "graph"}},
     },
 )
 

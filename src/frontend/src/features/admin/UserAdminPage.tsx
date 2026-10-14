@@ -10,6 +10,7 @@ import {
 import { DeleteOutlined, FolderOpenOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { adminApi, AdminUser } from '../../api/admin';
 import { useAuthStore } from '../../shared/auth/authStore';
+import { PROJECT_STATUS } from '../../shared/projectStatus';
 
 const { Text } = Typography;
 
@@ -28,12 +29,10 @@ const ROLE_LABEL: Record<string, { text: string; color: string }> = {
     viewer: { text: '查看者', color: 'default' },
 };
 
-const STATUS_LABEL: Record<string, { text: string; color: string }> = {
-    draft: { text: '草稿', color: 'default' },
-    building: { text: '构建中', color: 'processing' },
-    ready: { text: '就绪', color: 'success' },
-    published: { text: '已发布', color: 'purple' },
-};
+// 状态映射唯一权威在 shared/projectStatus（O1-F1）
+const STATUS_LABEL = Object.fromEntries(
+    Object.entries(PROJECT_STATUS).map(([k, v]) => [k, { text: v.text, color: v.color }]),
+) as Record<string, { text: string; color: string }>;
 
 const UserAdminPage: React.FC = () => {
     const me = useAuthStore((s) => s.user);
@@ -311,12 +310,12 @@ const UserAdminPage: React.FC = () => {
                 width={480}
             >
                 {projectsLoading ? (
-                    <div className="py-10 text-center text-sm text-gray-400">加载中…</div>
+                    <div className="py-10 text-center text-sm text-gray-500">加载中…</div>
                 ) : projects.length === 0 ? (
                     <Empty description="该用户暂无项目（未拥有也未参与任何项目）" />
                 ) : (
                     <div className="space-y-2">
-                        <div className="text-xs text-gray-400 mb-2">
+                        <div className="text-xs text-gray-500 mb-2">
                             共 {projects.length} 个项目（拥有 {projects.filter((p) => p.role === 'owner').length} 个，参与 {projects.filter((p) => p.role !== 'owner').length} 个）
                         </div>
                         {projects.map((p) => {
@@ -326,11 +325,11 @@ const UserAdminPage: React.FC = () => {
                                 <div key={p.id} className="flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2.5 hover:border-blue-200 hover:bg-blue-50/30 transition-colors">
                                     <div className="min-w-0">
                                         <div className="flex items-center gap-2">
-                                            <span className="font-mono text-xs text-gray-400">#{p.id}</span>
+                                            <span className="font-mono text-xs text-gray-500">#{p.id}</span>
                                             <span className="text-sm text-gray-800 truncate">{p.name}</span>
                                         </div>
                                         {p.created_at && (
-                                            <div className="text-[11px] text-gray-400 mt-0.5">创建于 {p.created_at.slice(0, 10)}</div>
+                                            <div className="text-[11px] text-gray-500 mt-0.5">创建于 {p.created_at.slice(0, 10)}</div>
                                         )}
                                     </div>
                                     <Space size={4}>
