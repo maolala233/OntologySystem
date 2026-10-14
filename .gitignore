@@ -43,3 +43,11 @@ src/backend/full-report.xml
 *.tsbuildinfo
 src/frontend/vite.config.js
 src/frontend/vite.config.d.ts
+
+# 运行时与临时目录
+celerybeat-schedule*
+src/backend/celerybeat-schedule*
+temp/
+.impeccable/
+.pytest_cache/
+.ruff_cache/
