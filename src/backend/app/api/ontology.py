@@ -1369,6 +1369,21 @@ def generate_ttl_from_graph_data(nodes: list[dict], edges: list[dict]) -> str:
         md5_hash = hashlib.md5(original_name.encode('utf-8')).hexdigest()
         return f"prop_{md5_hash[:8]}"
 
+    # 预扫描：统计每个数据属性被多少个类节点共用。
+    # rdfs:domain 在 RDF 语义中是合取——同一属性被两个类共用时若都写 domain，
+    # OWL-RL 会把任意主体的类型扩张成「同时属于所有 domain 类」，
+    # 与 disjointWith 组合会产生假冲突（如 大额/小额支付系统 互斥误报）。
+    # 故仅单主体属性才落 domain；多主体属性跳过（弱化表达，换取语义正确）。
+    dataprop_owner_count: dict[str, int] = {}
+    for node in nodes:
+        if not is_owl_class_type(node['data'].get('type', 'owl:Class')):
+            continue
+        for prop_name in (node['data'].get('properties') or {}):
+            if prop_name.startswith('_source_'):
+                continue
+            pid = generate_safe_prop_id(prop_name)
+            dataprop_owner_count[pid] = dataprop_owner_count.get(pid, 0) + 1
+
     node_uris: dict[str, URIRef] = {}
     for node in nodes:
         node_id = str(node['id'])
@@ -1402,7 +1417,7 @@ def generate_ttl_from_graph_data(nodes: list[dict], edges: list[dict]) -> str:
             g.add((dataprop_uri, RDF.type, OWL.DatatypeProperty))
             g.add((dataprop_uri, RDFS.label, Literal(prop_name, lang="zh")))
 
-            if is_owl_class_type(node_type):
+            if is_owl_class_type(node_type) and dataprop_owner_count.get(dataprop_id, 0) == 1:
                 g.add((dataprop_uri, RDFS.domain, uri))
 
             if prop_value:
