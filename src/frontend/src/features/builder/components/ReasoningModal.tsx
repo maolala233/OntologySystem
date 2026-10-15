@@ -5,13 +5,13 @@
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-    Button, Empty, Modal, Radio, Spin, Switch, Tag, message, Input, Popconfirm,
+    Button, Empty, Input, InputNumber, Modal, Popconfirm, Radio, Select, Spin, Switch, Tag, message,
 } from 'antd';
 import {
     DeleteOutlined, DownloadOutlined, ExperimentOutlined, PlusOutlined, ReloadOutlined, SettingOutlined,
 } from '@ant-design/icons';
 
-import { reasoningApi, type OntologyRule, type ReasoningItem, type ReasoningSummary } from '../../../api/reasoning';
+import { reasoningApi, type DeclaredAxiom, type OntologyRule, type ReasoningItem, type ReasoningSummary } from '../../../api/reasoning';
 
 const SOURCE_TAG: Record<string, { color: string; label: string }> = {
     owlrl: { color: '#5B8DEF', label: 'OWL-RL 蕴含' },
@@ -19,7 +19,51 @@ const SOURCE_TAG: Record<string, { color: string; label: string }> = {
     rule: { color: '#B585F2', label: '规则推理' },
 };
 
+const AXIOM_KIND_LABEL: Record<string, string> = {
+    functional: '函数性',
+    inverse_of: '互逆',
+    disjoint_with: '互斥',
+    subclass_of: '上下位',
+    equivalent_classes: '等价类',
+    cardinality: '基数',
+};
+
+/** 公理条目 → 人话描述 */
+const axiomText = (a: DeclaredAxiom): string => {
+    switch (a.kind) {
+        case 'functional':
+            return `「${a.predicate}」每个主体至多一个客体`;
+        case 'inverse_of':
+            return `「${a.predicates?.[0]}」与「${a.predicates?.[1]}」互为逆关系`;
+        case 'disjoint_with':
+            return `「${a.classes?.[0]}」与「${a.classes?.[1]}」无共同实例`;
+        case 'subclass_of':
+            return `「${a.classes?.[0]}」⊆「${a.classes?.[1]}」`;
+        case 'equivalent_classes':
+            return `「${a.classes?.[0]}」≡「${a.classes?.[1]}」`;
+        case 'cardinality': {
+            const parts = [a.min != null ? `≥${a.min}` : null, a.max != null ? `≤${a.max}` : null].filter(Boolean);
+            return `「${a.predicate}」基数 ${parts.join(' 且 ')}（约束类：${a.class || '未指定'}）`;
+        }
+        default:
+            return a.key;
+    }
+};
+
 const LIMIT = 300;
+
+/** 公理表单状态：kind 决定显示哪些字段 */
+interface AxiomForm {
+    kind: string;
+    predicate: string;
+    p: string;   // inverse_of 第二谓词
+    a: string;   // classes[0]（subclass_of=子类）
+    b: string;   // classes[1]（subclass_of=父类）
+    min_card: number | null;
+    max_card: number | null;
+}
+
+const EMPTY_AXIOM_FORM: AxiomForm = { kind: 'functional', predicate: '', p: '', a: '', b: '', min_card: null, max_card: null };
 
 const ReasoningModal: React.FC<{
     projectId: number;
@@ -33,12 +77,19 @@ const ReasoningModal: React.FC<{
     const [total, setTotal] = useState(0);
     const [loading, setLoading] = useState(false);
     const [sourceFilter, setSourceFilter] = useState<string | undefined>(undefined);
-    // 规则管理
+    // 规则与公理管理
     const [rules, setRules] = useState<OntologyRule[]>([]);
     const [rulesOpen, setRulesOpen] = useState(false);
     const [ruleForm, setRuleForm] = useState<{ name: string; s: string; p: string; o: string; q: string } | null>(null);
     const [editingRule, setEditingRule] = useState<OntologyRule | null>(null);
     const [savingRule, setSavingRule] = useState(false);
+    // 公理（O4 后扩展：抽取批准的公理与手工公理统一列出、可编辑可新增）
+    const [axioms, setAxioms] = useState<DeclaredAxiom[]>([]);
+    const [classLabels, setClassLabels] = useState<string[]>([]);
+    const [predicateLabels, setPredicateLabels] = useState<string[]>([]);
+    const [axiomForm, setAxiomForm] = useState<AxiomForm | null>(null);
+    const [editingAxiom, setEditingAxiom] = useState<DeclaredAxiom | null>(null);
+    const [savingAxiom, setSavingAxiom] = useState(false);
 
     const loadResults = useCallback(async (src?: string) => {
         setLoading(true);
@@ -60,6 +111,15 @@ const ReasoningModal: React.FC<{
         } catch { /* 规则加载失败不阻断 */ }
     }, [projectId]);
 
+    const loadAxioms = useCallback(async () => {
+        try {
+            const r = await reasoningApi.listAxioms(projectId);
+            setAxioms(r.items);
+            setClassLabels(r.class_labels);
+            setPredicateLabels(r.predicate_labels);
+        } catch { /* 公理加载失败不阻断 */ }
+    }, [projectId]);
+
     useEffect(() => {
         if (open) {
             loadResults(sourceFilter);
@@ -73,7 +133,9 @@ const ReasoningModal: React.FC<{
             const s = await reasoningApi.run(projectId, { profile });
             setSummary(s);
             message.success(`推理完成：事实 ${s.fact_triples} 条，推理得出 ${s.inferred_total} 条`);
-            await loadResults(sourceFilter);
+            // 新批次后回到「全部」：蕴含/规则产出比例随批次变化，停留在空 tab 会造成"没落盘"错觉
+            setSourceFilter(undefined);
+            await loadResults(undefined);
         } catch (e: any) {
             message.error(e?.response?.data?.detail || '推理运行失败');
         } finally {
@@ -155,6 +217,87 @@ const ReasoningModal: React.FC<{
         }
     };
 
+    const axiomBody = (f: AxiomForm) => ({
+        kind: f.kind,
+        predicate: f.predicate.trim() || undefined,
+        predicates: f.kind === 'inverse_of' ? [f.predicate.trim(), f.p.trim()] : undefined,
+        classes: ['disjoint_with', 'subclass_of', 'equivalent_classes'].includes(f.kind)
+            ? [f.a.trim(), f.b.trim()] : undefined,
+        min_card: f.kind === 'cardinality' ? (f.min_card ?? undefined) : undefined,
+        max_card: f.kind === 'cardinality' ? (f.max_card ?? undefined) : undefined,
+    });
+
+    const saveAxiom = async () => {
+        if (!axiomForm) return;
+        const f = axiomForm;
+        if ((f.kind === 'functional' || f.kind === 'cardinality') && !f.predicate.trim()) {
+            message.warning('请选择谓词');
+            return;
+        }
+        if (f.kind === 'inverse_of' && (!f.predicate.trim() || !f.p.trim())) {
+            message.warning('请选择两个互逆谓词');
+            return;
+        }
+        if (['disjoint_with', 'subclass_of', 'equivalent_classes'].includes(f.kind)
+                && (!f.a.trim() || !f.b.trim())) {
+            message.warning('请选择两个类');
+            return;
+        }
+        if (f.kind === 'inverse_of' && f.predicate.trim() === f.p.trim()) {
+            message.warning('互逆的两个谓词不能相同');
+            return;
+        }
+        if (f.kind !== 'cardinality' && f.a.trim() === f.b.trim()
+                && ['disjoint_with', 'subclass_of', 'equivalent_classes'].includes(f.kind)) {
+            message.warning('两个类不能相同');
+            return;
+        }
+        if (f.kind === 'cardinality' && f.min_card == null && f.max_card == null) {
+            message.warning('请至少填写最小或最大基数');
+            return;
+        }
+        setSavingAxiom(true);
+        try {
+            // 编辑 = 撤旧 + 声新（key 即锚点）
+            if (editingAxiom) {
+                await reasoningApi.removeAxiom(projectId, editingAxiom.key);
+            }
+            await reasoningApi.declareAxiom(projectId, axiomBody(f));
+            message.success(editingAxiom ? '公理已更新' : '公理已声明，可运行推理生效');
+            setAxiomForm(null);
+            setEditingAxiom(null);
+            await loadAxioms();
+        } catch (e: any) {
+            if (editingAxiom) await loadAxioms(); // 撤旧成功但声明失败时刷新，避免丢状态
+            message.error(e?.response?.data?.detail || '保存公理失败');
+        } finally {
+            setSavingAxiom(false);
+        }
+    };
+
+    const removeAxiom = async (a: DeclaredAxiom) => {
+        try {
+            await reasoningApi.removeAxiom(projectId, a.key);
+            message.success('公理已撤销');
+            await loadAxioms();
+        } catch (e: any) {
+            message.error(e?.response?.data?.detail || '撤销失败');
+        }
+    };
+
+    const editAxiom = (a: DeclaredAxiom) => {
+        setEditingAxiom(a);
+        setAxiomForm({
+            kind: a.kind,
+            predicate: a.predicate || a.predicates?.[0] || '',
+            p: a.predicates?.[1] || '',
+            a: a.classes?.[0] || '',
+            b: a.classes?.[1] || '',
+            min_card: a.min ?? null,
+            max_card: a.max ?? null,
+        });
+    };
+
     return (
         <Modal
             title={<span><ExperimentOutlined style={{ color: '#B585F2', marginRight: 8 }} />推理分析（蕴含推理 + 规则引擎）</span>}
@@ -174,8 +317,10 @@ const ReasoningModal: React.FC<{
                     运行推理
                 </Button>
                 <Button icon={<DownloadOutlined />} onClick={exportInferred}>导出含推理 TTL</Button>
-                <Button icon={<SettingOutlined />} onClick={() => { setRulesOpen(true); loadRules(); }}>
-                    管理规则{rules.length > 0 ? `（${rules.length}）` : ''}
+                <Button icon={<SettingOutlined />} onClick={() => {
+                    setRulesOpen(true); loadRules(); loadAxioms();
+                }}>
+                    规则与公理{rules.length + axioms.length > 0 ? `（${rules.length + axioms.length}）` : ''}
                 </Button>
             </div>
             <div className="text-xs text-gray-500 mb-3">
@@ -230,14 +375,113 @@ const ReasoningModal: React.FC<{
                 </div>
             )}
 
-            {/* ── 规则管理抽屉 ── */}
+            {/* ── 规则与公理管理抽屉（O4 后扩展：抽取批准的公理统一在此编辑）── */}
             <Modal
-                title="推理规则管理"
+                title="规则与公理管理"
                 open={rulesOpen}
-                onCancel={() => { setRulesOpen(false); setRuleForm(null); setEditingRule(null); }}
-                width={640}
+                onCancel={() => { setRulesOpen(false); setRuleForm(null); setEditingRule(null); setAxiomForm(null); setEditingAxiom(null); }}
+                width={680}
                 footer={null}
             >
+                {/* 公理区 */}
+                <div className="flex items-center gap-2 mb-2">
+                    <span className="text-sm font-medium" style={{ color: '#B585F2' }}>本体公理</span>
+                    <span className="text-xs text-gray-500">（AI 公理扫描批准的与手工声明的都在这里；编辑后点「运行推理」重新生效）</span>
+                    <div className="flex-1" />
+                    {!axiomForm && (
+                        <Button size="small" icon={<PlusOutlined />}
+                                onClick={() => { setEditingAxiom(null); setAxiomForm({ ...EMPTY_AXIOM_FORM }); }}>
+                            新建公理
+                        </Button>
+                    )}
+                </div>
+                {axiomForm && (
+                    <div className="p-3 mb-3 border rounded space-y-2" style={{ borderColor: '#2A3550' }}>
+                        <div className="flex items-center gap-2 text-sm">
+                            <span>公理类型</span>
+                            <Select size="small" style={{ width: 140 }} value={axiomForm.kind}
+                                    onChange={(v) => setAxiomForm({ ...EMPTY_AXIOM_FORM, kind: v })}
+                                    options={Object.entries(AXIOM_KIND_LABEL).map(([k, label]) => ({ value: k, label }))} />
+                            {editingAxiom && <span className="text-xs text-gray-500">（编辑 {editingAxiom.key}）</span>}
+                        </div>
+                        {(axiomForm.kind === 'functional' || axiomForm.kind === 'cardinality') && (
+                            <div className="flex items-center gap-2 text-sm">
+                                <span>谓词</span>
+                                <Select size="small" showSearch style={{ width: 220 }} placeholder="选择关系谓词"
+                                        value={axiomForm.predicate || undefined}
+                                        onChange={(v) => setAxiomForm({ ...axiomForm, predicate: v })}
+                                        options={predicateLabels.map((p) => ({ value: p, label: p }))} />
+                            </div>
+                        )}
+                        {axiomForm.kind === 'inverse_of' && (
+                            <div className="flex items-center gap-2 text-sm">
+                                <Select size="small" showSearch style={{ width: 180 }} placeholder="谓词 P"
+                                        value={axiomForm.predicate || undefined}
+                                        onChange={(v) => setAxiomForm({ ...axiomForm, predicate: v })}
+                                        options={predicateLabels.map((p) => ({ value: p, label: p }))} />
+                                <span>⇄</span>
+                                <Select size="small" showSearch style={{ width: 180 }} placeholder="谓词 Q（逆）"
+                                        value={axiomForm.p || undefined}
+                                        onChange={(v) => setAxiomForm({ ...axiomForm, p: v })}
+                                        options={predicateLabels.map((p) => ({ value: p, label: p }))} />
+                            </div>
+                        )}
+                        {['disjoint_with', 'subclass_of', 'equivalent_classes'].includes(axiomForm.kind) && (
+                            <div className="flex items-center gap-2 text-sm">
+                                <span>{axiomForm.kind === 'subclass_of' ? '子类' : '类 A'}</span>
+                                <Select size="small" showSearch style={{ width: 180 }}
+                                        placeholder={axiomForm.kind === 'subclass_of' ? '选择子类' : '选择类'}
+                                        value={axiomForm.a || undefined}
+                                        onChange={(v) => setAxiomForm({ ...axiomForm, a: v })}
+                                        options={classLabels.map((c) => ({ value: c, label: c }))} />
+                                <span>{axiomForm.kind === 'subclass_of' ? '⊆' : axiomForm.kind === 'disjoint_with' ? '⨯' : '≡'}</span>
+                                <span>{axiomForm.kind === 'subclass_of' ? '父类' : '类 B'}</span>
+                                <Select size="small" showSearch style={{ width: 180 }}
+                                        placeholder={axiomForm.kind === 'subclass_of' ? '选择父类' : '选择类'}
+                                        value={axiomForm.b || undefined}
+                                        onChange={(v) => setAxiomForm({ ...axiomForm, b: v })}
+                                        options={classLabels.map((c) => ({ value: c, label: c }))} />
+                            </div>
+                        )}
+                        {axiomForm.kind === 'cardinality' && (
+                            <div className="flex items-center gap-2 text-sm">
+                                <span>基数</span>
+                                <InputNumber size="small" min={0} placeholder="最小" style={{ width: 90 }}
+                                             value={axiomForm.min_card}
+                                             onChange={(v) => setAxiomForm({ ...axiomForm, min_card: v })} />
+                                <span>~</span>
+                                <InputNumber size="small" min={0} placeholder="最大" style={{ width: 90 }}
+                                             value={axiomForm.max_card}
+                                             onChange={(v) => setAxiomForm({ ...axiomForm, max_card: v })} />
+                            </div>
+                        )}
+                        <div className="flex gap-2">
+                            <Button size="small" type="primary" loading={savingAxiom} onClick={saveAxiom} className="bg-blue-600">保存</Button>
+                            <Button size="small" onClick={() => { setAxiomForm(null); setEditingAxiom(null); }}>取消</Button>
+                        </div>
+                    </div>
+                )}
+                {axioms.length === 0 ? (
+                    <Empty description="暂无已声明公理（可在审核工作台批准 AI 公理建议，或点「新建公理」手工声明）" className="py-3" />
+                ) : (
+                    <div className="max-h-[220px] overflow-y-auto mb-3">
+                        {axioms.map((a) => (
+                            <div key={a.key} className="flex items-center gap-2 py-1.5 border-b text-sm" style={{ borderColor: '#1E2A44' }}>
+                                <Tag color="purple" className="flex-shrink-0" style={{ fontSize: 11 }}>
+                                    {AXIOM_KIND_LABEL[a.kind] || a.kind}
+                                </Tag>
+                                <span className="flex-1 text-xs">{axiomText(a)}</span>
+                                <Button size="small" type="text" icon={<PlusOutlined rotate={90} />} onClick={() => editAxiom(a)} />
+                                <Popconfirm title="撤销该公理？" onConfirm={() => removeAxiom(a)}>
+                                    <Button size="small" type="text" danger icon={<DeleteOutlined />} />
+                                </Popconfirm>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {/* 规则区 */}
+                <div className="mb-2 text-sm font-medium" style={{ color: '#5B8DEF' }}>自定义推理规则</div>
                 <div className="mb-3 text-xs text-gray-500">
                     规则：当主体属于「主语类」（含子类）、经「谓词」连接到「宾语类」（含子类）的实例时，
                     自动推导出两者之间的「结论谓词」关系。推导结果只进推理结果，不改原始事实。

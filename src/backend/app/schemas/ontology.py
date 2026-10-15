@@ -40,7 +40,8 @@ class ProjectUpdate(BaseModel):
 
 class ProjectResponse(ProjectBase):
     id: int
-    owner_id: int
+    # 允许 NULL：遗留孤儿项目（如归属人被删）会挂掉管理员 scope=all 全量列表
+    owner_id: Optional[int] = None
     owner: Optional[UserResponse] = None
     domain_id: Optional[int] = None
     domain: Optional[KnowledgeDomainResponse] = None

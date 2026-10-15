@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import datetime
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -289,86 +289,18 @@ def _evidence_anchor(db: Session, project_id: int, chunk_indices: list,
 
 
 def _approve_axiom_suggestion(item, user, payload: dict, db: Session) -> dict:
-    """公理建议批准 → 写入画布公理（O2-B8）。
+    """公理建议批准 → 写入画布公理（O2-B8 + O4-B18）。
 
-    payload.kind ∈ functional | inverse_of | disjoint_with；
-    写入 schema 权威键 + 画布 node/edge data.axioms（导出 TTL 消费），
-    写入后 B6 SHACL / B2 schema_checks 在下次检测与发布门禁自动复查。
+    实际写入统一在 app/services/axiom_store.declare_axiom（审核批准、推理弹窗
+    手工新增/编辑三条路径共用同一写入逻辑，单一事实源 = graph_data）。
     """
-    from sqlalchemy.orm.attributes import flag_modified
-
     from app.infrastructure.database import Project
+    from app.services.axiom_store import declare_axiom
 
-    kind = str(payload.get("kind") or "").strip()
     proj = db.query(Project).filter(Project.id == item.project_id).first()
     if proj is None:
         return {"skipped": "项目不存在"}
-    gd = proj.graph_data if isinstance(proj.graph_data, dict) else {}
-    schema = gd.setdefault("schema", {})
-    ops_by_label = {str(op_.get("label") or ""): op_
-                    for op_ in (schema.get("object_properties") or [])
-                    if isinstance(op_, dict) and op_.get("label")}
-    classes_by_label = {str(c.get("label") or ""): c
-                        for c in (schema.get("classes") or [])
-                        if isinstance(c, dict) and c.get("label")}
-
-    def _mark_edges(predicate: str, mutator) -> int:
-        n = 0
-        for e in gd.get("edges") or []:
-            d = e.get("data") or {}
-            if str(d.get("relation") or "") == predicate:
-                ax = d.setdefault("axioms", {})
-                mutator(ax)
-                e["data"] = d
-                n += 1
-        return n
-
-    if kind == "functional":
-        label = str(payload.get("predicate") or "").strip()
-        op_ = ops_by_label.get(label)
-        if op_ is None:
-            return {"skipped": f"谓词不在 TBox: {label}"}
-        op_["functional"] = True
-        edges_marked = _mark_edges(label, lambda ax: ax.update(functional=True))
-    elif kind == "inverse_of":
-        p, q = (str(x or "").strip() for x in (payload.get("predicates") or ["", ""])[:2])
-        op_p, op_q = ops_by_label.get(p), ops_by_label.get(q)
-        if op_p is None or op_q is None or p == q:
-            return {"skipped": f"互逆谓词不在 TBox: {p} / {q}"}
-        op_p["inverse_of"] = q
-        op_q["inverse_of"] = p
-        edges_marked = (_mark_edges(p, lambda ax: ax.update(inverse_of=q))
-                        + _mark_edges(q, lambda ax: ax.update(inverse_of=p)))
-    elif kind == "disjoint_with":
-        a, b = (str(x or "").strip() for x in (payload.get("classes") or ["", ""])[:2])
-        ca, cb = classes_by_label.get(a), classes_by_label.get(b)
-        if ca is None or cb is None or a == b:
-            return {"skipped": f"互斥类不在 TBox: {a} / {b}"}
-        ca.setdefault("disjoint_with", [])
-        cb.setdefault("disjoint_with", [])
-        if b not in ca["disjoint_with"]:
-            ca["disjoint_with"].append(b)
-        if a not in cb["disjoint_with"]:
-            cb["disjoint_with"].append(a)
-        edges_marked = 0
-        # 画布类节点 data.axioms.disjoint_with 同步（画布是活编辑面）
-        for n in gd.get("nodes") or []:
-            d = n.get("data") or {}
-            lbl = str(d.get("label") or "")
-            if lbl in (a, b) and d.get("type") in ("owl:Class", "Class"):
-                ax = d.setdefault("axioms", {})
-                peers = ax.setdefault("disjoint_with", [])
-                peer = b if lbl == a else a
-                if peer not in peers:
-                    peers.append(peer)
-                n["data"] = d
-    else:
-        return {"skipped": f"未知公理建议类型: {kind}"}
-
-    proj.graph_data = gd
-    flag_modified(proj, "graph_data")
-    db.flush()
-    return {"axiom_declared": kind, "edges_marked": edges_marked}
+    return declare_axiom(db, proj, payload)
 
 
 def _approve_cq_suggestion(item, user, payload: dict, db: Session) -> dict:

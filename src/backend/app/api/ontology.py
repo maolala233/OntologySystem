@@ -1453,6 +1453,18 @@ def generate_ttl_from_graph_data(nodes: list[dict], edges: list[dict]) -> str:
             if peer_uri is not None and peer_uri != src_uri:
                 g.add((src_uri, OWL.disjointWith, peer_uri))
 
+    # ---- 公理导出 ①b：等价类（owl:equivalentClass，O4-B18）----
+    for node in nodes:
+        node_data = node.get('data', {})
+        equiv = (node_data.get('axioms') or {}).get('equivalent_to') or []
+        src_uri = node_uris.get(str(node['id']))
+        if not src_uri:
+            continue
+        for peer_label in equiv:
+            peer_uri = label_to_uri.get(peer_label)
+            if peer_uri is not None and peer_uri != src_uri:
+                g.add((src_uri, OWL.equivalentClass, peer_uri))
+
     # ---- 公理导出 ②：关系特征 + 互逆 + 基数 Restriction ----
     prop_uri_by_label = {}  # 关系 label -> objprop URI（inverseOf 解析用，先收集）
     edge_axioms_by_label = {}  # 关系 label -> (edge_data, source_id)

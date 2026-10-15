@@ -32,6 +32,25 @@ const TYPE_LABEL: Record<string, string> = {
     conflict_relationship: '关系冲突',
     missing_evidence: '缺证据',
     conflict_axiom: '公理违例',
+    axiom_suggestion: '公理建议',
+};
+
+/** 公理建议（O4-F11）：kind 中文名 / 来源徽标（统计推断、AI 生成、双通道佐证） */
+const AXIOM_KIND_LABEL: Record<string, string> = {
+    functional: '函数性',
+    inverse_of: '互逆关系',
+    disjoint_with: '互斥类',
+    domain_fix: '定义域修正',
+    range_fix: '值域修正',
+    subclass_of: '上下位（子类）',
+    equivalent_classes: '等价类',
+    cardinality: '基数约束',
+};
+
+const AXIOM_SOURCE_TAG: Record<string, { text: string; color: string }> = {
+    statistical: { text: '统计推断', color: 'cyan' },
+    llm: { text: 'AI 生成', color: 'geekblue' },
+    both: { text: '统计+AI 双佐证', color: 'purple' },
 };
 
 /** 0.793 → "79%"；无效值返回 null */
@@ -90,6 +109,14 @@ function humanSummary(item: ReviewItem): string {
         }
         case 'new_class':
             return `从文档中发现了新类别「${p.label || ''}」，它不在当前本体骨架中，请决定是否加入`;
+        case 'axiom_suggestion': {
+            const kindLbl = AXIOM_KIND_LABEL[p.kind] || p.kind || '公理';
+            const targets: string[] = p.kind === 'domain_fix' || p.kind === 'range_fix'
+                ? [p.predicate, p.value].filter(Boolean)
+                : (p.classes || p.predicates || [p.predicate].filter(Boolean) || []);
+            const src = AXIOM_SOURCE_TAG[p.source]?.text || '';
+            return `系统建议为本体添加「${kindLbl}」公理（${targets.join('、') || '见详情'}）${src ? `，依据：${src}` : ''}，请判断是否符合业务实际`;
+        }
         default:
             return item.reason || JSON.stringify(p).slice(0, 60);
     }
@@ -269,6 +296,69 @@ const FriendlyPayload: React.FC<{
                     {p.definition && <Quote text={p.definition} title="定义" />}
                 </div>
             );
+        case 'axiom_suggestion': {
+            const kindLbl = AXIOM_KIND_LABEL[p.kind] || p.kind || '';
+            const src = AXIOM_SOURCE_TAG[p.source] || { text: String(p.source || ''), color: 'default' };
+            const targets: string[] = p.kind === 'domain_fix' || p.kind === 'range_fix'
+                ? [p.predicate, p.value].filter(Boolean)
+                : (p.classes || p.predicates || [p.predicate].filter(Boolean) || []);
+            const ev = p.evidence || {};
+            // 统计证据标量字段（examples / llm_* 另行渲染）
+            const scalars = Object.entries(ev).filter(([k, v]) =>
+                !['llm_reason', 'llm_examples', 'examples'].includes(k)
+                && (typeof v !== 'object' || v === null));
+            const examples: any[] = [...(ev.examples || []), ...(ev.llm_examples || [])];
+            return (
+                <div className="space-y-3">
+                    <div className="p-3 bg-blue-50 border border-blue-100 rounded">
+                        {/* 三元素①②③：kind 徽标 + 高风险黄标 + 来源徽标 */}
+                        <div className="flex items-center gap-2 flex-wrap">
+                            {kindLbl && <Tag color="blue">{kindLbl}</Tag>}
+                            {p.risk_tier === 'high' && (
+                                <Tag color="gold">高风险：批准前已通过一致性机检</Tag>
+                            )}
+                            {src.text && <Tag color={src.color}>{src.text}</Tag>}
+                        </div>
+                        {targets.length > 0 && (
+                            <div className="mt-2 text-sm">
+                                涉及目标：
+                                {targets.map((t, i) => <Tag key={i} color="purple">{String(t)}</Tag>)}
+                            </div>
+                        )}
+                        {ev.llm_reason && (
+                            <div className="mt-2 text-sm">
+                                <Text type="secondary">AI 依据：</Text>{ev.llm_reason}
+                            </div>
+                        )}
+                        {scalars.length > 0 && (
+                            <div className="mt-1 text-sm text-gray-600">
+                                统计证据：{scalars.map(([k, v]) => `${k}=${String(v)}`).join('；')}
+                            </div>
+                        )}
+                        {examples.length > 0 && (
+                            <div className="mt-1 text-xs text-gray-500">
+                                样本：{examples.map((x, i) => {
+                                    if (typeof x === 'string') return x;
+                                    if (x && typeof x === 'object') {
+                                        // 常见形如 {entity, note} → "实体 — 说明"，其余键值对平铺
+                                        if (x.entity || x.note) {
+                                            return [x.entity, x.note].filter(Boolean).join(' — ');
+                                        }
+                                        return Object.entries(x).map(([k, v]) => `${k}=${String(v)}`).join('，');
+                                    }
+                                    return '';
+                                }).filter(Boolean).slice(0, 5).join('；')}
+                            </div>
+                        )}
+                    </div>
+                    <div className="text-sm text-gray-600">
+                        点击「通过」将把该公理写入本体骨架（函数性/互逆/互斥/等价类等会在后续冲突检测与发布门禁中自动校验）；
+                        驳回则仅关闭本条建议。高风险公理（上下位/等价类/基数）已经过影子校验与一致性检查。
+                    </div>
+                    <Quote text={item.reason} title="系统说明" />
+                </div>
+            );
+        }
         default:
             return null;
     }

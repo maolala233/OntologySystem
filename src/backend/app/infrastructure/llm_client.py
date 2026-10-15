@@ -558,6 +558,29 @@ class LLMClient:
             logger.warning(f"检测到 JSON 解析错误，原始内容：{clean[:200]}..., 正在尝试自动修复...")
             logger.debug(f"JSON 解析错误详情：{e}")
 
+            # ★ O4 公理建议通道：模型在 json_object 降级模式下可能先输出大段分析
+            # 文字再给 {"suggestions":[...]}（走查实测），按键定位平衡对象直接提取。
+            # 抽取链路响应不含该键，此分支对其零影响。
+            if '"suggestions"' in clean:
+                key_at = clean.rfind('"suggestions"')
+                brace_at = clean.rfind('{', 0, key_at)
+                if brace_at != -1:
+                    depth = 0
+                    for i in range(brace_at, len(clean)):
+                        if clean[i] == '{':
+                            depth += 1
+                        elif clean[i] == '}':
+                            depth -= 1
+                            if depth == 0:
+                                try:
+                                    parsed = json.loads(clean[brace_at:i + 1])
+                                    if isinstance(parsed.get('suggestions'), list):
+                                        logger.info(f"[JSON 修复成功] 方法：suggestions 键定位，提取 {i + 1 - brace_at} 字符")
+                                        return parsed
+                                except json.JSONDecodeError:
+                                    pass
+                                break
+
             # ★ 优先尝试：转义字符串内的控制字符（LLM 输出最常见的"结构完整但非法"问题）
             try:
                 escaped_json = self._escape_control_chars_in_json(clean)

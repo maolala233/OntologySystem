@@ -48,6 +48,29 @@ export interface RuleBody {
     enabled: boolean;
 }
 
+/** 公理声明（O4 后扩展：规则与公理统一管理）。key 为编辑/删除锚点。 */
+export interface DeclaredAxiom {
+    key: string;
+    kind: 'functional' | 'inverse_of' | 'disjoint_with' | 'subclass_of'
+        | 'equivalent_classes' | 'cardinality';
+    predicate?: string;
+    predicates?: string[];
+    classes?: string[];
+    class?: string;
+    min?: number | null;
+    max?: number | null;
+}
+
+export interface AxiomBody {
+    kind: string;
+    predicate?: string;
+    predicates?: string[];
+    classes?: string[];
+    value?: string;
+    min_card?: number;
+    max_card?: number;
+}
+
 export const reasoningApi = {
     run: async (projectId: number, body?: { profile?: string; rule_ids?: number[] }): Promise<ReasoningSummary> => {
         const response = await apiClient.post(`/api/projects/${projectId}/reasoning/run`, body || {});
@@ -75,5 +98,20 @@ export const reasoningApi = {
     },
     deleteRule: async (projectId: number, ruleId: number): Promise<void> => {
         await apiClient.delete(`/api/projects/${projectId}/reasoning/rules/${ruleId}`);
+    },
+
+    listAxioms: async (projectId: number): Promise<{
+        items: DeclaredAxiom[]; kinds: string[];
+        class_labels: string[]; predicate_labels: string[];
+    }> => {
+        const response = await apiClient.get(`/api/projects/${projectId}/reasoning/axioms`);
+        return response.data;
+    },
+    declareAxiom: async (projectId: number, body: AxiomBody): Promise<{ axiom_declared: string; edges_marked: number }> => {
+        const response = await apiClient.post(`/api/projects/${projectId}/reasoning/axioms`, body);
+        return response.data;
+    },
+    removeAxiom: async (projectId: number, key: string): Promise<void> => {
+        await apiClient.delete(`/api/projects/${projectId}/reasoning/axioms`, { params: { key } });
     },
 };

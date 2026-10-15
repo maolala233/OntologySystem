@@ -12,7 +12,7 @@ import type { MenuProps, TreeProps } from 'antd';
 import {
     ApartmentOutlined, CheckCircleOutlined, CloudServerOutlined, ClusterOutlined, DeleteOutlined,
     EditOutlined, ExperimentOutlined, ExportOutlined, EyeOutlined, ExpandOutlined, LeftOutlined, MoreOutlined,
-    PlusOutlined, RadarChartOutlined, RightOutlined, SaveOutlined, SearchOutlined,
+    PlusOutlined, RadarChartOutlined, RightOutlined, RobotOutlined, SaveOutlined, SearchOutlined,
     ShrinkOutlined, ThunderboltOutlined, UnorderedListOutlined,
 } from '@ant-design/icons';
 
@@ -537,6 +537,39 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
         }
     };
 
+    // ── AI 公理扫描（O4-F11）：LLM 通道候选过机检守门后物化为审核项；同步接口 ──
+    const [axiomScanning, setAxiomScanning] = useState(false);
+    const scanAxioms = async () => {
+        try {
+            setAxiomScanning(true);
+            const r = await fetch(`${window.location.origin}/api/projects/${projectId}/axiom-suggestions/run?channel=llm`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${localStorage.getItem('access_token') || ''}`,
+                },
+                body: JSON.stringify({}),
+            });
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            const data = await r.json();
+            const n = data.review_created ?? 0;
+            const both = data.merged_both ?? 0;
+            const up = data.upgraded_pending ?? 0;
+            const skip = data.llm?.skipped ?? data.llm?.error;
+            message.success(
+                `AI 公理扫描完成：新增建议 ${n} 条`
+                + (both ? `，与统计通道合并 ${both} 条` : '')
+                + (up ? `，并入既有待审 ${up} 条` : '')
+                + (skip && !n ? `（AI 通道本次未产出：${skip}）` : '')
+                + '，请到「审核」页处理',
+            );
+        } catch (e: any) {
+            message.error(e.message || 'AI 公理扫描失败');
+        } finally {
+            setAxiomScanning(false);
+        }
+    };
+
     // ── 导出 / 发布（自骨架编辑迁入）──
     // 统一导出弹窗（RDF 6 种序列化 + 平台 JSON）
     const [exportOpen, setExportOpen] = useState(false);
@@ -777,6 +810,11 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                         <span className="text-xs hidden lg:inline" style={{ color: '#8B94AB' }}>按分片批量抽取，进度弹窗显示批次与剩余时间</span>
                         <Button icon={<ClusterOutlined />} onClick={startResolution}>消解分析</Button>
                         <Button icon={<RadarChartOutlined />} onClick={detectConflicts}>冲突检测</Button>
+                        <Tooltip title="AI 依据实例样本建议新公理（函数性/互逆/互斥/等价类等 8 种）；候选先过存在性、冲突、影子校验、一致性四道机器检查，通过后才进入审核队列">
+                            <Button icon={<RobotOutlined />} onClick={scanAxioms} loading={axiomScanning}>
+                                AI 公理扫描
+                            </Button>
+                        </Tooltip>
                         <Tooltip title="语义蕴含推理（OWL-RL/RDFS）+ 自定义规则推理；结果与原始事实分开存放">
                             <Button icon={<ExperimentOutlined />} onClick={() => setReasoningOpen(true)}>推理分析</Button>
                         </Tooltip>

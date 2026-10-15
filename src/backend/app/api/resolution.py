@@ -3,6 +3,8 @@
 # run 走 extract 队列 Celery（复用 extraction 的进度/SSE）；merge/split/detect 同步（行表轻操作）。
 # 审核队列 API（03 §10）在 M3-6；本文件只暴露消解/冲突面。
 
+import json
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
@@ -180,16 +182,24 @@ def list_conflicts(
 @router.post("/axiom-suggestions/run", dependencies=[Depends(require_module("resolution"))])
 def run_axiom_suggestions_endpoint(
     project_id: int,
+    channel: str = "all",
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """公理建议扫描（O2-B8）：统计推断 functional/inverse_of/disjoint_with 候选，
-    每个候选带实例统计证据，物化为 review_items(item_type='axiom_suggestion')。"""
+    """公理建议扫描（O2-B8 + O4-B18 双通道）：channel=statistical（统计推断）
+    / llm（AI 生成，过存在性校验）/ all（默认双通道，向后兼容）。
+    每个候选带证据，物化为 review_items(item_type='axiom_suggestion')。"""
+    if channel not in ("statistical", "llm", "all"):
+        raise APIError(f"未知 channel: {channel}（可选 statistical/llm/all）",
+                       code="INVALID_CHANNEL", http_status=400)
     require_project_role(project_id, "editor", current_user, db)
     _load_project_or_404(project_id, db)
     from app.services.axiom_suggestion_service import run_axiom_suggestions
 
-    stats = run_axiom_suggestions(db, project_id)
+    stats = run_axiom_suggestions(db, project_id, channel=channel)
+    from app.core.logging import logger
+    logger.info(f"公理建议扫描完成 project={project_id} channel={channel} "
+                f"result={json.dumps(stats, ensure_ascii=False, default=str)[:2000]}")
     return stats
 
 

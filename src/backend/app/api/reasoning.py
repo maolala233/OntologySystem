@@ -6,8 +6,9 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user, require_module, require_project_role
-from app.infrastructure.database import OntologyRule, Project, ReasoningResult, User, get_db
+from app.infrastructure.database import OntologyRule, Project, User, get_db
 from app.services import reasoning_service
+from app.services.axiom_store import AXIOM_KINDS, declare_axiom, list_axioms, remove_axiom
 
 router = APIRouter(prefix="/api/projects/{project_id}", tags=["reasoning"])
 
@@ -130,3 +131,67 @@ def delete_rule(project_id: int, rule_id: int,
     db.delete(rule)
     db.commit()
     return {"deleted": True, "id": rule_id}
+
+
+# ── 公理声明 CRUD（O4 后扩展：规则与公理统一管理）──
+# 与审核批准共用 axiom_store.declare_axiom 写入路径（schema 权威键 + 画布双写）；
+# 列表/删除按 axiom key 定位。domain_fix/range_fix 与原生 domain/range 不可区分，
+# 不在本 CRUD 暴露（经画布属性面板调整）。
+
+
+class AxiomBody(BaseModel):
+    kind: str
+    predicate: str | None = None
+    predicates: list[str] | None = None
+    classes: list[str] | None = None
+    value: str | None = None
+    min_card: int | None = None
+    max_card: int | None = None
+
+
+@router.get("/reasoning/axioms", dependencies=[Depends(require_module("resolution"))])
+def list_axioms_endpoint(project_id: int, current_user: User = Depends(get_current_user),
+                         db: Session = Depends(get_db)):
+    """已声明公理列表（来自画布 graph_data，审核批准/手工新增同源）。
+
+    附带 schema 类/谓词清单（前端公理表单下拉用）。
+    """
+    proj = _load_project_or_404(project_id, db)
+    require_project_role(project_id, "viewer", current_user, db)
+    schema = (proj.graph_data or {}).get("schema") or {}
+    return {
+        "items": list_axioms(proj),
+        "kinds": list(AXIOM_KINDS),
+        "class_labels": sorted({str(c.get("label")) for c in schema.get("classes") or []
+                                if isinstance(c, dict) and c.get("label")}),
+        "predicate_labels": sorted({str(op_.get("label")) for op_ in schema.get("object_properties") or []
+                                    if isinstance(op_, dict) and op_.get("label")}),
+    }
+
+
+@router.post("/reasoning/axioms", dependencies=[Depends(require_module("resolution"))])
+def declare_axiom_endpoint(project_id: int, body: AxiomBody,
+                           current_user: User = Depends(get_current_user),
+                           db: Session = Depends(get_db)):
+    """手工声明公理（编辑走 delete + 重新 declare）。"""
+    require_project_role(project_id, "editor", current_user, db)
+    proj = _load_project_or_404(project_id, db)
+    result = declare_axiom(db, proj, body.model_dump())
+    if "skipped" in result:
+        raise HTTPException(status_code=400, detail=result["skipped"])
+    db.commit()
+    return result
+
+
+@router.delete("/reasoning/axioms", dependencies=[Depends(require_module("resolution"))])
+def remove_axiom_endpoint(project_id: int, key: str = Query(..., min_length=3),
+                          current_user: User = Depends(get_current_user),
+                          db: Session = Depends(get_db)):
+    """按 key 撤销一条公理声明（同时清理 schema 权威键与画布标记）。"""
+    require_project_role(project_id, "editor", current_user, db)
+    proj = _load_project_or_404(project_id, db)
+    result = remove_axiom(db, proj, key)
+    if "skipped" in result:
+        raise HTTPException(status_code=400, detail=result["skipped"])
+    db.commit()
+    return result

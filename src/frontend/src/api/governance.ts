@@ -8,7 +8,7 @@ import apiClient from './client';
 export type ReviewItemType =
     | 'entity_merge' | 'new_class' | 'low_confidence_entity' | 'low_confidence_relation'
     | 'conflict_value' | 'conflict_type' | 'conflict_relationship' | 'missing_evidence'
-    | 'conflict_axiom';
+    | 'conflict_axiom' | 'axiom_suggestion';
 export type ReviewPriority = 'low' | 'medium' | 'high' | 'critical';
 export type ReviewStatus = 'pending' | 'claimed' | 'approved' | 'rejected' | 'edited';
 

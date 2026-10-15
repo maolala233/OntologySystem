@@ -60,6 +60,7 @@ def suggest_functional(ents: list[dict], rels: list[dict],
                                  "object": r.get("object_label") or ""})
         out.append({
             "kind": "functional", "predicate": pred,
+            "risk_tier": "low", "source": "statistical",
             "evidence": {"subjects": st["subjects"], "single_value_rate": 1.0,
                          "examples": examples},
             "summary": (f"关系「{pred}」在 {st['subjects']} 个主体上全部单客体"
@@ -107,6 +108,7 @@ def suggest_inverse_of(ents: list[dict], rels: list[dict],
             out.append({
                 "kind": "inverse_of", "predicates": [pred_labels.get(a, a),
                                                      pred_labels.get(b, b)],
+                "risk_tier": "low", "source": "statistical",
                 "evidence": {"pairs": len(hits), "rate": round(min(rate_a, rate_b), 2),
                              "examples": examples},
                 "summary": (f"关系「{pred_labels.get(a, a)}」与「{pred_labels.get(b, b)}」"
@@ -167,6 +169,7 @@ def suggest_disjoint_with(ents: list[dict], rels: list[dict],
                 continue
             out.append({
                 "kind": "disjoint_with", "classes": [a, b],
+                "risk_tier": "low", "source": "statistical",
                 "evidence": {"instances_a": len(ia), "instances_b": len(ib),
                              "shared_label_instances": 0, "co_typed_instances": 0},
                 "summary": (f"类「{a}」（{len(ia)} 实例）与「{b}」（{len(ib)} 实例）"
