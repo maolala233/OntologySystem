@@ -48,6 +48,8 @@ src/frontend/vite.config.d.ts
 celerybeat-schedule*
 src/backend/celerybeat-schedule*
 temp/
+reports/
+src/backend/reports/
 .impeccable/
 .pytest_cache/
 .ruff_cache/
