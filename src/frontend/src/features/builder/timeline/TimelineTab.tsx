@@ -11,8 +11,9 @@ import { RollbackOutlined, SearchOutlined, ThunderboltOutlined } from '@ant-desi
 
 import { GateEvaluationRow, ImpactSummary, gateApi, impactApi } from '../../../api/cqs';
 import {
-    DiffResult, InstanceBrief, InstanceModified, RelationRow, VersionRow, versionsApi,
+    ClassModified, DiffResult, InstanceBrief, InstanceModified, RelationRow, VersionRow, versionsApi,
 } from '../../../api/governance';
+import { listCopilotAudit } from '../../../api/copilot';
 
 const KIND_META: Record<string, { color: string; label: string }> = {
     schema: { color: 'blue', label: '骨架' },
@@ -137,13 +138,70 @@ const RelationLines = ({ rows, color }: { rows: RelationRow[]; color: 'success' 
     );
 };
 
+/** 类字段级变化：属性增删/类型变化/父类调整/定义调整（旧格式无字段级 detail 时退化为「定义调整」） */
+const ClassModifiedLines = ({ mods }: { mods: ClassModified[] }) => {
+    const lines = mods.map((m) => {
+        const parts: string[] = [];
+        for (const p of m.props_added || []) parts.push(`新增属性：${p.name}(${p.data_type || '未定类型'})`);
+        for (const p of m.props_removed || []) parts.push(`移除属性：${p.name}(${p.data_type || '未定类型'})`);
+        for (const p of m.props_changed || []) parts.push(`${p.name}：${p.from || '未定类型'} → ${p.to || '未定类型'}`);
+        if (m.parent_from !== m.parent_to) parts.push(`父类：「${m.parent_from || '—'}」→「${m.parent_to || '—'}」`);
+        if (m.definition_changed) parts.push('定义描述调整');
+        return { key: m.label, label: m.label, text: parts.join('；') || '定义调整' };
+    });
+    const show = lines.slice(0, MAX_DIRECT);
+    const rest = lines.slice(MAX_DIRECT);
+    const renderLine = (l: { key: string; label: string; text: string }) => (
+        <div key={l.key} className="text-sm leading-6">
+            <Tag color="warning">变</Tag>
+            <span className="font-medium">{l.label}</span>
+            <span className="ml-1 text-gray-700">{l.text}</span>
+        </div>
+    );
+    return (
+        <div className="space-y-1">
+            {show.map(renderLine)}
+            {rest.length > 0 && (
+                <Collapse
+                    size="small"
+                    items={[{ key: 'more', label: `还有 ${rest.length} 条变化`, children: <div className="space-y-1">{rest.map(renderLine)}</div> }]}
+                />
+            )}
+        </div>
+    );
+};
+
 interface Props {
     projectId: number;
     onChanged?: () => void;
 }
 
+// AI 协同操作历史（O5-B29/F15）：copilot.* 审计流水的人话呈现
+interface CopilotAuditRow {
+    id: number; action: string; actor_id: number | null; actor: string | null;
+    detail: Record<string, any>; created_at: string | null;
+}
+const AUDIT_ACTION: Record<string, { color: string; text: string }> = {
+    'copilot.chat': { color: 'default', text: '协同对话' },
+    'copilot.proposal.apply': { color: 'green', text: '提案应用' },
+    'copilot.proposal.reject': { color: 'default', text: '提案忽略' },
+    'copilot.suggestion.convert': { color: 'cyan', text: '建议转审核' },
+    'copilot.verify.archive': { color: 'purple', text: '验证报告存档' },
+    'copilot.session.delete': { color: 'default', text: '会话删除' },
+};
+const AUDIT_SUMMARY: Record<string, (d: Record<string, any>) => string> = {
+    'copilot.chat': d => `会话 #${d.session_id ?? '-'}（${d.status ?? '-'}，${(d.latency_ms ?? 0) / 1000 | 0}s）`,
+    'copilot.proposal.apply': d => `提案 ${d.proposal_id ?? '-'}（${d.kind ?? '-'}），`
+        + (d.version_no ? `生成 manual 版本 v${d.version_no}` : '画布已更新')
+        + (d.diff_summary ? `，改动 ${d.diff_summary}` : ''),
+    'copilot.proposal.reject': d => `提案 ${d.proposal_id ?? '-'}（无画布副作用）`,
+    'copilot.suggestion.convert': d => `建议 ${d.proposal_id ?? '-'} → 审核项 #${d.review_item_id ?? '-'}`,
+    'copilot.verify.archive': d => `报告 #${d.message_id ?? '-'} → 版本 v${d.version_no ?? '-'}（结论 ${d.overall ?? '-'}）`,
+    'copilot.session.delete': d => `会话 #${d.session_id ?? '-'}`,
+};
+
 const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
-    const [subTab, setSubTab] = useState<'versions' | 'entity' | 'gate'>('versions');
+    const [subTab, setSubTab] = useState<'versions' | 'entity' | 'gate' | 'audit'>('versions');
     const [versions, setVersions] = useState<VersionRow[]>([]);
     const [loading, setLoading] = useState(false);
     const [selA, setSelA] = useState<number | null>(null);
@@ -161,6 +219,20 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
     const [gates, setGates] = useState<GateEvaluationRow[]>([]);
     const [impact, setImpact] = useState<ImpactSummary | null>(null);
     const [gateLoading, setGateLoading] = useState(false);
+
+    // AI 协同操作历史（O5-B29/F15）
+    const [audit, setAudit] = useState<CopilotAuditRow[]>([]);
+    const [auditLoading, setAuditLoading] = useState(false);
+    const loadAudit = useCallback(async () => {
+        setAuditLoading(true);
+        try {
+            setAudit(await listCopilotAudit(projectId));
+        } catch (e: any) {
+            message.error(e.response?.data?.error?.message || '加载 AI 协同历史失败');
+        } finally {
+            setAuditLoading(false);
+        }
+    }, [projectId]);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -273,11 +345,13 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
                         onChange={(v) => {
                             setSubTab(v as any);
                             if (v === 'gate') loadGate();
+                            if (v === 'audit') loadAudit();
                         }}
                         options={[
                             { value: 'versions', label: '版本时间轴' },
                             { value: 'entity', label: '实体时间线' },
                             { value: 'gate', label: '发布门控' },
+                            { value: 'audit', label: 'AI 协同' },
                         ]}
                     />
                     <Button icon={<SearchOutlined />} onClick={load}>刷新</Button>
@@ -338,6 +412,8 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
                                         if (!added.length && !removed.length && !modified.length) return null;
                                         const isInstances = key === 'instances';
                                         const isRelations = key === 'relations';
+                                        const isClasses = key === 'classes';
+                                        const isProps = key === 'properties';
                                         return (
                                             <div key={key} className="border rounded p-3">
                                                 <SectionHeader title={title} added={added.length} removed={removed.length} modified={modified.length} />
@@ -374,6 +450,23 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
                                                             <div>
                                                                 <div className="text-xs text-red-700 mb-1">删除关系</div>
                                                                 <RelationLines rows={removed} color="error" />
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ) : isClasses || isProps ? (
+                                                    <div className="space-y-2">
+                                                        {added.length > 0 && <TagWall words={added} color="success" />}
+                                                        {removed.length > 0 && <TagWall words={removed} color="error" />}
+                                                        {modified.length > 0 && (
+                                                            <div>
+                                                                <div className="text-xs text-amber-700 mb-1">
+                                                                    {isProps ? '定义域/值域变化' : '类定义变化'}
+                                                                </div>
+                                                                {isClasses ? (
+                                                                    <ClassModifiedLines mods={modified} />
+                                                                ) : (
+                                                                    <TagWall words={modified.map((m: any) => `${m.label}：${m.from || '—'} → ${m.to || '—'}`)} color="warning" />
+                                                                )}
                                                             </div>
                                                         )}
                                                     </div>
@@ -546,6 +639,40 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
                     />
                     {events.length === 0 && !entityLoading && <Empty description="查询实体时间线" />}
                 </div>
+            )}
+
+            {subTab === 'audit' && (
+                <Spin spinning={auditLoading}>
+                    <div className="mb-3 flex items-center gap-2">
+                        <span className="text-sm text-gray-600">
+                            AI 协同操作历史：谁、何时、通过哪个会话、依据什么证据改了什么（含提案 diff 摘要与 manual 版本号）
+                        </span>
+                        <Button size="small" icon={<SearchOutlined />} onClick={loadAudit}>刷新</Button>
+                    </div>
+                    {audit.length === 0 && !auditLoading ? (
+                        <Empty description="暂无 AI 协同操作记录" />
+                    ) : (
+                        <AntTimeline
+                            items={audit.map((a) => {
+                                const meta = AUDIT_ACTION[a.action] ?? { color: 'default', text: a.action };
+                                const summarize = AUDIT_SUMMARY[a.action];
+                                return {
+                                    color: meta.color === 'green' ? 'green' : meta.color === 'purple' ? 'purple' : 'blue',
+                                    children: (
+                                        <div>
+                                            <span className="font-medium">{String(a.created_at ?? '').slice(0, 19).replace('T', ' ')}</span>
+                                            <Space className="ml-2">
+                                                <Tag color={meta.color}>{meta.text}</Tag>
+                                            </Space>
+                                            <span className="ml-2 text-gray-700">{a.actor ?? `用户#${a.actor_id ?? '-'}`}</span>
+                                            <span className="ml-2 text-xs text-gray-500">{summarize ? summarize(a.detail ?? {}) : ''}</span>
+                                        </div>
+                                    ),
+                                };
+                            })}
+                        />
+                    )}
+                </Spin>
             )}
         </Card>
     );

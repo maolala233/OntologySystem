@@ -11,7 +11,7 @@ import {
     DeleteOutlined, DownloadOutlined, ExperimentOutlined, PlusOutlined, ReloadOutlined, SettingOutlined,
 } from '@ant-design/icons';
 
-import { reasoningApi, type DeclaredAxiom, type OntologyRule, type ReasoningItem, type ReasoningSummary } from '../../../api/reasoning';
+import { reasoningApi, type DeclaredAxiom, type OntologyRule, type ReasoningItem, type ReasoningSummary, type RuleSuggestion } from '../../../api/reasoning';
 
 const SOURCE_TAG: Record<string, { color: string; label: string }> = {
     owlrl: { color: '#5B8DEF', label: 'OWL-RL 蕴含' },
@@ -83,6 +83,9 @@ const ReasoningModal: React.FC<{
     const [ruleForm, setRuleForm] = useState<{ name: string; s: string; p: string; o: string; q: string } | null>(null);
     const [editingRule, setEditingRule] = useState<OntologyRule | null>(null);
     const [savingRule, setSavingRule] = useState(false);
+    // AI 规则挖掘（S9）：从实例事实的物质化蕴含挖候选规则，人工采纳后下次运行生效
+    const [mining, setMining] = useState(false);
+    const [suggestions, setSuggestions] = useState<RuleSuggestion[] | null>(null);
     // 公理（O4 后扩展：抽取批准的公理与手工公理统一列出、可编辑可新增）
     const [axioms, setAxioms] = useState<DeclaredAxiom[]>([]);
     const [classLabels, setClassLabels] = useState<string[]>([]);
@@ -214,6 +217,45 @@ const ReasoningModal: React.FC<{
             await loadRules();
         } catch {
             message.error('删除失败');
+        }
+    };
+
+    // ── AI 规则挖掘（S9）：统计+LLM 双通道候选 + 一键采纳（走既有 createRule 人工门禁）──
+    const mineRules = async () => {
+        setMining(true);
+        try {
+            const r = await reasoningApi.getRuleSuggestions(projectId, 'all');
+            setSuggestions(r.items);
+            const skipped = (r as { llm?: { skipped?: string } }).llm?.skipped;
+            if (!r.items.length) {
+                message.info(skipped
+                    ? '未挖掘到候选规则：LLM 通道跳过（抽取模型未配置或调用失败），统计通道需「带 p 必带 q」的稳定伴随模式'
+                    : '未挖掘到候选规则：需要实例关系间存在稳定伴随模式或 LLM 可提议的隐性关系');
+            } else if (skipped) {
+                message.info('LLM 通道跳过（抽取模型未配置或调用失败），仅统计通道产出');
+            }
+        } catch (e: any) {
+            message.error(e?.response?.data?.detail || '规则挖掘失败');
+        } finally {
+            setMining(false);
+        }
+    };
+
+    const adoptSuggestion = async (s: RuleSuggestion) => {
+        try {
+            await reasoningApi.createRule(projectId, {
+                name: s.name,
+                if_subject_class: s.if_subject_class,
+                if_predicate: s.if_predicate,
+                if_object_class: s.if_object_class,
+                then_predicate: s.then_predicate,
+                enabled: true,
+            });
+            message.success(`已采纳规则「${s.name}」，点击「运行推理」生效`);
+            setSuggestions((prev) => (prev ? prev.filter((x) => x !== s) : null));
+            await loadRules();
+        } catch (e: any) {
+            message.error(e?.response?.data?.detail || '采纳失败');
         }
     };
 
@@ -355,7 +397,13 @@ const ReasoningModal: React.FC<{
             {loading ? (
                 <div className="py-10 text-center"><Spin /></div>
             ) : items.length === 0 ? (
-                <Empty description="暂无推理结果，点击「运行推理」生成" className="py-6" />
+                <Empty description={
+                    sourceFilter === 'rule' && rules.length === 0
+                        ? '暂无自定义规则：在「规则与公理」新建，或用 AI 规则挖掘从数据里挖候选'
+                        : sourceFilter === 'rule'
+                            ? '已启用的规则本次未推导出新关系，可点「运行推理」重新计算'
+                            : '暂无推理结果，点击「运行推理」生成'
+                } className="py-6" />
             ) : (
                 <div className="max-h-[360px] overflow-y-auto border rounded" style={{ borderColor: '#2A3550' }}>
                     {items.map((it) => {
@@ -481,17 +529,66 @@ const ReasoningModal: React.FC<{
                 )}
 
                 {/* 规则区 */}
-                <div className="mb-2 text-sm font-medium" style={{ color: '#5B8DEF' }}>自定义推理规则</div>
+                <div className="flex items-center gap-2 mb-2">
+                    <span className="text-sm font-medium" style={{ color: '#5B8DEF' }}>自定义推理规则</span>
+                    <div className="flex-1" />
+                    <Button size="small" loading={mining} icon={<ExperimentOutlined />}
+                            onClick={mineRules}>
+                        AI 规则挖掘
+                    </Button>
+                    {!ruleForm && (
+                        <Button size="small" icon={<PlusOutlined />}
+                                onClick={() => { setEditingRule(null); setRuleForm({ name: '', s: '', p: '', o: '', q: '' }); }}>
+                            新建规则
+                        </Button>
+                    )}
+                </div>
                 <div className="mb-3 text-xs text-gray-500">
                     规则：当主体属于「主语类」（含子类）、经「谓词」连接到「宾语类」（含子类）的实例时，
-                    自动推导出两者之间的「结论谓词」关系。推导结果只进推理结果，不改原始事实。
+                    自动推导出两者之间的「结论谓词」关系。规则同时作用于原始事实与蕴含结果（链式推理：
+                    蕴含先推出的关系可以继续触发规则）。推导结果只进推理结果，不改原始事实。
                 </div>
-                {!ruleForm ? (
-                    <Button size="small" icon={<PlusOutlined />}
-                            onClick={() => { setEditingRule(null); setRuleForm({ name: '', s: '', p: '', o: '', q: '' }); }}>
-                        新建规则
-                    </Button>
-                ) : (
+                {suggestions !== null && (
+                    suggestions.length === 0 ? (
+                        <div className="mb-3 text-xs text-gray-500">
+                            未挖掘到候选规则：需要实例关系间存在「带 p 必带 q」的稳定伴随模式（支撑 ≥2 例且置信度 100%）。
+                        </div>
+                    ) : (
+                        <div className="mb-3 border rounded p-2 space-y-2" style={{ borderColor: '#2A3550' }}>
+                            <div className="text-xs" style={{ color: '#B585F2' }}>
+                                AI 挖掘到的候选规则（统计通道挖实例事实的稳定伴随模式，LLM 通道从本体素材抽隐性关系；采纳后点「运行推理」生效）
+                            </div>
+                            {suggestions.map((s, i) => {
+                                const src = s.source === 'both' ? { color: 'geekblue', label: '双通道' }
+                                    : s.source === 'llm' ? { color: 'purple', label: 'LLM 抽取' }
+                                    : { color: 'cyan', label: '统计挖掘' };
+                                return (
+                                    <div key={`${s.if_predicate}-${s.then_predicate}-${i}`}
+                                         className="flex items-start gap-2 text-xs">
+                                        <Tag color={src.color} className="flex-shrink-0" style={{ fontSize: 11 }}>{src.label}</Tag>
+                                        <div className="flex-1">
+                                            <div>
+                                                {s.if_subject_class} —[{s.if_predicate}]→ {s.if_object_class}
+                                                <span className="mx-1">⇒</span>
+                                                <span style={{ color: '#B585F2' }}>{s.then_predicate}</span>
+                                                {s.support != null && (
+                                                    <span className="text-gray-500">
+                                                        （支撑 {s.support} 例 · 置信度 {Math.round((s.confidence || 0) * 100)}%）
+                                                    </span>
+                                                )}
+                                            </div>
+                                            {s.llm_reason && (
+                                                <div className="text-gray-500 mt-0.5">{s.llm_reason}</div>
+                                            )}
+                                        </div>
+                                        <Button size="small" type="primary" onClick={() => adoptSuggestion(s)}>采纳</Button>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )
+                )}
+                {ruleForm && (
                     <div className="p-3 mb-3 border rounded space-y-2" style={{ borderColor: '#2A3550' }}>
                         <Input size="small" placeholder="规则名称（如：投资即投资了）"
                                value={ruleForm.name} onChange={(e) => setRuleForm({ ...ruleForm, name: e.target.value })} />

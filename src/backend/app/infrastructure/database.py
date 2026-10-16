@@ -980,6 +980,81 @@ class OntologyImport(Base):
     created_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))
 
 
+class CopilotSession(Base):
+    """Copilot 会话（O5-B22，docs/design/14 §5）：人机协同构建的对话分组。
+
+    kind 语义放消息级（copilot_messages.kind），会话只做分组与模型选择留痕。
+    权限挂 resolution 模块（构建域，14 §6）。
+    """
+    __tablename__ = "copilot_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, nullable=False, index=True)
+    user_id = Column(Integer, nullable=True, index=True)
+    title = Column(String(200), nullable=False, server_default="新会话")
+    model_config_id = Column(Integer, nullable=True)
+    message_count = Column(Integer, nullable=False, server_default="0")
+    created_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))
+    updated_at = Column(DateTime, nullable=True,
+                        server_default=sa_text("CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"))
+
+
+class CopilotMessage(Base):
+    """Copilot 消息（O5-B22）：role=user/assistant；stages/tool_calls 供回放。
+
+    kind: chat=分析问答；clarify=澄清（S3）；proposal=编辑提案（S2）；
+    suggestion=建议卡（S3）；verify=验证报告（S4）。status: ok/failed/stopped。
+    """
+    __tablename__ = "copilot_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(Integer, ForeignKey("copilot_sessions.id", ondelete="CASCADE"),
+                        nullable=False, index=True)
+    project_id = Column(Integer, nullable=False, index=True)
+    role = Column(Enum("user", "assistant", name="copilot_message_role"), nullable=False)
+    kind = Column(String(16), nullable=False, server_default="chat")
+    content = Column(Text, nullable=True)
+    stages = Column(JSON, nullable=True)
+    tool_calls = Column(JSON, nullable=True)
+    # O5-B28：kind=verify 的验证报告 JSON（三段结论 + comparison），会话渲染/回放用
+    report = Column(JSON, nullable=True)
+    status = Column(String(16), nullable=False, server_default="ok")
+    latency_ms = Column(Integer, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))
+
+
+class CopilotProposal(Base):
+    """Copilot 编辑提案（O5-B25，docs/design/14 §3.1/§5）：提案的持久化与执行状态机。
+
+    status: pending→applied/rejected/expired（并发画布冲突/超期在 apply 时判 expired）。
+    base_version 记生成时的画布版本号（OntologyVersion.version_no），执行前比对——
+    画布已被别人编辑则拒绝执行并提示刷新（防基于过期画布的破坏性操作）。
+    result 留执行结果（version_no/失败原因/自愈原因），审计经 audit_logs 关联 session_id。
+    """
+    __tablename__ = "copilot_proposals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    proposal_id = Column(String(32), nullable=False, unique=True, index=True)
+    project_id = Column(Integer, nullable=False, index=True)
+    session_id = Column(Integer, ForeignKey("copilot_sessions.id", ondelete="CASCADE"),
+                        nullable=True, index=True)
+    message_id = Column(Integer, nullable=True)
+    kind = Column(String(32), nullable=False)
+    targets = Column(JSON, nullable=True)
+    diff_preview = Column(JSON, nullable=True)
+    impact = Column(JSON, nullable=True)
+    llm_reason = Column(Text, nullable=True)
+    evidence = Column(JSON, nullable=True)
+    risk_tier = Column(String(8), nullable=False, server_default="low")
+    status = Column(Enum("pending", "applied", "rejected", "expired",
+                         name="copilot_proposal_status"), nullable=False,
+                    server_default="pending")
+    base_version = Column(Integer, nullable=True)
+    result = Column(JSON, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))
+    decided_at = Column(DateTime, nullable=True)
+
+
 class EvolutionReport(Base):
     """失败问答进化分析报告（O3-B16）：聚合结论 + 物化的审核项 id 留痕。"""
     __tablename__ = "evolution_reports"

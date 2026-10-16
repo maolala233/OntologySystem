@@ -97,8 +97,18 @@ export interface RelationRow {
     predicate: string;
     object: string; object_label: string; object_class: string;
 }
+/** 类字段级变化（versioning.diff_graphs）：属性增删/类型变化/父类调整/定义调整 */
+export interface ClassModified {
+    label: string;
+    from: string; to: string;
+    props_added?: { name: string; data_type: string }[];
+    props_removed?: { name: string; data_type: string }[];
+    props_changed?: { name: string; from: string; to: string }[];
+    parent_from?: string | null; parent_to?: string | null;
+    definition_changed?: boolean;
+}
 export interface DiffResult {
-    classes: { added: string[]; removed: string[]; modified: { label: string; from: string; to: string }[] };
+    classes: { added: string[]; removed: string[]; modified: ClassModified[] };
     properties: { added: string[]; removed: string[]; modified: { label: string; from: string; to: string }[] };
     instances: { added: InstanceBrief[]; removed: InstanceBrief[]; modified: InstanceModified[] };
     relations: { added: RelationRow[]; removed: RelationRow[]; modified: any[] };

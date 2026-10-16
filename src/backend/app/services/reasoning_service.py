@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
+from collections import Counter
 from typing import Any, Optional
 
 from rdflib import Graph, Literal, Namespace, URIRef
@@ -179,10 +180,13 @@ def _build_parent_map(nodes: list[dict], edges: list[dict]) -> dict[str, list[st
 
 
 def _run_rules(db: Session, project: Project, nodes: list[dict], edges: list[dict],
-               rule_ids: Optional[list[int]] = None) -> list[dict]:
+               rule_ids: Optional[list[int]] = None,
+               entailment_triples: Optional[list[dict]] = None) -> list[dict]:
     """规则引擎（R3）：IF 主语类-[谓词]->宾语类 THEN 推断(主语, 结论谓词, 宾语)。
 
-    类匹配带子类闭包；已存在同谓词事实关系的不重复推导。返回推理三元组 dict 列表。
+    类匹配带子类闭包；已存在同谓词事实关系的不重复推导。S9 链式推理：求值对象
+    除实例级事实外还包含蕴含三元组（实例级）——语义闭包先行的产出可以继续触发
+    规则；类级蕴含（cls→cls）无实体对应，天然跳过。返回推理三元组 dict 列表。
     """
     rules_q = db.query(OntologyRule).filter(
         OntologyRule.project_id == project.id, OntologyRule.enabled.is_(True))
@@ -199,6 +203,7 @@ def _run_rules(db: Session, project: Project, nodes: list[dict], edges: list[dic
         Entity.status.notin_(("rejected", "merged")),
     ).all()
     ent_by_id = {e.id: e for e in ents}
+    ent_by_uri = {e.uri: e for e in ents if e.uri}
     rels = db.query(Relation).filter(
         Relation.project_id == project.id,
         Relation.is_class_edge.is_(False),
@@ -208,33 +213,214 @@ def _run_rules(db: Session, project: Project, nodes: list[dict], edges: list[dic
     fact_keys = {(r.subject_id, r.predicate, r.object_id) for r in rels}
 
     closure_cache: dict[str, set[str]] = {}
+    produced: set[tuple[int, int, str, int]] = set()  # (rule_id, s, then_p, o) 同规则去重
     results: list[dict] = []
+
+    def _emit(rule: OntologyRule, s_ent: Entity, o_ent: Entity) -> None:
+        s_cls = s_ent.class_label or ""
+        o_cls = o_ent.class_label or ""
+        s_closure = closure_cache.setdefault(s_cls, _class_closure(s_cls, parent_map))
+        o_closure = closure_cache.setdefault(o_cls, _class_closure(o_cls, parent_map))
+        if rule.if_subject_class not in s_closure or rule.if_object_class not in o_closure:
+            return
+        key = (rule.id, s_ent.id, rule.then_predicate, o_ent.id)
+        if key in produced or (s_ent.id, rule.then_predicate, o_ent.id) in fact_keys:
+            return
+        produced.add(key)
+        results.append({
+            "source": "rule",
+            "rule_name": rule.name,
+            "subject_uri": s_ent.uri or "",
+            "subject_label": s_ent.label or "",
+            "predicate_uri": str(EX[_safe_prop_id(rule.then_predicate)]),
+            "predicate_label": rule.then_predicate,
+            "object_uri": o_ent.uri or "",
+            "object_label": o_ent.label or "",
+        })
+
     for r in rels:
         s_ent, o_ent = ent_by_id.get(r.subject_id), ent_by_id.get(r.object_id)
         if not s_ent or not o_ent:
             continue
         for rule in rules:
-            if r.predicate != rule.if_predicate:
-                continue
-            s_cls = s_ent.class_label or ""
-            o_cls = o_ent.class_label or ""
-            s_closure = closure_cache.setdefault(s_cls, _class_closure(s_cls, parent_map))
-            o_closure = closure_cache.setdefault(o_cls, _class_closure(o_cls, parent_map))
-            if rule.if_subject_class not in s_closure or rule.if_object_class not in o_closure:
-                continue
-            if (r.subject_id, rule.then_predicate, r.object_id) in fact_keys:
-                continue
-            results.append({
-                "source": "rule",
-                "rule_name": rule.name,
-                "subject_uri": s_ent.uri or "",
-                "subject_label": s_ent.label or "",
-                "predicate_uri": str(EX[_safe_prop_id(rule.then_predicate)]),
-                "predicate_label": rule.then_predicate,
-                "object_uri": o_ent.uri or "",
-                "object_label": o_ent.label or "",
-            })
+            if r.predicate == rule.if_predicate:
+                _emit(rule, s_ent, o_ent)
+
+    # 链式：蕴含三元组（实例级）继续触发规则
+    for t in (entailment_triples or []):
+        s_ent = ent_by_uri.get(t.get("subject_uri") or "")
+        o_ent = ent_by_uri.get(t.get("object_uri") or "")
+        if not s_ent or not o_ent:
+            continue
+        for rule in rules:
+            if t.get("predicate_label") == rule.if_predicate:
+                _emit(rule, s_ent, o_ent)
     return results
+
+
+def _majority(seq: list[str]) -> str:
+    seq = [x for x in seq if x]
+    return Counter(seq).most_common(1)[0][0] if seq else ""
+
+
+def mine_rule_suggestions(db: Session, project: Project,
+                          min_support: int = 2, top_k: int = 10) -> list[dict]:
+    """AI 规则挖掘（S9）：从实例事实的「物质化蕴含」中挖候选规则。
+
+    若带谓词 p 的实例同时全部带谓词 q（支撑 ≥ min_support，置信度 100%），
+    则建议规则 主语类-[p]->宾语类 ⇒ 新谓词 q——抽取只配对出现时，q 对 p 是隐性
+    可推导知识。只出建议不落库，采纳走既有 createRule（人工门禁，与公理建议同哲学）。
+    """
+    ents = db.query(Entity).filter(
+        Entity.project_id == project.id,
+        Entity.is_class_node.is_(False),
+        Entity.status.notin_(("rejected", "merged")),
+    ).all()
+    ent_by_id = {e.id: e for e in ents}
+    rels = db.query(Relation).filter(
+        Relation.project_id == project.id,
+        Relation.is_class_edge.is_(False),
+        Relation.status.notin_(("rejected",)),
+    ).all()
+
+    # subject_id → {谓词: [(宾语实体, 宾语类)]}；主语 → 主语类
+    by_subj: dict[int, dict[str, list[tuple[Entity, str]]]] = {}
+    for r in rels:
+        s_ent, o_ent = ent_by_id.get(r.subject_id), ent_by_id.get(r.object_id)
+        if not s_ent or not o_ent or not r.predicate:
+            continue
+        by_subj.setdefault(r.subject_id, {}).setdefault(r.predicate, []).append((o_ent, o_ent.class_label or ""))
+
+    # 谓词 → 拥有它的主语数（置信度分母：含只有 p 没有 q 的主语）
+    p_subjects: dict[str, set[int]] = {}
+    for sid, preds in by_subj.items():
+        for p in preds:
+            p_subjects.setdefault(p, set()).add(sid)
+
+    stats: dict[tuple[str, str], dict] = {}
+    for sid, preds in by_subj.items():
+        for p, _p_objs in preds.items():
+            for q, q_objs in preds.items():
+                if p == q:
+                    continue
+                st = stats.setdefault((p, q), {"n_p": len(p_subjects[p]), "both": 0,
+                                               "s_cls": [], "o_cls": []})
+                st["both"] += 1
+                st["s_cls"].append(ent_by_id[sid].class_label or "")
+                st["o_cls"].extend(c for _, c in q_objs)
+
+    out: list[dict] = []
+    for (p, q), st in stats.items():
+        if st["both"] < min_support or st["both"] < st["n_p"]:
+            continue  # 置信度须 100%：所有带 p 的实例都带 q
+        s_cls, o_cls = _majority(st["s_cls"]), _majority(st["o_cls"])
+        if not s_cls or not o_cls:
+            continue
+        out.append({
+            "name": f"{p}蕴含{q}",
+            "if_subject_class": s_cls,
+            "if_predicate": p,
+            "if_object_class": o_cls,
+            "then_predicate": q,
+            "support": st["both"],
+            "confidence": round(st["both"] / st["n_p"], 2),
+        })
+    out.sort(key=lambda x: (-x["support"], x["name"]))
+    return out[:top_k]
+
+
+def llm_rule_suggestions(db: Session, project: Project,
+                         llm: Optional[Any] = None,
+                         max_rules: int = 10) -> tuple[list[dict], dict]:
+    """LLM 规则抽取通道（S9 追加，规则版 O4 双通道）：素材组装 → call_llm → 解析+存在性门禁。
+
+    IF 侧（主语类/谓词/宾语类）必须逐字命中画布 schema / 实例关系谓词白名单；
+    THEN 侧为推导新关系。与既有 OntologyRule 同键的候选弃单。llm 注入供测试；
+    无抽取模型配置或调用失败时优雅跳过（stats.skipped 说明原因，不抛异常）。
+    """
+    from app.adapters.axiom_llm import build_materials
+    from app.adapters.rule_llm import RULE_OUTPUT_JSON_SCHEMA, build_rule_prompt, parse_rule_suggestions
+
+    graph_data = project.graph_data if isinstance(project.graph_data, dict) else {}
+    schema = graph_data.get("schema") if isinstance(graph_data.get("schema"), dict) else None
+
+    ents = db.query(Entity).filter(
+        Entity.project_id == project.id,
+        Entity.is_class_node.is_(False),
+        Entity.status.notin_(("rejected", "merged")),
+    ).all()
+    index = {e.id: e for e in db.query(Entity).filter(
+        Entity.project_id == project.id).all()}
+    rel_dicts = [{"subject_id": r.subject_id, "predicate": r.predicate,
+                  "object_id": r.object_id,
+                  "subject_label": (index.get(r.subject_id).label if index.get(r.subject_id) else "") or "",
+                  "object_label": (index.get(r.object_id).label if index.get(r.object_id) else "") or ""}
+                 for r in db.query(Relation).filter(
+                     Relation.project_id == project.id,
+                     Relation.is_class_edge.is_(False),
+                     Relation.status.notin_(("rejected",))).all()]
+
+    if llm is None:
+        llm = _build_rule_llm(db, project.id)
+    if llm is None:
+        return [], {"skipped": "llm_unavailable"}
+
+    from app.adapters.conflicts import _as_ent
+
+    materials = build_materials(schema, [_as_ent(e) for e in ents], rel_dicts)
+    system_prompt, user_prompt = build_rule_prompt(materials)
+    from app.services.axiom_suggestion_service import AXIOM_LLM_TIMEOUT
+    try:
+        resp = llm.call_llm(system_prompt=system_prompt, user_prompt=user_prompt,
+                            json_schema=RULE_OUTPUT_JSON_SCHEMA,
+                            timeout=AXIOM_LLM_TIMEOUT)
+    except Exception as e:  # noqa: BLE001 - LLM 失败不阻断统计通道
+        return [], {"skipped": f"llm_call_failed (timeout={AXIOM_LLM_TIMEOUT}s): {e}"}
+
+    if isinstance(resp, dict) and "rules" in resp:
+        content: Any = resp
+    else:
+        content = (resp or {}).get("content") or ""
+
+    # 已有规则同键去重（采纳过的不再荐）
+    existing = db.query(OntologyRule).filter(OntologyRule.project_id == project.id).all()
+    from app.adapters.resolution import normalize_label
+    existing_keys = {(normalize_label(r.if_subject_class), normalize_label(r.if_predicate),
+                      normalize_label(r.if_object_class), normalize_label(r.then_predicate))
+                     for r in existing}
+    candidates, rejected = parse_rule_suggestions(
+        content, schema,
+        relation_predicates=[d["predicate"] for d in rel_dicts],
+        existing_keys=existing_keys)
+    stats = {"parsed": len(candidates), "parse_rejected": len(rejected),
+             "rejected_reasons": rejected[:5]}
+    return candidates, stats
+
+
+def _build_rule_llm(db: Session, project_id: int):
+    """按项目抽取模型配置构造 LLMClient（与公理通道同口径）；未配置返回 None。"""
+    from app.services.axiom_suggestion_service import _build_llm
+    return _build_llm(db, project_id)
+
+
+def merge_rule_suggestions(statistical: list[dict], llm: list[dict]) -> list[dict]:
+    """双通道合并：同键（IF+THEN 归一）→ source=both，llm_reason 并入统计候选。"""
+    from app.adapters.resolution import normalize_label
+
+    def _key(c: dict) -> tuple:
+        return (normalize_label(c["if_subject_class"]), normalize_label(c["if_predicate"]),
+                normalize_label(c["if_object_class"]), normalize_label(c["then_predicate"]))
+
+    stat_by_key = {_key(c): c for c in statistical}
+    merged = list(statistical)
+    for c in llm:
+        base = stat_by_key.get(_key(c))
+        if base is not None:
+            base["source"] = "both"
+            base["llm_reason"] = c.get("llm_reason")
+        else:
+            merged.append(c)
+    return merged
 
 
 def run_reasoning(db: Session, project: Project, profile: str = "owlrl",
@@ -272,11 +458,12 @@ def run_reasoning(db: Session, project: Project, profile: str = "owlrl",
             "object_label": o_label,
         })
 
-    # ── 规则引擎 ──
+    # ── 规则引擎（S9 链式：蕴含产出的实例级三元组也参与规则求值）──
     graph_data = project.graph_data if isinstance(project.graph_data, dict) else {}
     nodes = graph_data.get("nodes") or []
     edges = graph_data.get("edges") or []
-    rule_results = _run_rules(db, project, nodes, edges, rule_ids)
+    rule_results = _run_rules(db, project, nodes, edges, rule_ids,
+                              entailment_triples=entailment)
 
     # ── 落库（latest-only：先清旧批次）──
     batch_id = str(uuid.uuid4())

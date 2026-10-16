@@ -73,7 +73,11 @@ def _clean_base_url(url: str) -> str:
 
 def _pick_default(db: Session, purpose: ModelPurpose,
                   project_id: Optional[int]) -> Optional[ModelConfig]:
-    """项目级默认优先于全局级默认（scope 内 enabled 且 is_default）。"""
+    """项目级默认优先于全局级默认（scope 内 enabled 且 is_default）。
+
+    兜底：没有标记 is_default 的行时，回落到同 scope 下任一启用配置（新者优先）——
+    只要有可用配置就不该报「未配置」（走查实测：全局 extract/chat 均未设默认 → QA 全挂）。
+    """
     q = (db.query(ModelConfig)
          .filter(ModelConfig.purpose == purpose.value, ModelConfig.enabled.is_(True)))
     if project_id is not None:
@@ -81,7 +85,15 @@ def _pick_default(db: Session, purpose: ModelPurpose,
                         ModelConfig.is_default.is_(True)).first())
         if row:
             return row
-    return q.filter(ModelConfig.scope == "global", ModelConfig.is_default.is_(True)).first()
+        row = (q.filter(ModelConfig.scope == "project", ModelConfig.project_id == project_id)
+               .order_by(ModelConfig.id.desc()).first())
+        if row:
+            return row
+    row = (q.filter(ModelConfig.scope == "global", ModelConfig.is_default.is_(True)).first())
+    if row:
+        return row
+    return (q.filter(ModelConfig.scope == "global")
+            .order_by(ModelConfig.id.desc()).first())
 
 
 def _env_fallback(purpose: ModelPurpose) -> Optional[ResolvedProvider]:

@@ -154,7 +154,11 @@ def load_graph_for(db: Session, project, ver) -> Optional[dict]:
 
 
 def diff_graphs(a: dict, b: dict) -> dict:
-    """两版 graph_data 的四级 diff（04 §9）：added/removed/modified（字段级 from→to）。"""
+    """两版 graph_data 的四级 diff（04 §9）：added/removed/modified（字段级 from→to）。
+
+    类 modified 附字段级明细（父类/定义/属性增删与类型变化），时间轴直接渲染，
+    不再只给「定义调整」一个笼统标记（S8 走查需求：属性变化要能看）。
+    """
     sa_, sb = a.get("schema") or {}, b.get("schema") or {}
 
     def _cls_sig(c: dict) -> str:
@@ -163,14 +167,33 @@ def diff_graphs(a: dict, b: dict) -> dict:
                                        for p in c.get("properties") or []),
                            "parent": c.get("parent")}, ensure_ascii=False, sort_keys=True)
 
+    def _cls_props(c: dict) -> dict:
+        return {p.get("name"): (p.get("data_type") or "")
+                for p in c.get("properties") or [] if p.get("name")}
+
     classes_a = {c.get("label"): c for c in sa_.get("classes") or [] if c.get("label")}
     classes_b = {c.get("label"): c for c in sb.get("classes") or [] if c.get("label")}
+    cls_modified = []
+    for k in sorted(set(classes_a) & set(classes_b)):
+        ca, cb = classes_a[k], classes_b[k]
+        if _cls_sig(ca) == _cls_sig(cb):
+            continue
+        pa, pb = _cls_props(ca), _cls_props(cb)
+        keys = set(pa) | set(pb)
+        cls_modified.append({
+            "label": k,
+            "from": _cls_sig(ca), "to": _cls_sig(cb),
+            "props_added": [{"name": x, "data_type": pb[x]} for x in sorted(keys - set(pa))],
+            "props_removed": [{"name": x, "data_type": pa[x]} for x in sorted(keys - set(pb))],
+            "props_changed": [{"name": x, "from": pa[x], "to": pb[x]}
+                              for x in sorted(keys & pa.keys() & pb.keys()) if pa[x] != pb[x]],
+            "parent_from": ca.get("parent"), "parent_to": cb.get("parent"),
+            "definition_changed": (ca.get("definition") or "") != (cb.get("definition") or ""),
+        })
     classes = {
         "added": sorted(set(classes_b) - set(classes_a)),
         "removed": sorted(set(classes_a) - set(classes_b)),
-        "modified": [{"label": k, "from": _cls_sig(classes_a[k]), "to": _cls_sig(classes_b[k])}
-                     for k in set(classes_a) & set(classes_b)
-                     if _cls_sig(classes_a[k]) != _cls_sig(classes_b[k])],
+        "modified": cls_modified,
     }
 
     def _op_sig(o: dict) -> str:

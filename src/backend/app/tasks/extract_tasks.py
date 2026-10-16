@@ -358,6 +358,12 @@ def run_schema_extraction(self, project_id: int,
                                  f"骨架抽取完成：{len(result.classes)} 类 / "
                                  f"{len(result.object_properties)} 关系{stitch_note}{check_note}",
                                  stats=stats)
+            # O5-B27：抽取完成回调追加首轮诊断（后台线程，不阻塞任务返回）
+            try:
+                from app.services.copilot_diagnosis import schedule_first_diagnosis
+                schedule_first_diagnosis(project_id, trigger="schema_extract")
+            except Exception:  # noqa: BLE001 —— 诊断调度失败不影响抽取结果
+                pass
             return {"status": "completed", **stats}
         finally:
             db.close()
@@ -658,6 +664,12 @@ def run_instance_extraction(self, project_id: int,
                                  f"{len(result.relations)} 关系"
                                  + (f"（含反向补全 {inverse_added} 条）" if inverse_added else ""),
                                  stats=stats)
+            # O5-B27：重抽/首抽完成均追加首轮诊断（后台线程，不阻塞任务返回）
+            try:
+                from app.services.copilot_diagnosis import schedule_first_diagnosis
+                schedule_first_diagnosis(project_id, trigger="instance_extract")
+            except Exception:  # noqa: BLE001 —— 诊断调度失败不影响抽取结果
+                pass
             return {"status": "completed", **stats}
         finally:
             db.close()

@@ -48,6 +48,21 @@ export interface RuleBody {
     enabled: boolean;
 }
 
+/** AI 规则挖掘候选（S9）：统计通道挖「带 p 必带 q」的物质化蕴含，LLM 通道从素材抽规则；
+ * 双通道同键合并 source=both。人工采纳后生效。 */
+export interface RuleSuggestion {
+    name: string;
+    if_subject_class: string;
+    if_predicate: string;
+    if_object_class: string;
+    then_predicate: string;
+    support: number | null;      // LLM 通道无统计支撑数
+    confidence: number | null;   // LLM 通道置信依据在 llm_reason
+    source?: 'co_occurrence' | 'llm' | 'both' | string;
+    llm_reason?: string | null;
+    examples?: Array<Record<string, unknown>> | null;
+}
+
 /** 公理声明（O4 后扩展：规则与公理统一管理）。key 为编辑/删除锚点。 */
 export interface DeclaredAxiom {
     key: string;
@@ -98,6 +113,12 @@ export const reasoningApi = {
     },
     deleteRule: async (projectId: number, ruleId: number): Promise<void> => {
         await apiClient.delete(`/api/projects/${projectId}/reasoning/rules/${ruleId}`);
+    },
+    // AI 规则挖掘（S9）：统计（物质化蕴含）+ LLM（规则抽取）双通道候选，只读不落库
+    getRuleSuggestions: async (projectId: number, channel: 'statistical' | 'llm' | 'all' = 'all'):
+        Promise<{ items: RuleSuggestion[]; llm?: { parsed?: number; parse_rejected?: number; skipped?: string } }> => {
+        const response = await apiClient.get(`/api/projects/${projectId}/reasoning/rule-suggestions`, { params: { channel } });
+        return response.data;
     },
 
     listAxioms: async (projectId: number): Promise<{

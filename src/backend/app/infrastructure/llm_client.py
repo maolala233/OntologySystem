@@ -560,26 +560,31 @@ class LLMClient:
 
             # ★ O4 公理建议通道：模型在 json_object 降级模式下可能先输出大段分析
             # 文字再给 {"suggestions":[...]}（走查实测），按键定位平衡对象直接提取。
-            # 抽取链路响应不含该键，此分支对其零影响。
-            if '"suggestions"' in clean:
-                key_at = clean.rfind('"suggestions"')
+            # ★ S9 规则挖掘通道同理（{"rules":[...]}）。
+            # 抽取链路响应不含这些键，此分支对其零影响。
+            for _key in ('"suggestions"', '"rules"'):
+                if _key not in clean:
+                    continue
+                key_at = clean.rfind(_key)
                 brace_at = clean.rfind('{', 0, key_at)
-                if brace_at != -1:
-                    depth = 0
-                    for i in range(brace_at, len(clean)):
-                        if clean[i] == '{':
-                            depth += 1
-                        elif clean[i] == '}':
-                            depth -= 1
-                            if depth == 0:
-                                try:
-                                    parsed = json.loads(clean[brace_at:i + 1])
-                                    if isinstance(parsed.get('suggestions'), list):
-                                        logger.info(f"[JSON 修复成功] 方法：suggestions 键定位，提取 {i + 1 - brace_at} 字符")
-                                        return parsed
-                                except json.JSONDecodeError:
-                                    pass
-                                break
+                if brace_at == -1:
+                    continue
+                depth = 0
+                parsed = None
+                for i in range(brace_at, len(clean)):
+                    if clean[i] == '{':
+                        depth += 1
+                    elif clean[i] == '}':
+                        depth -= 1
+                        if depth == 0:
+                            try:
+                                parsed = json.loads(clean[brace_at:i + 1])
+                            except json.JSONDecodeError:
+                                parsed = None
+                            break
+                if isinstance(parsed, dict) and isinstance(parsed.get(_key.strip('"')), list):
+                    logger.info(f"[JSON 修复成功] 方法：{_key.strip(chr(34))} 键定位，提取 {i + 1 - brace_at} 字符")
+                    return parsed
 
             # ★ 优先尝试：转义字符串内的控制字符（LLM 输出最常见的"结构完整但非法"问题）
             try:

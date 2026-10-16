@@ -113,6 +113,16 @@ def _graph_expand(db: Session, query: RetrievalQuery, seeds: list[Entity]) -> li
         return []
     hops = min(int(query.max_expansion_hops), 2)
     facts: list[dict] = []
+    # 实例属性也是事实（行表 Entity.props）：不进上下文的话「X的客服电话是多少」
+    # 这类属性问答永远拿不到值（走查实测——只有 instance_of 关系、无属性值）
+    for e in seeds:
+        for pk, pv in (e.props or {}).items():
+            kk = str(pk).strip()
+            vv = "" if pv is None else str(pv).strip()
+            if not kk or not vv:
+                continue
+            facts.append({"subject": e.label, "predicate": kk, "object": vv,
+                          "hop": 1, "score": 0.95, "entity_ids": [e.id]})
     frontier_ids = [e.id for e in seeds]
     seen_edges: set[tuple[int, str, int]] = set()
     for hop in range(1, hops + 1):

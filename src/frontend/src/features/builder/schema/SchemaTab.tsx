@@ -21,6 +21,8 @@ import {
     Input as AntInput,
     Dropdown,
     Menu,
+    Badge,
+    Empty,
 } from 'antd';
 import type { TreeProps } from 'antd';
 import {
@@ -72,9 +74,13 @@ import ExportDialog from '../components/ExportDialog';
 import { NodeDetailContent } from '../../graph-explorer/DetailDrawer';
 import { graphApi } from '../../../api/graphview';
 import { setUnsavedGuard } from '../../../utils/unsavedGuard';
+import { setCopilotSelection, pickSelection, COPILOT_CANVAS_REFRESH } from '../../../shared/copilotBus';
 import { humanizeEta } from '../../../shared/format';
 import CqPanel from './CqPanel';
 import { QuestionCircleOutlined } from '@ant-design/icons';
+import SuggestionCard from '../../../components/Copilot/SuggestionCard';
+import { listCopilotSuggestions } from '../../../api/copilot';
+import type { CopilotSuggestionItem } from '../../../api/copilot';
 
 const { TreeNode } = Tree;
 const { TextArea } = Input;
@@ -189,6 +195,27 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
 
     // 评测问题（CQ）管理抽屉（O3-F8）：CQ 约束抽取 + 发布门控
     const [isCqDrawerOpen, setIsCqDrawerOpen] = useState(false);
+    // 首轮诊断建议（O5-B27/F14）：顶栏"N 条建议"入口 + 建议抽屉
+    const [sugOpen, setSugOpen] = useState(false);
+    const [sugItems, setSugItems] = useState<CopilotSuggestionItem[]>([]);
+    const [sugPending, setSugPending] = useState(0);
+    const [sugLoading, setSugLoading] = useState(false);
+    const projectIdNum = useMemo(() => (projectId ? Number(projectId) : null), [projectId]);
+    const loadSuggestions = useCallback(async (open = false) => {
+        if (!projectIdNum) return;
+        if (open) setSugOpen(true);
+        setSugLoading(true);
+        try {
+            const resp = await listCopilotSuggestions(projectIdNum);
+            setSugItems(resp.items);
+            setSugPending(resp.pending_count);
+        } catch {
+            /* 建议列表拉取失败不打断画布 */
+        } finally {
+            setSugLoading(false);
+        }
+    }, [projectIdNum]);
+    useEffect(() => { loadSuggestions(); }, [loadSuggestions]);
     // 从其他项目导入框架（跨项目框架复用）
     const [isImportModalOpen, setIsImportModalOpen] = useState(false);
     const [importProjects, setImportProjects] = useState<{ id: number; name: string }[]>([]);
@@ -320,6 +347,23 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
         return () => setUnsavedGuard('schema', false);
     }, [hasUnsavedChanges]);
 
+    // O5-F13：Copilot 提案在悬浮窗应用后广播刷新 → 无未保存修改时自动重拉画布
+    //（有未保存修改时绝不覆盖用户编辑，只提示）
+    const hasUnsavedRef = useRef(hasUnsavedChanges);
+    useEffect(() => { hasUnsavedRef.current = hasUnsavedChanges; }, [hasUnsavedChanges]);
+    useEffect(() => {
+        const onRefresh = () => {
+            if (hasUnsavedRef.current) {
+                message.info('画布已被 Copilot 更新（manual 版本），保存当前修改后刷新即可看到');
+                return;
+            }
+            loadProject();
+            message.success('画布已同步 Copilot 提案变更');
+        };
+        window.addEventListener(COPILOT_CANVAS_REFRESH, onRefresh);
+        return () => window.removeEventListener(COPILOT_CANVAS_REFRESH, onRefresh);
+    }, []);
+
     // ── 从其他项目导入框架（跨项目框架复用）──
     const openImportFromProject = async () => {
         setImportSourceId(undefined);
@@ -428,6 +472,8 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
         setIsDrawerOpen(true);
         setDrawerTab('detail');   // 点击类/实例默认展示详情（与实例探索一致），编辑在第二个页签
         setDetailNodeId(null);
+        // O5-F12：选中态广播给全局 Copilot 小窗（"针对选中的东西说话"）
+        setCopilotSelection(pickSelection(node));
         // 点击画布节点 = 清除固定邻域高亮（恢复常态）
         setNeighborhoodPinId(null);
 
@@ -562,6 +608,8 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
         setSelectedElement(edge);
         setIsDrawerOpen(true);
         setDrawerTab('edit');     // 关系无详情页签（行表边 id 与画布边 id 不对应），直接编辑
+        // O5-F12：选中态广播给全局 Copilot 小窗
+        setCopilotSelection(pickSelection(undefined, edge));
 
         form.setFieldsValue({
             label: edge.data?.label || edge.data?.relation || '',
@@ -1722,6 +1770,19 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                     </Button>
                                 </Tooltip>
                             )}
+                            {/* O5-B27/F14：首轮诊断建议入口（抽取完成后 AI 建议落这里，不做运行时推送） */}
+                            <Tooltip title="AI 首轮诊断建议：抽取完成后自动生成，可转审核项走裁决流">
+                                <Badge count={sugPending} size="small" offset={[-2, 2]}>
+                                    <Button
+                                        icon={<AuditOutlined />}
+                                        loading={sugLoading && sugOpen}
+                                        onClick={() => loadSuggestions(true)}
+                                        style={{ background: 'transparent', borderColor: '#2A3550', color: '#E6EAF2' }}
+                                    >
+                                        AI 建议
+                                    </Button>
+                                </Badge>
+                            </Tooltip>
                             <Tooltip title={hasUnsavedChanges ? '保存修改' : '已保存'}>
                                 <Button
                                     icon={<SaveOutlined />}
@@ -2879,6 +2940,33 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                             destroyOnClose
                         >
                             <CqPanel projectId={Number(projectId)} open={isCqDrawerOpen} />
+                        </Drawer>
+
+                        {/* 首轮诊断建议抽屉（O5-B27/F14）：建议卡 = 理由 + 证据 + 转提案/转审核项/忽略 */}
+                        <Drawer
+                            title={`AI 首轮诊断建议${sugPending > 0 ? `（待处理 ${sugPending} 条）` : ''}`}
+                            width={480}
+                            open={sugOpen}
+                            onClose={() => setSugOpen(false)}
+                            destroyOnClose
+                        >
+                            {sugItems.length === 0 && !sugLoading ? (
+                                <Empty
+                                    description="暂无 AI 建议。完成一次骨架或实例抽取后，AI 会自动生成首轮诊断建议。"
+                                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                                />
+                            ) : (
+                                <div className="flex flex-col gap-3">
+                                    {sugItems.map((item) => (
+                                        <SuggestionCard
+                                            key={item.proposal_id}
+                                            projectId={Number(projectId)}
+                                            item={item}
+                                            onChanged={() => loadSuggestions(true)}
+                                        />
+                                    ))}
+                                </div>
+                            )}
                         </Drawer>
 
                         {/* RAGFlow 注入配置 Modal */}

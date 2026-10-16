@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import (
     auth,
+    copilot,
     cqs,
     documents,
     domains,
@@ -136,6 +137,7 @@ app.include_router(publications.router)  # M3-6：发布与公共区只读（03 
 app.include_router(graph_edit.router)  # R13：实例探索手动编辑（每次编辑落 manual 版本）
 app.include_router(graph_view.router)  # M4：图视图数据契约 + 节点/边详情（03 §13，06 §4）
 app.include_router(qa.router)  # M5：本体问答 SSE 流式 + 历史/溯源（03 §15，07 §4）
+app.include_router(copilot.router)  # O5-B22：Copilot 人机协同（SSE 会话 + 工具集）
 app.include_router(reports.router)  # R8：本体报告/PPT 生成（工具层扩展）
 app.include_router(mcp_gateway.router)  # M5：MCP 网关（HTTP Streamable，03 §16，07 §3）
 app.include_router(mcp_tokens.router)  # M5：MCP 令牌管理（admin，03 §16）

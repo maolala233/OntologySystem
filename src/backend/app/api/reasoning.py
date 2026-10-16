@@ -61,6 +61,35 @@ def get_reasoning_results(
     return reasoning_service.get_latest_results(db, project_id, limit=limit, source=source)
 
 
+@router.get("/reasoning/rule-suggestions", dependencies=[Depends(require_module("resolution"))])
+def get_rule_suggestions(
+    project_id: int,
+    channel: str = Query("all", description="挖掘通道：statistical/llm/all（默认双通道）"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """AI 规则挖掘（S9）：统计通道（物质化蕴含）+ LLM 通道（规则抽取）双通道候选，
+    只读不落库，采纳走 POST /reasoning/rules 人工门禁（与公理建议同哲学）。"""
+    _load_project_or_404(project_id, db)
+    if channel not in ("statistical", "llm", "all"):
+        raise HTTPException(status_code=400, detail="channel 仅支持 statistical/llm/all")
+    project = db.query(Project).filter(Project.id == project_id).first()
+    stat: list[dict] = []
+    if channel in ("statistical", "all"):
+        stat = reasoning_service.mine_rule_suggestions(db, project)
+    llm_items: list[dict] = []
+    llm_stats: dict | None = None
+    if channel in ("llm", "all"):
+        llm_items, llm_stats = reasoning_service.llm_rule_suggestions(db, project)
+    items = (stat if channel == "statistical"
+             else llm_items if channel == "llm"
+             else reasoning_service.merge_rule_suggestions(stat, llm_items))
+    out = {"items": items}
+    if llm_stats is not None:
+        out["llm"] = llm_stats
+    return out
+
+
 # ── 推理规则 CRUD ──
 
 class RuleBody(BaseModel):

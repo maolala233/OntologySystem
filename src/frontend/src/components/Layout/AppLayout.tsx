@@ -31,6 +31,7 @@ import { CONNECTIVITY_FIELDS, describeConnectivityError } from '../../utils/conn
 import { projectsApi } from '../../api/projects';
 import { useAuthStore } from '../../shared/auth/authStore';
 import { confirmLeaveUnsaved } from '../../utils/unsavedGuard';
+import CopilotWidget from '../Copilot/CopilotWidget';
 
 const { Sider, Content } = Layout;
 
@@ -326,6 +327,9 @@ const AppLayout: React.FC = () => {
                     <Outlet />
                 </Content>
             </Layout>
+
+            {/* O5-F12：全局悬浮 Copilot 小窗（任意页面常驻，项目上下文自动跟随路由） */}
+            <CopilotWidget />
         </Layout>
     );
 };
