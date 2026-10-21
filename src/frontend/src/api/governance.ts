@@ -15,6 +15,8 @@ export type ReviewStatus = 'pending' | 'claimed' | 'approved' | 'rejected' | 'ed
 export interface ReviewItem {
     id: number;
     project_id: number;
+    /** 所隶属项目名称（列表/详情返回；项目已删除时为 null，展示处回退 #id） */
+    project_name?: string | null;
     item_type: ReviewItemType;
     status: ReviewStatus;
     priority: ReviewPriority;
@@ -28,18 +30,35 @@ export interface ReviewItem {
     created_at: string | null;
 }
 
+const MAX_REVIEW_FETCH = 2000;
+
 export const reviewsApi = {
     listByProject: async (projectId: number, filters?: {
         status?: string; type?: string; priority?: string;
-    }): Promise<{ items: ReviewItem[]; total: number }> => {
+        limit?: number; offset?: number;
+    }): Promise<{ items: ReviewItem[]; total: number; limit?: number; offset?: number }> => {
         const response = await apiClient.get(`/api/projects/${projectId}/reviews`, { params: filters || {} });
         return response.data;
     },
 
-    /** 跨项目队列（审核工作台）：自动过滤为可 view 项目 */
-    listAll: async (filters?: { status?: string; type?: string }): Promise<{ items: ReviewItem[]; total: number }> => {
+    /** 跨项目队列（审核工作台）：自动过滤为可 view 项目；响应携带 projects（项目筛选下拉数据源） */
+    listAll: async (filters?: { status?: string; type?: string; project_id?: string; limit?: number; offset?: number }): Promise<{ items: ReviewItem[]; total: number; limit?: number; offset?: number; projects?: Array<{ id: number; name: string | null }> }> => {
         const response = await apiClient.get('/api/reviews', { params: filters || {} });
         return response.data;
+    },
+
+    /** 审核工作台全量加载：按 500/页循环拉到真实 total（后端单页上限 2000，超过 2000 截断并告警） */
+    listAllPaged: async (filters?: { status?: string; type?: string; project_id?: string }): Promise<{ items: ReviewItem[]; total: number; truncated: boolean; projects: Array<{ id: number; name: string | null }> }> => {
+        const PAGE = 500;
+        const first = await reviewsApi.listAll({ ...(filters || {}), limit: PAGE, offset: 0 });
+        const items = [...(first.items || [])];
+        const total = first.total ?? items.length;
+        while (items.length < Math.min(total, MAX_REVIEW_FETCH)) {
+            const page = await reviewsApi.listAll({ ...(filters || {}), limit: PAGE, offset: items.length });
+            if (!page.items?.length) break; // 防御：游标异常时不死循环
+            items.push(...page.items);
+        }
+        return { items, total, truncated: total > MAX_REVIEW_FETCH, projects: first.projects || [] };
     },
 
     detail: async (reviewId: number): Promise<ReviewItem> => {

@@ -370,6 +370,9 @@ const ReviewsPage: React.FC = () => {
     const [loading, setLoading] = useState(false);
     const [statusFilter, setStatusFilter] = useState<string[]>(['pending']);
     const [typeFilter, setTypeFilter] = useState<string[]>([]);
+    // 项目筛选（多选可搜索）；选项来自 /api/reviews 响应的 projects（可读范围内有审核项的项目）
+    const [projectFilter, setProjectFilter] = useState<number[]>([]);
+    const [projectOptions, setProjectOptions] = useState<Array<{ id: number; name: string | null }>>([]);
     const [selectedIds, setSelectedIds] = useState<React.Key[]>([]);
     const [pageSize, setPageSize] = useState(50);
     // 最后浏览过的项：抽屉关闭后 J/K 从这里继续前进/后退，而不是每次都回到第一条
@@ -388,11 +391,16 @@ const ReviewsPage: React.FC = () => {
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            const r = await reviewsApi.listAll({
+            const r = await reviewsApi.listAllPaged({
                 status: statusFilter.length ? statusFilter.join(',') : undefined,
                 type: typeFilter.length ? typeFilter.join(',') : undefined,
+                project_id: projectFilter.length ? projectFilter.join(',') : undefined,
             });
             setItems(r.items || []);
+            if (r.projects?.length) setProjectOptions(r.projects);
+            if (r.truncated) {
+                message.warning(`审核项共 ${r.total} 条，超出单次加载上限 2000，已显示前 2000 条；请用状态/类型筛选缩小范围`);
+            }
             // 过滤/刷新后剔除已不在结果中的选中项
             setSelectedIds((prev) => prev.filter((id) => (r.items || []).some((i) => i.id === id)));
         } catch (e: any) {
@@ -400,7 +408,7 @@ const ReviewsPage: React.FC = () => {
         } finally {
             setLoading(false);
         }
-    }, [statusFilter, typeFilter]);
+    }, [statusFilter, typeFilter, projectFilter]);
 
     useEffect(() => { load(); }, [load]);
 
@@ -510,7 +518,8 @@ const ReviewsPage: React.FC = () => {
                                 const r = await reviewsApi.batchDecide(Number(pid), ids.slice(off, off + 50), action);
                                 total += r.batch;
                             } catch (e: any) {
-                                failed.push(`${TYPE_LABEL[type] || type}(项目${pid})：${e.response?.data?.error?.message || e.message}`);
+                                const pname = items.find((i) => String(i.project_id) === pid)?.project_name;
+                                failed.push(`${TYPE_LABEL[type] || type}（${pname || `项目${pid}`}）：${e.response?.data?.error?.message || e.message}`);
                             }
                         }
                     }
@@ -547,7 +556,15 @@ const ReviewsPage: React.FC = () => {
                 );
             },
         },
-        { title: '项目', dataIndex: 'project_id', key: 'project_id', width: 70 },
+        {
+            title: '项目', dataIndex: 'project_name', key: 'project_name', width: 130,
+            ellipsis: true,
+            render: (_, r) => (
+                <Tooltip title={r.project_name ? `项目 #${r.project_id}` : '项目已删除'}>
+                    <span>{r.project_name || `#${r.project_id}`}</span>
+                </Tooltip>
+            ),
+        },
         {
             title: '状态', dataIndex: 'status', key: 'status', width: 90,
             render: (s: string) => (
@@ -588,6 +605,18 @@ const ReviewsPage: React.FC = () => {
                             { value: 'rejected', label: '已驳回' },
                             { value: 'edited', label: '已修订' },
                         ]}
+                    />
+                    <Select
+                        mode="multiple"
+                        style={{ minWidth: 180, maxWidth: 320 }}
+                        allowClear
+                        maxTagCount="responsive"
+                        showSearch
+                        optionFilterProp="label"
+                        placeholder="全部项目"
+                        value={projectFilter}
+                        onChange={setProjectFilter}
+                        options={projectOptions.map(p => ({ value: p.id, label: p.name || `#${p.id}（已删除）` }))}
                     />
                     <Select
                         mode="multiple"

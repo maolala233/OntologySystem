@@ -17,7 +17,7 @@ from app.api.auth import get_current_user
 from app.core.config import ensure_dirs, settings
 from app.core.deps import is_super_admin, require_module
 from app.core.logging import logger
-from app.infrastructure.database import KnowledgeDomain, Project, ProjectMember, UploadedDocument, User, get_db
+from app.infrastructure.database import KnowledgeDomain, Project, ProjectMember, ReviewItem, UploadedDocument, User, get_db
 from app.infrastructure.neo4j_client import neo4j_client
 from app.schemas.extraction import (
     SaveGraphRequest,
@@ -344,6 +344,8 @@ def delete_project(
     from app.infrastructure.database import ProjectMember
 
     db.query(ProjectMember).filter(ProjectMember.project_id == project_id).delete()
+    # 审核项随项目清理：否则审核工作台会出现“已删除项目”的孤立条目
+    db.query(ReviewItem).filter(ReviewItem.project_id == project_id).delete()
     db.delete(db_project)
     db.commit()
 

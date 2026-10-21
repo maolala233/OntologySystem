@@ -18,7 +18,24 @@ ITEM_TYPES = ("entity_merge", "new_class", "low_confidence_entity",
               "axiom_suggestion")
 
 
-def _serialize(r: ReviewItem, detail: bool = False) -> dict:
+def _project_name_map(db: Session) -> dict[int, str | None]:
+    return dict(db.query(Project.id, Project.name).all())
+
+
+def _reviewable_projects(db: Session, viewable_ids: list[int] | None) -> list[dict]:
+    """可读范围内实际存在审核项的项目清单（项目筛选项数据源；不受状态/类型筛选影响保持稳定）。
+
+    join Project 排除已删除项目的孤立审核项（项目行不存在的不进下拉）。
+    """
+    q = (db.query(ReviewItem.project_id)
+           .join(Project, ReviewItem.project_id == Project.id).distinct())
+    if viewable_ids is not None:
+        q = q.filter(ReviewItem.project_id.in_(viewable_ids or [-1]))
+    names = _project_name_map(db)
+    return [{"id": pid, "name": names.get(pid)} for pid in sorted(r[0] for r in q.all())]
+
+
+def _serialize(r: ReviewItem, detail: bool = False, project_names: dict[int, str | None] | None = None) -> dict:
     out = {"id": r.id, "project_id": r.project_id, "item_type": r.item_type,
            "status": r.status, "priority": r.priority, "reason": r.reason,
            "payload": r.payload, "suggested_action": r.suggested_action,
@@ -26,6 +43,8 @@ def _serialize(r: ReviewItem, detail: bool = False) -> dict:
            "decided_at": r.decided_at.isoformat() if r.decided_at else None,
            "result_ref": r.result_ref,
            "created_at": r.created_at.isoformat() if r.created_at else None}
+    if project_names is not None:
+        out["project_name"] = project_names.get(r.project_id)
     if detail:
         out["payload"] = r.payload  # 详情含完整上下文（候选/证据/冲突双方/建议动作）
     return out
@@ -59,9 +78,11 @@ def list_project_reviews(project_id: int,
                          status: str | None = Query(None),
                          type: str | None = Query(None),
                          priority: str | None = Query(None),
+                         limit: int = Query(200, ge=1, le=2000),
+                         offset: int = Query(0, ge=0),
                          current_user: User = Depends(get_current_user),
                          db: Session = Depends(get_db)):
-    """项目内审核队列（03 §10）。"""
+    """项目内审核队列（03 §10）。limit/offset 分页，total 为真实总数（不随 limit 截断）。"""
     require_project_role(project_id, "viewer", current_user, db)
     q = db.query(ReviewItem).filter(ReviewItem.project_id == project_id)
     if status:
@@ -73,21 +94,31 @@ def list_project_reviews(project_id: int,
         q = q.filter(ReviewItem.item_type == type)
     if priority:
         q = q.filter(ReviewItem.priority == priority)
-    rows = q.order_by(ReviewItem.priority.desc(), ReviewItem.id).limit(200).all()
-    return {"items": [_serialize(r) for r in rows], "total": len(rows)}
+    total = q.count()
+    rows = q.order_by(ReviewItem.priority.desc(), ReviewItem.id).offset(offset).limit(limit).all()
+    names = _project_name_map(db)
+    return {"items": [_serialize(r, project_names=names) for r in rows],
+            "total": total, "limit": limit, "offset": offset}
 
 
 @router.get("/reviews", dependencies=[Depends(require_module("review"))])
 def list_all_reviews(status: str | None = Query(None),
                      type: str | None = Query(None),
+                     project_id: str | None = Query(None),
+                     limit: int = Query(200, ge=1, le=2000),
+                     offset: int = Query(0, ge=0),
                      current_user: User = Depends(get_current_user),
                      db: Session = Depends(get_db)):
     """跨项目审核队列（审核工作台首页）：自动过滤为用户可 view 的项目。
 
-    status/type 均支持逗号分隔多值（审核工作台多选过滤）。
+    status/type/project_id 均支持逗号分隔多值（审核工作台多选过滤）。
+    limit/offset 分页，total 为真实总数（不随 limit 截断）。
+    响应携带 projects（可读范围内有审核项的项目清单，供项目筛选下拉）。
+    join Project：已删除项目的孤立审核项不再出现在工作台（items/total/projects 一致排除）。
     """
-    q = db.query(ReviewItem)
     ids = _viewable_project_ids(db, current_user)
+    projects = _reviewable_projects(db, ids)
+    q = db.query(ReviewItem).join(Project, ReviewItem.project_id == Project.id)
     if ids is not None:
         q = q.filter(ReviewItem.project_id.in_(ids or [-1]))
     if status:
@@ -99,8 +130,18 @@ def list_all_reviews(status: str | None = Query(None),
                 raise APIError(f"type 取值限 {ITEM_TYPES}", code="INVALID_TYPE",
                                http_status=400)
         q = q.filter(ReviewItem.item_type.in_(types))
-    rows = q.order_by(ReviewItem.priority.desc(), ReviewItem.id).limit(200).all()
-    return {"items": [_serialize(r) for r in rows], "total": len(rows)}
+    if project_id:
+        try:
+            filter_ids = [int(x) for x in project_id.split(",") if x.strip()]
+        except ValueError:
+            raise APIError("project_id 取值限逗号分隔的项目 ID", code="INVALID_PROJECT_FILTER",
+                           http_status=400)
+        q = q.filter(ReviewItem.project_id.in_(filter_ids))
+    total = q.count()
+    rows = q.order_by(ReviewItem.priority.desc(), ReviewItem.id).offset(offset).limit(limit).all()
+    names = _project_name_map(db)
+    return {"items": [_serialize(r, project_names=names) for r in rows],
+            "total": total, "limit": limit, "offset": offset, "projects": projects}
 
 
 @router.get("/reviews/{review_id}", dependencies=[Depends(require_module("review"))])
@@ -110,7 +151,7 @@ def review_detail(review_id: int,
     """详情：payload 完整上下文（候选项、证据原文、冲突双方、建议动作）。"""
     item = _get_item_or_404(db, review_id)
     _guard_project_view(item.project_id, current_user, db)
-    return _serialize(item, detail=True)
+    return _serialize(item, detail=True, project_names=_project_name_map(db))
 
 
 @router.post("/reviews/{review_id}/claim", dependencies=[Depends(require_module("review"))])
