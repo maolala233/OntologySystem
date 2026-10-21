@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import * as XLSX from 'xlsx';
 import {
     Drawer,
     Form,
@@ -16,6 +17,7 @@ import {
     Tag,
     Divider,
     Switch,
+    Segmented,
     InputNumber,
     Tree,
     Input as AntInput,
@@ -23,6 +25,7 @@ import {
     Menu,
     Badge,
     Empty,
+    Upload,
 } from 'antd';
 import type { TreeProps } from 'antd';
 import {
@@ -58,6 +61,8 @@ import {
     AuditOutlined,
     ExportOutlined,
     DashboardOutlined,
+    UploadOutlined,
+    DownloadOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { OntologyNode, OntologyEdge, DataPropertyDef } from '../../../types/ontology';
@@ -185,6 +190,131 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
             classes: tpl.classes.map(c => ({ class: c.cls, properties: c.properties, relations: c.relations })),
         });
     };
+
+    // ── 抽取模式（适量发散 / 严格白名单：上传主体配置模板防大模型抽取发散）──
+    const [strictMode, setStrictMode] = useState(false);
+    const [templateFileName, setTemplateFileName] = useState<string>('');
+    // 严格白名单选项仅在配置表有内容时可选（空表严格下发会被后端判 400）
+    const watchedClassRows = Form.useWatch('classes', ruleForm);
+    const hasTemplateRows = (watchedClassRows || []).some((r: any) => r?.class?.trim());
+    useEffect(() => {
+        if (!hasTemplateRows && strictMode) setStrictMode(false);
+    }, [hasTemplateRows, strictMode]);
+
+    // Excel 模板解析：首 Sheet → AOA；有表头行（主体/class 等）按表头列映射，否则按 主体|属性|关系 位置取列
+    const parseExcelTemplate = useCallback((wb: XLSX.WorkBook) => {
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        if (!ws) return [];
+        const aoa = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1, blankrows: false });
+        const headerClass = /^(主体|主体类|class|cls|label|name)$/i;
+        const headerProps = /^(属性|属性列表|properties|props|data_properties)$/i;
+        const headerRels = /^(关系|关系列表|relations|object_properties)$/i;
+        let clsIdx = 0, propsIdx = 1, relsIdx = 2;
+        const first = (aoa[0] || []).map(c => String(c ?? '').trim());
+        if (first.some(c => headerClass.test(c))) {
+            clsIdx = first.findIndex(c => headerClass.test(c));
+            propsIdx = first.findIndex(c => headerProps.test(c));
+            relsIdx = first.findIndex(c => headerRels.test(c));
+            aoa.shift();
+        }
+        return aoa.map(row => ({
+            class: String(row?.[clsIdx] ?? '').trim(),
+            properties: propsIdx >= 0 ? String(row?.[propsIdx] ?? '').trim() : '',
+            relations: relsIdx >= 0 ? String(row?.[relsIdx] ?? '').trim() : '',
+        })).filter(r => r.class);
+    }, []);
+
+    // 上传配置模板：本地解析填入配置表（文件不上传服务器），支持 Excel / JSON / CSV / TXT / Markdown
+    const MAX_TEMPLATE_ROWS = 60;
+    const handleTemplateFile = useCallback((file: File) => {
+        const finishImport = (rows: Array<{ class: string; properties: string; relations: string }>, name: string) => {
+            if (rows.length === 0) {
+                message.error('模板解析结果为空：请提供 Excel 表、JSON 数组或「主体,属性,关系」行式文本');
+                return;
+            }
+            if (rows.length > MAX_TEMPLATE_ROWS) rows = rows.slice(0, MAX_TEMPLATE_ROWS);
+            ruleForm.setFieldsValue({ classes: rows });
+            setStrictMode(true);
+            setTemplateFileName(name);
+            message.success(`已导入模板 ${rows.length} 行，并切换到严格白名单模式（AI 只按模板抽取，可手动改回适量发散）`);
+        };
+        // Excel：读 ArrayBuffer 走 SheetJS（浏览器本地解析，不上传服务器）
+        if (/\.(xlsx|xls)$/i.test(file.name)) {
+            const reader = new FileReader();
+            reader.onload = () => {
+                try {
+                    const wb = XLSX.read(new Uint8Array(reader.result as ArrayBuffer), { type: 'array' });
+                    finishImport(parseExcelTemplate(wb), file.name);
+                } catch (e: any) {
+                    message.error(`Excel 模板解析失败：${e.message || e}`);
+                }
+            };
+            reader.readAsArrayBuffer(file);
+            return false; // 阻止 antd Upload 自动上传
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+            try {
+                const text = String(reader.result || '');
+                let rows: Array<{ class: string; properties: string; relations: string }> = [];
+                const trimmed = text.trim();
+                let parsedAsJson = false;
+                if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+                    try {
+                        const data = JSON.parse(trimmed);
+                        const arr: any[] = Array.isArray(data) ? data : (Array.isArray(data?.classes) ? data.classes : Array.isArray(data?.subjects) ? data.subjects : []);
+                        rows = arr.map((it: any) => ({
+                            class: String(it.class ?? it.cls ?? it.label ?? it.主体 ?? it.name ?? '').trim(),
+                            properties: Array.isArray(it.properties ?? it.属性) ? (it.properties ?? it.属性).join(',') : String(it.properties ?? it.属性 ?? '').trim(),
+                            relations: Array.isArray(it.relations ?? it.object_properties ?? it.关系) ? (it.relations ?? it.object_properties ?? it.关系).join(',') : String(it.relations ?? it.object_properties ?? it.关系 ?? '').trim(),
+                        })).filter((r: any) => r.class);
+                        parsedAsJson = rows.length > 0;
+                    } catch { /* 非 JSON 按行式解析 */ }
+                }
+                if (!parsedAsJson) {
+                    // 行式：每行 主体,属性,关系（逗号/中文逗号/顿号/制表符均可）
+                    rows = trimmed.split(/\r?\n/)
+                        .map(l => l.trim())
+                        .filter(l => l && !l.startsWith('#') && !/^主体[,，\t]/.test(l))
+                        .map(l => {
+                            const cols = l.split(/[,，、\t]/).map(c => c.trim());
+                            return { class: cols[0] || '', properties: cols[1] || '', relations: cols[2] || '' };
+                        })
+                        .filter(r => r.class);
+                }
+                finishImport(rows, file.name);
+            } catch (e: any) {
+                message.error(`模板解析失败：${e.message || e}`);
+            }
+        };
+        reader.readAsText(file, 'utf-8');
+        return false; // 阻止 antd Upload 自动上传
+    }, [ruleForm, parseExcelTemplate]);
+
+    // 下载示例模板：Excel / JSON 两种格式，用户照格式填写后上传
+    const downloadTemplateSample = useCallback((fmt: 'xlsx' | 'json') => {
+        const rows = [
+            { class: '结算账户', properties: '账号,户名,币种', relations: '开立于,对应' },
+            { class: '支付指令', properties: '金额,指令状态', relations: '发送,受理' },
+            { class: '企业客户', properties: '客户号,企业名称', relations: '持有,申请' },
+        ];
+        if (fmt === 'json') {
+            const blob = new Blob([JSON.stringify(rows, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = '本体配置模板示例.json';
+            a.click();
+            URL.revokeObjectURL(url);
+            return;
+        }
+        const aoa = [['主体', '属性', '关系'], ...rows.map(r => [r.class, r.properties, r.relations])];
+        const ws = XLSX.utils.aoa_to_sheet(aoa);
+        ws['!cols'] = [{ wch: 20 }, { wch: 28 }, { wch: 24 }];
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, '主体配置');
+        XLSX.writeFile(wb, '本体配置模板示例.xlsx');
+    }, []);
     const [customRelationType, setCustomRelationType] = useState('');
     const [isAdmin, setIsAdmin] = useState(false);
     const [isNewNode, setIsNewNode] = useState(false);
@@ -1387,10 +1517,23 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
             }
             const guidance = lines.join('\n').slice(0, 2000) || undefined;
 
+            // 严格白名单模式：配置行结构化下发，后端 prompt 强约束 + 归并硬过滤双保险
+            const strictRows = strictMode
+                ? (values.classes || [])
+                    .filter((row: any) => row?.class?.trim())
+                    .map((row: any) => ({
+                        class: String(row.class).trim().slice(0, 200),
+                        properties: String(row.properties || '').trim().slice(0, 400),
+                        relations: String(row.relations || '').trim().slice(0, 400),
+                    }))
+                : undefined;
+            const strictConfig = strictRows && strictRows.length > 0 ? strictRows : undefined;
+
             const docIds = uploadedDocuments.map(doc => doc.id);
             const response = await extractionApi.runSchema(Number(projectId), {
                 document_ids: docIds,
                 guidance,
+                strict_config: strictConfig,
             });
 
             setCurrentTaskId(response.task_id);
@@ -1407,7 +1550,7 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
         } finally {
             setLoading(false);
         }
-    }, [projectId, uploadedDocuments, connectToProgressStream]);
+    }, [projectId, uploadedDocuments, connectToProgressStream, strictMode]);
 
     // 构建树形数据（带搜索过滤）
     const buildTreeData = useCallback(() => {
@@ -2461,6 +2604,8 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                             <div className="mb-4 text-gray-500 text-sm">
                                 选择一个引导模板快速填入，也可以在下方继续修改；<b>全部留空 = 通用模式</b>。
                                 这里的内容会作为引导提示词注入到每一次切片抽取中，帮助 AI 聚焦你关心的主体和关系。
+                                担心 AI 发散？<b>上传配置模板并选择「严格白名单」</b>，AI 只按模板抽取；
+                                选「适量发散」则以模板为引导，允许适度补充文档中的其他相关概念。
                             </div>
                             <div className="mb-4">
                                 <div className="text-xs text-gray-500 mb-2">引导模板</div>
@@ -2485,6 +2630,39 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                 <div className="flex items-center gap-2 mb-3 pb-2 border-b border-gray-100">
                                     <DatabaseOutlined className="text-indigo-500" />
                                     <span className="font-medium text-gray-700">主体配置</span>
+                                    <div className="ml-auto flex items-center gap-2">
+                                        <Upload accept=".xlsx,.xls,.json,.csv,.txt,.md" showUploadList={false} beforeUpload={handleTemplateFile as any}>
+                                            <Button size="small" icon={<UploadOutlined />}>上传配置模板</Button>
+                                        </Upload>
+                                        <Dropdown menu={{
+                                            items: [
+                                                { key: 'xlsx', label: 'Excel 版（.xlsx）' },
+                                                { key: 'json', label: 'JSON 版（.json）' },
+                                            ],
+                                            onClick: ({ key }) => downloadTemplateSample(key as 'xlsx' | 'json'),
+                                        }}>
+                                            <Button size="small" type="text" icon={<DownloadOutlined />}>示例模板</Button>
+                                        </Dropdown>
+                                    </div>
+                                </div>
+                                <div className="flex items-center justify-between p-2.5 mb-3 bg-blue-50 border border-blue-100 rounded-lg">
+                                    <div className="text-xs text-gray-600 flex-1 mr-3">
+                                        <span className="font-medium text-gray-700">抽取模式</span>
+                                        <span className="ml-1">{strictMode
+                                            ? `严格白名单${templateFileName ? `（模板：${templateFileName}）` : ''} — AI 只抽取配置表中列出的主体/属性/关系，超出一律过滤，不允许发散`
+                                            : '适量发散 — 配置表作为引导注入，AI 优先按模板抽取，允许适度补充文档中的其他相关概念'}</span>
+                                    </div>
+                                    <Tooltip title={!hasTemplateRows ? '严格白名单需先上传配置模板或填写配置行' : ''}>
+                                        <Segmented
+                                            size="small"
+                                            value={strictMode ? 'strict' : 'loose'}
+                                            onChange={(v) => setStrictMode(v === 'strict')}
+                                            options={[
+                                                { label: '适量发散', value: 'loose' },
+                                                { label: '严格白名单', value: 'strict', disabled: !hasTemplateRows },
+                                            ]}
+                                        />
+                                    </Tooltip>
                                 </div>
                                 <Form.List name="classes">
                                     {(fields, { add, remove }) => (

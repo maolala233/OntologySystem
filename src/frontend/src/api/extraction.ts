@@ -22,12 +22,14 @@ export interface ExtractTaskProgress {
 
 export const extractionApi = {
     /** 发起 Schema 抽取（extract 队列）：document_ids 缺省=全部已解析切片；
-     *  guidance 为用户注入的抽取引导纯文本（规则表单组装），随 prompt 进缓存键 */
+     *  guidance 为用户注入的抽取引导纯文本（规则表单组装），随 prompt 进缓存键；
+     *  strict_config 严格白名单模式（上传配置模板）：只抽列出的主体/属性/关系，配置外一律过滤 */
     runSchema: async (projectId: number, options?: {
         document_ids?: number[];
         parallelism?: number;
         guidance?: string;
-    }): Promise<{ task_id: string; chunks_total: number; parallelism: number }> => {
+        strict_config?: Array<{ class: string; properties?: string; relations?: string }>;
+    }): Promise<{ task_id: string; chunks_total: number; parallelism: number; strict?: boolean }> => {
         const response = await apiClient.post(`/api/projects/${projectId}/extraction/schema`, options || {});
         return response.data;
     },

@@ -94,6 +94,24 @@ def start_schema_extraction(
         else:
             guidance = guidance.strip()
 
+    # 严格白名单模式（用户上传主体配置模板）：行 {class, properties, relations}
+    strict_config = body.get("strict_config")
+    if strict_config is not None:
+        if not isinstance(strict_config, list) or \
+                not all(isinstance(r, dict) for r in strict_config):
+            raise APIError("strict_config 必须为 {class,properties,relations} 行数组",
+                           code="INVALID_STRICT_CONFIG", http_status=400)
+        if len(strict_config) > 60:
+            raise APIError("strict_config 最多 60 行", code="INVALID_STRICT_CONFIG", http_status=400)
+        clean_rows = []
+        for r in strict_config:
+            row = {"class": str(r.get("class") or "").strip()[:200],
+                   "properties": str(r.get("properties") or "").strip()[:400],
+                   "relations": str(r.get("relations") or "").strip()[:400]}
+            if row["class"]:
+                clean_rows.append(row)
+        strict_config = clean_rows or None
+
     # O3-B12：启用中的 Competency Questions 注入 guidance（用户显式 guidance 优先，CQ 追加在后）
     try:
         from app.services.cq_service import guidance_from_cqs
@@ -118,9 +136,11 @@ def start_schema_extraction(
     model_config_id = _resolve_extract_config_id(db, current_user, body, project_id)
     dispatched = dispatch_schema_extraction(
         project_id, document_ids, parallelism,
-        guidance=guidance, model_config_id=model_config_id)
+        guidance=guidance, model_config_id=model_config_id,
+        strict_config=strict_config)
     return {"task_id": dispatched["task_id"], "mode": dispatched["mode"],
-            "chunks_total": chunks_total, "parallelism": parallelism}
+            "chunks_total": chunks_total, "parallelism": parallelism,
+            "strict": strict_config is not None}
 
 
 @router.post("/instances", dependencies=[Depends(require_module("instance_build"))])

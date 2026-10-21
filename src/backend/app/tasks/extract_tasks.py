@@ -139,12 +139,14 @@ def dispatch_schema_extraction(project_id: int,
                                parallelism: int = 4,
                                chunk_limit: int = 200,
                                guidance: Optional[str] = None,
-                               model_config_id: Optional[int] = None) -> dict:
+                               model_config_id: Optional[int] = None,
+                               strict_config: Optional[list[dict]] = None) -> dict:
     """派发骨架抽取（03 §8）：详见 _dispatch。返回 {"mode", "task_id"}。"""
     return _dispatch(
         run_schema_extraction,
         (project_id, document_ids, parallelism, chunk_limit),
-        {"guidance": guidance, "model_config_id": model_config_id},
+        {"guidance": guidance, "model_config_id": model_config_id,
+         "strict_config": strict_config},
         project_id)
 
 
@@ -219,11 +221,13 @@ def run_schema_extraction(self, project_id: int,
                           parallelism: int = 4,
                           chunk_limit: int = 200,
                           guidance: Optional[str] = None,
-                          model_config_id: Optional[int] = None) -> dict:
+                          model_config_id: Optional[int] = None,
+                          strict_config: Optional[list[dict]] = None) -> dict:
     """Schema 阶段抽取（TBox）。失败置 failed 并上抛（需人工诊断模型配置后重跑）。
 
     guidance：用户注入的抽取引导（规则表单组装的纯文本），进每次切片抽取的 prompt
     并随 prompt 哈希参与缓存键；None/空 = 默认通用模式。
+    strict_config：主体配置模板行（严格白名单模式），prompt 强约束 + 归并硬过滤。
     model_config_id：发起者个人选择的 model_configs 行（API 层校验后传入）。
     """
     task_id = self.request.id
@@ -297,6 +301,7 @@ def run_schema_extraction(self, project_id: int,
                                     parallelism=parallelism,
                                     progress_cb=_progress, cancel_cb=_cancel_check,
                                     guidance=guidance,
+                                    strict_config=strict_config,
                                     model_config_id=model_config_id,
                                     stitch_progress_cb=_stitch_progress)
 
@@ -345,6 +350,7 @@ def run_schema_extraction(self, project_id: int,
                      "chunks_processed": result.chunks_processed,
                      "cache_hits": result.cache_hits,
                      "stitched_relations": result.stitched_relations,
+                     "strict_filtered": result.strict_filtered,
                      "version_no": version_no,
                      "schema_checks": checks.summary(),
                      "warnings": result.warnings[:10]}

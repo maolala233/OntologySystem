@@ -146,6 +146,7 @@ class SchemaExtractionResult(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     cache_hits: int = 0
     stitched_relations: int = 0   # 跨切片关系缝合补上的关系数
+    strict_filtered: dict = Field(default_factory=dict)  # 严格白名单过滤计数 {classes, relations, properties}
 
 
 # ── 缺陷 #9：LLM 输出缓存（model, prompt_hash）→ Redis 8h ──
@@ -290,11 +291,21 @@ def _validate_schema_payload(payload: Any) -> tuple[Optional[dict], str]:
 
 
 def _user_prompt(chunk_text: str, known_classes: list[str], error_feedback: str = "",
-                 chunk_no: int = 0, guidance: str = "") -> str:
-    """字段化 prompt（修复缺陷 #2）：结构化字段传入，绝不塞原始 dict。"""
+                 chunk_no: int = 0, guidance: str = "", strict: bool = False) -> str:
+    """字段化 prompt（修复缺陷 #2）：结构化字段传入，绝不塞原始 dict。
+
+    strict=True（上传配置模板的严格白名单模式）时引导头改为强约束措辞：
+    模板即唯一抽取范围，不再保留"与文档内容冲突时以文档为准"的发散口子。
+    """
     parts = []
     if guidance:
-        parts.append("【抽取引导（用户注入，优先遵守；与文档内容冲突时以文档为准）】\n" + guidance.strip())
+        if strict:
+            parts.append("【抽取范围（严格白名单，最高优先级）】\n"
+                         "只能抽取下列配置中列出的主体类、属性与关系；文档中出现但配置未列出的概念"
+                         "一律不抽取、不扩展、不归纳、不造同义新类。本白名单与任何其他指示冲突时以本白名单为准。\n"
+                         + guidance.strip())
+        else:
+            parts.append("【抽取引导（用户注入，优先遵守；与文档内容冲突时以文档为准）】\n" + guidance.strip())
     if known_classes:
         parts.append("【已发现类清单】（沿用这些命名，不要造同义新类）\n"
                      + "\n".join(f"- {c}" for c in known_classes))
@@ -422,6 +433,99 @@ def _stitch_doc_text(prepared: list[tuple[int, str]]) -> str:
     return "\n".join(parts)
 
 
+# ── 严格白名单模式（用户上传主体配置模板）：prompt 强约束 + 归并结果硬过滤双保险 ──
+
+STRICT_GUIDANCE_HEADER = (
+    "严格白名单模式：只允许抽取下列配置中列出的主体类、属性与关系；"
+    "文档中出现但配置未列出的概念一律不抽取、不扩展、不归纳、不造同义类。"
+)
+
+def parse_strict_config(strict_config: Optional[list[dict]]) -> Optional[dict]:
+    """把前端上传的主体配置行解析为白名单结构。
+
+    行形状 {class: str, properties: str(逗号分隔)|空, relations: str(逗号分隔)|空}。
+    语义：class 列表=类白名单（必含）；某类的 properties 非空=该类属性白名单，
+    空=该类属性不设限；relations 全部为空=关系不设限，否则=全局关系谓词白名单。
+    无有效类行返回 None（调用方按非严格模式处理）。
+    """
+    class_norms: set[str] = set()
+    props_by_class: dict[str, set[str]] = {}
+    rel_norms: set[str] = set()
+    has_rel_spec = False
+    for row in strict_config or []:
+        if not isinstance(row, dict):
+            continue
+        cls = str(row.get("class") or "").strip()
+        if not cls:
+            continue
+        key = normalize_label(cls)
+        class_norms.add(key)
+        props = str(row.get("properties") or "").strip()
+        if props:
+            props_by_class[key] = {normalize_label(p.strip())
+                                   for p in _split_config_list(props) if p.strip()}
+        rels = str(row.get("relations") or "").strip()
+        if rels:
+            has_rel_spec = True
+            rel_norms.update(normalize_label(r.strip())
+                             for r in _split_config_list(rels) if r.strip())
+    if not class_norms:
+        return None
+    return {"class_norms": class_norms,
+            "props_by_class": props_by_class,
+            "rel_norms": rel_norms if has_rel_spec else None}
+
+
+def _split_config_list(s: str) -> list[str]:
+    """配置行里的列表字段：逗号/中文逗号/顿号/分号/竖线都接受。"""
+    import re as _re
+    return [p for p in _re.split(r"[,，、;；|]", s or "") if p.strip()]
+
+
+def apply_strict_filter(merged: dict[str, dict], obj_props: dict[str, dict],
+                        dt_props: dict[str, dict], wl: dict) -> dict:
+    """按白名单就地过滤归并产物，返回过滤计数（prompt 层拦不住的在这里兜底）。"""
+    filtered = {"classes": 0, "relations": 0, "properties": 0}
+    class_norms: set[str] = wl["class_norms"]
+    props_by_class: dict[str, set[str]] = wl["props_by_class"]
+    rel_norms: Optional[set[str]] = wl["rel_norms"]
+
+    for key in [k for k in merged if k not in class_norms]:
+        merged.pop(key)
+        filtered["classes"] += 1
+
+    kept_prop_norms: set[str] = set()
+    for key, c in merged.items():
+        spec = props_by_class.get(key)
+        if not spec:
+            for p in c.get("properties") or []:
+                kept_prop_norms.add(normalize_label(str(p.get("name") or "")))
+            continue
+        props = c.get("properties") or []
+        kept = [p for p in props if normalize_label(str(p.get("name") or "")) in spec]
+        filtered["properties"] += len(props) - len(kept)
+        c["properties"] = kept
+        for p in kept:
+            kept_prop_norms.add(normalize_label(str(p.get("name") or "")))
+
+    for key in [k for k in obj_props]:
+        op = obj_props[key]
+        d = normalize_label(str(op.get("domain") or ""))
+        g = normalize_label(str(op.get("range") or ""))
+        if d not in class_norms or g not in class_norms or \
+                (rel_norms is not None and normalize_label(str(op.get("label") or "")) not in rel_norms):
+            obj_props.pop(key)
+            filtered["relations"] += 1
+
+    if props_by_class:  # 任一类设了属性白名单才过滤 schema 级 datatype_properties
+        for key in [k for k in dt_props]:
+            name = str(dt_props[key].get("name") or "")
+            if normalize_label(name) not in kept_prop_norms:
+                dt_props.pop(key)
+                filtered["properties"] += 1
+    return filtered
+
+
 def extract_schema(chunks: list, base_uri: str,
                    parallelism: int = 4,
                    model_override: Optional[dict] = None,
@@ -432,12 +536,15 @@ def extract_schema(chunks: list, base_uri: str,
                    progress_cb: Optional[Callable] = None,
                    stitch_progress_cb: Optional[Callable] = None,
                    cancel_cb: Optional[Callable] = None,
-                   guidance: Optional[str] = None) -> SchemaExtractionResult:
+                   guidance: Optional[str] = None,
+                   strict_config: Optional[list[dict]] = None) -> SchemaExtractionResult:
     """分块并行抽取 TBox → 归并去重（label_normalized）→ 跨切片关系缝合 → 悬空引用建占位类标记 pending。
 
     - 并行度 parallelism（修复缺陷 #5，默认 4）
     - (model, prompt_hash) Redis 8h 缓存（修复缺陷 #9，use_cache=False 可关）；
       guidance 注入用户 prompt，随 prompt 哈希进缓存键（改引导自动换缓存）
+    - strict_config（主体配置模板行）：严格白名单模式——prompt 头改为强约束措辞，
+      归并与缝合后按白名单硬过滤（超出的类/属性/关系一律丢弃），防大模型抽取发散
     - 归并后做跨切片关系缝合：全类清单 + 文档摘录补一轮 LLM 调用，连上分散在
       不同切片的类间关系（只连已知类，需原文证据；stitched_relations 记数）
     - 本地校验失败带错误反馈重试 1 次，仍失败计 warning
@@ -457,11 +564,15 @@ def extract_schema(chunks: list, base_uri: str,
         model_name = str((model_override or {}).get("model_name") or "injected")
     known: list[str] = list(known_classes or [])
 
+    wl = parse_strict_config(strict_config)
     guidance_text = (guidance or "").strip()
+    if wl is not None and guidance_text:
+        guidance_text = STRICT_GUIDANCE_HEADER + "\n" + guidance_text
 
     def one(idx: int, text: str):
         key = _cache_key(model_name, SYSTEM_PROMPT,
-                         _user_prompt(text, known, chunk_no=idx, guidance=guidance_text))
+                         _user_prompt(text, known, chunk_no=idx, guidance=guidance_text,
+                                      strict=wl is not None))
         if use_cache:
             cached = _cache_get(key)
             if cached is not None:
@@ -471,7 +582,8 @@ def extract_schema(chunks: list, base_uri: str,
         for _attempt in range(2):  # 首次 + 带错误反馈重试 1 次
             try:
                 raw = llm_call(SYSTEM_PROMPT,
-                               _user_prompt(text, known, feedback, chunk_no=idx, guidance=guidance_text),
+                               _user_prompt(text, known, feedback, chunk_no=idx, guidance=guidance_text,
+                                            strict=wl is not None),
                                SCHEMA_PROMPT_JSON_SCHEMA)
             except Exception as e:  # noqa: BLE001  LLM 连接/超时：单切片失败不入全局
                 last_err = f"LLM调用异常: {e}"
@@ -532,6 +644,12 @@ def extract_schema(chunks: list, base_uri: str,
 
     classes = list(merged.values())
 
+    # ── 严格白名单硬过滤：prompt 约束拦不住的发散产出在这里兜底丢弃（缝合前过滤，
+    #    缝合的类清单/关系谓词同样受限）──
+    if wl is not None:
+        result.strict_filtered = apply_strict_filter(merged, obj_props, dt_props, wl)
+        classes = list(merged.values())
+
     # ── 跨切片关系缝合：切片独立抽取只连得到同片共现的关系，这里归并后统一补一轮 ──
     # 依据 = 文档内容摘录（evidence 逐字摘录），只连类清单里已有的类，不造新类。
     stitched = 0
@@ -571,6 +689,9 @@ def extract_schema(chunks: list, base_uri: str,
                 g = normalize_label(str(r.get("range") or "").strip())
                 if d == g or d not in norm2label or g not in norm2label:
                     continue  # 缝合只连已知类，不造类不自环
+                if wl is not None and wl["rel_norms"] is not None \
+                        and normalize_label(label) not in wl["rel_norms"]:
+                    continue  # 严格模式：缝合关系谓词同样必须在白名单内
                 rk = (normalize_label(label), d, g)
                 if rk in existing_rk:
                     continue
