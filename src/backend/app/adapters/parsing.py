@@ -79,7 +79,29 @@ def parse_document(content: bytes, filename: str,
         return _finalize(doc, filename)
 
     if backend == ParseBackend.VL_MODEL:
-        raise AdapterError("VL 视觉模型后端未配置（扫描件请配置 VL 或部署 docling OCR）")
+        # S14 接通 VL 后端：整文档页转图 → 视觉大模型逐批描述（services/vl_parser，
+        # 模型配置走 model_configs 的 vl 通道）。仅 PDF/DOCX 支持页图渲染，其余格式报错提示。
+        if ext not in {"pdf", "docx", "doc"}:
+            raise AdapterError(f"VL 视觉模型解析仅支持 PDF/DOCX（当前: {ext}）；"
+                               f"图文混排 PDF 用 auto 也会自动 OCR")
+        import os
+        import tempfile
+
+        from app.services.vl_parser import parse_file_with_vl
+
+        tmp = tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False)
+        try:
+            tmp.write(content)
+            tmp.close()
+            md = parse_file_with_vl(tmp.name)
+        finally:
+            try:
+                os.remove(tmp.name)
+            except OSError:
+                pass
+        if not md:
+            raise AdapterError("VL 视觉模型解析失败（模型未配置/调用失败/文件无页），请检查模型配置或改用 auto")
+        return ParsedDocument(full_text_md=md, backend=ParseBackend.VL_MODEL)
 
     if backend == ParseBackend.NATIVE:
         return _finalize(_parse_native(content, filename, ext), filename)
@@ -189,19 +211,27 @@ def _parse_docling(content: bytes, filename: str, ocr: bool = False) -> Optional
 
 
 def _parse_pdf_auto(content: bytes, filename: str) -> ParsedDocument:
-    """PDF（04 §2.2）：pymupdf 每页快速文本层 → 扫描件判定 → docling_ocr/VL，文本层 → docling/native。"""
+    """PDF（04 §2.2）：pymupdf 每页快速文本层 → 扫描件/图文混排判定 → docling_ocr，纯文本 → docling/native。
+
+    S14：图文混排（图片占比 >0.05 但文字层仍为主）也走 docling OCR——
+    OCR 作用于整页位图，页面内嵌图片里的文字（截图条款/表单照片）随之提取；
+    纯文本页 OCR 无额外收益但 docling 版式模型本就要跑位图，代价可接受。
+    """
     from app.adapters.errors import AdapterError
 
     pages_text, image_ratio = _pdf_fast_layer(content)
     scanned = looks_like_scanned(pages_text, image_ratio)
-    if scanned:
+    mixed = (not scanned) and image_ratio > 0.05
+    if scanned or mixed:
         doc = _parse_docling(content, filename, ocr=True)
         if doc is not None:
             doc.ocr_page_count = len(pages_text)
             doc.pages = [ParsedPage(page_no=i + 1, text_md=t, ocr_used=True)
                          for i, t in enumerate(pages_text)]
             return _finalize(doc, filename)
-        raise AdapterError("扫描件判定命中，但 docling OCR 不可用且 VL 后端未配置（04 §2.2）")
+        if scanned:
+            raise AdapterError("扫描件判定命中，但 docling OCR 不可用且 VL 后端未配置（04 §2.2）")
+        # 混排但 docling 不可用：降级纯文本路径（文字层完整，图片文字丢失属可接受退化）
     # 文本型：docling 版式优先 → native pymupdf4llm 兜底
     doc = _parse_docling(content, filename)
     if doc is not None:
@@ -304,25 +334,130 @@ def _parse_csv(content: bytes) -> str:
     return "\n".join(lines)
 
 
+# ── PPTX 图文解析（S14）──
+# 图片 OCR 引擎（rapidocr PP-OCRv5/6 系）进程内单例：模型加载约 1-2s，懒初始化。
+# False = 已探测且不可用（降级纯文本，与旧行为一致）；None = 尚未探测。
+_OCR_ENGINE: Any = None
+
+
+def _get_ocr_engine():
+    global _OCR_ENGINE
+    if _OCR_ENGINE is None:
+        try:
+            from rapidocr import RapidOCR
+
+            _OCR_ENGINE = RapidOCR()
+        except Exception as e:  # noqa: BLE001 —— 无引擎/模型缺失不阻断解析
+            from app.core.logging import logger
+
+            logger.warning(f"[parsing] rapidocr 不可用，PPTX 图片跳过 OCR（{type(e).__name__}: {e}）")
+            _OCR_ENGINE = False
+    return _OCR_ENGINE or None
+
+
+def _ocr_image_bytes(blob: bytes) -> str:
+    """图片字节 → OCR 文本；无引擎/小装饰图/识别不出字返回空串。"""
+    engine = _get_ocr_engine()
+    if engine is None:
+        return ""
+    try:
+        import io as _io
+
+        import numpy as _np
+        from PIL import Image
+
+        img = Image.open(_io.BytesIO(blob))
+        w, h = img.size
+        if w < 100 or h < 60:  # 小图标/装饰元素：OCR 噪音大于收益
+            return ""
+        res = engine(_np.array(img.convert("RGB")))
+        txts = [t for t in (getattr(res, "txts", None) or []) if t and str(t).strip()]
+        if sum(len(t) for t in txts) < 2:
+            return ""
+        return "\n".join(str(t) for t in txts)
+    except Exception as e:  # noqa: BLE001 —— 单图失败不影响整文档
+        from app.core.logging import logger
+
+        logger.warning(f"[parsing] PPTX 图片 OCR 失败（跳过）: {e}")
+        return ""
+
+
 def _parse_pptx(content: bytes, filename: str) -> ParsedDocument:
-    """PPT/PPTX（04 §2.1：python-pptx 现路径首选，保留表格/备注提取）。"""
+    """PPTX 图文解析（S14）：python-pptx 逐页提取文本框/表格/备注 + 内嵌图片 rapidocr OCR。
+
+    图片文字以「[图片文字]:」分节并入所在页（下游切片/抽取/溯源按普通文本消费）；
+    OCR 引擎不可用或图片为小装饰图时优雅降级，纯文本行为与旧版一致。
+    """
     import os
     import tempfile
 
-    from app.services.parser import FileParser
+    from pptx import Presentation
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
 
     suffix = os.path.splitext(filename)[1] or ".pptx"
     tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
     try:
         tmp.write(content)
         tmp.close()
-        md = FileParser(vl_enabled=False).parse_file(tmp.name) or ""
+        prs = Presentation(tmp.name)
     finally:
         try:
             os.remove(tmp.name)
         except OSError:
             pass
-    return ParsedDocument(full_text_md=md, backend=ParseBackend.NATIVE)
+
+    def _walk_shapes(shapes, texts: list, images: list) -> None:
+        for shape in shapes:
+            try:
+                if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+                    _walk_shapes(shape.shapes, texts, images)
+                elif shape.has_table:
+                    rows = [" | ".join(cell.text_frame.text.strip()
+                                       for cell in r.cells if cell.text_frame)
+                            for r in shape.table.rows]
+                    rows = [r for r in rows if r.strip()]
+                    if rows:
+                        texts.append("[表格]:\n" + "\n".join(rows))
+                elif shape.has_text_frame:
+                    t = shape.text_frame.text.strip()
+                    if t:
+                        texts.append(t)
+                elif shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                    images.append(shape.image.blob)
+            except Exception:  # noqa: BLE001 —— 单形状异常不阻断整页
+                continue
+
+    pages: list[ParsedPage] = []
+    md_parts: list[str] = []
+    ocr_pages = 0
+    for i, slide in enumerate(prs.slides):
+        texts: list[str] = []
+        images: list[bytes] = []
+        _walk_shapes(slide.shapes, texts, images)
+        # 演讲者备注（04 §2.1 保留项）
+        try:
+            if slide.has_notes_slide and slide.notes_slide.notes_text_frame:
+                nt = slide.notes_slide.notes_text_frame.text.strip()
+                if nt:
+                    texts.append("[备注]:\n" + nt)
+        except Exception:  # noqa: BLE001
+            pass
+        page_md = "\n".join(texts)
+        ocr_txts = []
+        for blob in images:
+            t = _ocr_image_bytes(blob)
+            if t:
+                ocr_txts.append(t)
+        if ocr_txts:
+            ocr_pages += 1
+            page_md = (page_md + "\n\n" if page_md else "") + "[图片文字]:\n" + "\n".join(ocr_txts)
+        pages.append(ParsedPage(page_no=i + 1, text_md=page_md, ocr_used=bool(ocr_txts)))
+        if page_md:
+            md_parts.append(f"[Page {i + 1}]:\n{page_md}")
+    doc = ParsedDocument(full_text_md="\n".join(md_parts),
+                         pages=pages, backend=ParseBackend.NATIVE)
+    doc.ocr_page_count = ocr_pages
+    return doc
 
 
 def _parse_native(content: bytes, filename: str, ext: str) -> ParsedDocument:
