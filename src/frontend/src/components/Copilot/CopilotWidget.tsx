@@ -106,6 +106,9 @@ export default function CopilotWidget() {
     const params = useParams<{ projectId?: string }>();
     // 项目上下文自动跟随：路由有 :projectId 即为当前项目（构建器/记分卡等）
     const routePid = Number((params.projectId as string) || location.pathname.match(/\/projects\/(\d+)/)?.[1]);
+    // 仅项目构建流程（构建器五 Tab）可呼出；非构建页 return null 隐藏——
+    // 组件仍保持挂载（单例）：离开再回来聊天记录/输入不丢
+    const isBuilderRoute = /^\/projects\/\d+\/(documents|schema|graph|timeline|reviews)(\/|$)/.test(location.pathname);
 
     const [open, setOpen] = useState(() => localStorage.getItem(OPEN_KEY) === '1');
     const [pos, setPos] = useState(loadPos);
@@ -142,6 +145,14 @@ export default function CopilotWidget() {
                 setProjects(await projectsApi.getSelectableProjects());
             } catch { /* 项目列表失败不阻断小窗 */ }
         })();
+    }, []);
+
+    // 工具栏按钮开合（BuilderPage 头部 CopilotToggle 派发；悬浮球已取消——
+    // 用户反馈固定悬浮在页角与布局不搭，入口收进构建器顶栏）
+    useEffect(() => {
+        const onToggle = () => setOpen(v => !v);
+        window.addEventListener('copilot-toggle', onToggle);
+        return () => window.removeEventListener('copilot-toggle', onToggle);
     }, []);
 
     const refreshSessions = useCallback(async (pid: number) => {
@@ -422,17 +433,12 @@ export default function CopilotWidget() {
         </div>
     );
 
+    if (!isBuilderRoute) {
+        return null;
+    }
+
     if (!open) {
-        return (
-            <Tooltip title="本体协同助手（AI）" placement="left">
-                <button onClick={toggleOpen}
-                        className="fixed z-[1100] w-12 h-12 rounded-full bg-gradient-to-br from-blue-500 to-purple-600
-                                   text-white shadow-lg hover:scale-105 transition-transform flex items-center justify-center"
-                        style={{ right: 24, bottom: 24 }}>
-                    <RobotOutlined className="text-xl" />
-                </button>
-            </Tooltip>
-        );
+        return null;
     }
 
     const posStyle: React.CSSProperties = 'left' in pos
@@ -467,8 +473,10 @@ export default function CopilotWidget() {
             {RESIZE_DIRS.map(d => (
                 <div key={d} style={handleStyle(d)} onMouseDown={onResizeStart(d)} />
             ))}
-            {/* 头部：项目 + 模型 + 会话 */}
+            {/* 头部：项目 + 模型 + 会话（渐变走内联 style 兜底——用户环境曾出现
+                Tailwind 渐变类不生效导致白底白字、头部整条看不见的问题） */}
             <div className="h-11 px-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white flex items-center gap-2 shrink-0 cursor-move"
+                 style={{ background: 'linear-gradient(90deg, #2563eb, #9333ea)' }}
                  onMouseDown={onDragStart}>
                 <RobotOutlined />
                 <span className="text-sm font-medium">本体协同助手</span>
@@ -501,8 +509,9 @@ export default function CopilotWidget() {
             {/* 消息区 */}
             <div ref={bodyRef} className="flex-1 overflow-auto px-3 py-3 bg-gray-50">
                 {msgs.length === 0 && (
-                    <div className="h-full flex flex-col items-center justify-center text-gray-500 text-center px-4">
-                        <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-2xl mb-3">
+                    <div className="flex flex-col items-center text-gray-500 text-center px-4 pt-12">
+                        <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-2xl mb-3"
+                             style={{ background: 'linear-gradient(135deg, #3b82f6, #9333ea)' }}>
                             <RobotOutlined />
                         </div>
                         <p className="text-sm text-gray-600">
@@ -631,3 +640,70 @@ export default function CopilotWidget() {
     );
 }
 
+
+/**
+ * 助手开合按钮（放构建器 Tab 栏右侧，用户指定位置）：蓝紫渐变方圆 + 呼吸光晕。
+ * 与 CopilotWidget 通过 window CustomEvent('copilot-toggle') 通信，保持小窗单例挂载。
+ * 样式自包含（组件内 <style>），不依赖 Tailwind 渐变类（用户环境曾出现类失效）。
+ */
+export function CopilotToggle() {
+    return (
+        <Tooltip title="本体协同助手（AI）" placement="left">
+            <button onClick={() => window.dispatchEvent(new CustomEvent('copilot-toggle'))}
+                    className="copilot-fab" aria-label="打开本体协同助手">
+                <style>{`
+                    .copilot-fab {
+                        display: inline-flex; align-items: center; gap: 6px;
+                        padding: 0 14px; height: 36px; white-space: nowrap;
+                        border: none; cursor: pointer; color: #fff;
+                        border-radius: 18px;
+                        background: linear-gradient(135deg, #3b82f6 0%, #7c7cf0 52%, #9333ea 100%);
+                        box-shadow: inset 0 1px 0 rgba(255,255,255,.42),
+                                    inset 0 -1px 0 rgba(15,23,42,.06),
+                                    0 2px 6px rgba(15,23,42,.16),
+                                    0 10px 24px -8px rgba(91,141,239,.55);
+                        transition: transform .18s cubic-bezier(.2,.8,.3,1), box-shadow .18s ease;
+                        animation: copilot-fab-breathe 3.4s ease-in-out infinite;
+                    }
+                    .copilot-fab:hover {
+                        transform: translateY(-2px);
+                        box-shadow: inset 0 1px 0 rgba(255,255,255,.42),
+                                    inset 0 -1px 0 rgba(15,23,42,.06),
+                                    0 4px 10px rgba(15,23,42,.16),
+                                    0 14px 30px -8px rgba(91,141,239,.7);
+                    }
+                    .copilot-fab:active { transform: translateY(0) scale(.96); }
+                    .copilot-fab:focus-visible {
+                        outline: 2px solid #93c5fd; outline-offset: 3px;
+                    }
+                    .copilot-fab .copilot-fab-icon {
+                        font-size: 16px;
+                        filter: drop-shadow(0 1px 1.5px rgba(15,23,42,.25));
+                    }
+                    .copilot-fab .copilot-fab-text {
+                        font-size: 13px; font-weight: 500; letter-spacing: .02em;
+                    }
+                    @keyframes copilot-fab-breathe {
+                        0%, 100% {
+                            box-shadow: inset 0 1px 0 rgba(255,255,255,.42),
+                                        inset 0 -1px 0 rgba(15,23,42,.06),
+                                        0 2px 6px rgba(15,23,42,.16),
+                                        0 10px 24px -8px rgba(91,141,239,.55);
+                        }
+                        50% {
+                            box-shadow: inset 0 1px 0 rgba(255,255,255,.42),
+                                        inset 0 -1px 0 rgba(15,23,42,.06),
+                                        0 2px 6px rgba(15,23,42,.16),
+                                        0 12px 30px -6px rgba(147,51,234,.45);
+                        }
+                    }
+                    @media (prefers-reduced-motion: reduce) {
+                        .copilot-fab { animation: none; transition: none; }
+                    }
+                `}</style>
+                <RobotOutlined className="copilot-fab-icon" />
+                <span className="copilot-fab-text">AI 辅助</span>
+            </button>
+        </Tooltip>
+    );
+}

@@ -114,7 +114,11 @@ def classify_intent(message: str, history: list | None = None,
             for m in (history or [])[-4:])
         sys_p = ("你是意图分类器。把用户消息分为五类之一并只输出 JSON："
                  '{"intent":"edit|analysis|clarify_continue|verify|chitchat"}。'
-                 "edit=要求修改本体（增删改类/关系/实例/公理）；analysis=分析问答；"
+                 "edit=要求修改本体（增删改类/关系/实例/公理）；"
+                 "用户用陈述句给出业务事实或业务规则也算 edit——"
+                 "例如「客户可以购买基金」是关系诉求、「客户具备年龄属性」是属性诉求，"
+                 "都应转化为提案；"
+                 "analysis=分析问答；"
                  "clarify_continue=对助手澄清/建议的简短确认或选择；"
                  "verify=要求验证/评测（CQ、一致性、推理）；chitchat=寒暄或问助手本身。")
         user_p = (f"【最近对话】\n{recent}\n【用户消息】\n{message}")
@@ -677,6 +681,10 @@ _PROPOSAL_SYSTEM = (
     "若意图是改已有关系请用 edit_relation；语义相近时仍可提案，服务端会附冲突提示。"
     "\n注意：往类下添加**实例**（如「工商银行」是「银行」的一个实例）必须用 add_instance，"
     "绝不要把实例建成类（add_class）。"
+    "\n注意：用户用陈述句给出业务事实/规则时（如「客户可以购买基金」「客户具备年龄属性」），"
+    "直接转化为对应提案而不要只做文字回答：涉及类与类之间的关联 → add_relation；"
+    "给类新增数据属性 → edit_class（set_properties）。提案的 llm_reason 用一句话说明"
+    "「从这句话识别出了什么诉求」；用户没提的属性值填空串建槽位。"
 )
 
 

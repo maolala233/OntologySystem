@@ -338,7 +338,8 @@ export default function QaPage() {
                 <div className="flex-1 overflow-auto px-6 py-4">
                     {turns.length === 0 && (
                         <div className="h-full flex flex-col items-center justify-center text-gray-500">
-                            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-2xl mb-4">O</div>
+                            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-2xl mb-4"
+                              style={{ background: 'linear-gradient(135deg, #3b82f6, #9333ea)' }}>O</div>
                             <p className="text-gray-600">基于本体知识图谱的检索问答</p>
                             <p className="text-xs mt-1">回答带 [n] 引用角标，点击角标可定位到对应溯源引用卡</p>
                         </div>

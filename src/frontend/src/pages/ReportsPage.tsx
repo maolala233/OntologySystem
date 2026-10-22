@@ -319,7 +319,8 @@ export default function ReportsPage() {
 
                         {result.kind === 'ppt' && result.outline && (
                             <div className="border-t border-gray-100 pt-3 space-y-3">
-                                <div className="text-center py-6 bg-gradient-to-br from-blue-600 to-purple-600 rounded-lg text-white">
+                                <div className="text-center py-6 bg-gradient-to-br from-blue-600 to-purple-600 rounded-lg text-white"
+                                         style={{ background: 'linear-gradient(135deg, #2563eb, #9333ea)' }}>
                                     <div className="text-xl font-bold">{result.outline.title}</div>
                                     {result.outline.subtitle && (
                                         <div className="text-sm opacity-80 mt-1">{result.outline.subtitle}</div>

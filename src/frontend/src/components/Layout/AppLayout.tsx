@@ -218,7 +218,8 @@ const AppLayout: React.FC = () => {
                 {/* Logo 区域 */}
                 <div className="h-16 flex items-center justify-center bg-[#001529] border-b border-gray-700">
                     <div className="flex items-center space-x-2">
-                        <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+                        <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center"
+                             style={{ background: 'linear-gradient(135deg, #3b82f6, #9333ea)' }}>
                             <span className="text-white font-bold text-lg">O</span>
                         </div>
                         {!collapsed && (
@@ -260,6 +261,7 @@ const AppLayout: React.FC = () => {
                                 size={collapsed ? 32 : 40}
                                 icon={<UserOutlined />}
                                 className="bg-gradient-to-br from-blue-500 to-purple-600"
+                                style={{ background: 'linear-gradient(135deg, #3b82f6, #9333ea)' }}
                             />
                             {!collapsed && (
                                 <div className="flex-1">
@@ -328,7 +330,8 @@ const AppLayout: React.FC = () => {
                 </Content>
             </Layout>
 
-            {/* O5-F12：全局悬浮 Copilot 小窗（任意页面常驻，项目上下文自动跟随路由） */}
+            {/* O5-F12：Copilot 小窗始终挂载保持单例（会话状态不随路由丢）；
+                可见范围（仅构建器五 Tab）由组件内部按路由门控 */}
             <CopilotWidget />
         </Layout>
     );
