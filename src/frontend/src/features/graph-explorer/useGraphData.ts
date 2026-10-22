@@ -62,8 +62,9 @@ export function gridLayout(graph: Graph): void {
     }
 }
 
-/** FA2 分块渐进布局（同步迭代分片，避免长阻塞；≥1k 节点 Barnes-Hut） */
-export function fa2Layout(graph: Graph, totalIterations = 300, chunk = 50): void {
+/** FA2 分块渐进布局（同步迭代分片，避免长阻塞；≥1k 节点 Barnes-Hut）
+ *  S13：分片间让出主线程（setTimeout 0）——大图装载/重新布局不再整段冻结 UI */
+export async function fa2Layout(graph: Graph, totalIterations = 300, chunk = 50): Promise<void> {
     const count = graph.order;
     const settings = forceAtlas2.inferSettings(count);
     Object.assign(settings, {
@@ -86,6 +87,7 @@ export function fa2Layout(graph: Graph, totalIterations = 300, chunk = 50): void
     while (done < totalIterations) {
         forceAtlas2.assign(graph, { iterations: Math.min(chunk, totalIterations - done), settings });
         done += chunk;
+        await new Promise((r) => setTimeout(r, 0));
     }
 }
 
@@ -186,7 +188,7 @@ export async function loadGraph(
         if (graph.order <= 48) {
             gridLayout(graph);
         } else {
-            fa2Layout(graph);
+            await fa2Layout(graph);
         }
     }
     return { graph, meta, colorField };

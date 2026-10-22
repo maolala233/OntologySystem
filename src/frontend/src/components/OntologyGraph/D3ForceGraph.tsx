@@ -124,6 +124,11 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
     const svgRef = useRef<SVGSVGElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const simulationRef = useRef<any>(null);
+    // S13 性能：tick 每帧全量 selectAll 查询 → 渲染时缓存一次选择集（元素集仅在 renderGraph 重建时变化）
+    const tickSelsRef = useRef<{ links: any; inv: any; nodes: any }>({ links: null, inv: null, nodes: null });
+    // S13 性能：hover 邻域高亮 rAF 合帧——快速扫过多个节点时，每帧至多一次全量透明度重绘
+    const hoverRafRef = useRef<number | null>(null);
+    const pendingHoverRef = useRef<string | null>(null);
     const [isDragging, setIsDragging] = useState(false);
     const [zoomLevel, setZoomLevel] = useState(1);
     const [spacingSlider, setSpacingSlider] = useState(50);
@@ -245,6 +250,11 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
         }
 
         const sliderFactor = (spacingSlider - 50) / 50;
+        // 大图降载（S13）：碰撞检测迭代 3→1、alpha 起始低 + 衰减快 —— 仿真更早收敛，
+        // DOM 全量更新的 tick 帧数从 ~340 帧降到 ~130 帧
+        const collisionIterations = nodeCount > 150 ? 1 : 3;
+        const simAlpha = nodeCount > 150 ? 0.6 : 1;
+        const simAlphaDecay = nodeCount > 150 ? 0.04 : 0.02;
 
         return {
             linkDistance: Math.round(baseLinkDistance * (1 + sliderFactor * 0.5)),
@@ -253,7 +263,8 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             collisionRadius: Math.round(baseCollisionRadius * (1 + sliderFactor * 0.3)),
             centerStrength: parseFloat((baseCenterStrength * (1 - sliderFactor * 0.2)).toFixed(3)),
             linkStrength: parseFloat((baseLinkStrength * (1 - sliderFactor * 0.1)).toFixed(2)),
-            collisionStrength: parseFloat(baseCollisionStrength.toFixed(2))
+            collisionStrength: parseFloat(baseCollisionStrength.toFixed(2)),
+            collisionIterations, simAlpha, simAlphaDecay,
         };
     }, [nodes.length, spacingSlider]);
 
@@ -473,10 +484,11 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             .force("collision", forceCollide()
                 .radius((d: any) => d.radius + forceParams.collisionRadius)
                 .strength(forceParams.collisionStrength)
-                .iterations(3))
+                .iterations(forceParams.collisionIterations))
             .force("x", forceX(centerX).strength(0.03))
             .force("y", forceY(centerY).strength(0.03))
-            .alphaDecay(0.02)
+            .alpha(forceParams.simAlpha)
+            .alphaDecay(forceParams.simAlphaDecay)
             .velocityDecay(0.4);
 
         if (newNodeIds.size > 0 && prevNodeIdsRef.current.size > 0) {
@@ -487,13 +499,16 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
 
         simulationRef.current = simulation;
 
+        // 大图降载（S13）：>300 节点时进入/退出不做过渡动画（transition 每元素逐帧插值，SVG 下代价高）
+        const largeGraph = d3Nodes.length > 300;
+
         // ── Edges: enter/update/exit ──
         const linkSelection = g.selectAll<SVGPathElement, any>("path.link")
             .data(d3Links, (d: any) => d.id);
 
         linkSelection.exit()
             .transition()
-            .duration(200)
+            .duration(largeGraph ? 0 : 200)
             .style("opacity", 0)
             .remove();
 
@@ -511,7 +526,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             .style("cursor", "pointer");
 
         linkEnter.transition()
-            .duration(400)
+            .duration(largeGraph ? 0 : 400)
             .style("opacity", 1);
 
         const linkMerge = linkEnter.merge(linkSelection as any);
@@ -535,6 +550,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                         .attr("stroke-width", 2.5)
                         .attr("marker-end", `url(#${uid}-arrowhead-hl)`);
 
+                    if (layoutBusy()) return;  // S13：布局中不建悬浮标签（锚点抖 + DOM 建删放大卡顿）
                     const pathElement = this as SVGPathElement;
                     const pathLength = pathElement.getTotalLength();
                     if (pathLength === 0) return;
@@ -628,6 +644,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                     .attr("stroke-width", 2.5)
                     .attr("marker-end", `url(#${uid}-arrowhead-hl)`);
 
+                if (layoutBusy()) return;  // S13：布局中不建悬浮标签（锚点抖 + DOM 建删放大卡顿）
                 const pathElement = this as SVGPathElement;
                 const pathLength = pathElement.getTotalLength();
                 if (pathLength === 0) return;
@@ -698,7 +715,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
 
         nodeSelection.exit()
             .transition()
-            .duration(250)
+            .duration(largeGraph ? 0 : 250)
             .style("opacity", 0)
             .attr("transform", (d: any) => {
                 const cx = d.x || 0;
@@ -767,7 +784,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
         });
 
         nodeEnter.transition()
-            .duration(400)
+            .duration(largeGraph ? 0 : 400)
             .ease((t: number) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2)
             .style("opacity", 1);
 
@@ -833,7 +850,20 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                     .attr("stroke-width", 1.5);
             }
         };
-        applyHoverRef.current = applyHoverHighlight;
+        // 布局未静止（仿真还在跑）时跳过悬浮标签/提示框：节点在动，标签锚点会抖，
+        // 且每帧 DOM 建删叠加 tick 更新会放大卡顿；高亮本身（单元素+全量透明度）不跳过
+        const layoutBusy = () => {
+            try { return (simulationRef.current?.alpha?.() ?? 0) > 0.08; } catch { return false; }
+        };
+        const applyHoverThrottled = (id: string | null) => {
+            pendingHoverRef.current = id;
+            if (hoverRafRef.current != null) return;
+            hoverRafRef.current = requestAnimationFrame(() => {
+                hoverRafRef.current = null;
+                applyHoverHighlight(pendingHoverRef.current);
+            });
+        };
+        applyHoverRef.current = applyHoverThrottled;
 
         allNodes
             .on("contextmenu", (event: MouseEvent, d: any) => {
@@ -858,7 +888,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                     lines.push(`📄 ${sourceDoc}`);
                 }
                 lines.push(...propKeys.slice(0, 5).map(k => `${k}: ${String(tooltip[k]).substring(0, 20)}`));
-                if (lines.length > 0) {
+                if (lines.length > 0 && !layoutBusy()) {
                     const labelGroupId = `node-tooltip-${d.id}`;
                     let labelGroup = svg.select<SVGGElement>(`g#${labelGroupId}`);
                     if (labelGroup.empty()) {
@@ -994,20 +1024,27 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             return { sx, sy, tx, ty };
         };
 
+        // S13：缓存 tick 选择集（renderGraph 时元素集已定，tick 内不再每帧 querySelectorAll）
+        tickSelsRef.current = {
+            links: g.selectAll<SVGPathElement, any>("path.link"),
+            inv: g.selectAll<SVGPathElement, any>("path.invisible-link"),
+            nodes: g.selectAll<SVGGElement, any>("g.node-group"),
+        };
         simulation.on("tick", () => {
-            g.selectAll<SVGPathElement, any>("path.link").each(function (this: SVGPathElement, d: any) {
+            const sels = tickSelsRef.current;
+            (sels.links || g.selectAll<SVGPathElement, any>("path.link")).each(function (this: SVGPathElement, d: any) {
                 const pts = computeEdgePath(d);
                 if (!pts) return;
                 this.setAttribute('d', `M${pts.sx},${pts.sy}L${pts.tx},${pts.ty}`);
             });
 
-            g.selectAll<SVGPathElement, any>("path.invisible-link").each(function (this: SVGPathElement, d: any) {
+            (sels.inv || g.selectAll<SVGPathElement, any>("path.invisible-link")).each(function (this: SVGPathElement, d: any) {
                 const pts = computeEdgePath(d);
                 if (!pts) return;
                 this.setAttribute('d', `M${pts.sx},${pts.sy}L${pts.tx},${pts.ty}`);
             });
 
-            g.selectAll<SVGGElement, any>("g.node-group")
+            (sels.nodes || g.selectAll<SVGGElement, any>("g.node-group"))
                 .attr("transform", (d: any) => `translate(${d.x || 0}, ${d.y || 0})`);
         });
 
