@@ -71,6 +71,7 @@ async def upload_documents(
     project_id: int,
     files: list[UploadFile] = File(...),
     auto_parse: bool = Query(True, description="上传后自动触发解析（parse 队列，SSE 订阅 parse-events）"),
+    parse_backend: str = Query("auto", description="解析后端 auto/docling_ocr/docling/vl_model/native（auto_parse=true 时生效）"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -78,6 +79,10 @@ async def upload_documents(
     require_project_role(project_id, "editor", current_user, db)
     if not files:
         raise APIError("请至少上传一个文件", code="EMPTY_UPLOAD", http_status=400)
+    allowed_backends = {"auto", "docling_ocr", "docling", "vl_model", "native"}
+    if parse_backend not in allowed_backends:
+        raise APIError(f"未知 backend: {parse_backend}", code="INVALID_BACKEND", http_status=400,
+                       detail={"allowed": sorted(allowed_backends)})
 
     minio = get_minio_client()
     os.makedirs(settings.TEMP_DIR, exist_ok=True)
@@ -144,7 +149,7 @@ async def upload_documents(
 
             for d in saved:
                 try:
-                    res = dispatch_parse(d.id)
+                    res = dispatch_parse(d.id, backend=parse_backend)
                     task_ids[d.id] = res["task_id"]
                     if res["mode"] == "inline":
                         inline_count += 1
@@ -380,22 +385,61 @@ def download_document(
     return RedirectResponse(url, status_code=302)
 
 
+def _purge_document_derived(db: Session, doc: UploadedDocument) -> int:
+    """删除文档的派生数据：MySQL 分块硬删（同步）+ Milvus 向量清理（后台线程，best-effort）。
+
+    修复"删除后再解析，已删内容累计出现"：旧实现只置 deleted_at，chunks 与向量
+    全部残留——向量召回（retrieval._vector_sources 只按 project_id 过滤）与 QA
+    溯源会持续把已删文档内容带出来，删得越多累计越多。向量按 source_file 标量
+    字段清理（Milvus 2.3 不支持 JSON 路径表达式，与 document_pipeline 重解析
+    清理同口径；同项目同名文件的向量一并清除，内容哈希去重兜底）。
+    向量清理走后台线程：Milvus 连接抖动时会长时间阻塞，不能卡删除接口。
+    """
+    import threading
+
+    import json as _json
+
+    n = (db.query(DocumentChunk)
+         .filter(DocumentChunk.document_id == doc.id)
+         .delete(synchronize_session=False))
+    pid, fname = doc.project_id, doc.filename
+
+    def _drop_vectors() -> None:
+        try:
+            from app.infrastructure.vector_client import VectorStoreManager
+            vm = VectorStoreManager()
+            if vm.is_enabled and vm.collection is not None:
+                vm.delete_by_expr(
+                    f'project_id == {pid} and source_file == "{_json.dumps(fname, ensure_ascii=False)[1:-1]}"')
+        except Exception as e:  # noqa: BLE001 —— 向量库抖动不阻断删除
+            logger.warning(f"[documents] 文档向量清理失败（best-effort，project={pid} file={fname}）: {e}")
+
+    threading.Thread(target=_drop_vectors, name=f"purge-vectors-{doc.id}", daemon=True).start()
+    return n
+
+
 @router.post("/clear-all", dependencies=[Depends(require_module("documents"))])
 def clear_all_documents(
     project_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """清空项目文档（旧 ontology.py 路由收编，03 §18）：软删全部未删文档。"""
+    """清空项目文档（旧 ontology.py 路由收编，03 §18）：软删全部未删文档 + 清派生数据。"""
     require_project_role(project_id, "editor", current_user, db)
     now = datetime.utcnow()
+    docs = (db.query(UploadedDocument)
+            .filter(UploadedDocument.project_id == project_id,
+                    UploadedDocument.deleted_at.is_(None)).all())
+    purged = 0
+    for d in docs:
+        purged += _purge_document_derived(db, d)
     count = (db.query(UploadedDocument)
              .filter(UploadedDocument.project_id == project_id,
                      UploadedDocument.deleted_at.is_(None))
              .update({"deleted_at": now}, synchronize_session=False))
     db.commit()
-    logger.info(f"[documents] 项目 {project_id} 清空 {count} 个文档（软删）by user {current_user.id}")
-    return {"message": f"已清空 {count} 个文档", "deleted_count": count}
+    logger.info(f"[documents] 项目 {project_id} 清空 {count} 个文档（软删，清 {purged} 条分块）by user {current_user.id}")
+    return {"message": f"已清空 {count} 个文档", "deleted_count": count, "purged_chunks": purged}
 
 
 @router.delete("/{doc_id}", dependencies=[Depends(require_module("documents"))])
@@ -405,10 +449,11 @@ def delete_document(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """软删：置 deleted_at；chunks 保留（向量清理随 M4 outbox 接入）。"""
+    """软删：置 deleted_at；分块与向量一并清理（已抽取的图谱数据不受影响）。"""
     require_project_role(project_id, "editor", current_user, db)
     doc = _load_doc_or_404(project_id, doc_id, db)
+    purged = _purge_document_derived(db, doc)
     doc.deleted_at = datetime.utcnow()
     db.commit()
-    logger.info(f"[documents] 文档 {doc_id} 软删 by user {current_user.id}")
-    return {"status": "success", "id": doc_id, "deleted": True}
+    logger.info(f"[documents] 文档 {doc_id} 软删（清 {purged} 条分块+向量）by user {current_user.id}")
+    return {"status": "success", "id": doc_id, "deleted": True, "purged_chunks": purged}

@@ -30,8 +30,8 @@ export interface DocumentChunkRow {
 }
 
 export const documentsApi = {
-    /** 多文件上传（秒传命中 → 409 DUPLICATE_UPLOAD） */
-    upload: async (projectId: number, files: File[], autoParse = true): Promise<{
+    /** 多文件上传（秒传命中 → 409 DUPLICATE_UPLOAD）；backend 仅 auto_parse 时生效 */
+    upload: async (projectId: number, files: File[], autoParse = true, backend?: string): Promise<{
         saved: DocumentRow[];
         auto_parse: boolean;
         message?: string;
@@ -39,8 +39,10 @@ export const documentsApi = {
     }> => {
         const formData = new FormData();
         files.forEach((f) => formData.append('files', f));
+        const qs = new URLSearchParams({ auto_parse: String(autoParse) });
+        if (backend) qs.set('parse_backend', backend);
         const response = await apiClient.post(
-            `/api/projects/${projectId}/documents/upload?auto_parse=${autoParse}`,
+            `/api/projects/${projectId}/documents/upload?${qs.toString()}`,
             formData,
             { headers: { 'Content-Type': 'multipart/form-data' } },
         );

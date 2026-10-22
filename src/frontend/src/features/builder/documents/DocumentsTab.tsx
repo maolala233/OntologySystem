@@ -1,14 +1,14 @@
 /**
- * 构建器 · 文档解析 Tab（05 §6.4）：上传（拖拽/秒传 409 友好提示）→ 解析（参数抽屉）
- * → 分块列表（游标分页）→ 删除/下载。数据源：M3-1/M3-2 documents API。
+ * 构建器 · 文档解析 Tab（05 §6.4）：上传（弹窗：选文件+解析方法+解析时机）
+ * → 解析（参数抽屉）→ 分块列表（游标分页）→ 删除/下载。数据源：M3-1/M3-2 documents API。
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-    Button, Card, Drawer, Modal, Popconfirm, Select, Space, Table, Tag, Tooltip, Upload, Input, message,
+    Button, Card, Drawer, Modal, Popconfirm, Radio, Select, Space, Table, Tag, Tooltip, Upload, Input, message,
 } from 'antd';
 import {
     CloudUploadOutlined, DeleteOutlined, DownloadOutlined, FileTextOutlined,
-    ReloadOutlined, ScissorOutlined,
+    InboxOutlined, ReloadOutlined, ScissorOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 
@@ -23,6 +23,14 @@ const STATUS_TAG: Record<string, { color: string; text: string }> = {
     failed: { color: 'error', text: '失败' },
 };
 
+const BACKEND_OPTIONS = [
+    { value: 'auto', label: 'auto（自动路由，扫描件走 OCR）' },
+    { value: 'docling', label: 'docling（文本 PDF/Office）' },
+    { value: 'docling_ocr', label: 'docling_ocr（扫描件 OCR）' },
+    { value: 'vl_model', label: 'vl_model（视觉模型）' },
+    { value: 'native', label: 'native（纯文本快速）' },
+];
+
 interface Props {
     projectId: number;
     /** 解析完成回调（供 BuilderPage 顶部提示刷新等） */
@@ -36,6 +44,11 @@ const DocumentsTab: React.FC<Props> = ({ projectId, onChanged }) => {
     const [parseDrawer, setParseDrawer] = useState<DocumentRow | null>(null);
     const [backend, setBackend] = useState('auto');
     const [chunkSize, setChunkSize] = useState('2000');
+    // 上传弹窗：选文件 → 解析方法 → 完成即解析 / 仅上传（待解析）
+    const [uploadOpen, setUploadOpen] = useState(false);
+    const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+    const [uploadBackend, setUploadBackend] = useState('auto');
+    const [uploadMode, setUploadMode] = useState<'parse' | 'defer'>('parse');
     const [chunksDoc, setChunksDoc] = useState<DocumentRow | null>(null);
     const [chunks, setChunks] = useState<DocumentChunkRow[]>([]);
     const [nextCursor, setNextCursor] = useState<number | null>(null);
@@ -62,11 +75,17 @@ const DocumentsTab: React.FC<Props> = ({ projectId, onChanged }) => {
         return () => clearInterval(t);
     }, [docs, load]);
 
-    const handleUpload = async (files: File[]) => {
-        if (files.length === 0) return;
+    const handleUpload = async () => {
+        if (pendingFiles.length === 0) return;
+        uploadingRef.current = true;
         try {
-            const r = await documentsApi.upload(projectId, files, true);
-            message.success(r.message || `已上传 ${r.saved?.length ?? 0} 个文档，解析任务已派发`);
+            const autoParse = uploadMode === 'parse';
+            const r = await documentsApi.upload(projectId, pendingFiles, autoParse, uploadBackend);
+            message.success(autoParse
+                ? (r.message || `已上传 ${r.saved?.length ?? 0} 个文档，解析任务已派发`)
+                : `已上传 ${r.saved?.length ?? 0} 个文档（待解析，可在列表点「解析」开始）`);
+            setUploadOpen(false);
+            setPendingFiles([]);
             load();
             onChanged?.();
         } catch (e: any) {
@@ -76,10 +95,14 @@ const DocumentsTab: React.FC<Props> = ({ projectId, onChanged }) => {
                     title: '秒传命中',
                     content: '相同内容的文档已存在于本项目，已直接复用，无需重复上传。',
                 });
+                setUploadOpen(false);
+                setPendingFiles([]);
                 load();
             } else {
                 message.error(e.response?.data?.error?.message || e.response?.data?.detail || '上传失败');
             }
+        } finally {
+            uploadingRef.current = false;
         }
     };
 
@@ -194,22 +217,10 @@ const DocumentsTab: React.FC<Props> = ({ projectId, onChanged }) => {
             title="文档解析"
             extra={
                 <Space>
-                    <Upload
-                        multiple
-                        showUploadList={false}
-                        beforeUpload={() => false}
-                        onChange={async ({ fileList }) => {
-                            if (uploadingRef.current || fileList.length === 0) return;
-                            uploadingRef.current = true;
-                            try {
-                                await handleUpload(fileList.map((f) => f.originFileObj).filter(Boolean) as File[]);
-                            } finally {
-                                uploadingRef.current = false;
-                            }
-                        }}
-                    >
-                        <Button type="primary" icon={<CloudUploadOutlined />}>上传文档（自动解析）</Button>
-                    </Upload>
+                    <Button type="primary" icon={<CloudUploadOutlined />}
+                            onClick={() => { setPendingFiles([]); setUploadBackend('auto'); setUploadMode('parse'); setUploadOpen(true); }}>
+                        上传文档
+                    </Button>
                     <Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>
                 </Space>
             }
@@ -221,8 +232,53 @@ const DocumentsTab: React.FC<Props> = ({ projectId, onChanged }) => {
                 columns={columns}
                 dataSource={docs}
                 pagination={{ pageSize: 10, showSizeChanger: false }}
-                locale={{ emptyText: '暂无文档；点击右上角上传（txt/pdf/docx/md/xlsx/csv/pptx，≤200MB）' }}
+                locale={{ emptyText: '暂无文档；点击右上角「上传文档」开始（txt/pdf/docx/md/xlsx/csv/pptx，≤200MB）' }}
             />
+
+            {/* 上传弹窗：选文件 → 解析方法 → 解析时机（完成即解析 / 待解析） */}
+            <Modal
+                title="上传文档"
+                open={uploadOpen}
+                onCancel={() => { if (!uploadingRef.current) setUploadOpen(false); }}
+                okText={uploadMode === 'parse' ? '完成并开始解析' : '完成（仅上传）'}
+                okButtonProps={{ disabled: pendingFiles.length === 0 || uploadingRef.current }}
+                onOk={handleUpload}
+                width={520}
+                maskClosable={false}
+            >
+                <div className="space-y-4">
+                    <Upload.Dragger
+                        multiple
+                        showUploadList={{ showRemoveIcon: true }}
+                        beforeUpload={() => false}
+                        onChange={({ fileList }) => {
+                            if (uploadingRef.current) return;
+                            setPendingFiles(fileList.map((f) => f.originFileObj).filter(Boolean) as File[]);
+                        }}
+                        accept=".txt,.md,.pdf,.doc,.docx,.xls,.xlsx,.csv,.ppt,.pptx,.html,.json"
+                    >
+                        <p className="ant-upload-drag-icon"><InboxOutlined /></p>
+                        <p className="ant-upload-text">点击或拖拽文件到此处</p>
+                        <p className="ant-upload-hint">支持 txt/pdf/docx/md/xlsx/csv/pptx 等，单文件 ≤200MB，可多选</p>
+                    </Upload.Dragger>
+                    <div>
+                        <div className="mb-1 text-gray-600">解析方法</div>
+                        <Select
+                            style={{ width: '100%' }}
+                            value={uploadBackend}
+                            onChange={setUploadBackend}
+                            options={BACKEND_OPTIONS}
+                        />
+                    </div>
+                    <div>
+                        <div className="mb-1 text-gray-600">解析时机</div>
+                        <Radio.Group value={uploadMode} onChange={(e) => setUploadMode(e.target.value)}>
+                            <Radio value="parse">完成后立即开始解析</Radio>
+                            <Radio value="defer">完成后保持「待解析」，稍后在列表点「解析」</Radio>
+                        </Radio.Group>
+                    </div>
+                </div>
+            </Modal>
 
             <Drawer
                 title={`解析参数 · ${parseDrawer?.filename || ''}`}
@@ -238,13 +294,7 @@ const DocumentsTab: React.FC<Props> = ({ projectId, onChanged }) => {
                             style={{ width: '100%' }}
                             value={backend}
                             onChange={setBackend}
-                            options={[
-                                { value: 'auto', label: 'auto（自动路由，扫描件走 OCR）' },
-                                { value: 'docling', label: 'docling（文本 PDF/Office）' },
-                                { value: 'docling_ocr', label: 'docling_ocr（扫描件 OCR）' },
-                                { value: 'vl_model', label: 'vl_model（视觉模型）' },
-                                { value: 'native', label: 'native（纯文本快速）' },
-                            ]}
+                            options={BACKEND_OPTIONS}
                         />
                     </div>
                     <div>
