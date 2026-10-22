@@ -3,7 +3,6 @@
 # run 走 extract 队列 Celery（复用 extraction 的进度/SSE）；merge/split/detect 同步（行表轻操作）。
 # 审核队列 API（03 §10）在 M3-6；本文件只暴露消解/冲突面。
 
-import json
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
@@ -188,19 +187,19 @@ def run_axiom_suggestions_endpoint(
 ):
     """公理建议扫描（O2-B8 + O4-B18 双通道）：channel=statistical（统计推断）
     / llm（AI 生成，过存在性校验）/ all（默认双通道，向后兼容）。
-    每个候选带证据，物化为 review_items(item_type='axiom_suggestion')。"""
+
+    S12 异步化：走 extract 任务框架（进度 + 阶段边界可取消），返回 task_id/mode，
+    前端复用 TaskProgressModal 订阅进度；LLM 通道单次调用 3-10 分钟，不再同步阻塞。
+    """
     if channel not in ("statistical", "llm", "all"):
         raise APIError(f"未知 channel: {channel}（可选 statistical/llm/all）",
                        code="INVALID_CHANNEL", http_status=400)
     require_project_role(project_id, "editor", current_user, db)
     _load_project_or_404(project_id, db)
-    from app.services.axiom_suggestion_service import run_axiom_suggestions
+    from app.tasks.extract_tasks import dispatch_axiom_suggestion
 
-    stats = run_axiom_suggestions(db, project_id, channel=channel)
-    from app.core.logging import logger
-    logger.info(f"公理建议扫描完成 project={project_id} channel={channel} "
-                f"result={json.dumps(stats, ensure_ascii=False, default=str)[:2000]}")
-    return stats
+    dispatched = dispatch_axiom_suggestion(project_id, channel=channel)
+    return {"task_id": dispatched["task_id"], "mode": dispatched["mode"]}
 
 
 @router.get("/axiom-suggestions", dependencies=[Depends(require_module("resolution"))])

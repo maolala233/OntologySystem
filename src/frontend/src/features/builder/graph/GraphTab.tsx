@@ -537,11 +537,10 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
         }
     };
 
-    // ── AI 公理扫描（O4-F11）：LLM 通道候选过机检守门后物化为审核项；同步接口 ──
-    const [axiomScanning, setAxiomScanning] = useState(false);
+    // ── AI 公理扫描（O4-F11）：S12 异步化——LLM 单次 3-10 分钟不再同步阻塞，
+    // 走 extract 任务框架，复用 TaskProgressModal（分阶段进度 + 可人工取消） ──
     const scanAxioms = async () => {
         try {
-            setAxiomScanning(true);
             const r = await fetch(`${window.location.origin}/api/projects/${projectId}/axiom-suggestions/run?channel=llm`, {
                 method: 'POST',
                 headers: {
@@ -550,23 +549,16 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                 },
                 body: JSON.stringify({}),
             });
-            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            if (!r.ok) {
+                const err = await r.json().catch(() => ({}));
+                throw new Error(err?.error?.message || `HTTP ${r.status}`);
+            }
             const data = await r.json();
-            const n = data.review_created ?? 0;
-            const both = data.merged_both ?? 0;
-            const up = data.upgraded_pending ?? 0;
-            const skip = data.llm?.skipped ?? data.llm?.error;
-            message.success(
-                `AI 公理扫描完成：新增建议 ${n} 条`
-                + (both ? `，与统计通道合并 ${both} 条` : '')
-                + (up ? `，并入既有待审 ${up} 条` : '')
-                + (skip && !n ? `（AI 通道本次未产出：${skip}）` : '')
-                + '，请到「审核」页处理',
-            );
+            setProgressTitle('AI 公理扫描');
+            setTaskId(data.task_id);
+            setProgressOpen(true);
         } catch (e: any) {
-            message.error(e.message || 'AI 公理扫描失败');
-        } finally {
-            setAxiomScanning(false);
+            message.error(e.message || 'AI 公理扫描派发失败');
         }
     };
 
@@ -811,7 +803,7 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                         <Button icon={<ClusterOutlined />} onClick={startResolution}>消解分析</Button>
                         <Button icon={<RadarChartOutlined />} onClick={detectConflicts}>冲突检测</Button>
                         <Tooltip title="AI 依据实例样本建议新公理（函数性/互逆/互斥/等价类等 8 种）；候选先过存在性、冲突、影子校验、一致性四道机器检查，通过后才进入审核队列">
-                            <Button icon={<RobotOutlined />} onClick={scanAxioms} loading={axiomScanning}>
+                            <Button icon={<RobotOutlined />} onClick={scanAxioms}>
                                 AI 公理扫描
                             </Button>
                         </Tooltip>

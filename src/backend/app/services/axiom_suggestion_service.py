@@ -100,15 +100,21 @@ def _upgrade_pending(item, cand: dict) -> bool:
 def run_axiom_suggestions(db: Session, project_id: int,
                           channel: str = "all",
                           llm: Optional[Any] = None,
-                          min_instances_note: str = "") -> dict:
+                          min_instances_note: str = "",
+                          progress_cb: Optional[Any] = None,
+                          is_cancelled_fn: Optional[Any] = None) -> dict:
     """公理候选扫描并物化审核项（同 kind+target 待审去重）。
 
     channel='llm' 或 'all' 时走 LLM 通道；llm 参数供测试注入 FakeLLM，
     为 None 时按项目抽取模型配置构造（无配置则 LLM 通道优雅跳过）。
+    progress_cb(pct, msg)：任务框架的进度回调（S12 异步化）；is_cancelled_fn()：
+    取消探测（阶段边界生效——LLM 单次调用本身不可中断，取消后不物化任何审核项）。
     """
     if channel not in CHANNELS:
         return {"candidates": 0, "review_created": 0, "deduped": 0,
                 "skipped": f"未知 channel: {channel}"}
+    _prog = progress_cb or (lambda pct, msg: None)
+    _cancelled = is_cancelled_fn or (lambda: False)
 
     ents = db.query(Entity).filter(
         Entity.project_id == project_id,
@@ -140,13 +146,23 @@ def run_axiom_suggestions(db: Session, project_id: int,
 
     stat_candidates: list[dict] = []
     if channel in ("statistical", "all"):
+        _prog(20, "统计通道推断中…")
         stat_candidates = suggest_axioms(ent_dicts, rel_dicts, schema)
 
     llm_candidates: list[dict] = []
     llm_stats: dict | None = None
     if channel in ("llm", "all"):
+        _prog(35, f"统计通道完成 {len(stat_candidates)} 条候选；AI 通道生成中"
+                  "（单次调用约 3-10 分钟，可取消）…")
+        if _cancelled():
+            return {"candidates": 0, "review_created": 0, "deduped": 0,
+                    "cancelled": True}
         llm_candidates, llm_stats = _llm_candidates(db, project_id, schema,
                                                     ent_dicts, rel_dicts, llm)
+        _prog(70, f"AI 通道返回 {len(llm_candidates)} 条候选；合并与机检守门中…")
+        if _cancelled():
+            return {"candidates": 0, "review_created": 0, "deduped": 0,
+                    "cancelled": True}
 
     # O4-B20 双通道合并（channel=statistical 时 llm 为空表，合并退化为透传）
     candidates, merged_both = _merge_dual_channel(stat_candidates, llm_candidates)
@@ -162,6 +178,10 @@ def run_axiom_suggestions(db: Session, project_id: int,
 
     created = deduped = upgraded = 0
     seen_in_run: set[tuple] = set()
+    _prog(85, f"候选合并完成 {len(candidates)} 条；物化审核项中…")
+    if _cancelled():
+        return {"candidates": len(candidates), "review_created": 0,
+                "deduped": 0, "cancelled": True}
     for cand in candidates:
         key = _suggestion_key(cand)
         item = existing_by_key.get(key)

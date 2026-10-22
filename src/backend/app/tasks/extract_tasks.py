@@ -984,3 +984,60 @@ def run_conflict_detection_task(self, project_id: int,
     except Exception as e:  # noqa: BLE001
         finish_task_progress(task_id, "failed", str(e)[:300], stats={"project_id": project_id})
         raise
+
+
+@celery_app.task(name="app.tasks.extract_tasks.run_axiom_suggestion_task",
+                 bind=True, max_retries=0, acks_late=True)
+def run_axiom_suggestion_task(self, project_id: int, channel: str = "all") -> dict:
+    """AI 公理扫描（O4-B18 双通道）异步化（S12）：进度分阶段上报 + 阶段边界取消。
+
+    LLM 单次调用本身不可中断（阻塞 HTTP），取消在阶段边界生效：
+    统计后 / LLM 返回后 / 物化前——取消即不物化任何审核项（已入画布数据零影响）。
+    """
+    task_id = self.request.id
+    set_task_progress(task_id, "queued", 5, "公理扫描已入队",
+                      {"project_id": project_id}, queue="extract")
+    db = None
+    try:
+        from app.infrastructure.database import SessionLocal
+        from app.services.axiom_suggestion_service import run_axiom_suggestions
+
+        db = SessionLocal()
+
+        def _prog(pct: int, msg: str) -> None:
+            if is_cancelled(task_id):
+                return
+            set_task_progress(task_id, "extracting", pct, msg,
+                              {"project_id": project_id}, queue="extract")
+
+        stats = run_axiom_suggestions(
+            db, project_id, channel=channel,
+            progress_cb=_prog,
+            is_cancelled_fn=lambda: is_cancelled(task_id))
+        stats["project_id"] = project_id  # 进度查询端点按 stats.project_id 对账，缺失即 404
+        if stats.get("cancelled"):
+            finish_task_progress(task_id, "cancelled", "已取消（未物化任何审核项）",
+                                 stats={"project_id": project_id})
+            return {"status": "cancelled", **stats}
+        finish_task_progress(task_id, "completed",
+                             f"公理扫描完成：新增建议 {stats.get('review_created', 0)} 条"
+                             + (f"，合并双佐证 {stats['merged_both']} 条"
+                                if stats.get("merged_both") else ""),
+                             stats=stats)
+        return {"status": "completed", **stats}
+    except Exception as e:  # noqa: BLE001
+        finish_task_progress(task_id, "failed", str(e)[:300],
+                             stats={"project_id": project_id})
+        raise
+    finally:
+        if db is not None:
+            db.close()
+
+
+def dispatch_axiom_suggestion(project_id: int, channel: str = "all") -> dict:
+    """派发 AI 公理扫描（详见 _dispatch）。返回 {"mode", "task_id"}。"""
+    return _dispatch(
+        run_axiom_suggestion_task,
+        (project_id,),
+        {"channel": channel},
+        project_id)
