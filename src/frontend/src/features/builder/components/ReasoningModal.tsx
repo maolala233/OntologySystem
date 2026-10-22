@@ -5,8 +5,7 @@
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-    Button, Empty, Input, InputNumber, Modal, Popconfirm, Radio, Select, Spin, Switch, Tag, message,
-} from 'antd';
+    Button, Empty, Input, InputNumber, Modal, Popconfirm, Radio, Select, Spin, Switch, Tag, message, Pagination, Dropdown } from 'antd';
 import {
     DeleteOutlined, DownloadOutlined, ExperimentOutlined, PlusOutlined, ReloadOutlined, SettingOutlined,
 } from '@ant-design/icons';
@@ -50,7 +49,9 @@ const axiomText = (a: DeclaredAxiom): string => {
     }
 };
 
-const LIMIT = 300;
+const PAGE_SIZE = 50;
+/** 「蕴含」Tab = OWL-RL + RDFS 蕴含合并（旧批次/RDFS profile 的整批 rdfs 标注也在其中） */
+const ENTAILMENT_SOURCES = 'owlrl,rdfs';
 
 /** 公理表单状态：kind 决定显示哪些字段 */
 interface AxiomForm {
@@ -77,6 +78,7 @@ const ReasoningModal: React.FC<{
     const [total, setTotal] = useState(0);
     const [loading, setLoading] = useState(false);
     const [sourceFilter, setSourceFilter] = useState<string | undefined>(undefined);
+    const [page, setPage] = useState(1);
     // 规则与公理管理
     const [rules, setRules] = useState<OntologyRule[]>([]);
     const [rulesOpen, setRulesOpen] = useState(false);
@@ -94,10 +96,14 @@ const ReasoningModal: React.FC<{
     const [editingAxiom, setEditingAxiom] = useState<DeclaredAxiom | null>(null);
     const [savingAxiom, setSavingAxiom] = useState(false);
 
-    const loadResults = useCallback(async (src?: string) => {
+    const loadResults = useCallback(async (src?: string, page = 1) => {
         setLoading(true);
         try {
-            const r = await reasoningApi.getResults(projectId, { limit: LIMIT, source: src });
+            // 「蕴含」Tab 前端语义 = owlrl+rdfs 合并（后端 source 支持逗号多值）
+            const srcParam = src === 'owlrl' ? ENTAILMENT_SOURCES : src;
+            const r = await reasoningApi.getResults(projectId, {
+                limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE, source: srcParam,
+            });
             setItems(r.items);
             setTotal(r.total);
         } catch (e: any) {
@@ -125,7 +131,8 @@ const ReasoningModal: React.FC<{
 
     useEffect(() => {
         if (open) {
-            loadResults(sourceFilter);
+            setPage(1);
+            loadResults(sourceFilter, 1);
             loadRules();
         }
     }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -138,7 +145,8 @@ const ReasoningModal: React.FC<{
             message.success(`推理完成：事实 ${s.fact_triples} 条，推理得出 ${s.inferred_total} 条`);
             // 新批次后回到「全部」：蕴含/规则产出比例随批次变化，停留在空 tab 会造成"没落盘"错觉
             setSourceFilter(undefined);
-            await loadResults(undefined);
+            setPage(1);
+            await loadResults(undefined, 1);
         } catch (e: any) {
             message.error(e?.response?.data?.detail || '推理运行失败');
         } finally {
@@ -146,9 +154,12 @@ const ReasoningModal: React.FC<{
         }
     };
 
-    const exportInferred = async () => {
+    const EXPORT_FMT_EXT: Record<string, string> = {
+        turtle: 'ttl', ntriples: 'nt', rdfxml: 'rdf', jsonld: 'jsonld', trig: 'trig', owl: 'owl',
+    };
+    const exportInferred = async (fmt: string) => {
         try {
-            const resp = await fetch(reasoningApi.exportInferredUrl(projectId), {
+            const resp = await fetch(`/api/projects/${projectId}/export?format=${fmt}&include_inferred=true`, {
                 headers: { Authorization: `Bearer ${localStorage.getItem('access_token') || ''}` },
             });
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -156,7 +167,7 @@ const ReasoningModal: React.FC<{
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `ontology_project_${projectId}_inferred.ttl`;
+            a.download = `ontology_project_${projectId}_inferred.${EXPORT_FMT_EXT[fmt] || fmt}`;
             a.click();
             URL.revokeObjectURL(url);
         } catch (e: any) {
@@ -358,7 +369,19 @@ const ReasoningModal: React.FC<{
                         onClick={runReasoning}>
                     运行推理
                 </Button>
-                <Button icon={<DownloadOutlined />} onClick={exportInferred}>导出含推理 TTL</Button>
+                <Dropdown menu={{
+                    items: [
+                        { key: 'turtle', label: 'Turtle（.ttl · 事实/推理分节标注）' },
+                        { key: 'ntriples', label: 'N-Triples（.nt）' },
+                        { key: 'rdfxml', label: 'RDF/XML（.rdf）' },
+                        { key: 'jsonld', label: 'JSON-LD（.jsonld）' },
+                        { key: 'trig', label: 'TriG（.trig）' },
+                        { key: 'owl', label: 'OWL（.owl）' },
+                    ],
+                    onClick: ({ key }) => exportInferred(key),
+                }}>
+                    <Button icon={<DownloadOutlined />}>导出含推理 ▾</Button>
+                </Dropdown>
                 <Button icon={<SettingOutlined />} onClick={() => {
                     setRulesOpen(true); loadRules(); loadAxioms();
                 }}>
@@ -385,9 +408,9 @@ const ReasoningModal: React.FC<{
             {/* 结果列表 */}
             <div className="flex items-center gap-2 mb-2">
                 <span className="text-sm font-medium">推理结果</span>
-                <span className="text-xs text-gray-500">（共 {total} 条，最多展示 {LIMIT} 条）</span>
+                <span className="text-xs text-gray-500">（共 {total} 条{total > 0 && ` · 第 ${(page - 1) * PAGE_SIZE + 1}-${Math.min(page * PAGE_SIZE, total)} 条`}）</span>
                 <div className="flex-1" />
-                <Radio.Group size="small" value={sourceFilter} onChange={(e) => { setSourceFilter(e.target.value); loadResults(e.target.value); }}>
+                <Radio.Group size="small" value={sourceFilter} onChange={(e) => { setSourceFilter(e.target.value); setPage(1); loadResults(e.target.value, 1); }}>
                     <Radio.Button value={undefined}>全部</Radio.Button>
                     <Radio.Button value="owlrl">蕴含</Radio.Button>
                     <Radio.Button value="rule">规则</Radio.Button>
@@ -420,6 +443,18 @@ const ReasoningModal: React.FC<{
                             </div>
                         );
                     })}
+                </div>
+            )}
+            {total > PAGE_SIZE && (
+                <div className="flex justify-center mt-2">
+                    <Pagination
+                        size="small"
+                        current={page}
+                        pageSize={PAGE_SIZE}
+                        total={total}
+                        onChange={(p) => { setPage(p); loadResults(sourceFilter, p); }}
+                        showSizeChanger={false}
+                    />
                 </div>
             )}
 

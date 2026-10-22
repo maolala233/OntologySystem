@@ -52,13 +52,15 @@ def run_reasoning_endpoint(
 def get_reasoning_results(
     project_id: int,
     limit: int = Query(200, ge=1, le=2000),
-    source: str | None = Query(None, description="过滤：owlrl/rdfs/rule"),
+    offset: int = Query(0, ge=0),
+    source: str | None = Query(None, description="过滤：owlrl/rdfs/rule，支持逗号分隔多值（如 owlrl,rdfs=全部蕴含）"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """最新批次推理结果（仅推导三元组；原始事实不在此表）。"""
     _load_project_or_404(project_id, db)
-    return reasoning_service.get_latest_results(db, project_id, limit=limit, source=source)
+    return reasoning_service.get_latest_results(db, project_id, limit=limit,
+                                                offset=offset, source=source)
 
 
 @router.get("/reasoning/rule-suggestions", dependencies=[Depends(require_module("resolution"))])

@@ -1009,19 +1009,36 @@ def export_project(
     if not db_project:
         raise HTTPException(status_code=404, detail="Project not found")
     _check_export_permission(db_project, current_user)
-    # 推理期 R2：turtle 可附推理分节（事实与推理横幅分隔）
-    if include_inferred and fmt == ExportFormat.TURTLE:
-        from urllib.parse import quote as _q
-
+    # 推理期 R2（S12 扩展）：RDF 6 格式均可附推理——turtle 保留"事实|推理"横幅分节原文；
+    # 其余 RDF 格式由含推理 TTL 转序列化（横幅注释不带入，推理三元组并入数据）；
+    # 平台 JSON 为事实格式不含推理，include_inferred 对其忽略。
+    if include_inferred and fmt != ExportFormat.JSON:
+        from app.adapters.exporting import export_rdf
         from app.services.reasoning_service import export_ttl_with_inference
 
-        content = export_ttl_with_inference(db, db_project, profile="owlrl")
-        project_name = db_project.name
-        encoded_filename = _q(f"ontology_{project_name}_inferred.ttl", safe='')
-        ascii_filename = f"ontology_project_{db_project.id}_inferred.ttl"
+        ttl_content = export_ttl_with_inference(db, db_project, profile="owlrl")
+        if fmt is ExportFormat.TURTLE:
+            from urllib.parse import quote as _q
+
+            encoded_filename = _q(f"ontology_{db_project.name}_inferred.ttl", safe='')
+            ascii_filename = f"ontology_project_{db_project.id}_inferred.ttl"
+            return Response(
+                content=ttl_content,
+                media_type="text/turtle; charset=utf-8",
+                headers={
+                    "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}; filename=\"{ascii_filename}\"",
+                },
+            )
+        try:
+            content, media_type, ext = export_rdf(ttl_content, fmt)
+        except Exception as e:
+            logger.error(f"[export] 含推理 RDF 序列化失败 format={fmt}: {e}")
+            raise HTTPException(status_code=500, detail=f"RDF serialization failed: {e}")
+        encoded_filename = quote(f"ontology_{db_project.name}_inferred.{ext}", safe='')
+        ascii_filename = f"ontology_project_{db_project.id}_inferred.{ext}"
         return Response(
             content=content,
-            media_type="text/turtle; charset=utf-8",
+            media_type=media_type,
             headers={
                 "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}; filename=\"{ascii_filename}\"",
             },

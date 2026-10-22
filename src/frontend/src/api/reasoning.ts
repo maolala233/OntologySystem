@@ -91,7 +91,7 @@ export const reasoningApi = {
         const response = await apiClient.post(`/api/projects/${projectId}/reasoning/run`, body || {});
         return response.data;
     },
-    getResults: async (projectId: number, params?: { limit?: number; source?: string }): Promise<{
+    getResults: async (projectId: number, params?: { limit?: number; offset?: number; source?: string }): Promise<{
         batch_id: string | null; total: number; items: ReasoningItem[];
     }> => {
         const response = await apiClient.get(`/api/projects/${projectId}/reasoning/results`, { params: params || {} });

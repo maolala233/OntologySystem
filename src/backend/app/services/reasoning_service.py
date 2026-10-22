@@ -492,8 +492,8 @@ def run_reasoning(db: Session, project: Project, profile: str = "owlrl",
 
 
 def get_latest_results(db: Session, project_id: int, limit: int = 200,
-                       source: Optional[str] = None) -> dict:
-    """取最新批次的推理结果行（source 过滤可选）。"""
+                       offset: int = 0, source: Optional[str] = None) -> dict:
+    """取最新批次的推理结果行（source 过滤可选，支持逗号分隔多值；offset 分页）。"""
     latest = (db.query(ReasoningResult)
               .filter(ReasoningResult.project_id == project_id)
               .order_by(ReasoningResult.id.desc()).first())
@@ -503,9 +503,14 @@ def get_latest_results(db: Session, project_id: int, limit: int = 200,
         ReasoningResult.project_id == project_id,
         ReasoningResult.batch_id == latest.batch_id)
     if source:
-        q = q.filter(ReasoningResult.source == source)
+        sources = [s for s in source.split(",") if s]
+        if len(sources) == 1:
+            q = q.filter(ReasoningResult.source == sources[0])
+        else:
+            q = q.filter(ReasoningResult.source.in_(sources))
     total = q.count()
-    items = q.order_by(ReasoningResult.source, ReasoningResult.id).limit(limit).all()
+    items = (q.order_by(ReasoningResult.source, ReasoningResult.id)
+              .offset(offset).limit(limit).all())
     return {
         "batch_id": latest.batch_id,
         "total": total,
