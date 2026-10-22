@@ -2867,8 +2867,8 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                                 <span>
                                                     有 <b>{ssePendingReviews}</b> 项待人工确认（低置信实体/关系、新类、冲突等），通过后才会落地生效。
                                                 </span>
-                                                <Button type="primary" size="small" icon={<AuditOutlined />} onClick={() => navigate('/reviews')}>
-                                                    去审核工作台
+                                                <Button type="primary" size="small" icon={<AuditOutlined />} onClick={() => navigate(`/projects/${projectId}/reviews`)}>
+                                                    去审核
                                                 </Button>
                                             </div>
                                         )}

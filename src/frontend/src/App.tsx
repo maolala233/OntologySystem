@@ -57,6 +57,8 @@ function App() {
                         <Route path="projects/:projectId/schema" element={<BuilderPage />} />
                         <Route path="projects/:projectId/graph" element={<BuilderPage />} />
                         <Route path="projects/:projectId/timeline" element={<BuilderPage />} />
+                        {/* 构建器第五 Tab：项目内审核队列（用户在构建过程中查看审核情况） */}
+                        <Route path="projects/:projectId/reviews" element={<BuilderPage />} />
                         <Route path="projects/:projectId" element={<Navigate to="documents" replace />} />
                         {/* O2-F7 本体健康记分卡（实时聚合机检与审核指标） */}
                         <Route path="projects/:projectId/scorecard" element={<ScorecardPage />} />

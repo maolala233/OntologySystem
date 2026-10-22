@@ -36,6 +36,7 @@ const TaskProgressModal: React.FC<Props> = ({
     const [status, setStatus] = useState('queued');
     const [stats, setStats] = useState<Record<string, any>>({});
     const [pendingReviews, setPendingReviews] = useState<number | null>(null);
+    const [cancelReq, setCancelReq] = useState(false);
     const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     useEffect(() => {
@@ -46,6 +47,7 @@ const TaskProgressModal: React.FC<Props> = ({
         setMessage('排队中...');
         setDetail('');
         setPendingReviews(null);
+        setCancelReq(false);
 
         const poll = async () => {
             try {
@@ -96,7 +98,8 @@ const TaskProgressModal: React.FC<Props> = ({
         if (!taskId) return;
         try {
             await extractionApi.cancelTask(projectId, taskId);
-            setMessage('取消请求已发送...');
+            setCancelReq(true);
+            setMessage('取消请求已发送，将在当前阶段结束后生效...');
         } catch (e: any) {
             console.warn('[task] 取消失败', e);
         }
@@ -106,19 +109,24 @@ const TaskProgressModal: React.FC<Props> = ({
         <Modal
             open={open}
             title={title}
-            onCancel={() => { if (!TERMINAL.has(status)) return; onClose(); }}
+            onCancel={() => {
+                // 终态可直接关；已请求取消的运行中任务也放行（结果将被丢弃，用户无需守着弹窗）
+                if (TERMINAL.has(status) || cancelReq) onClose();
+            }}
             footer={
                 <Space>
                     {!TERMINAL.has(status) && (
-                        <Button icon={<StopOutlined />} danger onClick={handleCancel}>取消任务</Button>
+                        <Button icon={<StopOutlined />} danger disabled={cancelReq} onClick={handleCancel}>
+                            {cancelReq ? '取消中…' : '取消任务'}
+                        </Button>
                     )}
                     {status === 'completed' && (pendingReviews ?? 0) > 0 && (
                         <Button
                             type="primary"
                             icon={<AuditOutlined />}
-                            onClick={() => navigate('/reviews')}
+                            onClick={() => navigate(`/projects/${projectId}/reviews`)}
                         >
-                            去审核工作台（{pendingReviews} 项待确认）
+                            去审核（{pendingReviews} 项待确认）
                         </Button>
                     )}
                     <Button type="primary" disabled={!TERMINAL.has(status)} onClick={onClose}>关闭</Button>
@@ -154,7 +162,16 @@ const TaskProgressModal: React.FC<Props> = ({
                     showIcon
                     icon={<AuditOutlined />}
                     message={`抽取完成，有 ${pendingReviews} 项待人工确认（低置信实体/关系、新类、冲突等）`}
-                    description="请在审核工作台逐项核验后通过或驳回，通过项才会落地生效。"
+                    description="请在「审核」页逐项核验后通过或驳回，通过项才会落地生效。"
+                />
+            )}
+            {cancelReq && status !== 'cancelled' && !TERMINAL.has(status) && (
+                <Alert
+                    className="mt-3"
+                    type="info"
+                    showIcon
+                    message="已请求取消"
+                    description="将在当前阶段结束后生效：进行中的 AI 调用返回后，其结果将被丢弃，不会写入任何数据。"
                 />
             )}
             {status === 'cancelled' && (

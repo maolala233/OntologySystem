@@ -7,18 +7,20 @@ import React, { lazy, Suspense, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Button, Spin, Tabs, Tag, Tooltip } from 'antd';
 import {
-    ArrowLeftOutlined, CloudUploadOutlined, DatabaseOutlined,
+    ArrowLeftOutlined, AuditOutlined, CloudUploadOutlined, DatabaseOutlined,
     FieldTimeOutlined, NodeIndexOutlined,
 } from '@ant-design/icons';
 
 import { useBuilderStore } from './store';
 import { PROJECT_STATUS } from '../../shared/projectStatus';
 import { confirmLeaveUnsaved } from '../../utils/unsavedGuard';
+import { CopilotToggle } from '../../components/Copilot/CopilotWidget';
 
 const DocumentsTab = lazy(() => import('./documents/DocumentsTab'));
 const SchemaTab = lazy(() => import('./schema/SchemaTab'));
 const GraphTab = lazy(() => import('./graph/GraphTab'));
 const TimelineTab = lazy(() => import('./timeline/TimelineTab'));
+const ProjectReviewsTab = lazy(() => import('./reviews/ProjectReviewsTab'));
 
 // 状态映射唯一权威在 shared/projectStatus；构建器中发布态补充只读提示
 const STATUS_TAG: Record<string, { color: string; text: string }> = {
@@ -39,7 +41,7 @@ const BuilderPage: React.FC = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [pid]);
 
-    const activeTab = ['documents', 'schema', 'graph', 'timeline']
+    const activeTab = ['documents', 'schema', 'graph', 'timeline', 'reviews']
         .find((t) => location.pathname.endsWith(`/${t}`)) || 'documents';
 
     if (!Number.isFinite(pid) || pid <= 0) {
@@ -87,6 +89,11 @@ const BuilderPage: React.FC = () => {
             label: tabLabel(<FieldTimeOutlined className="mr-1" />, '时间轴', '版本对比与发布门控'),
             children: <TimelineTab projectId={pid} onChanged={() => loadProject(pid)} />,
         },
+        {
+            key: 'reviews',
+            label: tabLabel(<AuditOutlined className="mr-1" />, '审核', '本项目的审核队列'),
+            children: <ProjectReviewsTab projectId={pid} />,
+        },
     ];
 
     const statusMeta = STATUS_TAG[projectStatus] || STATUS_TAG.draft;
@@ -120,6 +127,11 @@ const BuilderPage: React.FC = () => {
                     activeKey={activeTab}
                     onChange={(key) => confirmLeaveUnsaved(() => navigate(`/projects/${pid}/${key}`))}
                     items={tabItems}
+                    tabBarExtraContent={{ right: (
+                        <span className="inline-flex items-center pr-1">
+                            <CopilotToggle />
+                        </span>
+                    ) }}
                     className="flex-1 px-4 pb-2 overflow-auto builder-tabs"
                     destroyInactiveTabPane={false}
                 />
