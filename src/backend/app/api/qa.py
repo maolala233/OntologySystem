@@ -10,7 +10,7 @@ import logging
 import time
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -414,6 +414,7 @@ def qa_conversation_delete(
 def qa_source_detail(
     project_id: int,
     ref_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(require_module("qa")),
 ):
@@ -436,8 +437,8 @@ def qa_source_detail(
         if d is not None and d.deleted_at is None:
             doc_names[did] = d.filename
             try:
-                doc_urls[did] = get_minio_client().get_presigned_url(
-                    settings.MINIO_BUCKET_UPLOADS, d.storage_key)
+                doc_urls[did] = get_minio_client().get_browser_presigned_url(
+                    settings.MINIO_BUCKET_UPLOADS, d.storage_key, request)
             except Exception as e:  # 预签名失败不阻断溯源内容返回
                 logger.warning(f"[qa] 预签名失败 doc={did}: {e}")
 

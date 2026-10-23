@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     MINIO_ACCESS_KEY: str = "minioadmin"
     MINIO_SECRET_KEY: str = "minioadmin"
     MINIO_SECURE: bool = False
+    # 预签名 URL 浏览器改写前缀（方案C同域反代）：容器栈设 /minio（nginx 反代回内网 MinIO），
+    # 空串=不改写（本地 dev 直连宿主 9010 的场景）。签名 host 仍是 MINIO_ENDPOINT，由 nginx 原样回传。
+    MINIO_PUBLIC_PATH_PREFIX: str = ""
     MINIO_BUCKET_UPLOADS: str = "ontology-uploads"
     MINIO_BUCKET_PARSED: str = "ontology-parsed"
     MINIO_BUCKET_EXPORTS: str = "ontology-exports"

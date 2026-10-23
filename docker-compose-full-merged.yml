@@ -44,6 +44,7 @@ services:
       MILVUS_PORT: "19530"
       MINIO_ACCESS_KEY: minioadmin
       MINIO_BUCKET_EXPORTS: ontology-exports
+      MINIO_PUBLIC_PATH_PREFIX: /minio
       MINIO_BUCKET_PARSED: ontology-parsed
       MINIO_BUCKET_UPLOADS: ontology-uploads
       MINIO_ENDPOINT: minio-business:9000
@@ -657,6 +658,7 @@ services:
       MILVUS_COLLECTION_NAME: knowledge_graph_rag
       MILVUS_HOST: standalone
       MILVUS_PORT: "19530"
+      VECTOR_STORE_DIMENSION: "1024"
       MINIO_ACCESS_KEY: minioadmin
       MINIO_ENDPOINT: minio-business:9000
       MINIO_SECRET_KEY: minioadmin

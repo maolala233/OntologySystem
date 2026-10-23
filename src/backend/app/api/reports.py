@@ -14,7 +14,7 @@ import uuid
 from collections import Counter
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Request, UploadFile
 from lxml import etree
 from pptx.oxml.ns import qn
 from pydantic import BaseModel, Field
@@ -26,7 +26,7 @@ from app.core.deps import ensure_module, get_current_user, get_db, require_any_m
 from app.core.exceptions import APIError
 from app.infrastructure.database import Entity, Project, ReasoningResult, Relation, UploadedDocument, User
 from app.infrastructure.llm_client import LLMClient
-from app.infrastructure.minio_client import get_minio_client
+from app.infrastructure.minio_client import get_minio_client, to_browser_url
 from app.core.config import settings
 from app.adapters.provider import build_legacy_llm_config
 from app.services.audit_service import log_action
@@ -99,23 +99,24 @@ def get_ppt_template(project_id: int, db: Session = Depends(get_db),
 
 
 @router.get("/{project_id}/reports/ppt-template/download", dependencies=[Depends(require_any_module("report", "ppt"))])
-def download_ppt_template(project_id: int, db: Session = Depends(get_db),
+def download_ppt_template(project_id: int, request: Request, db: Session = Depends(get_db),
                           user: User = Depends(get_current_user)):
     """下载当前已上传的模板（预签名 URL，1 小时有效）。"""
     _ensure_qa_access(db, project_id, user)
     mc = get_minio_client()
     if mc.stat_object(settings.MINIO_BUCKET_EXPORTS, _template_key(project_id)) is None:
         raise APIError("尚未上传模板", code="PPT_TEMPLATE_MISSING", http_status=400)
-    url = mc.get_presigned_url(settings.MINIO_BUCKET_EXPORTS, _template_key(project_id))
+    url = mc.get_browser_presigned_url(settings.MINIO_BUCKET_EXPORTS, _template_key(project_id),
+                                       request)
     return {"url": url}
 
 
 @router.get("/{project_id}/reports/ppt-template/sample", dependencies=[Depends(require_any_module("report", "ppt"))])
-def download_sample_template(project_id: int, db: Session = Depends(get_db),
+def download_sample_template(project_id: int, request: Request, db: Session = Depends(get_db),
                              user: User = Depends(get_current_user)):
     """下载内置示例模板（内含占位符协议说明页，生成时说明页自动删除）。"""
     _ensure_qa_access(db, project_id, user)
-    return {"url": _ensure_sample_template()}
+    return {"url": to_browser_url(_ensure_sample_template(), request)}
 
 
 @router.delete("/{project_id}/reports/ppt-template", dependencies=[Depends(require_any_module("report", "ppt"))])
@@ -979,21 +980,24 @@ def _build_sample_template() -> bytes:
     return buf.getvalue()
 
 
-def _ensure_sample_template() -> str:
+def _ensure_sample_template(request=None) -> str:
     """示例模板已在 MinIO 则返回预签名 URL，否则生成并上传。"""
     mc = get_minio_client()
     if mc.stat_object(settings.MINIO_BUCKET_EXPORTS, SAMPLE_TEMPLATE_KEY) is None:
         mc.put_bytes(settings.MINIO_BUCKET_EXPORTS, SAMPLE_TEMPLATE_KEY,
                      _build_sample_template(),
                      content_type="application/vnd.openxmlformats-officedocument.presentationml.presentation")
-    return mc.get_presigned_url(settings.MINIO_BUCKET_EXPORTS, SAMPLE_TEMPLATE_KEY)
+    return to_browser_url(
+        mc.get_presigned_url(settings.MINIO_BUCKET_EXPORTS, SAMPLE_TEMPLATE_KEY), request)
 
 
-def _upload_export(project_id: int, filename: str, data: bytes, content_type: str) -> str:
+def _upload_export(project_id: int, filename: str, data: bytes, content_type: str,
+                   request=None) -> str:
     key = f"reports/{project_id}/{uuid.uuid4().hex[:8]}-{filename}"
     get_minio_client().put_bytes(settings.MINIO_BUCKET_EXPORTS, key, data,
                                  content_type=content_type)
-    return get_minio_client().get_presigned_url(settings.MINIO_BUCKET_EXPORTS, key)
+    return to_browser_url(
+        get_minio_client().get_presigned_url(settings.MINIO_BUCKET_EXPORTS, key), request)
 
 
 # ---------------------------------------------------------------- 端点
@@ -1076,6 +1080,7 @@ def suggest_topics(project_id: int, db: Session = Depends(get_db),
 def generate_report(
     project_id: int,
     body: ReportRequest,
+    request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -1118,9 +1123,10 @@ def generate_report(
                                        entity_total=ctx["entity_total"],
                                        relation_total=ctx["relation_total"])
         downloads["md"] = _upload_export(project_id, f"{title}_{stamp}.md", md_bytes,
-                                         "text/markdown")
+                                         "text/markdown", request)
         downloads["docx"] = _upload_export(project_id, f"{title}_{stamp}.docx", docx_bytes,
-                                           "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                                           "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                           request)
         result = {"kind": "report", "title": title, "content": content, "outline": None,
                   "downloads": downloads}
     else:
@@ -1148,7 +1154,8 @@ def generate_report(
             used_template = False
         safe_title = re.sub(r'[\\/:*?"<>|]', '_', str(outline.get("title") or "本体演示"))[:50]
         downloads["pptx"] = _upload_export(project_id, f"{safe_title}_{stamp}.pptx", pptx_bytes,
-                                           "application/vnd.openxmlformats-officedocument.presentationml.presentation")
+                                           "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                                           request)
         result = {"kind": "ppt", "title": outline.get("title") or "本体演示",
                   "content": None, "outline": outline, "downloads": downloads,
                   "used_template": used_template}

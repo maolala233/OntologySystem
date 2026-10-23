@@ -516,6 +516,7 @@ services:
       MINIO_BUCKET_UPLOADS: ontology-uploads
       MINIO_BUCKET_PARSED: ontology-parsed
       MINIO_BUCKET_EXPORTS: ontology-exports
+      MINIO_PUBLIC_PATH_PREFIX: /minio
       SEMANTICA_TRIPLET_BACKEND: oxigraph
       SEMANTICA_TRIPLET_PATH: /data/oxigraph
       VECTOR_STORE_MILVUS_HOST: standalone

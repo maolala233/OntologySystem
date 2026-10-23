@@ -6,6 +6,7 @@ import logging
 import uuid
 from datetime import timedelta
 from functools import lru_cache
+from urllib.parse import urlsplit, urlunsplit
 
 from minio import Minio
 from minio.error import S3Error
@@ -114,6 +115,15 @@ class MinIOClient:
             logger.error(f"[MinIO] 预签名失败 bucket={bucket} key={key}: {e}")
             raise APIError("生成下载链接失败", code="MINIO_PRESIGN_FAILED", status_code=502)
 
+    def get_browser_presigned_url(self, bucket: str, key: str, request=None,
+                                  expires: timedelta = timedelta(hours=1)) -> str:
+        """面向浏览器的预签名 URL：内网签名 → 同域 /minio 前缀改写（方案C）。
+
+        签名覆盖的是签发时的 Host 头（=MINIO_ENDPOINT，容器内网名），浏览器侧由
+        nginx 把 /minio/* 反代回内网并原样回传该 Host，MinIO 侧签名校验仍通过。
+        MINIO_PUBLIC_PATH_PREFIX 未配置或无请求上下文时原样返回（dev 直连 9010）。"""
+        return to_browser_url(self.get_presigned_url(bucket, key, expires), request)
+
     def stat_object(self, bucket: str, key: str) -> dict | None:
         try:
             st = self.client.stat_object(bucket, key)
@@ -134,3 +144,16 @@ class MinIOClient:
 @lru_cache(maxsize=1)
 def get_minio_client() -> MinIOClient:
     return MinIOClient()
+
+
+def to_browser_url(presigned: str, request=None) -> str:
+    """内网预签名 URL → 浏览器同域 URL（/minio 前缀，方案C）。类方法与既有调用点共用。"""
+    prefix = (settings.MINIO_PUBLIC_PATH_PREFIX or "").rstrip("/")
+    if not prefix or request is None:
+        return presigned
+    host = request.headers.get("host")
+    if not host:
+        return presigned
+    parts = urlsplit(presigned)
+    scheme = request.headers.get("x-forwarded-proto") or "http"
+    return urlunsplit((scheme, host, f"{prefix}{parts.path}", parts.query, ""))

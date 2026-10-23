@@ -3,7 +3,7 @@
 # 快照下载走 MinIO 预签名 URL（API 不代理字节流，M3-1 同款）。
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user, get_db, require_module, require_project_role
@@ -106,6 +106,7 @@ def diff_versions_endpoint(project_id: int, a: int, b: int,
 
 @router.get("/versions/{vid}/snapshot")
 def snapshot_url(project_id: int, vid: int,
+                 request: Request,
                  current_user: User = Depends(get_current_user),
                  db: Session = Depends(get_db)):
     """下载快照（MinIO 预签名 URL，1h TTL）。"""
@@ -117,8 +118,8 @@ def snapshot_url(project_id: int, vid: int,
     from app.infrastructure.minio_client import get_minio_client
 
     try:
-        url = get_minio_client().get_presigned_url(
-            _snapshot_bucket(), ver.full_snapshot_key)
+        url = get_minio_client().get_browser_presigned_url(
+            _snapshot_bucket(), ver.full_snapshot_key, request)
     except Exception as e:  # noqa: BLE001
         raise APIError(f"快照预签名失败: {e}", code="SNAPSHOT_UNAVAILABLE",
                        http_status=503)

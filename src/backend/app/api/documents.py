@@ -9,7 +9,7 @@ import os
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -373,6 +373,7 @@ def list_chunks(
 def download_document(
     project_id: int,
     doc_id: int,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -381,7 +382,8 @@ def download_document(
     doc = _load_doc_or_404(project_id, doc_id, db)
     if not doc.storage_key:
         raise NotFoundError("该文档无 MinIO 原件（历史本地文档）")
-    url = get_minio_client().get_presigned_url(settings.MINIO_BUCKET_UPLOADS, doc.storage_key)
+    url = get_minio_client().get_browser_presigned_url(
+        settings.MINIO_BUCKET_UPLOADS, doc.storage_key, request)
     return RedirectResponse(url, status_code=302)
 
 

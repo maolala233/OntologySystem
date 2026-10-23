@@ -70,6 +70,7 @@ services:
       MINIO_BUCKET_UPLOADS: ontology-uploads
       MINIO_BUCKET_PARSED: ontology-parsed
       MINIO_BUCKET_EXPORTS: ontology-exports
+      MINIO_PUBLIC_PATH_PREFIX: /minio
       # ---- ★ 新增：Semantica 适配层 ----
       # Oxigraph 是嵌入式：给目录，不给 URL。该目录由 worker-rdf 独占写入，
       # backend 只读挂载（见下方 volumes）。
