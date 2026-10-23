@@ -60,6 +60,13 @@ _ANALYSIS_RE = re.compile(
 # 模糊编辑指令（S3-B26）：句首是"整理/优化/处理"这类没说清操作的动词 → 澄清而非猜测改动
 _VAGUE_EDIT_RE = re.compile(
     r"^(?:请|帮我|麻烦你?|给我)?(?:整理|优化|完善|处理|清理|收拾|治理|规范)(?:一?下)?")
+# S15：事实陈述句（"X 使用/属于/可以… Y"）→ edit。LLM 分类对这类句子摇摆
+# （一会儿 edit 一会儿 analysis），改用确定性规则：无疑问词 + 简短 + 名词-动词-名词结构。
+_FACT_STMT_RE = re.compile(
+    r"[\u4e00-\u9fff]{2,12}(?:可以|能够|可|需要|须|应|使用|属于|包含|具备|拥有|采用|办理|支持|适用|覆盖|持有|购买|缴纳|收取|开具|核验|签署|报送)"
+    r"[\u4e00-\u9fff]{2,12}")
+_QUESTION_RE = re.compile(r"(\?|？|吗[?？!!.。~～]?$|怎么|如何|为什么|为啥|哪些|什么|多少|几个|哪[一里个])")
+
 CLARIFY_MAX_ROUNDS = 2  # 最多澄清 2 轮，超过建议转人工编辑（14 §5 B26）
 
 
@@ -81,7 +88,10 @@ def classify_intent_by_rule(message: str, history: list | None = None) -> dict:
     if edit_hit and not (question_head and edit_hit.start() > 8):
         return {"intent": "edit", "via": "rule", "confidence": 0.9}
     if _VERIFY_RE.search(text):
-        return {"intent": "verify", "via": "rule", "confidence": 0.85}
+        # S15：复合名词保护——「复核人员」「验证工具」「评测问题」这类领域名词里
+        # 恰好含验证关键词时不算 verify（交给后续规则/LLM 路由，避免编辑诉求被劫持跑验证）
+        if not re.search(r"(验证|评测|复核|抽检|机检)[人员工具系统流程报告表单问题项标准]", text):
+            return {"intent": "verify", "via": "rule", "confidence": 0.85}
     # 模糊编辑动词（句首"整理/优化/处理…"）：是编辑意图但操作不明 → edit+vague 标记
     # （B26：调用方据此直接澄清，不赌提案生成；非提问语境才生效）
     if _VAGUE_EDIT_RE.match(text) and not _ANALYSIS_RE.search(text):
@@ -91,6 +101,9 @@ def classify_intent_by_rule(message: str, history: list | None = None) -> dict:
         return {"intent": "clarify_continue", "via": "rule", "confidence": 0.8}
     if _ANALYSIS_RE.search(text):
         return {"intent": "analysis", "via": "rule", "confidence": 0.85}
+    # S15 事实陈述句：名词-动词-名词、无疑问词 → 编辑意图（提案器会处理新建/同名冲突）
+    if not _QUESTION_RE.search(text) and len(text) <= 30 and _FACT_STMT_RE.search(text):
+        return {"intent": "edit", "via": "rule", "confidence": 0.75}
     return {"intent": "analysis", "via": "rule", "confidence": 0.4}
 
 
@@ -115,9 +128,11 @@ def classify_intent(message: str, history: list | None = None,
         sys_p = ("你是意图分类器。把用户消息分为五类之一并只输出 JSON："
                  '{"intent":"edit|analysis|clarify_continue|verify|chitchat"}。'
                  "edit=要求修改本体（增删改类/关系/实例/公理）；"
-                 "用户用陈述句给出业务事实或业务规则也算 edit——"
-                 "例如「客户可以购买基金」是关系诉求、「客户具备年龄属性」是属性诉求，"
-                 "都应转化为提案；"
+                 "用户用陈述句给出业务事实或业务规则一律算 edit——"
+                 "即使涉及画布上不存在的概念也算（提案器会安排新建），"
+                 "例如「客户可以购买基金」是关系诉求、「客户具备年龄属性」是属性诉求、"
+                 "「复核人员使用支付密码」=新建复核人员并建关系，都应转化为提案；"
+                 "只有用户明显在提问或要分析报告时才是 analysis；"
                  "analysis=分析问答；"
                  "clarify_continue=对助手澄清/建议的简短确认或选择；"
                  "verify=要求验证/评测（CQ、一致性、推理）；chitchat=寒暄或问助手本身。")
@@ -449,6 +464,12 @@ def validate_proposal(raw: dict, gd: dict) -> tuple[dict | None, list[str]]:
             errors.append("add_class 缺少新类 label")
         elif normalize_label(lbl) in classes_by_norm:
             errors.append(f"类「{lbl}」已存在，请改用 edit/merge 表达")
+        elif normalize_label(lbl) in props_by_norm:
+            # S14：同名概念已存在为「关系」——用户陈述「X属于Y」时多半指既有概念，
+            # 新建同名类是误判；打回重生成（1 次后转澄清），LLM 会改走 edit_relation/add_relation/澄清
+            errors.append(f"「{lbl}」已经是画布中的关系（谓词）而非类；"
+                          f"若用户意图是把该关系挂到「Y」之下或修改它，请改用 add_relation/edit_relation；"
+                          f"意图不明则不要生成提案")
         parent = t.get("sub_class_of")
         canon_parent = None
         if parent:
@@ -653,6 +674,10 @@ def validate_proposal(raw: dict, gd: dict) -> tuple[dict | None, list[str]]:
 _PROPOSAL_SYSTEM = (
     "你是企业本体平台的编辑提案生成器。根据用户消息与画布清单，输出且仅输出一个 JSON 提案："
     '{"kind":"...","targets":{...},"llm_reason":"一段话人话理由","evidence":["..."]}'
+    "\n若用户一句话包含多个有依赖关系的操作（如「用户使用支付密码」=先新建「用户」类，"
+    "再建 用户—使用→支付密码 关系），则输出提案数组："
+    '{"proposals":[{"kind":"...","targets":{...},"llm_reason":"...","evidence":[]},...]}'
+    "（最多 4 个，按依赖顺序排列：先建类/实例、后建引用它们的关系；单操作一律输出单个对象，不要包数组）。"
     "\nkind 可选：merge_classes/delete_class/add_class/add_relation/edit_relation/"
     "delete_instance/edit_instance/edit_class/declare_axiom/add_instance。"
     "\ntargets 按 kind 分别为："
@@ -681,6 +706,10 @@ _PROPOSAL_SYSTEM = (
     "若意图是改已有关系请用 edit_relation；语义相近时仍可提案，服务端会附冲突提示。"
     "\n注意：往类下添加**实例**（如「工商银行」是「银行」的一个实例）必须用 add_instance，"
     "绝不要把实例建成类（add_class）。"
+    "\n注意：生成提案前先对照画布清单判断用户提到的每个概念是类、关系还是实例："
+    "已是类 → 用 edit_class；已是关系（谓词）→ 用 edit_relation/add_relation 表达归属或修改；"
+    "绝不新建与画布已有类或关系同名的类（同名会被直接拒绝）。"
+    "用户说「X属于Y」且 X 已存在为关系时，那是想把该关系挂到 Y 的语境下，不是要新建 X 类；拿不准就反问澄清。"
     "\n注意：用户用陈述句给出业务事实/规则时（如「客户可以购买基金」「客户具备年龄属性」），"
     "直接转化为对应提案而不要只做文字回答：涉及类与类之间的关联 → add_relation；"
     "给类新增数据属性 → edit_class（set_properties）。提案的 llm_reason 用一句话说明"
@@ -761,6 +790,64 @@ def finalize_proposal(db: Session, project: Project, kind: str, targets: dict,
     return result
 
 
+def _compliance_preview(gd: dict, proposal: dict) -> list[str]:
+    """S15 合理性预检：模拟应用提案 → 机检（TBox + SHACL）前后对比。
+
+    新增违例 → 以人话 warning 返回（随提案卡琥珀提示，应用前看得见）；
+    机检不可用/出错返回空（不误伤正常提案）。执行器在应用时还有一道机检自愈回滚兜底。
+    """
+    try:
+        import copy as _copy
+
+        from app.services.copilot_executor import _run_checks
+
+        before = _run_checks(gd)
+        work = _copy.deepcopy(gd)
+        _simulate_apply(work, proposal)
+        after = _run_checks(work)
+        out = []
+        de_schema = after.get("schema_errors", 0) - before.get("schema_errors", 0)
+        de_shacl = after.get("shacl_violations", 0) - before.get("shacl_violations", 0)
+        if de_schema > 0:
+            out.append(f"该调整会引入 {de_schema} 处本体结构违例（应用前 {before.get('schema_errors', 0)} → 应用后 {after.get('schema_errors', 0)}），请核对")
+        if de_shacl > 0:
+            out.append(f"该调整会引入 {de_shacl} 处数据约束违例（SHACL），请核对")
+        return out
+    except Exception as e:  # noqa: BLE001 —— 预检失败不阻断提案
+        logger.warning(f"[copilot-proposal] 合规预检失败（跳过）: {e}")
+        return []
+
+
+def _simulate_apply(gd: dict, proposal: dict) -> None:
+    """S14：多提案批内依赖——把已通过的提案效果模拟并入画布副本，
+    供后续提案的存在性校验（如 add_relation 引用同批 add_class 新建的类）。"""
+    kind = proposal["kind"]
+    t = proposal["targets"]
+    schema = gd.setdefault("schema", {})
+    if kind == "add_class":
+        lbl = str(t.get("label") or "")
+        gd.setdefault("nodes", []).append(
+            {"id": "sim_" + normalize_label(lbl), "data": {"type": "owl:Class",
+                                                           "label": lbl, "properties": {}}})
+        classes = schema.setdefault("classes", [])
+        if not any(c.get("label") == lbl for c in classes):
+            classes.append({"label": lbl, "sub_class_of": t.get("sub_class_of")})
+    elif kind == "add_relation":
+        pred = str(t.get("predicate") or "")
+        gd.setdefault("edges", []).append(
+            {"id": "sim_edge_" + normalize_label(pred), "source": "sim_s",
+             "target": "sim_o", "data": {"label": pred, "relation": pred}})
+        ops = schema.setdefault("object_properties", [])
+        if not any(o.get("label") == pred for o in ops):
+            ops.append({"label": pred, "domain": t.get("domain"), "range": t.get("range")})
+    elif kind == "add_instance":
+        lbl = str(t.get("label") or "")
+        gd.setdefault("nodes", []).append(
+            {"id": "sim_i_" + normalize_label(lbl),
+             "data": {"type": "owl:NamedIndividual", "label": lbl,
+                      "class_label": t.get("class"), "properties": t.get("properties") or {}}})
+
+
 def generate_proposal(db: Session, project: Project, message: str,
                       selected: dict | None, llm) -> dict:
     """编辑意图 → 提案（单次 LLM 调用；幻觉 target 打回重生成 1 次，再败转澄清）。"""
@@ -779,7 +866,9 @@ def generate_proposal(db: Session, project: Project, message: str,
                                         "targets": {"type": "object"},
                                         "llm_reason": {"type": "string"},
                                         "evidence": {"type": "array",
-                                                     "items": {"type": "string"}}}}})
+                                                     "items": {"type": "string"}},
+                                        "proposals": {"type": "array",
+                                                      "items": {"type": "object"}}}}})
         except Exception as exc:  # noqa: BLE001 —— 模型失败直接转错误提示
             logger.warning(f"[copilot-proposal] 生成失败：{exc}")
             return {"ok": False, "kind": "model_error",
@@ -789,14 +878,49 @@ def generate_proposal(db: Session, project: Project, message: str,
             last_errors = ["模型输出不是合法 JSON"]
             feedback = "输出必须是一个 JSON 对象，不要有其他文字。"
             continue
-        proposal, errors = validate_proposal(raw, project.graph_data
-                                             if isinstance(project.graph_data, dict) else {})
+        gd_now = project.graph_data if isinstance(project.graph_data, dict) else {}
+        proposal, errors = validate_proposal(raw, gd_now)
         if proposal:
+            compliance = _compliance_preview(gd_now, proposal)
+            warn = list(proposal.get("warnings") or []) + compliance
             final = finalize_proposal(db, project, proposal["kind"], proposal["targets"],
                                       proposal["llm_reason"], proposal["evidence"],
                                       proposal["risk_tier"],
-                                      warnings=proposal.get("warnings"))
-            return {"ok": True, "proposal": final}
+                                      warnings=warn)
+            return {"ok": True, "proposal": final,
+                    "attempts": attempt,
+                    "compliance_warnings": compliance or None}
+        # S14：多提案（一句话多操作，如"用户使用支付密码"=建类+建关系）——
+        # 逐个校验，全部合法才通过整批；否则带逐条错误打回重试
+        raw_list = raw.get("proposals") if isinstance(raw.get("proposals"), list) else None
+        if raw_list is not None:
+            import copy as _copy
+
+            gd = project.graph_data if isinstance(project.graph_data, dict) else {}
+            work = _copy.deepcopy(gd)  # 批内依赖：提案 i 的产物并入副本供提案 i+1 校验
+            if len(raw_list) > 4:
+                last_errors = ["proposals 数组最多 4 个提案"]
+                feedback = "一次最多 4 个提案，请拆分或合并语义后重新输出。"
+                continue
+            finals = []
+            batch_errors: list[str] = []
+            for i, item in enumerate(raw_list):
+                one, errors = validate_proposal(item if isinstance(item, dict) else {}, work)
+                if one:
+                    warn = list(one.get("warnings") or []) + _compliance_preview(gd, one)
+                    finals.append(finalize_proposal(db, project, one["kind"], one["targets"],
+                                                    one["llm_reason"], one["evidence"],
+                                                    one["risk_tier"],
+                                                    warnings=warn))
+                    _simulate_apply(work, one)
+                else:
+                    batch_errors.append(f"第{i + 1}个提案: " + "；".join(errors))
+            if finals and not batch_errors:
+                return {"ok": True, "proposal": finals[0], "proposals": finals}
+            last_errors = batch_errors or ["proposals 为空"]
+            feedback = ("；".join(last_errors)
+                        + "。请重新输出完整提案（数组中每个提案的 target 都必须合法）。")
+            continue
         last_errors = errors
         feedback = ("；".join(errors)
                     + "。target 必须逐字使用画布清单中的原始 label；确实不存在的元素"
@@ -813,9 +937,11 @@ def generate_proposal(db: Session, project: Project, message: str,
 _CLARIFY_SYSTEM = (
     "你是本体构建助手的澄清器。用户的编辑指令含糊（没说清想做什么操作），"
     "或引用了画布上不存在的元素。生成一个简短的澄清问题（一句话，人话、面向非专业用户）"
-    "和最多 2 个最可能、具体可点的后续操作选项。"
+    "和至少 3 个（最多 4 个）最可能的理解，按可能性从高到低排序；每个选项=可直接点选执行的具体操作。"
     '只输出 JSON：{"question":"...","options":["...","..."]}。'
     "选项要具体（例如「新建一个「账户」类」），系统会自动补一个「其他」。"
+    "尽量把用户表述里隐含的多种意图都补全成选项（如「整理下账户」可能是合并重复、"
+    "补缺失属性、或调整层级），别只给一种理解。"
 )
 
 

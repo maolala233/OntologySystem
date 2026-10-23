@@ -386,6 +386,43 @@ def _latest_version_no(db: Session, project_id: int) -> int:
 
 # ---------------------------------------------------------------- 执行主流程
 
+def _rebase_batch_siblings(db, project: Project, proposal, latest: int) -> bool:
+    """S14：判断提案是否属于"同批多提案"且其余兄弟仍 pending——是则重定基放行。
+
+    同批 = 同会话、同 base_version、同轮生成（created_at 相差 <60s）的 pending 提案。
+    若提案是孤立过期（画布被人工/其他会话改过），无 pending 兄弟 → 返回 False 走原过期流程。
+    """
+    from datetime import timedelta as _td
+
+    from app.infrastructure.database import CopilotProposal
+    from sqlalchemy.orm.attributes import flag_modified
+
+    if proposal.base_version is None:
+        return False
+    base_v = int(proposal.base_version)
+    # 同批证据：同会话/同 base_version/同时窗（60s）内的兄弟提案，pending 或 applied 均可
+    # （顺序应用时，前面的兄弟已 applied；只认 pending 会把批次误判为孤立过期）
+    siblings = (db.query(CopilotProposal)
+                .filter(CopilotProposal.project_id == project.id,
+                        CopilotProposal.session_id == proposal.session_id,
+                        CopilotProposal.base_version == base_v,
+                        CopilotProposal.status.in_(["pending", "applied"]),
+                        CopilotProposal.proposal_id != proposal.proposal_id,
+                        CopilotProposal.created_at >= proposal.created_at - _td(seconds=60),
+                        CopilotProposal.created_at <= proposal.created_at + _td(seconds=60))
+                .all())
+    if not siblings:
+        return False
+    # 同批成立：把兄弟（含本提案自身由调用方处理）重定基到当前版本
+    for sib in siblings:
+        sib.base_version = latest
+        sib.result = {"reason": f"同批提案顺序应用，重定基到 v{latest}"}
+        flag_modified(sib, "result")
+    proposal.base_version = latest
+    db.commit()
+    return True
+
+
 def apply_proposal(db: Session, project: Project, user: User,
                    proposal: CopilotProposal, confirm: bool = False) -> dict:
     """执行提案：闸门 → 内存变更 → 机检对比 → 提交/回滚。返回统一结果 dict。
@@ -408,15 +445,19 @@ def apply_proposal(db: Session, project: Project, user: User,
     # 并发冲突闸：提案生成时的画布版本 ≠ 当前版本 → 画布已被编辑，拒绝并提示刷新
     latest = _latest_version_no(db, project.id)
     if proposal.base_version is not None and int(proposal.base_version) != latest:
-        proposal.status = "expired"
-        proposal.result = {"reason": f"画布已更新（当前 v{latest}，提案基于 v{proposal.base_version}）",
-                           "conflict": True}
-        from sqlalchemy.orm.attributes import flag_modified
-        flag_modified(proposal, "result")
-        db.commit()
-        return {"applied": False, "conflict": True,
-                "message": f"画布已更新（当前 v{latest}，提案基于 v{proposal.base_version}），"
-                           "请刷新画布后重新生成提案"}
+        # S14 例外：同批多提案（同一会话同一 base_version 生成的 pending 兄弟提案）
+        # 按依赖顺序逐个应用是设计意图——应用 i 使 i+1 的 base 过期是误伤；
+        # 重定基：把同批 pending 兄弟提案的 base_version 抬到当前版本，随本提案一并放行
+        if not _rebase_batch_siblings(db, project, proposal, latest):
+            proposal.status = "expired"
+            proposal.result = {"reason": f"画布已更新（当前 v{latest}，提案基于 v{proposal.base_version}）",
+                               "conflict": True}
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(proposal, "result")
+            db.commit()
+            return {"applied": False, "conflict": True,
+                    "message": f"画布已更新（当前 v{latest}，提案基于 v{proposal.base_version}），"
+                               "请刷新画布后重新生成提案"}
     # 超期闸：会话内长时间未处理即 expired（created_at 为 DB 本地 naive 时间，用本地 now 对比）
     created = proposal.created_at
     if created is not None:

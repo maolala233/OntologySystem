@@ -58,6 +58,8 @@ interface Msg {
     streaming?: boolean;
     latency_ms?: number | null;
     proposal?: CopilotProposalItem | null;
+    /** S14：一句话多操作 → 多提案卡（按依赖顺序渲染，逐卡应用） */
+    proposals?: CopilotProposalItem[] | null;
     /** B26：澄清轮（问题 + ≤3 选项含"其他"，F14/F16 渲染确认式选项组） */
     clarify?: CopilotClarify | null;
     /** B28：验证报告（F15 渲染三段报告卡）；msgId 供存档按钮定位 */
@@ -354,6 +356,7 @@ export default function CopilotWidget() {
                         latency_ms: done.latency_ms,
                         // F13：编辑提案随 done 返回 → 消息挂提案卡
                         proposal: done.proposal ?? undefined,
+                        proposals: (done as any).proposals ?? undefined,
                         // B26：澄清态随 done 返回 → 消息挂确认式选项组（F14/F16）
                         clarify: done.clarify?.exhausted ? undefined : (done.clarify ?? undefined),
                         // B28：验证报告随 done 返回 → 消息挂三段报告卡（F15；实时流暂无 msgId，
@@ -532,16 +535,16 @@ export default function CopilotWidget() {
                             </div>
                         ) : (
                             <div className="max-w-[90%] px-3 py-2 rounded-2xl bg-white border border-gray-100 shadow-sm">
+                                {/* S15：工具步骤在回答之前（事件顺序=先工具后回答，展示对齐） */}
+                                {m.toolSteps && m.toolSteps.length > 0 && (
+                                    <ToolSteps steps={m.toolSteps} />
+                                )}
                                 {m.content ? (
                                     <MarkdownAnswer content={m.content} sourceCount={0} onCite={() => {}} />
                                 ) : m.streaming ? (
                                     <span className="text-sm text-gray-500">{stage || '思考中…'}</span>
                                 ) : (
                                     <span className="text-sm text-gray-500">（模型未返回内容）</span>
-                                )}
-                                {/* B31/F16：工具调用步骤（名称+耗时，点击展开参数与输出） */}
-                                {m.toolSteps && m.toolSteps.length > 0 && (
-                                    <ToolSteps steps={m.toolSteps} />
                                 )}
                                 {/* B26/F16：澄清轮确认式选项组（其他=自输入；选中后点确认才发送）。
                                     仅当澄清轮仍是最后一条消息时可交互——已回答后再点会重复提交同一答案 */}
@@ -569,7 +572,7 @@ export default function CopilotWidget() {
                                         <VerifyReportCard projectId={projectId} report={m.report} messageId={m.msgId} />
                                     </div>
                                 )}
-                                {m.proposal && projectId != null && (
+                                {m.proposal && projectId != null && !(m.proposals && m.proposals.length > 1) && (
                                     <ProposalCard
                                         projectId={projectId}
                                         proposal={m.proposal}
@@ -580,6 +583,25 @@ export default function CopilotWidget() {
                                             return next;
                                         })}
                                     />
+                                )}
+                                {m.proposals && m.proposals.length > 1 && projectId != null && (
+                                    <div className="mt-2 space-y-2">
+                                        {m.proposals.map((pr, pi) => (
+                                            <ProposalCard
+                                                key={pr.proposal_id}
+                                                projectId={projectId}
+                                                proposal={pr}
+                                                onAdjust={draft => { setInput(draft); }}
+                                                onStatusChange={(st, res) => setMsgs(prev => {
+                                                    const next = [...prev];
+                                                    const arr = [...(next[i].proposals || [])];
+                                                    arr[pi] = { ...arr[pi], status: st, result: res ?? arr[pi].result };
+                                                    next[i] = { ...next[i], proposals: arr };
+                                                    return next;
+                                                })}
+                                            />
+                                        ))}
+                                    </div>
                                 )}
                             </div>
                         )}

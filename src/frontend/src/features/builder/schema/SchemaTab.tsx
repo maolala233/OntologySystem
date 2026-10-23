@@ -317,6 +317,10 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
     }, []);
     const [customRelationType, setCustomRelationType] = useState('');
     const [isAdmin, setIsAdmin] = useState(false);
+    // S14：手动新增、尚未「保存」落库的节点 id——详情面板据此显示友好提示而非报错
+    const [unsavedNodeIds, setUnsavedNodeIds] = useState<Set<string>>(new Set());
+    // S14：抽屉内删除/属性保存后自动落库的挂起标记（等 nodes/edges state 提交后再存，避免闭包旧值）
+    const pendingAutoSaveRef = useRef(false);
     const [isNewNode, setIsNewNode] = useState(false);
     const [highlightNodeId, setHighlightNodeId] = useState<string | null>(null);
     // 固定邻域高亮（"在画布中聚焦"）：持续版悬停效果；点击画布其他节点/空白即恢复
@@ -874,6 +878,7 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
 
         setIsDrawerOpen(false);
         message.success('属性已更新');
+        pendingAutoSaveRef.current = true;  // 属性修改后自动落库（否则刷新即丢，用户以为没保存上）
     };
 
     const addNewClass = () => {
@@ -891,8 +896,11 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
         setIsNewNode(true);
         setHighlightNodeId(newNode.id);
         
+        setUnsavedNodeIds((prev) => new Set(prev).add(newNode.id));
         setSelectedElement(newNode);
         setIsDrawerOpen(true);
+        // 新类行表里还没有记录，详情面板查库会 404——直接落到编辑页签（本来也该先改名称）
+        setDrawerTab('edit');
         form.setFieldsValue({
             label: '新类',
             type: 'owl:Class',
@@ -924,10 +932,20 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                 }
                 setIsDrawerOpen(false);
                 setSelectedElement(null);
+                pendingAutoSaveRef.current = true;  // 删除后自动落库（用户预期删除即生效）
                 message.success('删除成功');
             },
         });
     };
+
+    // S14：删除/属性保存引发的 nodes/edges 变更提交后，自动执行一次草稿落库
+    useEffect(() => {
+        if (pendingAutoSaveRef.current) {
+            pendingAutoSaveRef.current = false;
+            handleSaveDraft();
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [nodes, edges]);
 
     const handleSaveDraft = async () => {
         if (!projectId) return;
@@ -943,6 +961,7 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
             setLastSavedNodes([...nodes]);
             setLastSavedEdges([...edges]);
             setHasUnsavedChanges(false);
+            setUnsavedNodeIds(new Set());  // 落库后详情面板可正常查到
 
             message.success('草稿已保存，已自动同步到图数据库 (Neo4j)');
         } catch (error) {
@@ -2278,6 +2297,9 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                                     nodeId={detailNodeId || String(selectedElement.id)}
                                                     onNavigateNode={focusDetailNode}
                                                     onExpandNode={focusDetailNode}
+                                                    unsavedHint={unsavedNodeIds.has(String(selectedElement.id))
+                                                        ? '该类尚未保存到数据库：在「编辑」页签填好名称后点右上「保存」，详情即生效'
+                                                        : undefined}
                                                 />
                                             ),
                                         },

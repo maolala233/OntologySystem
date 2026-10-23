@@ -302,7 +302,9 @@ export const NodeDetailContent: React.FC<{
     onLoaded?: (d: NodeDetail) => void;
     /** 变化后触发重新加载（宿主页编辑保存成功等） */
     reloadKey?: number;
-}> = ({ projectId, nodeId, onNavigateNode, onExpandNode, onLoaded, reloadKey }) => {
+    /** 节点可能尚未落库（如手动新增未保存）时的友好提示：加载失败时显示它而非报错 */
+    unsavedHint?: string;
+}> = ({ projectId, nodeId, onNavigateNode, onExpandNode, onLoaded, reloadKey, unsavedHint }) => {
     const [nodeDetail, setNodeDetail] = useState<NodeDetail | null>(null);
     const [loading, setLoading] = useState(false);
     const [refreshKey, setRefreshKey] = useState(0);
@@ -318,7 +320,8 @@ export const NodeDetailContent: React.FC<{
                 setNodeDetail(d);
                 onLoaded?.(d);
             } catch (e: any) {
-                if (alive) message.error(e.response?.data?.error?.message || '加载详情失败');
+                // 未保存节点（宿主已给提示）属预期 404：不再弹错误 toast
+                if (alive && !unsavedHint) message.error(e.response?.data?.error?.message || '加载详情失败');
             } finally {
                 if (alive) setLoading(false);
             }
@@ -329,7 +332,7 @@ export const NodeDetailContent: React.FC<{
     }, [projectId, nodeId, refreshKey, reloadKey]);
 
     if (loading) return <Spin className="block mx-auto my-10" />;
-    if (!nodeDetail) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="详情加载失败或节点不存在" />;
+    if (!nodeDetail) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={unsavedHint || "详情加载失败或节点不存在"} />;
     return (
                 <div>
     <div className="flex justify-end mb-1">

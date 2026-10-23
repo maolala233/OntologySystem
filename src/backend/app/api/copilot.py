@@ -160,6 +160,9 @@ def copilot_chat(project_id: int, body: CopilotChatRequest,
                             "observation": {"proposal": payload["proposal"]},
                         }]
                         _persist_proposal(db, proj, session, payload["proposal"])
+                        # S14：多提案（一句话多操作）——首个已落，其余逐个落库（回放/状态查询都要有行）
+                        for extra in (payload.get("proposals") or [])[1:]:
+                            _persist_proposal(db, proj, session, extra)
                     elif (payload.get("clarify")
                           and not payload["clarify"].get("exhausted")):
                         # B26：澄清轮落库 kind=clarify（轮次计数与回放都靠它）

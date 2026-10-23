@@ -160,8 +160,13 @@ def run_copilot_turn(db: Session, project: Project, user: User,
         raise ValueError("llm client required")
 
     yield "stage", {"stage": "intent", "detail": "识别意图…"}
+    # S15：意图识别作为工具步骤上屏（前端 ToolSteps 可展开看分类依据）
+    yield "tool", {"phase": "start", "tool": "意图识别", "args": {"message": message[:100]}}
     intent_info = classify_intent(message, history=history, llm=llm)
     intent = intent_info["intent"]
+    yield "tool", {"phase": "end", "tool": "意图识别", "duration_ms": 0,
+                   "observation": {"intent": intent, "via": intent_info.get("via"),
+                                   "confidence": intent_info.get("confidence")}}
 
     # B26 澄清后继续：把用户补充并回原指令，再按合成消息重新路由；
     # 回复若直接带具体编辑动词（分类为 edit），合成消息作为提案上下文一并带上
@@ -219,19 +224,49 @@ def run_copilot_turn(db: Session, project: Project, user: User,
             yield from _clarify_branch(trigger="vague")
             return
         yield "stage", {"stage": "proposal", "detail": "生成编辑提案…"}
+        # S15：提案生成 + 合规校验作为工具步骤上屏
+        yield "tool", {"phase": "start", "tool": "画布对照",
+                       "args": {"检查对象": effective[:100]}}
+        yield "tool", {"phase": "end", "tool": "画布对照", "duration_ms": 0,
+                       "observation": {"画布": f"{len((project.graph_data or {}).get('nodes', []))} 节点 / "
+                                               f"{len((project.graph_data or {}).get('edges', []))} 边",
+                                       "选中": (selected or {}).get("label") or "无"}}
+        yield "tool", {"phase": "start", "tool": "提案生成", "args": {"message": effective[:100]}}
         result = generate_proposal(db, project, effective, selected, llm)
         if result.get("ok"):
             proposal = result["proposal"]
-            answer = (f"已生成「{proposal['kind']}」编辑提案：{proposal['llm_reason']}\n\n"
-                      "请在小窗的提案卡中核对影响面后确认应用"
-                      + ("（高风险操作将要求二次确认）" if proposal["risk_tier"] == "high" else "")
-                      + "。")
+            proposals = result.get("proposals") or []
+            kinds = [p["kind"] for p in (proposals or [proposal])]
+            yield "tool", {"phase": "end", "tool": "提案生成",
+                           "duration_ms": int((time.time() - t0) * 1000),
+                           "observation": {"提案数": len(proposals or [proposal]),
+                                           "类型": kinds,
+                                           "尝试次数": result.get("attempts", 1)}}
+            # S15：合规预检结果作为独立工具步骤（有告警时前端琥珀提示随卡显示）
+            cw = result.get("compliance_warnings")
+            yield "tool", {"phase": "start", "tool": "合规校验",
+                           "args": {"范围": "TBox 机检 + SHACL 约束（模拟应用后对比）"}}
+            yield "tool", {"phase": "end", "tool": "合规校验", "duration_ms": 0,
+                           "observation": ({"结论": "通过，未引入新违例"} if not cw
+                                           else {"新增违例": cw})}
+            if len(proposals) > 1:
+                # S14：一句话多操作 → 多提案（按依赖顺序，先建类后建关系）
+                seq = "①②③④"
+                answer = (f"你这句话包含 {len(proposals)} 个操作，已生成 {len(proposals)} 项编辑提案：\n"
+                          + "\n".join(f"{seq[i]} {p['llm_reason']}" for i, p in enumerate(proposals))
+                          + "\n\n请按顺序在下方提案卡中核对并应用（先建类/实例、再建引用它们的关系）。")
+            else:
+                answer = (f"已生成「{proposal['kind']}」编辑提案：{proposal['llm_reason']}\n\n"
+                          "请在小窗的提案卡中核对影响面后确认应用"
+                          + ("（高风险操作将要求二次确认）" if proposal["risk_tier"] == "high" else "")
+                          + "。")
             for chunk in _sse_chunks(answer):
                 yield "token", {"delta": chunk}
             latency_ms = int((time.time() - t0) * 1000)
             yield "done", {"answer": answer, "tool_calls": [],
                            "latency_ms": latency_ms, "rounds": 0,
-                           "intent": intent, "proposal": proposal}
+                           "intent": intent, "proposal": proposal,
+                           "proposals": proposals if len(proposals) > 1 else None}
         else:
             # 幻觉 target 打回重生成仍失败 → 选项化澄清（B26 升级自纯文本提示）
             yield "stage", {"stage": "clarify", "detail": "需要澄清你的意图…"}
