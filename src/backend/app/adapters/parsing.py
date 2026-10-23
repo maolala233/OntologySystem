@@ -70,7 +70,7 @@ def parse_document(content: bytes, filename: str,
     if ext in {"csv", "xls", "xlsx"}:
         return _finalize(_parse_tabular(content, filename), filename)
     if ext == "pptx" or ext == "ppt":
-        return _finalize(_parse_pptx(content, filename), filename)
+        return _finalize(_parse_pptx(content, filename, backend=backend), filename)
 
     if backend == ParseBackend.DOCLING or backend == ParseBackend.DOCLING_OCR:
         doc = _parse_docling(content, filename, ocr=(backend == ParseBackend.DOCLING_OCR))
@@ -382,8 +382,37 @@ def _ocr_image_bytes(blob: bytes) -> str:
         return ""
 
 
-def _parse_pptx(content: bytes, filename: str) -> ParsedDocument:
-    """PPTX 图文解析（S14）：python-pptx 逐页提取文本框/表格/备注 + 内嵌图片 rapidocr OCR。
+def _vl_describe_image_blobs(blobs: list) -> str:
+    """图片字节列表 → 视觉模型语义描述；未配置/失败返回空串（调用方回退 OCR）。"""
+    import os
+    import tempfile
+
+    try:
+        from app.services.vl_parser import describe_images
+
+        paths = []
+        for idx, blob in enumerate(blobs):
+            f = tempfile.NamedTemporaryFile(suffix=f"_pptimg_{idx}.png", delete=False)
+            f.write(blob)
+            f.close()
+            paths.append(f.name)
+        try:
+            return describe_images(paths)
+        finally:
+            for pth in paths:
+                try:
+                    os.remove(pth)
+                except OSError:
+                    pass
+    except Exception as e:  # noqa: BLE001
+        from app.core.logging import logger
+
+        logger.warning(f"[parsing] PPTX 图片 VL 描述失败（回退 OCR）: {e}")
+        return ""
+
+
+def _parse_pptx(content: bytes, filename: str, backend: ParseBackend = ParseBackend.AUTO) -> ParsedDocument:
+    """PPTX 图文解析（S14）：python-pptx 逐页提取文本框/表格/备注 + 内嵌图片解析。
 
     图片文字以「[图片文字]:」分节并入所在页（下游切片/抽取/溯源按普通文本消费）；
     OCR 引擎不可用或图片为小装饰图时优雅降级，纯文本行为与旧版一致。
@@ -430,6 +459,7 @@ def _parse_pptx(content: bytes, filename: str) -> ParsedDocument:
     pages: list[ParsedPage] = []
     md_parts: list[str] = []
     ocr_pages = 0
+    vl_used = False  # 至少一页的图片由视觉模型描述产出（决定 parse_backend 标注）
     for i, slide in enumerate(prs.slides):
         texts: list[str] = []
         images: list[bytes] = []
@@ -443,19 +473,31 @@ def _parse_pptx(content: bytes, filename: str) -> ParsedDocument:
         except Exception:  # noqa: BLE001
             pass
         page_md = "\n".join(texts)
-        ocr_txts = []
-        for blob in images:
-            t = _ocr_image_bytes(blob)
-            if t:
-                ocr_txts.append(t)
-        if ocr_txts:
+        vl_text = ""
+        img_txts = []
+        if images and backend == ParseBackend.VL_MODEL:
+            vl_text = _vl_describe_image_blobs(images)
+        if vl_text:
+            img_txts.append(vl_text)
+        else:
+            # VL 未选用/未产出（未配置/失败）→ 回退 OCR；非 VL 后端直接 OCR
+            for blob in images:
+                t = _ocr_image_bytes(blob)
+                if t:
+                    img_txts.append(t)
+        if img_txts:
             ocr_pages += 1
-            page_md = (page_md + "\n\n" if page_md else "") + "[图片文字]:\n" + "\n".join(ocr_txts)
-        pages.append(ParsedPage(page_no=i + 1, text_md=page_md, ocr_used=bool(ocr_txts)))
+            if vl_text:
+                vl_used = True
+            tag = "[图片·视觉描述]:" if vl_text else "[图片文字]:"
+            page_md = (page_md + "\n\n" if page_md else "") + tag + "\n" + "\n".join(img_txts)
+        pages.append(ParsedPage(page_no=i + 1, text_md=page_md, ocr_used=bool(img_txts)))
         if page_md:
             md_parts.append(f"[Page {i + 1}]:\n{page_md}")
+    # parse_backend 反映实际生效路径：VL 描述走通=vl_model；其余（OCR/纯文本）=native
+    eff_backend = ParseBackend.VL_MODEL if (backend == ParseBackend.VL_MODEL and vl_used) else ParseBackend.NATIVE
     doc = ParsedDocument(full_text_md="\n".join(md_parts),
-                         pages=pages, backend=ParseBackend.NATIVE)
+                         pages=pages, backend=eff_backend)
     doc.ocr_page_count = ocr_pages
     return doc
 

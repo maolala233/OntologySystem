@@ -116,6 +116,40 @@ def _call_vl_model(image_paths: list[str], prompt: str, vl_config: dict) -> str:
     return response.choices[0].message.content
 
 
+def describe_images(image_paths: list[str]) -> str:
+    """S14：PPTX 内嵌图片 → 视觉模型语义描述（批量 VL_BATCH_SIZE 张/次）。
+
+    与 parse_file_with_vl（整文档页转图）的区别：输入是散图（截图/流程图/表格照片），
+    供 PPTX 图文解析按页调用。模型未配置/全部批次失败返回空串（调用方降级 OCR）。
+    """
+    if not image_paths:
+        return ""
+    try:
+        cfg = _get_vl_config()
+        if not cfg.get("model"):
+            return ""
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[VL解析] 读取 VL 模型配置失败: {e}")
+        return ""
+
+    prompt = (
+        "这些是从演示文稿中截取的图片。请逐张提取与描述，不要遗漏任何信息：\n"
+        "1. 图中出现的全部文字（原文照录）；\n"
+        "2. 表格完整内容（转成 markdown 表格）；\n"
+        "3. 流程图/架构图：用「A → B → C」式的步骤与指向文字表达清楚节点和连线关系；\n"
+        "4. 其他传达的业务信息（界面元素、指标、状态等）。\n"
+        "每张图片以『图N』开头分别输出（N 从 1 开始按传入顺序）。"
+    )
+    outs: list[str] = []
+    for i in range(0, len(image_paths), VL_BATCH_SIZE):
+        batch = image_paths[i:i + VL_BATCH_SIZE]
+        try:
+            outs.append(_call_vl_model(batch, prompt, cfg))
+        except Exception as e:  # noqa: BLE001 —— 单批失败不阻断其余批次
+            logger.warning(f"[VL解析] 图片第 {i + 1}-{i + len(batch)} 张描述失败: {e}")
+    return "\n\n".join(o for o in outs if o and o.strip()).strip()
+
+
 def parse_file_with_vl(file_path: str) -> str:
     start_time = time.time()
     fname_lower = file_path.lower()
