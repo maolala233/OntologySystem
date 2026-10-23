@@ -183,6 +183,11 @@ def _mutate_merge_classes(gd: dict, targets: dict) -> None:
         _remove_node_and_touching_edges(_nodes(gd), _edges(gd), nid)
 
 
+def _grid_position(i: int) -> dict:
+    """确定性网格布局（与 extract_tasks 同款：6 列）。"""
+    return {"x": 80 + (i % 6) * 220, "y": 80 + (i // 6) * 150}
+
+
 def _mutate_add_class(gd: dict, targets: dict) -> None:
     import secrets
 
@@ -192,21 +197,50 @@ def _mutate_add_class(gd: dict, targets: dict) -> None:
     schema.setdefault("classes", []).append(
         {"id": f"manual_{secrets.token_hex(4)}", "label": label,
          "sub_class_of": parent, "parent": parent})  # parent：diff 版本对比读这个键
+    # S15：补 position（前端按 'position' in node 判节点/关系；缺失会被误判成关系打开错误面板）
     _nodes(gd).append({"id": f"manual_{secrets.token_hex(6)}",
+                       "position": _grid_position(len(_nodes(gd))),
                        "data": {"label": label, "type": "owl:Class", "properties": {}}})
 
 
+def _edge_data(e: dict) -> dict:
+    d = e.get("data")
+    return d if isinstance(d, dict) else {}
+
+
 def _mutate_add_relation(gd: dict, targets: dict) -> None:
+    """S15 一致性修复：与人工「创建关系」对齐——除 TBox 谓词声明外，
+    在 domain/range 类节点之间补画布连线（人工路径只加边；此处双写=人工超集，
+    TBox 声明保住合规范导出）。同谓词同方向已有连线则跳过（幂等）。"""
     import secrets
 
+    pred = str(targets.get("predicate") or "").strip()
+    dom_lbl = str(targets.get("domain") or "").strip()
+    rng_lbl = str(targets.get("range") or "").strip()
     schema = gd.setdefault("schema", {})
     schema.setdefault("object_properties", []).append({
         "id": f"manual_{secrets.token_hex(4)}",
-        "label": str(targets.get("predicate") or "").strip(),
-        "domain": str(targets.get("domain") or "").strip(),
-        "range": str(targets.get("range") or "").strip(),
+        "label": pred,
+        "domain": dom_lbl,
+        "range": rng_lbl,
         "functional": bool(targets.get("functional")),
     })
+    # 画布连线：按 label 找 domain/range 类节点（校验闸已保证存在）
+    dom_node = next((n for n in _nodes(gd) if _is_class(n)
+                     and normalize_label(str(_node_data(n).get("label") or "")) == normalize_label(dom_lbl)), None)
+    rng_node = next((n for n in _nodes(gd) if _is_class(n)
+                     and normalize_label(str(_node_data(n).get("label") or "")) == normalize_label(rng_lbl)), None)
+    if dom_node is None or rng_node is None:
+        return  # 类节点缺失（历史数据不一致）时保底只写 TBox
+    dup = next((e for e in _edges(gd)
+                if str(e.get("source")) == dom_node.get("id")
+                and str(e.get("target")) == rng_node.get("id")
+                and str(_edge_data(e).get("label") or _edge_data(e).get("relation") or "") == pred), None)
+    if dup is not None:
+        return
+    _edges(gd).append({"id": f"manual_{secrets.token_hex(6)}",
+                       "source": dom_node.get("id"), "target": rng_node.get("id"),
+                       "data": {"label": pred, "relation": pred, "_source": "manual"}})
 
 
 def _mutate_edit_relation(gd: dict, targets: dict) -> None:
@@ -355,6 +389,7 @@ def _mutate_add_instance(gd: dict, targets: dict) -> None:
     nid = f"manual_{secrets.token_hex(6)}"
     props = dict(targets.get("properties") or {})
     _nodes(gd).append({"id": nid,
+                       "position": _grid_position(len(_nodes(gd))),
                        "data": {"label": label, "type": "owl:NamedIndividual",
                                 "class_label": str(_node_data(cls_node).get("label") or ""),
                                 "properties": props}})

@@ -485,20 +485,15 @@ export default function CopilotWidget() {
                 <span className="text-sm font-medium">本体协同助手</span>
                 {/* 下拉只拦自身 mousedown（防拖拽吞掉 Select 触发）；外圈空白归还头部拖拽热区 */}
                 <div className="flex-1 flex justify-end min-w-0">
+                    {/* S15：项目跟随当前页面（构建器路由上下文），不可在小窗内切换——
+                        避免在 A 项目画布上操作 B 项目的画布造成误导与误改 */}
                     <div onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()}>
-                        <Select
-                            value={projectId ?? undefined}
-                            onChange={v => setProjectId(v)}
-                            placeholder="选择项目"
-                            showSearch
-                            optionFilterProp="label"
-                            dropdownStyle={{ zIndex: 1200 }}
-                            className="min-w-0 [&_.ant-select-selector]:!bg-white/20 [&_.ant-select-selector]:!border-white/30
-                                       [&_.ant-select-selection-item]:!text-white [&_.ant-select-arrow]:!text-white/80"
-                            style={{ width: 130 }}
-                            size="small"
-                            options={projects.map(p => ({ value: p.id, label: p.name }))}
-                        />
+                        <Tooltip title="助手跟随当前进入的项目，如需切换请从「我的项目」进入对应项目">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs
+                                             bg-white/20 border border-white/30 text-white max-w-[150px] truncate">
+                                {projects.find(p => p.id === projectId)?.name || `项目 #${projectId ?? '-'}`}
+                            </span>
+                        </Tooltip>
                     </div>
                 </div>
                 {/* overlayStyle：小窗面板 z-[1100] 高于 antd 弹层默认 1050，不抬层弹层会被面板盖住（同头部下拉的坑） */}

@@ -161,6 +161,11 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
     const [isDrawerOpen, setIsDrawerOpen] = useState(false);
     // 详情/编辑页签（详情 = 实例探索同款 NodeDetailContent；编辑 = 原属性表单）
     const [drawerTab, setDrawerTab] = useState<'detail' | 'edit'>('detail');
+
+    // S15：节点/关系判据——边必有 source/target；不再依赖 position
+    //（copilot 执行器写的历史节点可能缺 position，会被误判成“关系”打开错误面板）
+    const isNodeElement = (el: OntologyNode | OntologyEdge | null): el is OntologyNode =>
+        !!el && !('source' in el) && !('target' in el) && el.type !== 'relationship';
     const [detailNodeId, setDetailNodeId] = useState<string | null>(null);
     // 画布聚焦请求（seq 递增触发 D3 平移缩放定位）
     const [focusRequest, setFocusRequest] = useState<{ nodeId: string; seq: number } | null>(null);
@@ -796,7 +801,7 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
 
         const { label, type, properties, relation, description, disjoint_with,
                 axioms, min_cardinality, max_cardinality } = values;
-        const isNode = 'position' in selectedElement;
+        const isNode = isNodeElement(selectedElement);
 
         if (isNode) {
             const propsObj: Record<string, any> = {};
@@ -924,7 +929,7 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
             cancelText: '取消',
             okButtonProps: { danger: true },
             onOk: () => {
-                const isNode = 'position' in selectedElement;
+                const isNode = isNodeElement(selectedElement);
                 if (isNode) {
                     setNodes((nds) => nds.filter((node) => node.id !== selectedElement.id));
                 } else {
@@ -2260,7 +2265,7 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                         {/* 属性抽屉：节点 = 详情（实例探索同款）/编辑 双页签；关系 = 编辑 */}
                         <Drawer
                             title={selectedElement ? (
-                                'position' in selectedElement
+                                isNodeElement(selectedElement)
                                     ? `节点 - ${selectedElement.data?.label || '未命名'}`
                                     : `编辑关系 - ${selectedElement.data?.label || '未命名'}`
                             ) : "属性编辑"}
@@ -2271,10 +2276,10 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                 form.resetFields();
                             }}
                             open={isDrawerOpen}
-                            width={selectedElement && 'position' in selectedElement && drawerTab === 'detail' ? 560 : 420}
+                            width={selectedElement && isNodeElement(selectedElement) && drawerTab === 'detail' ? 560 : 420}
                             destroyOnClose={true}
                             className="property-drawer"
-                            extra={selectedElement && 'position' in selectedElement && drawerTab === 'detail' ? (
+                            extra={selectedElement && isNodeElement(selectedElement) && drawerTab === 'detail' ? (
                                 <Space size={4}>
                                     <Button size="small" icon={<SendOutlined />}
                                             onClick={() => focusDetailNode(detailNodeId || String(selectedElement.id))}>在画布中聚焦</Button>
@@ -2283,7 +2288,7 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                 </Space>
                             ) : undefined}
                         >
-                            {selectedElement && 'position' in selectedElement ? (
+                            {selectedElement && isNodeElement(selectedElement) ? (
                                 <Tabs
                                     activeKey={drawerTab}
                                     onChange={(k) => setDrawerTab(k as 'detail' | 'edit')}
