@@ -650,9 +650,24 @@ def iter_answer(query: RetrievalQuery, db: Session | None = None,
     t0 = time.time()
     sources = retrieve(query, db=db)
     yield ("meta", {"source_count": len(sources)})
+    # S20 Tier0（流式同权）：复合门诚实拒答 + coverage 元数据随 done 下发
+    grade = None
+    if query.use_tier0 and db is not None:
+        try:
+            from app.services.semantic_index import build_index, grade_coverage
+
+            proj = db.query(Project).filter(Project.id == query.project_id).first()
+            gd = (proj.graph_data if isinstance(proj.graph_data, dict) else {}) if proj else {}
+            grade = grade_coverage(build_index and build_index(db, query.project_id),
+                                   gd, query.question)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[retrieval] 流式 Tier0 预检失败（忽略）：{e}")
     if not sources or llm is None:
         result = query_with_reasoning(query, db=db, llm=llm)
         result.failed = not result.sources  # O3-B16：空引用问答计失败轨迹
+        if grade is not None:
+            result.coverage = grade["coverage"]
+            result.coverage_matched = grade["matched"][:10]
         yield ("token", result.answer)
         yield ("done", result)
         return
@@ -678,6 +693,8 @@ def iter_answer(query: RetrievalQuery, db: Session | None = None,
         confidence=_confidence(sources),
         model=getattr(llm, "model", None),
         latency_ms=int((time.time() - t0) * 1000),
+        coverage=(grade or {}).get("coverage"),
+        coverage_matched=(grade or {}).get("matched", [])[:10],
     ))
 
 

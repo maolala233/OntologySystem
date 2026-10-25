@@ -774,7 +774,7 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
                                value={newHypothesis} onChange={(e) => setNewHypothesis(e.target.value)} />
                         <Button type="primary" loading={evolving} onClick={startRun}>开始进化运行</Button>
                         <span className="text-xs text-gray-500">
-                            每轮：改本体 → 点「评估本轮」跑 40 题配对评估——通过才可发布，被拒可继续修订
+                            每轮：改本体 → 点「评估本轮」用评测问题做配对评估——新版本答得更好才允许发布，被拒可继续修订
                         </span>
                     </div>
                     {runs.length === 0 && <Empty description="尚无进化运行：写一条假设开始" />}

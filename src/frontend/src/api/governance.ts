@@ -299,6 +299,14 @@ export interface Scorecard {
     orphan_classes: string[];
     orphan_count: number;
     schema_checks: { passed: boolean; error_count: number; warning_count: number };
+    /** S18 OntoQA 结构成熟度（Tier2 只打分不阻断） */
+    maturity?: {
+        relationship_richness: number;
+        attribute_richness: number;
+        inheritance_richness: number;
+        taxonomy_depth: number;
+        warnings: string[];
+    };
     review_trend: ScorecardTrendPoint[];
     pending_reviews: number;
     class_count: number;

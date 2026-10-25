@@ -120,6 +120,8 @@ const PublishDialog: React.FC<Props> = ({ projectId, open, onClose, onPublished 
             open={open}
             onCancel={onClose}
             width={720}
+            centered
+            styles={{ body: { maxHeight: 'calc(100vh - 170px)', overflowY: 'auto' } }}
             footer={[
                 <Button key="cancel" onClick={onClose}>取消</Button>,
                 <Tooltip key="publish" title={machineBlocked
@@ -143,7 +145,9 @@ const PublishDialog: React.FC<Props> = ({ projectId, open, onClose, onPublished 
                 <div className="mb-1 font-medium flex items-center gap-2">
                     <SafetyOutlined /> 发布门禁机检
                     {gateReport && (gateReport.passed
-                        ? <Tag color="success">全部通过</Tag>
+                        ? <Tag color="success">
+                            {`机检 ${gateReport.checks.filter(c => c.level === 'block' && c.passed).length}/${gateReport.checks.filter(c => c.level === 'block').length} 通过`}{gateReport.checks.some(c => c.level === 'info') ? '；CQ 发布时评估' : ''}
+                          </Tag>
                         : <Tag color="error">{failedChecks.length} 项阻断</Tag>)}
                     {contentUnchanged && <Tag color="gold">内容未变化（发布将幂等返回既有版本）</Tag>}
                 </div>

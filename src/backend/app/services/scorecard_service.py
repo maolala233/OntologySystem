@@ -97,10 +97,10 @@ def compute_scorecard(db: Session, project_id: int, gd: dict) -> dict:
     # 证据闭合率（B9）
     closure = tbox_evidence_closure(db, project_id, gd)
     checked = closure.get("checked") or 0
+    # S18 口径统一（UX 走查 P0-2）：闭合率只按"悬空"计（悬空=阻断，与发布门禁同源）；
+    # missing（无锚点）仅建议补齐，不计入率值——否则与门禁 ✓ 打架。
     if checked:
-        evidence_rate = round(
-            (checked - len(closure.get("dangling") or [])
-             - len(closure.get("missing") or [])) / checked, 3)
+        evidence_rate = round((checked - len(closure.get("dangling") or [])) / checked, 3)
     else:
         evidence_rate = 1.0
 
@@ -165,7 +165,31 @@ def compute_scorecard(db: Session, project_id: int, gd: dict) -> dict:
                              ReviewItem.status.in_(("pending", "claimed")))
                      .scalar() or 0)
 
+    # ── S18 OntoQA 结构成熟度（docs/15 Tier2：只打分不阻断） ──
+    total_items = len(classes) + len(ops)
+    relationship_richness = round(len(ops) / total_items, 3) if total_items else 0.0
+    prop_entries = sum(len(c.get("properties") or [])
+                       for c in classes if isinstance(c, dict))
+    attribute_richness = round(prop_entries / len(classes), 3) if classes else 0.0
+    with_parent = sum(1 for c in classes if c.get("parent_classes"))
+    inheritance_richness = round(with_parent / len(classes), 3) if classes else 0.0
+    taxonomy_depth = _taxonomy_depth(schema)
+    maturity_warnings: list[str] = []
+    if classes and relationship_richness < 0.1:
+        maturity_warnings.append("关系丰富度偏低（<0.1）：本体基本只是分类树，建议补充对象关系/属性")
+    if taxonomy_depth <= 1 and len(classes) > 1:
+        maturity_warnings.append("分类无层级（深度 1）：建议归纳父类形成分类体系")
+    if classes and attribute_richness < 1.0:
+        maturity_warnings.append("属性丰富度偏低：多数类无属性，实例问答可依据有限")
+
     return {
+        "maturity": {
+            "relationship_richness": relationship_richness,
+            "attribute_richness": attribute_richness,
+            "inheritance_richness": inheritance_richness,
+            "taxonomy_depth": taxonomy_depth,
+            "warnings": maturity_warnings,
+        },
         "consistency_violations": int(open_conflicts),
         "cycles": cycle_count,
         "dangling_refs": dangling_parent + len(dangling_dr),
@@ -181,6 +205,10 @@ def compute_scorecard(db: Session, project_id: int, gd: dict) -> dict:
         "schema_checks": {"passed": checks.get("passed"),
                           "error_count": checks.get("error_count"),
                           "warning_count": checks.get("warning_count")},
+        "schema_warnings": [
+            {"rule": i.get("rule"), "message": i.get("message") or str(i)}
+            for i in (checks.get("issues") or [])
+            if i.get("severity") == "warning"][:10],
         "review_trend": trend,
         "pending_reviews": int(pending_count),
         "class_count": len(class_labels),
@@ -205,3 +233,34 @@ def _has_hierarchy_link(schema: dict, class_label: str) -> bool:
 
 
 __all__ = ["compute_scorecard"]
+
+def _taxonomy_depth(schema: dict) -> int:
+    """分类树最大深度（BFS；parent_classes 边，1 = 无层级）。"""
+    children: dict[str, list[str]] = {}
+    all_labels: set[str] = set()
+    for c in (schema.get("classes") or []):
+        if not isinstance(c, dict) or not c.get("label"):
+            continue
+        label = _norm_label(c["label"])
+        all_labels.add(label)
+        for parent in c.get("parent_classes") or []:
+            children.setdefault(_norm_label(parent), []).append(label)
+    if not all_labels:
+        return 0
+    roots = [lb for lb in all_labels if lb not in children or not children[lb]]
+    # 从"没有任何子节点的类"反向走父链更直观——这里按"父 → 子"自顶向下：
+    has_parent = {ch for kids in children.values() for ch in kids}
+    frontier = [lb for lb in all_labels if lb not in has_parent]  # 顶层类
+    depth = 0
+    seen: set[str] = set()
+    level = list(set(frontier))
+    while level:
+        depth += 1
+        nxt = []
+        for lb in level:
+            if lb in seen:
+                continue
+            seen.add(lb)
+            nxt.extend(children.get(lb, []))
+        level = list(set(nxt))
+    return depth

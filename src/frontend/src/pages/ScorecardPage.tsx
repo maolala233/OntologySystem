@@ -228,6 +228,28 @@ const ScorecardPage: React.FC = () => {
                 </div>
             </Card>
 
+            {/* S18 OntoQA 结构成熟度（Tier2：只打分不阻断） */}
+            {data.maturity && (
+                <Card size="small" title="结构成熟度（OntoQA）"
+                      extra={<span className="text-xs text-gray-400">衡量本体是否"不只是分类树"，不阻断发布</span>}
+                      style={{ marginTop: 16 }}>
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-2 py-1 text-sm">
+                        <div>关系丰富度 <b className={data.maturity.relationship_richness < 0.1 ? 'text-red-500' : 'text-green-600'}>
+                            {(data.maturity.relationship_richness * 100).toFixed(0)}%</b></div>
+                        <div>属性丰富度 <b>{(data.maturity.attribute_richness * 100).toFixed(0)}%</b></div>
+                        <div>继承丰富度 <b>{(data.maturity.inheritance_richness * 100).toFixed(0)}%</b></div>
+                        <div>分类深度 <b>{data.maturity.taxonomy_depth}</b></div>
+                    </div>
+                    {(data.maturity.warnings ?? []).length > 0 && (
+                        <Alert type="warning" showIcon className="mt-2"
+                               message="成熟度建议"
+                               description={<ul className="list-disc pl-4 my-0">
+                                   {data.maturity.warnings.map((w, i) => <li key={i}>{w}</li>)}
+                               </ul>} />
+                    )}
+                </Card>
+            )}
+
             {/* 明细提示：悬空引用 / 证据悬空 / 孤立类 / 命名问题 */}
             {hasDetail && (
                 <Card size="small" title="问题明细" style={{ marginTop: 16 }}>

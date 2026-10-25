@@ -32,6 +32,10 @@ interface QaTurn {
     done?: QaDonePayload;
     error?: string;
     streaming: boolean;
+    /** S20 Tier0：覆盖分级与建议（done 时回填） */
+    coverage?: 'no' | 'partial' | 'likely' | null;
+    coverage_matched?: { label?: string; kind?: string; class_label?: string }[];
+    suggested_terms?: string[];
 }
 
 interface QaDrawerProps {
@@ -136,6 +140,9 @@ export default function QaDrawer({ open, onClose, projectId: initialProjectId }:
                                 ...cur, done, streaming: false,
                                 // done.answer 为服务端聚合全文（流中断时更完整）
                                 answer: done.answer || cur.answer,
+                                coverage: done.coverage ?? null,
+                                coverage_matched: done.coverage_matched ?? [],
+                                suggested_terms: done.suggested_terms ?? [],
                             };
                             return next;
                         });
@@ -335,8 +342,45 @@ export default function QaDrawer({ open, onClose, projectId: initialProjectId }:
                                     )}
                                 </div>
                             )}
+                            {/* FE10：S20 Tier0 覆盖信号（拒答卡 + 覆盖徽标）——前后端一致 */}
+                            {turn.coverage === 'no' && (
+                                <div className="mt-1.5 border border-amber-200 bg-amber-50 rounded p-2 text-xs">
+                                    <div className="font-medium text-amber-700 mb-0.5">本体未覆盖该问题的术语——为不编造，本回答仅基于松散检索</div>
+                                    {(turn.suggested_terms?.length ?? 0) > 0 && (
+                                        <div className="text-amber-600">
+                                            相近术语：
+                                            {turn.suggested_terms!.slice(0, 5).map(t => (
+                                                <Tag key={t} className="!m-0 !text-[10px] mr-1" color="gold">{t}</Tag>
+                                            ))}
+                                        </div>
+                                    )}
+                                    <div className="text-gray-500 mt-0.5">建议：澄清或改写问题；或上传相关文档补充构建本体。</div>
+                                </div>
+                            )}
                             {turn.done && (
                                 <div className="flex items-center gap-2 mt-1.5 text-[11px] text-gray-500 flex-wrap">
+                                    {turn.coverage && turn.coverage !== 'no' && (
+                                        <Tooltip title="Tier0 确定性预检：问题术语与本体词汇的命中分级（likely≥2 项/partial 1 项）">
+                                            <Tag color={turn.coverage === 'likely' ? 'green' : 'gold'} className="mr-0">
+                                                术语覆盖 {turn.coverage === 'likely' ? '良好' : '部分'}
+                                            </Tag>
+                                        </Tooltip>
+                                    )}
+                                    {(turn.coverage_matched ?? []).filter(m => m.label).length > 0 && (
+                                        <Popover content={(
+                                            <div className="text-xs max-w-xs">
+                                                {turn.coverage_matched!.filter(m => m.label).slice(0, 6).map((m, i) => (
+                                                    <div key={i}>{m.label}
+                                                        <span className="text-gray-400">（{m.kind === 'property' ? '属性' : m.class_label || m.kind}）</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )} title="命中的本体词汇">
+                                            <Button size="small" type="link" className="!px-0 !text-[11px]">
+                                                命中 {turn.coverage_matched!.filter(m => m.label).length} 项
+                                            </Button>
+                                        </Popover>
+                                    )}
                                     {turn.done.confidence > 0 && (
                                         <Tag color={turn.done.confidence >= 0.6 ? 'green' : 'orange'} className="mr-0">
                                             置信度 {(turn.done.confidence * 100).toFixed(0)}%

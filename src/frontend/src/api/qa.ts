@@ -26,6 +26,10 @@ export interface QaDonePayload {
     latency_ms: number;
     history_id: number;
     conversation_id?: string;
+    /** S20 Tier0：确定性覆盖分级 no/partial/likely（前端诚实呈现用） */
+    coverage?: 'no' | 'partial' | 'likely' | null;
+    coverage_matched?: { label?: string; kind?: string; class_label?: string }[];
+    suggested_terms?: string[];
 }
 
 export interface QaHistoryItem {
