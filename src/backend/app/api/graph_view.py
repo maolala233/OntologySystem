@@ -5,11 +5,12 @@
 from __future__ import annotations
 
 import json
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.deps import get_current_user, get_db, require_project_role
 from app.core.exceptions import APIError, NotFoundError
@@ -63,11 +64,12 @@ def _node_kind(ent: Entity) -> str:
 
 
 def _node_out(ent: Entity, degree: int, x=None, y=None) -> dict:
-    """06 §4.1 节点 7 字段契约。"""
+    """06 §4.1 节点 7 字段契约（S16 追加 source_type/certified 透出）。"""
     return {"id": str(ent.id), "uri": ent.uri, "label": ent.label,
             "kind": _node_kind(ent), "group": ent.class_label,
             "class_label": ent.class_label, "degree": degree,
             "status": ent.status, "confidence": float(ent.confidence) if ent.confidence is not None else None,
+            "source_type": ent.source_type, "certified": bool(ent.certified),
             "x": x, "y": y}
 
 
@@ -85,6 +87,7 @@ def _edge_out(rel: Relation, subj: Entity, obj: Entity,
             "weight": float(rel.confidence) if rel.confidence is not None else None,
             "group": rel.predicate,
             "status": rel.status,
+            "source_type": rel.source_type, "certified": bool(rel.certified),
             "is_class_edge": bool(subj.is_class_node and obj.is_class_node)}
 
 
@@ -353,6 +356,7 @@ def node_detail(project_id: int, node_id: str,
                    "label_normalized": ent.label_normalized,
                    "class_label": ent.class_label, "kind": _node_kind(ent),
                    "status": ent.status, "confidence": float(ent.confidence) if ent.confidence is not None else None,
+                   "source_type": ent.source_type, "certified": bool(ent.certified),
                    "created_at": ent.created_at.isoformat() if ent.created_at else None,
                    "updated_at": ent.updated_at.isoformat() if ent.updated_at else None,
                    "instance_count": inst_count},
@@ -369,9 +373,89 @@ def node_detail(project_id: int, node_id: str,
     }
 
 
+def _certify_stamp(data: dict, certified: bool) -> dict:
+    """S16：节点/边 data 认证标记（blob 为准，写回后监听器同步行表）。"""
+    data["certified"] = bool(certified)
+    if certified and data.get("source_type") not in ("steward_edited", "steward_specified"):
+        data["source_type"] = "steward_edited"
+    if not certified and data.get("source_type") in ("steward_edited", "steward_specified"):
+        # 撤销认证 = 降级回人工编辑来源但保留 steward 身份？合同：撤销即回 ai（重新开放机器覆盖）
+        data["source_type"] = "ai"
+    return data
+
+
+@router.post("/node/{node_id}/certify")
+def certify_node(project_id: int, node_id: str, certified: bool = True,
+                 current_user: User = Depends(get_current_user),
+                 db: Session = Depends(get_db)):
+    """S16 一键认证/撤销认证节点：写 blob 节点 data（certified + steward_edited），
+    graph_data 双写监听器自动同步行表；重建保留语义（docs/15 S16-Step1）。"""
+    require_project_role(project_id, "editor", current_user, db)
+    ent = _entity_or_404(project_id, node_id, db)
+    proj = db.query(Project).filter(Project.id == project_id).first()
+    if proj is None:
+        raise NotFoundError(f"项目不存在: {project_id}")
+    gd = proj.graph_data if isinstance(proj.graph_data, dict) else {}
+    canvas_id = unquote(ent.uri.rsplit(":entity/", 1)[-1])
+    ent_id, ent_uri = int(ent.id), str(ent.uri)  # 纯值缓存：commit 后重建会删行，旧实例属性不可再访问
+    target = next((n for n in gd.get("nodes") or [] if str(n.get("id")) == canvas_id), None)
+    if target is None:
+        raise NotFoundError(f"画布节点不存在: {canvas_id}")
+    data = _certify_stamp(target.get("data") if isinstance(target.get("data"), dict) else {},
+                          certified)
+    target["data"] = data
+    proj.graph_data = gd
+    flag_modified(proj, "graph_data")
+    db.commit()
+    # 行表由监听器删全重建（id 变化），回包以 blob 写入值为准（事实源）
+    return {"id": str(ent_id), "certified": bool(data.get("certified")),
+            "source_type": data.get("source_type", "ai"),
+            "uri": ent_uri}
+
+
+@router.post("/edge/{edge_id}/certify")
+def certify_edge(project_id: int, edge_id: int, certified: bool = True,
+                 current_user: User = Depends(get_current_user),
+                 db: Session = Depends(get_db)):
+    """S16 一键认证/撤销认证关系：按 (subject_uri, predicate, object_uri) 定位画布边后写 data。"""
+    require_project_role(project_id, "editor", current_user, db)
+    rel = db.query(Relation).filter(Relation.id == edge_id,
+                                    Relation.project_id == project_id).first()
+    if rel is None:
+        raise NotFoundError(f"关系不存在: {edge_id}")
+    subj = db.query(Entity).filter(Entity.id == rel.subject_id).first()
+    obj = db.query(Entity).filter(Entity.id == rel.object_id).first()
+    proj = db.query(Project).filter(Project.id == project_id).first()
+    if proj is None or subj is None or obj is None:
+        raise NotFoundError("关系端点缺失")
+    gd = proj.graph_data if isinstance(proj.graph_data, dict) else {}
+    subj_label, obj_label = str(subj.label), str(obj.label)  # 纯值缓存（同 certify_node）
+    rel_pred = str(rel.predicate)
+    s_cid = unquote(subj.uri.rsplit(":entity/", 1)[-1])
+    o_cid = unquote(obj.uri.rsplit(":entity/", 1)[-1])
+    target = None
+    for e in gd.get("edges") or []:
+        d = e.get("data") if isinstance(e.get("data"), dict) else {}
+        if str(e.get("source")) == s_cid and str(e.get("target")) == o_cid \
+                and str(d.get("relation") or e.get("label") or "related") == rel.predicate:
+            target = e
+            break
+    if target is None:
+        raise NotFoundError(f"画布边不存在: {subj.label}-[{rel.predicate}]->{obj.label}")
+    data = _certify_stamp(target.get("data") if isinstance(target.get("data"), dict) else {},
+                          certified)
+    target["data"] = data
+    proj.graph_data = gd
+    flag_modified(proj, "graph_data")
+    db.commit()
+    # 行表由监听器删全重建（id 变化），回包以 blob 写入值为准（事实源）
+    return {"id": str(edge_id), "certified": bool(data.get("certified")),
+            "source_type": data.get("source_type", "ai"),
+            "subject": subj_label, "predicate": rel_pred, "object": obj_label}
+
+
 @router.get("/edge/{edge_id}/detail")
-def edge_detail(project_id: int, edge_id: int,
-                current_user: User = Depends(get_current_user),
+def edge_detail(project_id: int, edge_id: int,                current_user: User = Depends(get_current_user),
                 db: Session = Depends(get_db)):
     """边详情：谓词/两端实体/置信度/溯源证据。"""
     require_project_role(project_id, "viewer", current_user, db)

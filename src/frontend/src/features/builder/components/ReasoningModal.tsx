@@ -5,7 +5,7 @@
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-    Button, Empty, Input, InputNumber, Modal, Popconfirm, Radio, Select, Spin, Switch, Tag, message, Pagination, Dropdown } from 'antd';
+    Button, Empty, Input, InputNumber, Modal, Popconfirm, Radio, Select, Spin, Switch, Tag, Tooltip, message, Pagination, Dropdown } from 'antd';
 import {
     DeleteOutlined, DownloadOutlined, ExperimentOutlined, PlusOutlined, ReloadOutlined, SettingOutlined,
 } from '@ant-design/icons';
@@ -128,6 +128,17 @@ const ReasoningModal: React.FC<{
             setPredicateLabels(r.predicate_labels);
         } catch { /* 公理加载失败不阻断 */ }
     }, [projectId]);
+
+    /** S16：公理一键认证/撤销（认证后重跑抽取与自进化不覆盖该公理） */
+    const certifyAxiom = useCallback(async (a: DeclaredAxiom, certified: boolean) => {
+        try {
+            await reasoningApi.certifyAxiom(projectId, a.key, certified);
+            message.success(certified ? '已认证：重跑抽取与自进化不会覆盖该公理' : '已撤销认证');
+            await loadAxioms();
+        } catch (e: any) {
+            message.error(e?.response?.data?.detail || '认证操作失败');
+        }
+    }, [projectId, loadAxioms]);
 
     useEffect(() => {
         if (open) {
@@ -554,6 +565,15 @@ const ReasoningModal: React.FC<{
                                     {AXIOM_KIND_LABEL[a.kind] || a.kind}
                                 </Tag>
                                 <span className="flex-1 text-xs">{axiomText(a)}</span>
+                                {a.certified
+                                    ? <Tooltip title="已人工认证：重跑抽取与自进化不会覆盖"><Tag color="green" className="flex-shrink-0" style={{ fontSize: 11 }}>✓已认证</Tag></Tooltip>
+                                    : <Tooltip title="未认证：点击人工认证（重跑抽取与自进化不覆盖）">
+                                        <Button size="small" type="link" className="flex-shrink-0" style={{ fontSize: 11, padding: 0 }}
+                                                onClick={() => certifyAxiom(a, true)}>认证</Button>
+                                      </Tooltip>}
+                                {a.certified &&
+                                    <Button size="small" type="text" className="flex-shrink-0" style={{ fontSize: 11 }}
+                                            onClick={() => certifyAxiom(a, false)}>撤销</Button>}
                                 <Button size="small" type="text" icon={<PlusOutlined rotate={90} />} onClick={() => editAxiom(a)} />
                                 <Popconfirm title="撤销该公理？" onConfirm={() => removeAxiom(a)}>
                                     <Button size="small" type="text" danger icon={<DeleteOutlined />} />

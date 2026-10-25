@@ -4,7 +4,7 @@
  * 边：谓词、两端实体、置信度、溯源证据。
  */
 import React, { useEffect, useRef, useState } from 'react';
-import { Button, Descriptions, Drawer, Empty, Modal, Space, Spin, Table, Tag, Tooltip, Typography, message } from 'antd';
+import { Button, Descriptions, Drawer, Empty, Modal, Popconfirm, Space, Spin, Table, Tag, Tooltip, Typography, message } from 'antd';
 import { FileTextOutlined, LinkOutlined, ReloadOutlined, SendOutlined, ExpandOutlined } from '@ant-design/icons';
 
 import { EdgeDetail, NodeDetail, graphApi } from '../../api/graphview';
@@ -19,6 +19,16 @@ const KIND_LABEL: Record<string, string> = {
 const STATUS_COLOR: Record<string, string> = {
     auto: 'default', merged: 'cyan', pending_review: 'gold',
     approved: 'success', rejected: 'error', claimed: 'processing',
+};
+
+/** S16：资产来源四态徽标（人话文案） */
+const SOURCE_TYPE_LABEL: Record<string, string> = {
+    deterministic: '规则抽取', ai: 'AI 抽取',
+    steward_edited: '人工编辑', steward_specified: '人工新建',
+};
+const SOURCE_TYPE_COLOR: Record<string, string> = {
+    deterministic: 'cyan', ai: 'orange',
+    steward_edited: 'purple', steward_specified: 'magenta',
 };
 
 /** 切片原文上下文弹层：切片全文 + 证据原句高亮（溯源 char_start/end 为切片内偏移） */
@@ -207,6 +217,7 @@ interface Props {
 const DetailDrawer: React.FC<Props> = ({ projectId, selection, onClose, onNavigateNode, onExpandNode, extraNodeActions, reloadKey }) => {
     const [nodeTitle, setNodeTitle] = useState<string>('节点详情');
     const [edgeDetail, setEdgeDetail] = useState<EdgeDetail | null>(null);
+    const [edgeRefresh, setEdgeRefresh] = useState(0);  // S16：认证后重载边详情
 
     useEffect(() => {
         setEdgeDetail(null);
@@ -219,7 +230,7 @@ const DetailDrawer: React.FC<Props> = ({ projectId, selection, onClose, onNaviga
             }
         };
         load();
-    }, [projectId, selection]);
+    }, [projectId, selection, edgeRefresh]);
 
     const title = selection?.type === 'edge' ? '关系详情' : nodeTitle;
 
@@ -273,6 +284,21 @@ const DetailDrawer: React.FC<Props> = ({ projectId, selection, onClose, onNaviga
                                 {edgeDetail.confidence != null ? <Tag color="blue">{edgeDetail.confidence.toFixed(2)}</Tag> : '—'}
                             </Descriptions.Item>
                             <Descriptions.Item label="状态"><Tag color={STATUS_COLOR[edgeDetail.status]}>{edgeDetail.status}</Tag></Descriptions.Item>
+                            {edgeDetail.source_type &&
+                                <Descriptions.Item label="来源">
+                                    <Tag color={SOURCE_TYPE_COLOR[edgeDetail.source_type] || 'default'}>
+                                        {SOURCE_TYPE_LABEL[edgeDetail.source_type] || edgeDetail.source_type}
+                                    </Tag>
+                                </Descriptions.Item>}
+                            {edgeDetail.certified != null &&
+                                <Descriptions.Item label="认证">
+                                    <Space>
+                                        {edgeDetail.certified && <Tag color="green">✓ 已认证</Tag>}
+                                        <CertifyButton projectId={projectId} kind="edge" targetId={edgeDetail.edge.id}
+                                                       certified={!!edgeDetail.certified}
+                                                       onDone={() => setEdgeRefresh((k) => k + 1)} />
+                                    </Space>
+                                </Descriptions.Item>}
                             <Descriptions.Item label={<Term t="双向边" />}>{edgeDetail.edge.bidirectional ? `是（弧形偏移 #${edgeDetail.edge.pairIndex}）` : '否'}</Descriptions.Item>
                             {Object.keys(edgeDetail.props).length > 0 && (
                                 <Descriptions.Item label="属性">
@@ -288,6 +314,40 @@ const DetailDrawer: React.FC<Props> = ({ projectId, selection, onClose, onNaviga
                 </div>
             )}
         </Drawer>
+    );
+};
+
+/**
+ * S16：一键人工认证/撤销按钮——认证后重跑抽取与自进化不得覆盖该内容（blob 为准）。
+ */
+const CertifyButton: React.FC<{
+    projectId: number;
+    kind: 'node' | 'edge';
+    targetId: string;
+    certified: boolean;
+    onDone: () => void;
+}> = ({ projectId, kind, targetId, certified, onDone }) => {
+    const [busy, setBusy] = useState(false);
+    const toggle = async () => {
+        setBusy(true);
+        try {
+            const fn = kind === 'node' ? graphApi.certifyNode : graphApi.certifyEdge;
+            await fn(projectId, targetId, !certified);
+            message.success(certified ? '已撤销认证：该内容重新开放机器更新' : '已人工认证：重跑抽取与自进化不会覆盖');
+            onDone();
+        } catch (e: any) {
+            message.error(e.response?.data?.error?.message || '认证操作失败');
+        } finally {
+            setBusy(false);
+        }
+    };
+    return (
+        <Popconfirm title={certified ? '撤销认证后，机器重跑可能更新此内容，确定？' : '认证后重跑抽取与自进化不会覆盖此内容，确定？'}
+                    onConfirm={toggle}>
+            <Button size="small" type={certified ? 'text' : 'link'} loading={busy} style={{ padding: 0 }}>
+                {certified ? '撤销认证' : '人工认证'}
+            </Button>
+        </Popconfirm>
     );
 };
 
@@ -345,9 +405,20 @@ export const NodeDetailContent: React.FC<{
                         </Tag>
                         <Tag color="geekblue">{nodeDetail.entity.class_label}</Tag>
                         <Tag color={STATUS_COLOR[nodeDetail.entity.status]}>{nodeDetail.entity.status}</Tag>
+                        {nodeDetail.entity.source_type &&
+                            <Tooltip title="知识来源：规则/AI 抽取，或人工编辑/新建">
+                                <Tag color={SOURCE_TYPE_COLOR[nodeDetail.entity.source_type] || 'default'}>
+                                    {SOURCE_TYPE_LABEL[nodeDetail.entity.source_type] || nodeDetail.entity.source_type}
+                                </Tag>
+                            </Tooltip>}
+                        {nodeDetail.entity.certified &&
+                            <Tooltip title="已人工认证：重跑抽取与自进化不会覆盖此内容"><Tag color="green">✓ 已认证</Tag></Tooltip>}
                         {nodeDetail.entity.confidence != null &&
                             <Tooltip title={TERM_HELP['置信']}><Tag color="blue">置信 {nodeDetail.entity.confidence.toFixed(2)}</Tag></Tooltip>}
                         <Tooltip title={TERM_HELP['度数']}><Tag>度数 {nodeDetail.degree}</Tag></Tooltip>
+                        <CertifyButton projectId={projectId} kind="node" targetId={nodeId}
+                                       certified={!!nodeDetail.entity.certified}
+                                       onDone={() => setRefreshKey((k) => k + 1)} />
                     </Space>
 
                     <Section title="基本信息">

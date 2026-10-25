@@ -121,6 +121,7 @@ def ask_question(
         use_graph=body.use_graph,
         use_inferred=body.use_inferred,
         knowledge_domain=body.knowledge_domain,
+        use_tier0=True,  # S20：确定性权威注入 + 答案性预检
     )
     llm = _build_llm(db, project_id, body.model_config_id)
 
@@ -142,6 +143,10 @@ def ask_question(
             "latency_ms": result.latency_ms,
             "repair_rounds": result.repair_rounds,
             "failed": result.failed,
+            # S20 Tier0：确定性覆盖分级 + 命中词汇 + 拒答建议（前端诚实呈现用）
+            "coverage": result.coverage,
+            "coverage_matched": result.coverage_matched,
+            "suggested_terms": result.suggested_terms,
             "history_id": hist.id,
             "conversation_id": conversation_id,
         }

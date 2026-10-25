@@ -13,6 +13,7 @@ import {
 
 import { GateEvaluationRow, ImpactSummary, gateApi, impactApi } from '../../../api/cqs';
 import { publishApi, versionsApi } from '../../../api/governance';
+import { LoadingOutlined } from '@ant-design/icons';
 
 const VERDICT_META = {
     pass: { color: 'success', icon: <CheckCircleOutlined />, text: '通过' },
@@ -40,19 +41,23 @@ const PublishDialog: React.FC<Props> = ({ projectId, open, onClose, onPublished 
     const [unacceptableRegressions, setUnacceptableRegressions] = useState(false);
     const [publishing, setPublishing] = useState(false);
     const [publishError, setPublishError] = useState<string | null>(null);
+    // S17-3（FE3）：机检门禁报告（确定性结论优先展示）
+    const [gateReport, setGateReport] = useState<Awaited<ReturnType<typeof publishApi.gateReport>> | null>(null);
 
     const load = useCallback(async () => {
         if (!open) return;
         setLoading(true);
         setPublishError(null);
         try {
-            const [imp, gates, versionsResp] = await Promise.all([
+            const [imp, gates, versionsResp, report] = await Promise.all([
                 impactApi.preview(projectId).catch(() => null),
                 gateApi.evaluations(projectId, 5).catch(() => ({ items: [], total: 0 })),
                 // 版本列表用于判断「门控被拒后图谱是否有新落版」——有则允许重试发布（会重新评估）
                 versionsApi.list(projectId).catch(() => null),
+                publishApi.gateReport(projectId).catch(() => null),
             ]);
             setImpact(imp);
+            setGateReport(report);
             setEvaluations(gates.items || []);
             const versions = versionsResp?.items || [];
             setLatestVersionAt(versions[0]?.created_at || null);
@@ -68,6 +73,10 @@ const PublishDialog: React.FC<Props> = ({ projectId, open, onClose, onPublished 
     const gateBlocked = !!latest && latest.verdict === 'reject'
         && (!latestVersionAt || !String(latest.created_at || '')
             || String(latestVersionAt) <= String(latest.created_at));
+    // S17-3：机检门禁有 block 失败 → 禁用发布（确定性结论优先）
+    const machineBlocked = !!gateReport && !gateReport.passed;
+    const failedChecks = (gateReport?.checks || []).filter((c) => c.level === 'block' && !c.passed);
+    const contentUnchanged = !!gateReport && !gateReport.content_changed;
 
     const handlePublish = async () => {
         setPublishing(true);
@@ -75,7 +84,11 @@ const PublishDialog: React.FC<Props> = ({ projectId, open, onClose, onPublished 
         try {
             const r = await publishApi.publish(projectId, { unacceptable_regressions: unacceptableRegressions } as any);
             const warn = (r as any).warnings?.length ? `（${(r as any).warnings.length} 条警告）` : '';
-            message.success(`发布成功：v${r.version_no}${warn}`);
+            if (r.idempotent) {
+                message.info(`内容未变化：v${r.version_no} 已是最新发布，直接返回（未新建版本）`);
+            } else {
+                message.success(`发布成功：v${r.version_no}${warn}`);
+            }
             onPublished();
             onClose();
         } catch (e: any) {
@@ -109,12 +122,14 @@ const PublishDialog: React.FC<Props> = ({ projectId, open, onClose, onPublished 
             width={720}
             footer={[
                 <Button key="cancel" onClick={onClose}>取消</Button>,
-                <Tooltip key="publish" title={gateBlocked
-                    ? `最新门控未通过（${latest ? `胜 ${latest.wins}/平 ${latest.ties}/负 ${latest.losses}，硬伤 ${latest.hard_failures}` : ''}）；修复后需先重新落版（抽取或手动打版），再回来发布`
-                    : ''}>
+                <Tooltip key="publish" title={machineBlocked
+                    ? `机检门禁未通过：${failedChecks.map((c) => c.name).join('、')}——修复后重试`
+                    : (gateBlocked
+                        ? `最新门控未通过（${latest ? `胜 ${latest.wins}/平 ${latest.ties}/负 ${latest.losses}，硬伤 ${latest.hard_failures}` : ''}）；修复后需先重新落版（抽取或手动打版），再回来发布`
+                        : '')}>
                     <Button key="ok" type="primary" loading={publishing}
-                            disabled={gateBlocked} onClick={handlePublish}>
-                        确认发布
+                            disabled={gateBlocked || machineBlocked} onClick={handlePublish}>
+                        {contentUnchanged ? '确认发布（幂等）' : '确认发布'}
                     </Button>
                 </Tooltip>,
             ]}
@@ -123,6 +138,45 @@ const PublishDialog: React.FC<Props> = ({ projectId, open, onClose, onPublished 
                 {publishError && (
                     <Alert type="error" showIcon className="mb-3" message="发布被拦截" description={publishError} />
                 )}
+
+                {/* 0. 机检门禁报告（S17-3，FE3 Step1：确定性结论优先展示） */}
+                <div className="mb-1 font-medium flex items-center gap-2">
+                    <SafetyOutlined /> 发布门禁机检
+                    {gateReport && (gateReport.passed
+                        ? <Tag color="success">全部通过</Tag>
+                        : <Tag color="error">{failedChecks.length} 项阻断</Tag>)}
+                    {contentUnchanged && <Tag color="gold">内容未变化（发布将幂等返回既有版本）</Tag>}
+                </div>
+                {!gateReport && <div className="text-gray-500 text-sm mb-3">门禁报告加载失败（服务异常）</div>}
+                {gateReport && (
+                    <div className="mb-2 text-sm">
+                        {gateReport.checks.map((c) => (
+                            <div key={c.code} className="flex items-center gap-2 py-0.5">
+                                {c.level === 'info'
+                                    ? <LoadingOutlined style={{ color: '#8c8c8c' }} />
+                                    : (c.passed
+                                        ? <CheckCircleOutlined style={{ color: '#52c41a' }} />
+                                        : <CloseCircleOutlined style={{ color: '#ff4d4f' }} />)}
+                                <span className={c.level === 'block' && !c.passed ? 'text-red-600' : ''}>{c.name}</span>
+                                {c.level === 'info' && <Tag style={{ fontSize: 11 }}>发布时执行</Tag>}
+                                {c.code === 'EVIDENCE_CLOSURE_FAILED' && c.passed && c.detail?.missing_count > 0 && (
+                                    <span className="text-xs text-amber-600">{c.detail.missing_count} 个对象无证据锚点（建议补齐）</span>
+                                )}
+                                {c.level === 'block' && !c.passed && c.code === 'PENDING_CRITICAL_REVIEWS'
+                                    && c.detail?.blockers?.length > 0 && (
+                                    <span className="text-xs text-red-500">待处理 {c.detail.blockers.length} 项</span>
+                                )}
+                            </div>
+                        ))}
+                        {gateReport.warnings.length > 0 && (
+                            <Alert type="warning" showIcon className="mt-1"
+                                   message={`${gateReport.warnings.length} 条非阻断告警`}
+                                   description={<ul className="list-disc pl-4 my-0">{gateReport.warnings.slice(0, 5).map((w, i) => <li key={i}>{w}</li>)}</ul>} />
+                        )}
+                    </div>
+                )}
+
+                <Divider className="my-3" />
 
                 {/* 1. 影响分析数字（O3-B13） */}
                 <div className="mb-1 font-medium">发布影响分析</div>

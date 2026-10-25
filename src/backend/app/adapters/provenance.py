@@ -1,11 +1,37 @@
 # app/adapters/provenance.py - 溯源（docs/design/04 §8）
 # 里程碑：M3 实现。W3C PROV-O 对齐 + SHA-256 校验和（复用 semantica compute_checksum）。
+# S16（docs/15 §S16）：资产级来源四态合同 —— 机器产物默认不可信；steward_*/certified
+# 一经写入，任何自动流程（重跑抽取/自进化/合并）不得降级改写（判定 is_protected）。
 
 from __future__ import annotations
 
 from pydantic import BaseModel
 
 from app.core.security import sha256_hex
+
+# 资产来源四态（对齐 COA EnrichmentSource 语义，docs/15 S16）：
+#   deterministic      规则/结构化通道确定性产出
+#   ai                 LLM 抽取/推理产物（默认；重跑可覆盖）
+#   steward_edited     人工编辑已存在对象（内容级人工背书）
+#   steward_specified  人工新建/人工选定关键判定（最高优先）
+SOURCE_TYPES = ("deterministic", "ai", "steward_edited", "steward_specified")
+STEWARD_SOURCE_TYPES = frozenset({"steward_edited", "steward_specified"})
+DEFAULT_SOURCE_TYPE = "ai"
+
+
+def normalize_source_type(value: object) -> str:
+    """任意输入 → 合法四态之一；无法识别一律回落 ai（机器产物默认不可信）。"""
+    v = str(value or "").strip().lower()
+    return v if v in SOURCE_TYPES else DEFAULT_SOURCE_TYPE
+
+
+def is_steward(source_type: object) -> bool:
+    return normalize_source_type(source_type) in STEWARD_SOURCE_TYPES
+
+
+def is_protected(source_type: object, certified: object) -> bool:
+    """人工内容保护判定：certified=1 或 steward_* 来源 → 自动流程不得改写。"""
+    return bool(certified) or is_steward(source_type)
 
 
 class ProvenanceData(BaseModel):
@@ -50,4 +76,8 @@ def get_lineage(project_id: int, target_type: str, target_id: int) -> list[Prove
     raise NotImplementedError("M3 实现")
 
 
-__all__ = ["ProvenanceData", "locate_quote", "track_batch", "get_lineage"]
+__all__ = [
+    "SOURCE_TYPES", "STEWARD_SOURCE_TYPES", "DEFAULT_SOURCE_TYPE",
+    "normalize_source_type", "is_steward", "is_protected",
+    "ProvenanceData", "locate_quote", "track_batch", "get_lineage",
+]

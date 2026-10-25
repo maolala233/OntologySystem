@@ -3,15 +3,39 @@
 # 写入路径有三条：审核批准（review_service._approve_axiom_suggestion 委托本模块）、
 # 推理弹窗手工新增/编辑（api/reasoning.py 公理 CRUD）、抽取批准链路。
 # TTL 导出与 owlrl 推理经既有钩子消费同一份数据。
+# S16（docs/15）：schema.axiom_provenance 注册表按 list key 记录每条公理的
+# 来源四态 + 认证位（审核批准/手工新增 = steward_specified + certified）。
 
 from __future__ import annotations
 
+import datetime
+
 from sqlalchemy.orm import Session
 
+from app.adapters.provenance import normalize_source_type
 from app.infrastructure.database import Project
 
 AXIOM_KINDS = ("functional", "inverse_of", "disjoint_with", "domain_fix",
                "range_fix", "subclass_of", "equivalent_classes", "cardinality")
+
+
+def _stamp_provenance(schema: dict, key: str, payload: dict) -> None:
+    """S16：按 list key 登记公理来源（人工路径默认 steward_specified + certified）。
+
+    payload.evidence 可带证据锚点（{source_document_id, source_chunk_no, quote...} 或其列表），
+    发布门禁的证据闭合检查据此校验悬空（S16-Step2）。
+    """
+    entry: dict = {
+        "source_type": normalize_source_type(
+            payload.get("source_type") or "steward_specified"),
+        "certified": bool(payload.get("certified", True)),
+        "decided_by": payload.get("decided_by"),
+        "decided_at": datetime.datetime.utcnow().isoformat(timespec="seconds"),
+    }
+    ev = payload.get("evidence")
+    if isinstance(ev, (dict, list)) and ev:
+        entry["evidence"] = ev
+    schema.setdefault("axiom_provenance", {})[key] = entry
 
 
 def _class_node_ids(gd: dict) -> dict[str, str]:
@@ -38,6 +62,7 @@ def declare_axiom(db: Session, proj: Project, payload: dict) -> dict:
     kind = str(payload.get("kind") or "").strip()
     gd = proj.graph_data if isinstance(proj.graph_data, dict) else {}
     schema = gd.setdefault("schema", {})
+    prov_key: str | None = None  # S16：登记 axiom_provenance 的 list key
     ops_by_label = {str(op_.get("label") or ""): op_
                     for op_ in (schema.get("object_properties") or [])
                     if isinstance(op_, dict) and op_.get("label")}
@@ -62,6 +87,7 @@ def declare_axiom(db: Session, proj: Project, payload: dict) -> dict:
         if op_ is None:
             return {"skipped": f"谓词不在 TBox: {label}"}
         op_["functional"] = True
+        prov_key = f"functional:{label}"
         edges_marked = _mark_edges(label, lambda ax: ax.update(functional=True))
     elif kind == "inverse_of":
         p, q = (str(x or "").strip() for x in (payload.get("predicates") or ["", ""])[:2])
@@ -70,6 +96,7 @@ def declare_axiom(db: Session, proj: Project, payload: dict) -> dict:
             return {"skipped": f"互逆谓词不在 TBox: {p} / {q}"}
         op_p["inverse_of"] = q
         op_q["inverse_of"] = p
+        prov_key = f"inverse_of:{min(p, q)}|{max(p, q)}"
         edges_marked = (_mark_edges(p, lambda ax: ax.update(inverse_of=q))
                         + _mark_edges(q, lambda ax: ax.update(inverse_of=p)))
     elif kind == "disjoint_with":
@@ -79,6 +106,7 @@ def declare_axiom(db: Session, proj: Project, payload: dict) -> dict:
             return {"skipped": f"互斥类不在 TBox: {a} / {b}"}
         ca.setdefault("disjoint_with", [])
         cb.setdefault("disjoint_with", [])
+        prov_key = f"disjoint_with:{min(a, b)}|{max(a, b)}"
         if b not in ca["disjoint_with"]:
             ca["disjoint_with"].append(b)
         if a not in cb["disjoint_with"]:
@@ -125,6 +153,7 @@ def declare_axiom(db: Session, proj: Project, payload: dict) -> dict:
         if ca is None or cp is None or child == parent:
             return {"skipped": f"子类/父类不在 TBox: {child} / {parent}"}
         parents = ca.setdefault("parent_classes", [])
+        prov_key = f"subclass_of:{child}|{parent}"
         edges_marked = 0
         if parent not in parents:
             parents.append(parent)
@@ -152,6 +181,7 @@ def declare_axiom(db: Session, proj: Project, payload: dict) -> dict:
             equiv = c.setdefault("equivalent_to", [])
             if peer not in equiv:
                 equiv.append(peer)
+        prov_key = f"equivalent_classes:{min(a, b)}|{max(a, b)}"
         edges_marked = 0
         node_by_class_label = _class_node_ids(gd)
         for lbl, peer in ((a, b), (b, a)):
@@ -181,6 +211,8 @@ def declare_axiom(db: Session, proj: Project, payload: dict) -> dict:
         restr_cls = str(op_.get("domain") or "").strip()
         op_.setdefault("cardinality_restrictions", []).append(
             {"class": restr_cls, "min": mn, "max": mx})
+        prov_key = f"cardinality:{label}#{len(op_['cardinality_restrictions']) - 1}"
+
         def _card_mutator(ax: dict) -> None:
             if mn is not None:
                 ax["min_cardinality"] = mn
@@ -190,6 +222,8 @@ def declare_axiom(db: Session, proj: Project, payload: dict) -> dict:
     else:
         return {"skipped": f"未知公理建议类型: {kind}"}
 
+    if prov_key:  # S16：登记来源（domain_fix/range_fix 无独立 list key，随 op 自身展示）
+        _stamp_provenance(schema, prov_key, payload)
     proj.graph_data = gd
     flag_modified(proj, "graph_data")
     db.flush()
@@ -245,6 +279,15 @@ def list_axioms(proj: Project) -> list[dict]:
         for parent in c.get("parent_classes") or []:
             items.append({"key": f"subclass_of:{label}|{parent}",
                           "kind": "subclass_of", "classes": [label, str(parent)]})
+
+    # S16：挂接来源登记（无登记的存量公理 → ai/未认证，grandfather 不阻断仅提示）
+    prov = schema.get("axiom_provenance") or {}
+    for it in items:
+        meta = prov.get(str(it.get("key") or ""))
+        it["source_type"] = str((meta or {}).get("source_type") or "ai")
+        it["certified"] = bool((meta or {}).get("certified"))
+        if isinstance((meta or {}).get("evidence"), (dict, list)):
+            it["evidence"] = meta["evidence"]
     return items
 
 
@@ -343,10 +386,47 @@ def remove_axiom(db: Session, proj: Project, key: str) -> dict:
     else:
         return {"skipped": f"未知公理 key: {key}"}
 
+    prov = schema.get("axiom_provenance")
+    if isinstance(prov, dict):
+        prov.pop(key, None)
+        if kind == "cardinality":  # 索引 key 随删除位移：整组清空（list 渲染回落默认值）
+            label = rest.partition("#")[0]
+            for stale in [k for k in prov if k.startswith(f"cardinality:{label}#")]:
+                prov.pop(stale, None)
     proj.graph_data = gd
     flag_modified(proj, "graph_data")
     db.flush()
     return {"removed": key}
 
 
-__all__ = ["AXIOM_KINDS", "declare_axiom", "list_axioms", "remove_axiom"]
+def certify_axiom(db: Session, proj: Project, key: str, certified: bool = True,
+                  decided_by: int | None = None) -> dict:
+    """S16：公理一键认证/撤销（存量公理一次性盘点的入口）。
+
+    认证 = axiom_provenance[key].certified=True + 来源升为 steward_edited（首次）；
+    撤销 = certified=False（来源回落 ai，重新开放机器覆盖）。key 必须是 list_axioms 的锚点。
+    """
+    from sqlalchemy.orm.attributes import flag_modified
+
+    items = {i["key"] for i in list_axioms(proj)}
+    if key not in items:
+        return {"skipped": f"公理不存在: {key}"}
+    gd = proj.graph_data if isinstance(proj.graph_data, dict) else {}
+    schema = gd.setdefault("schema", {})
+    meta = schema.setdefault("axiom_provenance", {}).setdefault(key, {})
+    meta["certified"] = bool(certified)
+    if certified:
+        if meta.get("source_type") not in ("steward_edited", "steward_specified"):
+            meta["source_type"] = "steward_edited"
+        meta["decided_by"] = decided_by
+        meta["decided_at"] = datetime.datetime.utcnow().isoformat(timespec="seconds")
+    else:
+        meta["source_type"] = "ai"
+    proj.graph_data = gd
+    flag_modified(proj, "graph_data")
+    db.flush()
+    return {"key": key, "certified": bool(certified),
+            "source_type": meta.get("source_type", "ai")}
+
+
+__all__ = ["AXIOM_KINDS", "declare_axiom", "list_axioms", "remove_axiom", "certify_axiom"]

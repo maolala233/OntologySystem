@@ -178,10 +178,47 @@ export const versionsApi = {
 // ── 发布/公共区 ──
 
 export const publishApi = {
-    publish: async (projectId: number, body?: { note?: string; label?: string; unacceptable_regressions?: boolean }) => {
+    publish: async (projectId: number, body?: { note?: string; label?: string; unacceptable_regressions?: boolean; force?: boolean }) => {
         const response = await apiClient.post(`/api/projects/${projectId}/publish`, body || {});
         return response.data as {
             publication_id: number; version_no: number; status: string; warnings: string[];
+            /** S17-1：true=同内容幂等返回既有发布（未新建版本） */
+            idempotent?: boolean;
+        };
+    },
+
+    /**
+     * S21：进化触发器检查（新轨迹 ≥N 或距 checkpoint ≥M 天 → due；幂等）。
+     */
+    evolutionTriggerCheck: async (projectId: number) => {
+        const response = await apiClient.get(`/api/projects/${projectId}/evolution/trigger/check`);
+        return response.data as {
+            evolution_due: boolean; new_trajectories: number; days_since_checkpoint: number;
+            reason: string | null; checkpoint_time: string;
+            thresholds: { min_new_trajectories: number; min_days: number };
+        };
+    },
+
+    /** S21：手动推进进化 checkpoint（本批轨迹看过/暂不进化；发布成功会自动推进） */
+    evolutionTriggerAdvance: async (projectId: number) => {
+        const response = await apiClient.post(`/api/projects/${projectId}/evolution/trigger/advance`, {});
+        return response.data;
+    },
+
+    /**
+     * S17-3（FE3 向导 Step1）：只读发布门禁报告——五道检查逐项结果 + 幂等信号。
+     * check.level: block=阻断（任一失败 passed=false）| info=提示；warnings=非阻断告警。
+     */
+    gateReport: async (projectId: number) => {
+        const response = await apiClient.get(`/api/projects/${projectId}/publish/gate-report`);
+        return response.data as {
+            passed: boolean;
+            checks: { code: string; name: string; level: 'block' | 'warn' | 'info';
+                      passed: boolean; detail: any }[];
+            warnings: string[];
+            content_changed: boolean;
+            checksum: string;
+            last_publication: { publication_id: number; version_no: number } | null;
         };
     },
 

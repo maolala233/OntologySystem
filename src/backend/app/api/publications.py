@@ -52,45 +52,54 @@ def _serialize_pub(p: Publication, proj: Project | None = None) -> dict:
 def publish(project_id: int, body: dict | None = None,
             current_user: User = Depends(get_current_user),
             db: Session = Depends(get_db)):
-    """发布（04 §10 校验链）→ 落版本(kind=publication) + 快照 + publications + 公共区可见。"""
+    """发布（04 §10 校验链）→ 落版本(kind=publication) + 快照 + publications + 公共区可见。
+
+    S17-1 幂等语义（docs/15）：与最近一次发布内容 checksum 相同且未带 force →
+    安全重试直接返回既有发布（不重复建版本/不重跑 CQ 配对评估/不发重复事件）；
+    内容变化或 force=true → 正常走门禁并发布新版本。
+    """
     # allow_published=True：publish 幂等重发豁免只读拦截
     require_project_role(project_id, "owner", current_user, db, allow_published=True)
     proj = _project_or_404(project_id, db)
     body = body or {}
-
-    # 门禁 1：知识域必填
-    if not (proj.domain_id or (proj.domains or "").strip()):
-        raise APIError("发布前必须设置知识域", code="DOMAIN_REQUIRED", http_status=400)
-    # 门禁 2：无 pending/claimed 的 critical/high 审核项
-    from app.services.review_service import publish_blockers
-
-    blockers = publish_blockers(db, project_id)
-    if blockers:
-        raise APIError(f"存在 {len(blockers)} 个未处理的高优先级审核项，先完成审核",
-                       code="PENDING_CRITICAL_REVIEWS", http_status=400,
-                       detail={"blockers": blockers[:20]})
-    # 门禁 3：TBox 健康检查（只警告不阻断，警告写入发布说明）
-    from app.adapters.versioning import create_version, quality_gate
-
     gd = proj.graph_data or {}
-    health = quality_gate(gd)
-    # 门禁 3：TBox 机检硬伤（类层次环/悬空父类引用/自父）阻断发布（O1-B2）
-    if not health["passed"]:
-        raise APIError("TBox 机检未通过，修复后重试发布", code="SCHEMA_CHECKS_FAILED",
-                       http_status=400,
-                       detail={"errors": health.get("errors", []),
-                               "warnings": health.get("warnings", [])})
 
-    # 门禁 4：TBox 证据闭合（O2-B9）——悬空证据引用阻断发布
-    from app.services.evidence_closure import tbox_evidence_closure
+    # 门禁报告单一事实源（S17-3）：阻断式错误码与历史契约保持一致
+    from app.services.publish_gate import collect_gate_report
 
-    closure = tbox_evidence_closure(db, project_id, gd)
-    if not closure["passed"]:
-        raise APIError(
-            f"TBox 证据闭合检查未通过：{len(closure['dangling'])} 个悬空证据引用"
-            "（引用的切片已不存在），修复或补抽证据后重试",
-            code="EVIDENCE_CLOSURE_FAILED", http_status=400,
-            detail={"dangling": closure["dangling"][:20]})
+    report = collect_gate_report(db, proj, gd)
+
+    # S17-1 幂等短路：内容未变化 → 返回既有发布
+    if not report["content_changed"] and not body.get("force"):
+        last = report["last_publication"] or {}
+        logger.info(f"[publish] 项目 {project_id} 幂等重发：内容未变化，返回既有发布")
+        return {"publication_id": last.get("publication_id"),
+                "version_no": last.get("version_no"),
+                "status": "published", "idempotent": True,
+                "warnings": ["内容未变化：已存在相同内容的发布，直接返回既有版本"],
+                "impact": None}
+
+    # 阻断式门禁：按报告顺序抛出第一个失败（错误码与历史契约一致）
+    for check in report["checks"]:
+        if check["level"] == "block" and not check["passed"]:
+            code = check["code"]
+            if code == "DOMAIN_REQUIRED":
+                raise APIError("发布前必须设置知识域", code=code, http_status=400)
+            if code == "PENDING_CRITICAL_REVIEWS":
+                raise APIError(f"存在 {len(check['detail']['blockers'])} 个未处理的高优先级审核项，先完成审核",
+                               code=code, http_status=400,
+                               detail={"blockers": check["detail"]["blockers"]})
+            if code == "SCHEMA_CHECKS_FAILED":
+                raise APIError("TBox 机检未通过，修复后重试发布", code=code,
+                               http_status=400, detail=check["detail"])
+            if code == "EVIDENCE_CLOSURE_FAILED":
+                raise APIError(
+                    f"TBox 证据闭合检查未通过：{len(check['detail']['dangling'])} 个悬空证据引用"
+                    "（引用的切片已不存在），修复或补抽证据后重试",
+                    code=code, http_status=400,
+                    detail={"dangling": check["detail"]["dangling"]})
+    health_warnings = next((c["detail"]["warnings"] for c in report["checks"]
+                            if c["code"] == "SCHEMA_CHECKS_FAILED"), [])
 
     # 门禁 5：CQ 配对评估（O3-B14）——项目配置了启用 CQ 且存在正式基线版本时生效。
     # 候选 vN-cK（不覆盖正式版本）；接受条件 = 零硬伤 + 非平局胜场严格更多；
@@ -163,9 +172,11 @@ def publish(project_id: int, body: dict | None = None,
                             "results": (evaluation.results or [])[:20]})
 
     # 落版本 + publication 快照 + 记录 + 状态机
+    from app.adapters.versioning import create_version
+
     ver = create_version(db, proj, "publication", current_user.id,
                          label=body.get("label"),
-                         description="；".join(health["warnings"]) or "发布快照")
+                         description="；".join(health_warnings) or "发布快照")
     if not ver.label:
         ver.label = f"发布 v{ver.version_no}"
     snap = (db.query(GraphSnapshot)
@@ -196,8 +207,17 @@ def publish(project_id: int, body: dict | None = None,
                 "snapshot_id": pub.snapshot_id})
     log_action(db, current_user.id, "publish", "project", project_id,
                {"publication_id": pub.id, "version_no": ver.version_no,
-                "warnings": health["warnings"]})
+                "warnings": health_warnings})
     db.commit()
+    # S21：发布成功 → 进化触发器 checkpoint 推进（EvoOntology 语义：只随发布成功推进）
+    try:
+        from app.services.trigger import advance_checkpoint
+
+        advance_checkpoint(db, project_id)
+        db.commit()
+    except Exception as exc:  # noqa: BLE001 —— 触发器故障不阻断发布
+        db.rollback()
+        logger.warning(f"[publish] 进化 checkpoint 推进失败（不阻断）：{exc}")
     # M4：即时派发 outbox 消费（beat 30s 兜底；事件后即时同步降低投影延迟）
     try:
         from app.tasks.graph_tasks import drain_outbox
@@ -208,8 +228,24 @@ def publish(project_id: int, body: dict | None = None,
     except Exception:  # noqa: BLE001 —— broker 不可达时由 beat 兜底
         pass
     return {"publication_id": pub.id, "version_no": ver.version_no,
-            "status": "published", "warnings": health["warnings"] + sync_warnings,
+            "status": "published", "idempotent": False,
+            "warnings": health_warnings + sync_warnings,
             "impact": impact_summary}
+
+
+@router.get("/api/projects/{project_id}/publish/gate-report")
+def publish_gate_report(project_id: int,
+                        current_user: User = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
+    """S17-3（FE3 向导 Step1）：只读发布门禁报告——五道检查逐项结果 + 幂等信号。
+
+    不落库不发事件；passed=False 仅由 block 级失败决定；warnings 为非阻断告警汇总。
+    """
+    require_project_role(project_id, "editor", current_user, db)
+    proj = _project_or_404(project_id, db)
+    from app.services.publish_gate import collect_gate_report
+
+    return collect_gate_report(db, proj, proj.graph_data or {})
 
 
 @router.get("/api/projects/{project_id}/publish/impact",

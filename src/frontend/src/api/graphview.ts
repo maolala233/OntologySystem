@@ -13,6 +13,9 @@ export interface GraphNode {
     degree: number;
     status: string;
     confidence: number | null;
+    /** S16：资产来源四态 deterministic|ai|steward_edited|steward_specified */
+    source_type?: string;
+    certified?: boolean;
     x?: number | null;
     y?: number | null;
 }
@@ -29,6 +32,8 @@ export interface GraphEdge {
     weight: number | null;
     group: string;
     status: string;
+    /** S16：边来源四态 + 认证位 */
+    source_type?: string; certified?: boolean;
     is_class_edge: boolean;
 }
 
@@ -62,6 +67,8 @@ export interface NodeDetail {
         class_label: string; kind: string; status: string;
         confidence: number | null; created_at: string | null; updated_at: string | null;
         instance_count: number | null;
+        /** S16：来源四态 + 认证位 */
+        source_type?: string; certified?: boolean;
     };
     properties: Record<string, any>;
     raw_props: Record<string, any>;
@@ -90,6 +97,8 @@ export interface EdgeDetail {
     props: Record<string, any>;
     confidence: number | null;
     status: string;
+    /** S16：边认证（certify 后展示/撤销） */
+    source_type?: string; certified?: boolean;
     provenance: ProvenanceRow[];
 }
 
@@ -125,6 +134,16 @@ export const graphApi = {
 
     layoutCoords: async (projectId: number): Promise<{ available: boolean; coords: Record<string, [number, number]> }> =>
         (await apiClient.get(`/api/projects/${projectId}/graph/layout`)).data,
+
+    /** S16：一键人工认证/撤销（节点）；写 blob 后监听器同步行表 */
+    certifyNode: async (projectId: number, nodeId: string, certified = true):
+        Promise<{ id: string; certified: boolean; source_type: string }> =>
+        (await apiClient.post(`/api/projects/${projectId}/graph/node/${nodeId}/certify?certified=${certified}`)).data,
+
+    /** S16：一键人工认证/撤销（关系） */
+    certifyEdge: async (projectId: number, edgeId: string, certified = true):
+        Promise<{ id: string; certified: boolean; source_type: string }> =>
+        (await apiClient.post(`/api/projects/${projectId}/graph/edge/${edgeId}/certify?certified=${certified}`)).data,
 };
 
 // ── R13：实例探索手动编辑（每次编辑后端落一版 kind=manual，可在「时间轴」追溯）──

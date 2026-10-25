@@ -39,6 +39,11 @@ def tbox_evidence_closure(db: Session, project_id: int, gd: dict) -> dict:
     def _check_anchor(name: str, anchor) -> None:
         nonlocal checked
         checked += 1
+        # 锚点可以是单个 dict 或列表（S16 公理支持多锚点）
+        if isinstance(anchor, list):
+            for a in anchor:
+                _check_anchor(name, a)
+            return
         # 存量数据 evidence 可能是字符串引文（无 doc/chunk 锚点）→ 按缺失计（不阻断）
         if not isinstance(anchor, dict):
             missing.append(name)
@@ -93,6 +98,13 @@ def tbox_evidence_closure(db: Session, project_id: int, gd: dict) -> dict:
                 anchor = {"source_document_id": d["source_document_id"],
                           "source_chunk_no": d["source_chunk_no"]}
         _check_anchor(f"关系「{label}」", anchor)
+
+    # ── 公理（S16-Step2）：axiom_provenance[key].evidence 锚点。无登记=missing
+    #    （grandfather 不阻断）；有登记但锚点悬空（引用的 chunk 已删）=dangling 阻断。
+    for key, meta in (schema.get("axiom_provenance") or {}).items():
+        if not isinstance(meta, dict):
+            continue
+        _check_anchor(f"公理「{key}」", meta.get("evidence"))
 
     return {"passed": not dangling, "dangling": dangling, "missing": missing,
             "checked": checked}

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.deps import get_current_user, require_module, require_project_role
 from app.infrastructure.database import OntologyRule, Project, User, get_db
 from app.services import reasoning_service
-from app.services.axiom_store import AXIOM_KINDS, declare_axiom, list_axioms, remove_axiom
+from app.services.axiom_store import AXIOM_KINDS, certify_axiom, declare_axiom, list_axioms, remove_axiom
 
 router = APIRouter(prefix="/api/projects/{project_id}", tags=["reasoning"])
 
@@ -178,6 +178,14 @@ class AxiomBody(BaseModel):
     value: str | None = None
     min_card: int | None = None
     max_card: int | None = None
+    # S16：证据锚点（chunk 全量序号 → 审批/声明时固化为锚点；或直接传锚点 dict）
+    chunk_indices: list[int] | None = None
+    evidence: dict | list | None = None
+
+
+class AxiomCertifyBody(BaseModel):
+    key: str
+    certified: bool = True
 
 
 @router.get("/reasoning/axioms", dependencies=[Depends(require_module("resolution"))])
@@ -204,10 +212,20 @@ def list_axioms_endpoint(project_id: int, current_user: User = Depends(get_curre
 def declare_axiom_endpoint(project_id: int, body: AxiomBody,
                            current_user: User = Depends(get_current_user),
                            db: Session = Depends(get_db)):
-    """手工声明公理（编辑走 delete + 重新 declare）。"""
+    """手工声明公理（编辑走 delete + 重新 declare）。
+
+    S16：带 chunk_indices 时固化为证据锚点（steward_specified + certified 语义不变）。
+    """
     require_project_role(project_id, "editor", current_user, db)
     proj = _load_project_or_404(project_id, db)
-    result = declare_axiom(db, proj, body.model_dump())
+    payload = body.model_dump()
+    if payload.get("chunk_indices") and not payload.get("evidence"):
+        from app.services.review_service import _evidence_anchor
+
+        anchor = _evidence_anchor(db, project_id, payload["chunk_indices"], "")
+        if anchor:
+            payload["evidence"] = anchor
+    result = declare_axiom(db, proj, payload)
     if "skipped" in result:
         raise HTTPException(status_code=400, detail=result["skipped"])
     db.commit()
@@ -222,6 +240,21 @@ def remove_axiom_endpoint(project_id: int, key: str = Query(..., min_length=3),
     require_project_role(project_id, "editor", current_user, db)
     proj = _load_project_or_404(project_id, db)
     result = remove_axiom(db, proj, key)
+    if "skipped" in result:
+        raise HTTPException(status_code=400, detail=result["skipped"])
+    db.commit()
+    return result
+
+
+@router.post("/reasoning/axioms/certify", dependencies=[Depends(require_module("resolution"))])
+def certify_axiom_endpoint(project_id: int, body: AxiomCertifyBody,
+                           current_user: User = Depends(get_current_user),
+                           db: Session = Depends(get_db)):
+    """S16：公理一键认证/撤销（存量公理盘点用；写 axiom_provenance，list 即时可见）。"""
+    require_project_role(project_id, "editor", current_user, db)
+    proj = _load_project_or_404(project_id, db)
+    result = certify_axiom(db, proj, body.key, certified=body.certified,
+                           decided_by=current_user.id)
     if "skipped" in result:
         raise HTTPException(status_code=400, detail=result["skipped"])
     db.commit()

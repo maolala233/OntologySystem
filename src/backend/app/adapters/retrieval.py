@@ -14,7 +14,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.infrastructure.database import Entity, ProvenanceRecord, ReasoningResult, Relation, UploadedDocument
+from app.infrastructure.database import Entity, Project, ProvenanceRecord, ReasoningResult, Relation, UploadedDocument
 from app.infrastructure.llm_client import LLMClient
 from app.infrastructure.vector_client import VectorStoreManager
 
@@ -54,6 +54,10 @@ class QAResult(BaseModel):
     # O3-B15 QA 自修复：失败检测→换策略重试 ≤2 轮；repair_rounds>0 即发生过修复
     repair_rounds: int = 0
     failed: bool = False
+    # S20 Tier0（docs/15）：确定性答案性预检结果（use_tier0=True 时填充）
+    coverage: str | None = None          # no | partial | likely（确定性术语覆盖分级）
+    coverage_matched: list = Field(default_factory=list)   # 命中的本体词汇（实体/谓词）
+    suggested_terms: list = Field(default_factory=list)    # 拒答时的最近术语建议
 
 
 class RetrievalQuery(BaseModel):
@@ -61,6 +65,8 @@ class RetrievalQuery(BaseModel):
     question: str
     top_k: int = 12
     use_graph: bool = True
+    # S20 Tier0：确定性权威注入 + 答案性预检（默认关闭，QA 入口开启；单测直调 retrieve 不受影响）
+    use_tier0: bool = False
     use_inferred: bool = True  # 是否注入语义推理引用（来源标注区分，不与事实混排）
     max_expansion_hops: int = 2
     knowledge_domain: str | None = None  # 向量过滤表达式（权限隔离强制 project_id）
@@ -243,6 +249,7 @@ def _keyword_sources(query: RetrievalQuery, db: Session) -> list[RetrievedSource
     “投资范围”这类稀有且决定性的词项才能把正确切片顶进名额。
     """
     import math
+
     from app.infrastructure.database import DocumentChunk, UploadedDocument
     terms = _question_terms(query.question)
     if not terms:
@@ -332,6 +339,56 @@ def _inference_sources(query: RetrievalQuery, db: Session) -> list[RetrievedSour
     return out
 
 
+def _authoritative_sources(query: RetrievalQuery, db: Session) -> list[RetrievedSource]:
+    """S20 Tier0：问题精确命中的本体概念 → 权威口径引用（公理/层级/互斥，含认证标记）。
+
+    只取 exact 级命中（grade_coverage 的实体命中即精确形态：label/别名在问题中原样出现）；
+    置顶注入让 LLM 优先拿到确定性口径（COA "残余限定词转发"同旨）。
+    """
+    from app.services.semantic_index import build_index, entity_axioms, grade_coverage
+
+    proj = db.query(Project).filter(Project.id == query.project_id).first()
+    if proj is None:
+        return []
+    gd = proj.graph_data if isinstance(proj.graph_data, dict) else {}
+    index = build_index(db, query.project_id)
+    grade = grade_coverage(index, gd, query.question)
+    out: list[RetrievedSource] = []
+    for m in grade["matched"]:
+        if m.get("kind") == "property" or len(out) >= 2:
+            continue
+        e = next((x for x in index if x.uri == m.get("uri")), None)
+        if e is None:
+            continue
+        canvas_id = e.uri.rsplit("/", 1)[-1] if e.uri.startswith("urn:") else str(e.id)
+        axioms = entity_axioms(gd, canvas_id, e.label)
+        if not axioms:
+            continue
+        parts = []
+        for a in axioms:
+            if a["kind"] == "subclass_of":
+                parts.append(a["classes"][0] + " ⊂ " + a["classes"][1])
+            elif a["kind"] == "disjoint_with":
+                parts.append(a["classes"][0] + " ⋈ 互斥 " + a["classes"][1])
+            elif a["kind"] == "functional":
+                parts.append(a["predicate"] + " 为函数性（单值）")
+            elif a["kind"] == "cardinality":
+                parts.append(a["predicate"] + " 基数 [min=" + str(a.get("min"))
+                             + ", max=" + str(a.get("max")) + "]")
+            elif a["kind"] == "equivalent_classes":
+                parts.append(a["classes"][0] + " ≡ " + a["classes"][1])
+            elif a["kind"] == "domain_range":
+                parts.append(a["predicate"] + ": " + str(a["domain"]) + " → " + str(a["range"]))
+        mark = "（人工认证）" if (m.get("certified") or any(a.get("certified") for a in axioms)) else ""
+        out.append(RetrievedSource(
+            doc_file="本体口径" + mark,
+            quote="【" + e.label + "】" + "；".join(parts) + "。来源：本本体声明" + mark,
+            char_start=None, char_end=None,
+            ref_type="authoritative", score=1.0, source_document_id=None,
+        ))
+    return out
+
+
 def retrieve(query: RetrievalQuery, db: Session | None = None) -> list[RetrievedSource]:
     """双路召回 + proximity 融合（07 §4）。db 为 None 时仅向量路径。
 
@@ -392,6 +449,12 @@ def retrieve(query: RetrievalQuery, db: Session | None = None) -> list[Retrieved
 
     fused = _dedup(graph_facts)[:MAX_GRAPH_FACTS] + _dedup(text_hits)
     result = fused[:MAX_SOURCES]
+    # S20 Tier0：确定性权威口径注入（精确命中的本体概念，置顶；超出 MAX_SOURCES 的部分
+    # 由后续 inferred 分支的切片自然收敛，auth 至多 2 条不会被切掉）
+    if query.use_tier0 and db is not None:
+        auth = _authoritative_sources(query, db)
+        if auth:
+            result = auth + result
     # 语义推理引用垫底补充（不与事实混排）：
     # 推理引用有保留名额——事实满额时压缩事实到 8 条，保证层级/归属类问题
     # 能拿到推理证据；事实不足时推理最多补 MAX_INFERRED_SOURCES 条
@@ -416,6 +479,8 @@ _QA_SYSTEM_PROMPT = """你是一位专业的本体知识问答助手，基于提
 4. 来源为"语义推理"的引用是系统从本体公理/规则推导出的结论（非原文事实）：
    可用于回答类型归属、层级关系类问题，引用时保留 [n] 标注，表述上与原文事实区分
    （如"根据语义推理"），不要说成文档记载的内容。
+5. 来源为"本体口径"的引用是本体声明的权威语义（类层级/互斥/函数性/基数等，可能含
+   人工认证标记）：属于确定性依据，优先采用，保留 [n] 标注并注明"本体口径"。
 
 【引用格式说明】：[1] 表示引用第 1 条参考信息，以此类推。
 """
@@ -485,7 +550,41 @@ def query_with_repair(query: RetrievalQuery, db: Session | None = None,
     R2 最宽召回（top_k 上限 + 图扩展 + 推理引用）。修复成功 repair_rounds=轮数。
     """
     t0 = time.time()
-    result = query_with_reasoning(query, db=db, llm=llm)
+    # S20 Tier0 预检（确定性、无 LLM）：覆盖分级 + 复合门诚实拒答
+    grade = None
+    if query.use_tier0 and db is not None:
+        try:
+            from app.services.semantic_index import build_index, grade_coverage, nearest_terms
+
+            proj = db.query(Project).filter(Project.id == query.project_id).first()
+            gd = (proj.graph_data if isinstance(proj.graph_data, dict) else {}) if proj else {}
+            index = build_index(db, query.project_id)
+            grade = grade_coverage(index, gd, query.question)
+            if grade["coverage"] == "no":
+                probe = retrieve(query, db=db)
+                if not probe:
+                    # 复合门：术语零命中 且 检索（图/关键词）无果 → 诚实拒答，不调 LLM 不编造
+                    sugg = nearest_terms(index, query.question)[:5]
+                    return QAResult(
+                        answer=("该问题涉及的术语未在本本体覆盖。为了不编造，我不作答。"
+                                + ("相近术语供参考：" + "、".join(sugg) + "。" if sugg else "")
+                                + "建议：①澄清或改写问题；②上传相关文档补充构建本体。"),
+                        sources=[],
+                        reasoning_path=["S20 Tier0：术语零命中且检索无果——诚实拒答（未调用 LLM）"],
+                        confidence=0.0, model=getattr(llm, "model", None),
+                        latency_ms=int((time.time() - t0) * 1000),
+                        failed=True, coverage="no", coverage_matched=[],
+                        suggested_terms=sugg,
+                    )
+        except Exception as e:  # noqa: BLE001 —— Tier0 故障不阻断问答
+            logger.warning("[retrieval] Tier0 预检失败（忽略）：" + str(e))
+    def _attach(res: QAResult) -> QAResult:
+        if grade is not None:
+            res.coverage = grade["coverage"]
+            res.coverage_matched = grade["matched"][:10]
+        return res
+
+    result = _attach(query_with_reasoning(query, db=db, llm=llm))
     llm_failed = any("LLM 生成失败" in r for r in result.reasoning_path)
     if not _is_failed(result, llm_failed):
         return result
@@ -497,16 +596,18 @@ def query_with_repair(query: RetrievalQuery, db: Session | None = None,
                        top_k=min(30, max(query.top_k * 2, 20)),
                        use_graph=query.use_graph, use_inferred=False,
                        max_expansion_hops=query.max_expansion_hops,
-                       knowledge_domain=query.knowledge_domain),
+                       knowledge_domain=query.knowledge_domain,
+                       use_tier0=query.use_tier0),
         # R2：最宽召回（原始问题 + 推理引用）
         RetrievalQuery(project_id=query.project_id,
                        question=query.question, top_k=30,
                        use_graph=True, use_inferred=True,
                        max_expansion_hops=query.max_expansion_hops,
-                       knowledge_domain=query.knowledge_domain),
+                       knowledge_domain=query.knowledge_domain,
+                       use_tier0=query.use_tier0),
     ]
     for round_no, q2 in enumerate(strategies, start=1):
-        result = query_with_reasoning(q2, db=db, llm=llm)
+        result = _attach(query_with_reasoning(q2, db=db, llm=llm))
         llm_failed = any("LLM 生成失败" in r for r in result.reasoning_path)
         result.repair_rounds = round_no
         result.latency_ms = int((time.time() - t0) * 1000)

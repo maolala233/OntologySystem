@@ -265,6 +265,11 @@ class Entity(Base):
                          name="entity_status"), nullable=False, server_default="auto")
     canonical_id = Column(Integer, ForeignKey("entities.id", ondelete="SET NULL"), nullable=True)
     is_class_node = Column(Boolean, nullable=False, server_default="0")
+    # S16（docs/15）：资产来源四态 + 人工认证位。blob 节点 data.source_type/certified
+    # 为显式来源；同步重建时 certified/steward 行保留（自动流程不得降级人工内容）。
+    source_type = Column(Enum("deterministic", "ai", "steward_edited", "steward_specified",
+                              name="asset_source_type"), nullable=False, server_default="ai")
+    certified = Column(Boolean, nullable=False, server_default=sa_text("0"))
     created_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))
     updated_at = Column(DateTime, nullable=False,
                         server_default=sa_text("CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"))
@@ -288,6 +293,10 @@ class Relation(Base):
     status = Column(Enum("auto", "pending_review", "approved", "rejected",
                          name="relation_status"), nullable=False, server_default="auto")
     is_class_edge = Column(Boolean, nullable=False, server_default="0")
+    # S16：同 Entity（来源四态 + 认证位，重建时保留人工标记）
+    source_type = Column(Enum("deterministic", "ai", "steward_edited", "steward_specified",
+                              name="asset_source_type"), nullable=False, server_default="ai")
+    certified = Column(Boolean, nullable=False, server_default=sa_text("0"))
     created_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))
 
     __table_args__ = (
@@ -1067,3 +1076,25 @@ class EvolutionReport(Base):
     review_item_ids = Column(JSON, nullable=True)
     created_by = Column(Integer, nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))
+
+
+class EvolutionTriggerState(Base):
+    """进化触发器状态（S21-2，docs/15 / EvoOntology trigger 语义）：每项目一行。
+
+    checkpoint 只在发布成功后推进（publish 调 advance_checkpoint）；rejected 的
+    进化轮不推进——同一批轨迹可重试。触发条件 = checkpoint 后新轨迹 ≥ min_new
+    或 距 checkpoint ≥ min_days（任一满足即提醒，只决定是否提醒，不自动启动进化）。
+    窗口游标用轨迹自增 ID（同秒内创建的轨迹不会因 DATETIME 秒级精度漏计/重计；
+    EvoOntology 同款 checkpoint_trajectory_id 语义），checkpoint_time 仅用于天数阈值。
+    """
+    __tablename__ = "evolution_trigger_state"
+
+    project_id = Column(Integer, primary_key=True, index=True)
+    checkpoint_time = Column(DateTime, nullable=False)
+    checkpoint_qa_id = Column(Integer, nullable=False, server_default=sa_text("0"))
+    checkpoint_copilot_id = Column(Integer, nullable=False, server_default=sa_text("0"))
+    evolution_due = Column(Boolean, nullable=False, server_default=sa_text("0"))
+    min_new_trajectories = Column(Integer, nullable=False, server_default="30")
+    min_days = Column(Integer, nullable=False, server_default="7")
+    updated_at = Column(DateTime, nullable=False,
+                        server_default=sa_text("CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"))

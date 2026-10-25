@@ -132,6 +132,9 @@ def _approve_conflict_type(item, user, payload: dict, db: Session) -> dict:
         if s and str(s.get("class") or "") != chosen:
             data = n.get("data") or {}
             data["class_label"] = chosen
+            # S16：人工裁决改写类别 → steward_edited + 认证位（重跑抽取不得降级）
+            data["source_type"] = "steward_edited"
+            data["certified"] = True
             n["data"] = data
             reclassified += 1
 
@@ -194,7 +197,9 @@ def _approve_new_class(item, user, payload: dict, db: Session) -> dict:
         entry = {
             "label": label,
             "definition": payload.get("definition") or f"审核通过的实例新类型（{label}）",
-            "properties": [], "parent": None, "aliases": []}
+            "properties": [], "parent": None, "aliases": [],
+            # S16：人工批准新建 → steward_specified + 认证位
+            "source_type": "steward_specified", "certified": True}
         if anchor:
             entry["evidence"] = anchor
         gd["schema"]["classes"].append(entry)
@@ -203,7 +208,8 @@ def _approve_new_class(item, user, payload: dict, db: Session) -> dict:
         node_id = f"class_{abs(hash(label)) % (10 ** 12):012d}"
         while node_id in ids:  # 碰撞兜底
             node_id += "x"
-        node_data: dict = {"label": label, "type": "Class", "approved_from": "new_class"}
+        node_data: dict = {"label": label, "type": "Class", "approved_from": "new_class",
+                           "source_type": "steward_specified", "certified": True}
         if anchor:
             node_data["source_document_id"] = anchor["source_document_id"]
             node_data["source_chunk_no"] = anchor["source_chunk_no"]
@@ -248,6 +254,8 @@ def _approve_new_predicate(item, user, payload: dict, db: Session) -> dict:
             "domain": payload.get("domain") or None,
             "range": payload.get("range") or None,
             "definition": payload.get("definition") or f"审核通过的实例新关系（{label}）",
+            # S16：人工批准新建 → steward_specified + 认证位
+            "source_type": "steward_specified", "certified": True,
         }
         if anchor:
             entry["evidence"] = anchor
@@ -300,6 +308,15 @@ def _approve_axiom_suggestion(item, user, payload: dict, db: Session) -> dict:
     proj = db.query(Project).filter(Project.id == item.project_id).first()
     if proj is None:
         return {"skipped": "项目不存在"}
+    # S16：审批时可带 chunk_indices（裁决编辑面板选择证据切片）→ 固化为证据锚点
+    if payload.get("chunk_indices") and not payload.get("evidence"):
+        anchor = _evidence_anchor(db, item.project_id,
+                                  payload.get("chunk_indices") or [], "")
+        if anchor:
+            payload = {**payload, "evidence": anchor}
+    # S16：人工批准的公理 → steward_specified + 认证位（axiom_provenance 登记处）
+    payload = {**payload, "source_type": "steward_specified", "certified": True,
+               "decided_by": getattr(user, "id", None)}
     return declare_axiom(db, proj, payload)
 
 

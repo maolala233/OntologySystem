@@ -11,7 +11,7 @@ import { RollbackOutlined, SearchOutlined, ThunderboltOutlined } from '@ant-desi
 
 import { GateEvaluationRow, ImpactSummary, gateApi, impactApi } from '../../../api/cqs';
 import {
-    ClassModified, DiffResult, InstanceBrief, InstanceModified, RelationRow, VersionRow, versionsApi,
+    ClassModified, DiffResult, InstanceBrief, InstanceModified, RelationRow, VersionRow, publishApi, versionsApi,
 } from '../../../api/governance';
 import { listCopilotAudit } from '../../../api/copilot';
 
@@ -220,6 +220,9 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
     const [impact, setImpact] = useState<ImpactSummary | null>(null);
     const [gateLoading, setGateLoading] = useState(false);
 
+    // S21：进化触发器（due 提醒横幅）
+    const [triggerInfo, setTriggerInfo] = useState<Awaited<ReturnType<typeof publishApi.evolutionTriggerCheck>> | null>(null);
+
     // AI 协同操作历史（O5-B29/F15）
     const [audit, setAudit] = useState<CopilotAuditRow[]>([]);
     const [auditLoading, setAuditLoading] = useState(false);
@@ -247,6 +250,24 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
     }, [projectId]);
 
     useEffect(() => { load(); }, [load]);
+
+    // S21：进化触发器检查（静默失败不阻断时间轴）
+    const loadTrigger = useCallback(async () => {
+        try {
+            setTriggerInfo(await publishApi.evolutionTriggerCheck(projectId));
+        } catch { /* 未配置/无权限时静默 */ }
+    }, [projectId]);
+    useEffect(() => { loadTrigger(); }, [loadTrigger]);
+
+    const advanceTrigger = useCallback(async () => {
+        try {
+            await publishApi.evolutionTriggerAdvance(projectId);
+            message.success('已推进进化 checkpoint：本批轨迹不再提醒');
+            loadTrigger();
+        } catch (e: any) {
+            message.error(e.response?.data?.error?.message || '操作失败');
+        }
+    }, [projectId, loadTrigger]);
 
     const loadGate = useCallback(async () => {
         setGateLoading(true);
@@ -358,8 +379,14 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
                 </Space>
             }
         >
+            {triggerInfo?.evolution_due && (
+                <Alert type="warning" showIcon className="mb-3"
+                       message={`该进化了：${triggerInfo.reason || `新增 ${triggerInfo.new_trajectories} 条轨迹 / 距上次进化 ${triggerInfo.days_since_checkpoint} 天`}`}
+                       description="重复出现的行为问题可以从轨迹中诊断，并生成本体候选补丁（配对评估通过后才会发布）。"
+                       action={<Button size="small" onClick={advanceTrigger}>本批已看过，稍后再进化</Button>} />
+            )}
             {subTab === 'versions' && (
-                <Spin spinning={loading}>
+            <Spin spinning={loading}>
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <div>
                             <div className="mb-3 flex items-center gap-2">

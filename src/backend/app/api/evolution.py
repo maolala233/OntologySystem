@@ -73,3 +73,50 @@ def latest_report(project_id: int, db: Session = Depends(get_db),
     if row is None:
         return {"report": None}
     return {"report": evolution_service.serialize_report(row)}
+
+
+# ─────────────── S21（docs/15）：轨迹聚合 + 进化触发器 ───────────────
+
+@router.get("/{project_id}/evolution/trajectories")
+def list_trajectories(project_id: int, limit: int = 50,
+                      db: Session = Depends(get_db),
+                      user: User = Depends(get_current_user)):
+    """进化素材轨迹（EvoOntology 形状聚合视图）：qa + copilot 可观察行为，
+    不记思维链；结果字段截断。只读，viewer 可查。"""
+    require_project_role(project_id, "viewer", user, db)
+    from app.services.trajectory import list_trajectories as _list
+
+    return {"items": _list(db, project_id, limit=limit)}
+
+
+@router.get("/{project_id}/evolution/trigger/check")
+def trigger_check(project_id: int, db: Session = Depends(get_db),
+                  user: User = Depends(get_current_user)):
+    """进化触发器检查（S21-2）：新轨迹 ≥N 条或距 checkpoint ≥M 天 → due。
+
+    幂等；due 只代表「该提醒进化了」，不自动启动任何进化动作。
+    """
+    require_project_role(project_id, "viewer", user, db)
+    from app.services import trigger
+
+    result = trigger.check(db, project_id)
+    db.commit()  # due 翻转持久化
+    return result
+
+
+@router.post("/{project_id}/evolution/trigger/advance")
+def trigger_advance(project_id: int, db: Session = Depends(get_db),
+                    user: User = Depends(get_current_user)):
+    """手动推进 checkpoint（编辑意图：本批轨迹看过/暂不进化）。发布成功会自动推进。
+
+    allow_published=True：checkpoint 推进的正常时机恰在发布之后（项目已只读），
+    与 publish 的幂等重发豁免同理。
+    """
+    require_project_role(project_id, "editor", user, db, allow_published=True)
+    from app.services import trigger
+
+    result = trigger.advance_checkpoint(db, project_id)
+    db.commit()
+    log_action(db, user.id, "evolution.trigger_advance", "project", str(project_id), result)
+    db.commit()
+    return result

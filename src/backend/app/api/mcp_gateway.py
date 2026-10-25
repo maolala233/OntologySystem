@@ -27,6 +27,7 @@ from app.infrastructure.database import (
     Entity,
     McpToken,
     OntologyVersion,
+    Relation,
     Project,
     ProvenanceRecord,
     ReasoningResult,
@@ -338,6 +339,32 @@ def _tool_specs(ctx: McpContext) -> list[dict]:
             "description": "列出项目本体版本（版本号/标签/时间/统计）",
             "inputSchema": {"type": "object", "properties": {}},
         },
+        {
+            "name": "resolve_semantics",
+            "description": "S19 语义解析（运行时可信核心）：按提及词解析概念，返回实体+适用公理/约束+溯源证据；"
+                           "每条带 coverage_status（supported/ambiguous/unavailable），消歧失败返回候选绝不猜；"
+                           "硬上限 mentions<=5、禁全量枚举。先 read ontology://session-manifest 再用本工具",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "mentions": {"type": "array", "items": {"type": "string"}, "maxItems": 5,
+                                 "description": "实体/术语提及词列表（最多 5 个）"},
+                    "context": {"type": "string", "description": "当前任务上下文（可选，辅助消歧）"},
+                },
+                "required": ["mentions"],
+            },
+        },
+        {
+            "name": "check_answerable",
+            "description": "S19 答案性预检（确定性、无 LLM）：问题术语与本体词汇的命中覆盖分级 "
+                           "（no/partial/likely）+ 命中清单；覆盖不足时不要硬答，改走澄清或提示构建",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"question": {"type": "string", "minLength": 1},
+                               "context": {"type": "string"}},
+                "required": ["question"],
+            },
+        },
     ]
     if ctx.can_write:
         specs += [
@@ -378,6 +405,9 @@ def _resource_specs(ctx: McpContext) -> list[dict]:
          "description": "节点/边/类/实例计数与知识域", "mimeType": "application/json"},
         {"uri": "ontology://schema/info", "name": f"项目 {ctx.project.id} TBox（TTL）",
          "description": "本体骨架 turtle 文本", "mimeType": "text/turtle"},
+        {"uri": "ontology://session-manifest", "name": f"项目 {ctx.project.id} 会话清单（S19）",
+         "description": "会话初始化只注入本清单：版本+计数+认证统计+工具签名+使用指引；"
+                        "具体语义按需 resolve_semantics", "mimeType": "application/json"},
     ]
 
 
@@ -741,6 +771,140 @@ def _audit(ctx: McpContext, db: Session, action: str, tool: str, args: dict,
 
 # ---------------------------------------------------------------- Resources
 
+
+
+# ---------------------------------------------------------------- S19 语义服务面
+# 匹配/公理/证据实现抽取到 app/services/semantic_index.py（S20-0：MCP 与 QA Tier0 共用）
+from app.services.semantic_index import (  # noqa: E402
+    AXIOM_CAP as _AXIOM_CAP,
+    EVIDENCE_CAP as _EVIDENCE_CAP,
+    MENTION_MAX as _MENTION_MAX,
+    build_index as _semantic_index,
+    entity_axioms as _entity_axioms,
+    entity_evidence as _entity_evidence,
+    grade_coverage as grade_coverage,
+    match_mention as _match_mention,
+)
+
+_SEMANTIC_TOOL_NAMES = ["resolve_semantics", "check_answerable", "ask", "get_ontology_schema"]
+
+
+def _t_resolve_semantics(ctx: McpContext, db: Session, args: dict) -> dict:
+    """S19-2：语义解析——按提及词返回实体+适用公理+证据，带诚实信号与硬上限。"""
+    mentions = args.get("mentions")
+    if not isinstance(mentions, list) or not mentions:
+        raise _rpc_error(ERR_INVALID_PARAMS, "mentions 必须是非空数组（<=5）")
+    context = str(args.get("context") or "")
+    mentions = [str(m) for m in mentions][:_MENTION_MAX]
+    skipped = [str(m) for m in (args.get("mentions") or [])[len(mentions):]]
+
+    index = _semantic_index(db, ctx.project.id)
+    gd = ctx.project.graph_data if isinstance(ctx.project.graph_data, dict) else {}
+    results = []
+    for m in mentions:
+        match = _match_mention(index, m, context)
+        if match["status"] == "unavailable":
+            results.append({"mention": m, "coverage_status": "unavailable",
+                            "note": "本本体未覆盖该概念：不要编造，改走澄清或提示构建"})
+            continue
+        cands = match["candidates"]
+        if match["status"] == "ambiguous":
+            results.append({"mention": m, "coverage_status": "ambiguous",
+                            "candidates": [{"uri": e.uri, "label": e.label,
+                                            "kind": "class" if e.is_class_node else "instance",
+                                            "class_label": e.class_label} for e in cands],
+                            "note": "多个候选，请根据 context 指定；语义服务不替你猜"})
+            continue
+        e = cands[0]
+        canvas_id = e.uri.rsplit("/", 1)[-1] if e.uri.startswith("urn:") else str(e.id)
+        results.append({
+            "mention": m, "coverage_status": match["status"], "matched_via": match["via"],
+            "entity": {"uri": e.uri, "label": e.label,
+                       "kind": "class" if e.is_class_node else "instance",
+                       "class_label": e.class_label, "aliases": e.aliases,
+                       "source_type": e.source_type, "certified": bool(e.certified),
+                       "confidence": float(e.confidence) if e.confidence is not None else None},
+            "axioms": _entity_axioms(gd, canvas_id, e.label),
+            "evidence": _entity_evidence(db, ctx.project.id, e.id),
+        })
+    payload = {"results": results, "skipped": skipped,
+               "note": "resolved 语义是引导不是最终答案：执行动作前须按返回的公理/约束校验；"
+                       "unavailable/ambiguous 时不要编造。"}
+    if len(json.dumps(payload, ensure_ascii=False).encode("utf-8")) > MAX_RESPONSE_BYTES:
+        payload = {"results": [], "skipped": skipped, "note": "响应超限，请减少 mentions"}
+    return _text_content(payload)
+
+
+def _t_check_answerable(ctx: McpContext, db: Session, args: dict) -> dict:
+    """S19-3：答案性预检（确定性、无 LLM）——问题与本体词汇命中分级，诚实不超claim。"""
+    question = str(args.get("question") or "").strip()
+    if not question:
+        raise _rpc_error(ERR_INVALID_PARAMS, "question 不能为空")
+    index = _semantic_index(db, ctx.project.id)
+    gd = ctx.project.graph_data if isinstance(ctx.project.graph_data, dict) else {}
+    grade = grade_coverage(index, gd, question)
+    matched = grade["matched"]
+    n = grade["matched_count"]
+    coverage = grade["coverage"]
+    return _text_content({
+        "coverage": coverage, "matched_entities": matched[:10], "matched_count": n,
+        "note": "确定性预检只覆盖术语命中；实际可答性以检索与生成结果为准。"
+                "coverage=no 时不要硬答：改走澄清或提示补建本体。",
+    })
+
+
+def _session_manifest(ctx: McpContext, db: Session) -> dict:
+    """S19-1 会话清单：会话初始化只注入摘要，具体语义按需 resolve。"""
+    from app.services.axiom_store import list_axioms
+
+    pid = ctx.project.id
+    classes = (db.query(Entity).filter(Entity.project_id == pid,
+                                       Entity.is_class_node.is_(True)).count())
+    instances = (db.query(Entity).filter(Entity.project_id == pid,
+                                         Entity.is_class_node.is_(False)).count())
+    relations = (db.query(Relation).filter(Relation.project_id == pid).count())
+    certified_ents = (db.query(Entity).filter(Entity.project_id == pid,
+                                              Entity.certified.is_(True)).count())
+    axioms: list = []
+    try:
+        axioms = list_axioms(ctx.project)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[mcp] manifest 公理统计失败：{exc}")
+    rules = 0
+    try:
+        from app.infrastructure.database import OntologyRule
+
+        rules = (db.query(OntologyRule).filter(OntologyRule.project_id == pid).count())
+    except Exception:  # noqa: BLE001
+        pass
+    from app.adapters.versioning import latest_official_version
+
+    ver = latest_official_version(db, pid)
+    return {
+        "project": {"id": pid, "name": ctx.project.name, "status": ctx.project.status},
+        "ontology_version": {"version_no": ver.version_no if ver else None,
+                             "published": ctx.project.status == "published"},
+        "counts": {"classes": classes, "instances": instances,
+                   "relations": relations, "axioms": len(axioms),
+                   "axioms_certified": sum(1 for a in axioms if a.get("certified")),
+                   "rules": rules, "entities_certified": certified_ents},
+        "tools": _SEMANTIC_TOOL_NAMES,
+        "recommended_sequence": ["resources/read session-manifest（本清单）",
+                                 "resolve_semantics（按需取语义）",
+                                 "check_answerable（执行前确认覆盖）",
+                                 "执行动作前按公理/约束校验"],
+        "guidance": "resolved 语义是引导不是最终答案：执行动作前须按公理/约束校验；"
+                    "unavailable/ambiguous 时不要编造，改走澄清；"
+                    "本清单只含摘要，定义与证据按需检索。",
+    }
+
+
+
+# S19：语义工具注册（定义于上方，动态补入工具表）
+_TOOL_TABLE["resolve_semantics"] = _t_resolve_semantics
+_TOOL_TABLE["check_answerable"] = _t_check_answerable
+
+
 def _read_resource(ctx: McpContext, db: Session, uri: str) -> dict:
     if uri == "ontology://graph/summary":
         gd = ctx.project.graph_data or {}
@@ -763,6 +927,11 @@ def _read_resource(ctx: McpContext, db: Session, uri: str) -> dict:
                 "classes": class_count, "instances": instance_count,
                 "entity_rows": ent_rows,
             }, ensure_ascii=False),
+        }]}
+    if uri == "ontology://session-manifest":
+        return {"contents": [{
+            "uri": uri, "mimeType": "application/json",
+            "text": json.dumps(_session_manifest(ctx, db), ensure_ascii=False),
         }]}
     if uri == "ontology://schema/info":
         ttl = ctx.project.ttl_content or ""

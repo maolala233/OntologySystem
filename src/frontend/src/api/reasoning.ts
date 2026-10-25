@@ -74,6 +74,10 @@ export interface DeclaredAxiom {
     class?: string;
     min?: number | null;
     max?: number | null;
+    /** S16：公理来源四态 + 认证位（+可选证据锚点） */
+    source_type?: string;
+    certified?: boolean;
+    evidence?: unknown;
 }
 
 export interface AxiomBody {
@@ -134,5 +138,11 @@ export const reasoningApi = {
     },
     removeAxiom: async (projectId: number, key: string): Promise<void> => {
         await apiClient.delete(`/api/projects/${projectId}/reasoning/axioms`, { params: { key } });
+    },
+    /** S16：公理一键认证/撤销（存量公理盘点用） */
+    certifyAxiom: async (projectId: number, key: string, certified = true):
+        Promise<{ key: string; certified: boolean; source_type: string }> => {
+        const response = await apiClient.post(`/api/projects/${projectId}/reasoning/axioms/certify`, { key, certified });
+        return response.data;
     },
 };
