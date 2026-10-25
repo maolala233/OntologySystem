@@ -464,6 +464,25 @@ class GraphLayout(Base):
     created_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))
 
 
+class DataGrant(Base):
+    """数据级授权（S23，docs/15 / COA 数据级授权）：每用户至多一行。
+
+    无行 = 不受限（grandfather）；有行 = 受限用户：
+    domain_allowlist 知识域白名单（QA/MCP 域门控，fail-closed）；
+    class_denylist 类黑名单（检索/解析裁剪）；property_denylist 属性黑名单（详情脱敏）。
+    """
+    __tablename__ = "data_grants"
+
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
+                     primary_key=True, index=True)
+    domain_allowlist = Column(JSON, nullable=True)   # ["金融服务", ...]；空=全拒（受限内）
+    class_denylist = Column(JSON, nullable=True)     # ["反洗钱标记", ...]
+    property_denylist = Column(JSON, nullable=True)  # ["客户身份识别号", ...]
+    updated_by = Column(Integer, nullable=True)
+    updated_at = Column(DateTime, nullable=False,
+                        server_default=sa_text("CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"))
+
+
 class McpToken(Base):
     """MCP 网关令牌（M5 R7，02 §3.9 / 07 §3.2）：user+project+读写范围 绑定。
 

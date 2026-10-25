@@ -4,16 +4,16 @@
 from __future__ import annotations
 
 import secrets
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
-from app.core.deps import get_db, require_role
+from app.core.deps import get_current_user, get_db, require_role
 from app.core.exceptions import DuplicateUploadError, NotFoundError, ValidationError
-from app.infrastructure.database import Role, User
 from app.core.logging import logger
+from app.infrastructure.database import Role, User
 
 router = APIRouter(prefix="/api/admin/users", tags=["admin-users"])
 
@@ -198,3 +198,80 @@ def delete_user(user_id: int, admin: User = Depends(require_role("admin")),
     db.commit()
     logger.info(f"[audit] action=user.delete operator={admin.username} target={user.username}")
     return {"deleted": True, "id": user_id}
+
+
+# ─────────────── S23：数据级授权管理（docs/15） ───────────────
+
+@router.get("/admin/data-grants/{user_id}")
+def get_data_grant(user_id: int, current_user: User = Depends(get_current_user),
+                   db: Session = Depends(get_db)):
+    """查某用户的数据级授权（无行=不受限）。仅超管。"""
+    from app.core.deps import is_super_admin
+    from app.core.exceptions import ForbiddenError
+    from app.infrastructure.database import DataGrant
+
+    if not is_super_admin(current_user):
+        raise ForbiddenError("仅超级管理员可管理数据授权", code="ADMIN_ONLY")
+    row = db.query(DataGrant).filter(DataGrant.user_id == user_id).first()
+    if row is None:
+        return {"user_id": user_id, "restricted": False,
+                "domain_allowlist": None, "class_denylist": None,
+                "property_denylist": None}
+    return {"user_id": user_id, "restricted": True,
+            "domain_allowlist": row.domain_allowlist or [],
+            "class_denylist": row.class_denylist or [],
+            "property_denylist": row.property_denylist or []}
+
+
+@router.put("/admin/data-grants/{user_id}")
+def put_data_grant(user_id: int, body: dict,
+                   current_user: User = Depends(get_current_user),
+                   db: Session = Depends(get_db)):
+    """设置/清除数据级授权（S23）。仅超管。
+
+    body: {"restricted": false} 清除（回到不受限）；
+          {"restricted": true, "domain_allowlist": [...], "class_denylist": [...],
+           "property_denylist": [...]} 建立受限行（缺省空数组=该维度全拒/全裁）。
+    """
+    from app.core.deps import is_super_admin
+    from app.core.exceptions import APIError, ForbiddenError
+    from app.infrastructure.database import DataGrant
+
+    if not is_super_admin(current_user):
+        raise ForbiddenError("仅超级管理员可管理数据授权", code="ADMIN_ONLY")
+    target = db.query(User).filter(User.id == user_id).first()
+    if target is None:
+        raise APIError("用户不存在", code="USER_NOT_FOUND", http_status=404)
+    body = body or {}
+    row = db.query(DataGrant).filter(DataGrant.user_id == user_id).first()
+    if not body.get("restricted", False):
+        if row is not None:
+            db.delete(row)
+        db.commit()
+        return {"user_id": user_id, "restricted": False}
+
+    def _lst(key: str) -> list:
+        v = body.get(key) or []
+        if not isinstance(v, list):
+            raise APIError(f"{key} 必须是数组", code="BAD_GRANT_SHAPE", http_status=400)
+        return [str(x).strip() for x in v if str(x).strip()]
+
+    if row is None:
+        row = DataGrant(user_id=user_id)
+        db.add(row)
+    row.domain_allowlist = _lst("domain_allowlist")
+    row.class_denylist = _lst("class_denylist")
+    row.property_denylist = _lst("property_denylist")
+    row.updated_by = current_user.id
+    db.commit()
+    from app.services.audit_service import log_action
+
+    log_action(db, current_user.id, "data_grant.upsert", "user", str(user_id),
+               {"domain_allowlist": row.domain_allowlist,
+                "class_denylist": row.class_denylist,
+                "property_denylist": row.property_denylist})
+    db.commit()
+    return {"user_id": user_id, "restricted": True,
+            "domain_allowlist": row.domain_allowlist,
+            "class_denylist": row.class_denylist,
+            "property_denylist": row.property_denylist}

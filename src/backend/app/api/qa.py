@@ -105,6 +105,10 @@ def ask_question(
 ):
     """本体问答（03 §15）：stream=true → SSE（token/sources/done），否则 JSON 聚合。"""
     proj = _ensure_qa_access(db, project_id, user)
+    # S23 数据级授权：受限用户的知识域白名单（fail-closed：明确 403，不是编造不是空结果）
+    from app.services.data_auth import ensure_qa_domain_access
+
+    ensure_qa_domain_access(db, proj, user)
     question = body.question.strip()
     if not question:
         raise APIError("问题不能为空", code="QA_EMPTY_QUESTION", http_status=400)

@@ -128,3 +128,24 @@ export const adminApi = {
         return resp.data;
     },
 };
+
+
+// ── S23 数据级授权（docs/15）──
+export interface DataGrantInfo {
+    user_id: number;
+    restricted: boolean;
+    domain_allowlist: string[] | null;
+    class_denylist: string[] | null;
+    property_denylist: string[] | null;
+}
+
+export const dataGrantApi = {
+    get: async (userId: number): Promise<DataGrantInfo> => {
+        const resp = await apiClient.get(`/api/admin/users/admin/data-grants/${userId}`);
+        return resp.data;
+    },
+    put: async (userId: number, body: Partial<DataGrantInfo>): Promise<DataGrantInfo> => {
+        const resp = await apiClient.put(`/api/admin/users/admin/data-grants/${userId}`, body);
+        return resp.data;
+    },
+};

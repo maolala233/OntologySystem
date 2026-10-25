@@ -456,6 +456,17 @@ def _t_search_entities(ctx: McpContext, db: Session, args: dict) -> dict:
         ]
         seen = {e.id for e in rows}
         rows += [e for e in alias_hit if e.id not in seen]
+    # S23 数据级授权：受限令牌按类黑名单裁剪（被裁条目留审计）
+    from app.services.data_auth import audit_trim, scope_for
+
+    scope = scope_for(db, ctx.user)
+    if scope.active:
+        before = len(rows)
+        rows = [e for e in rows if scope.class_allowed(e.class_label)]
+        if len(rows) != before:
+            audit_trim(db, ctx.user.id, "mcp.search_entities",
+                       {"trimmed": before - len(rows)})
+            db.commit()
     class_filter = args.get("class_label")
     out = []
     for e in rows[: min(max(limit, 1), 50)]:
@@ -483,9 +494,12 @@ def _t_get_entity(ctx: McpContext, db: Session, args: dict) -> dict:
          "char_start": p.char_start, "char_end": p.char_end, "method": p.extraction_method}
         for p, fname in provs
     ]
+    from app.services.data_auth import scope_for
+
+    _scope = scope_for(db, ctx.user)
     return _text_content({
         "uri": ent.uri, "label": ent.label, "class_label": ent.class_label,
-        "aliases": ent.aliases, "properties": ent.props or {},
+        "aliases": ent.aliases, "properties": _scope.filter_props(ent.props),
         "confidence": float(ent.confidence) if ent.confidence is not None else None,
         "status": ent.status, "provenance": provenance,
     })
@@ -800,6 +814,12 @@ def _t_resolve_semantics(ctx: McpContext, db: Session, args: dict) -> dict:
 
     index = _semantic_index(db, ctx.project.id)
     gd = ctx.project.graph_data if isinstance(ctx.project.graph_data, dict) else {}
+    # S23：受限令牌——类黑名单内的概念按 unavailable 呈现（不暴露其存在）
+    from app.services.data_auth import scope_for
+
+    _scope = scope_for(db, ctx.user)
+    if _scope.active:
+        index = [e for e in index if _scope.class_allowed(e.class_label)]
     results = []
     for m in mentions:
         match = _match_mention(index, m, context)

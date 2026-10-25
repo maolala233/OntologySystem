@@ -5,10 +5,10 @@
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-    Button, Drawer, Empty, Modal, Form, Input, Popconfirm, Select, Space, Table, Tag, Typography, message,
+    Button, Drawer, Empty, Modal, Form, Input, Popconfirm, Select, Space, Switch, Table, Tag, Typography, message,
 } from 'antd';
 import { DeleteOutlined, FolderOpenOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
-import { adminApi, AdminUser } from '../../api/admin';
+import { adminApi, AdminUser, dataGrantApi } from '../../api/admin';
 import { useAuthStore } from '../../shared/auth/authStore';
 import { PROJECT_STATUS } from '../../shared/projectStatus';
 
@@ -170,6 +170,54 @@ const UserAdminPage: React.FC = () => {
         [users],
     );
 
+    // ── S23 数据级授权弹窗 ──
+    const [grantUser, setGrantUser] = useState<AdminUser | null>(null);
+    const [grantLoading, setGrantLoading] = useState(false);
+    const [grantSaving, setGrantSaving] = useState(false);
+    const [grantRestricted, setGrantRestricted] = useState(false);
+    const [domainAllow, setDomainAllow] = useState<string[]>([]);
+    const [classDeny, setClassDeny] = useState<string[]>([]);
+    const [propDeny, setPropDeny] = useState<string[]>([]);
+
+    const openGrant = async (u: AdminUser) => {
+        setGrantUser(u);
+        setGrantLoading(true);
+        try {
+            const g = await dataGrantApi.get(u.id);
+            setGrantRestricted(g.restricted);
+            setDomainAllow(g.domain_allowlist ?? []);
+            setClassDeny(g.class_denylist ?? []);
+            setPropDeny(g.property_denylist ?? []);
+        } catch (e: any) {
+            message.error(e.response?.data?.error?.message || '读取授权失败');
+            setGrantUser(null);
+        } finally {
+            setGrantLoading(false);
+        }
+    };
+
+    const saveGrant = async () => {
+        if (!grantUser) return;
+        setGrantSaving(true);
+        try {
+            await dataGrantApi.put(grantUser.id, {
+                restricted: grantRestricted,
+                domain_allowlist: domainAllow,
+                class_denylist: classDeny,
+                property_denylist: propDeny,
+            });
+            message.success(grantRestricted
+                ? `已对 ${grantUser.username} 启用数据级限制（fail-closed）`
+                : `已解除 ${grantUser.username} 的数据级限制`);
+            setGrantUser(null);
+            load();
+        } catch (e: any) {
+            message.error(e.response?.data?.error?.message || '保存失败');
+        } finally {
+            setGrantSaving(false);
+        }
+    };
+
     const columns = [
         { title: 'ID', dataIndex: 'id', width: 70 },
         { title: '用户名', dataIndex: 'username' },
@@ -196,6 +244,7 @@ const UserAdminPage: React.FC = () => {
                 <Space size={0}>
                     <Button size="small" type="link" icon={<FolderOpenOutlined />}
                         onClick={() => openProjects(record)}>项目</Button>
+                    <Button size="small" type="link" onClick={() => openGrant(record)}>数据授权</Button>
                     <Button size="small" type="link" onClick={() => handleResetPassword(record)}>重置密码</Button>
                     <Button size="small" type="link" danger={record.is_active}
                             disabled={record.role === 'admin'}
@@ -342,6 +391,45 @@ const UserAdminPage: React.FC = () => {
                     </div>
                 )}
             </Drawer>
+
+            <Modal title={grantUser ? `数据级授权 · ${grantUser.username}` : '数据级授权'}
+                   open={!!grantUser} onCancel={() => setGrantUser(null)}
+                   onOk={saveGrant} okText="保存" cancelText="取消"
+                   confirmLoading={grantSaving} width={560}>
+                {grantLoading ? <Empty description="读取中…" /> : (
+                    <div className="space-y-4">
+                        <div className="flex items-center gap-2">
+                            <Switch checked={grantRestricted} onChange={setGrantRestricted} />
+                            <span className="text-sm">启用数据级限制</span>
+                            <span className="text-xs text-gray-500">
+                                关闭=该用户不受限；开启后按下面三份清单裁剪（fail-closed：白名单外知识域直接拒绝问答）
+                            </span>
+                        </div>
+                        {grantRestricted && (
+                            <>
+                                <div>
+                                    <div className="text-sm mb-1">知识域白名单 <span className="text-xs text-gray-400">（问答/公共区只允许这些域；空=全部拒绝）</span></div>
+                                    <Select mode="tags" className="w-full" value={domainAllow}
+                                            onChange={setDomainAllow}
+                                            placeholder="如：金融服务、零售业务（回车添加）" />
+                                </div>
+                                <div>
+                                    <div className="text-sm mb-1">类黑名单 <span className="text-xs text-gray-400">（检索与语义解析中隐藏这些类）</span></div>
+                                    <Select mode="tags" className="w-full" value={classDeny}
+                                            onChange={setClassDeny}
+                                            placeholder="如：反洗钱标记（回车添加）" />
+                                </div>
+                                <div>
+                                    <div className="text-sm mb-1">属性黑名单 <span className="text-xs text-gray-400">（实体详情中脱敏这些属性）</span></div>
+                                    <Select mode="tags" className="w-full" value={propDeny}
+                                            onChange={setPropDeny}
+                                            placeholder="如：客户身份识别号（回车添加）" />
+                                </div>
+                            </>
+                        )}
+                    </div>
+                )}
+            </Modal>
         </div>
     );
 };
