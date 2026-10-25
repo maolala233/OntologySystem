@@ -20,6 +20,11 @@ const STATUS_COLOR: Record<string, string> = {
     auto: 'default', merged: 'cyan', pending_review: 'gold',
     approved: 'success', rejected: 'error', claimed: 'processing',
 };
+/** P2：状态人话（auto 对非专业用户含义不明） */
+const STATUS_LABEL: Record<string, string> = {
+    auto: '机器生成', merged: '已合并', pending_review: '待审核',
+    approved: '已通过', rejected: '已拒绝', claimed: '处理中',
+};
 
 /** S16：资产来源四态徽标（人话文案） */
 const SOURCE_TYPE_LABEL: Record<string, string> = {
@@ -283,7 +288,7 @@ const DetailDrawer: React.FC<Props> = ({ projectId, selection, onClose, onNaviga
                             <Descriptions.Item label={<Term t="置信度" />}>
                                 {edgeDetail.confidence != null ? <Tag color="blue">{edgeDetail.confidence.toFixed(2)}</Tag> : '—'}
                             </Descriptions.Item>
-                            <Descriptions.Item label="状态"><Tag color={STATUS_COLOR[edgeDetail.status]}>{edgeDetail.status}</Tag></Descriptions.Item>
+                            <Descriptions.Item label="状态"><Tooltip title="机器生成=未经人工认证的内容"><Tag color={STATUS_COLOR[edgeDetail.status]}>{STATUS_LABEL[edgeDetail.status] || edgeDetail.status}</Tag></Tooltip></Descriptions.Item>
                             {edgeDetail.source_type &&
                                 <Descriptions.Item label="来源">
                                     <Tag color={SOURCE_TYPE_COLOR[edgeDetail.source_type] || 'default'}>
@@ -404,7 +409,9 @@ export const NodeDetailContent: React.FC<{
                             {KIND_LABEL[nodeDetail.node.kind] || nodeDetail.node.kind}
                         </Tag>
                         <Tag color="geekblue">{nodeDetail.entity.class_label}</Tag>
-                        <Tag color={STATUS_COLOR[nodeDetail.entity.status]}>{nodeDetail.entity.status}</Tag>
+                        <Tooltip title="机器生成=未经人工认证的内容（重跑可能更新）；点「人工认证」可固定">
+                  <Tag color={STATUS_COLOR[nodeDetail.entity.status]}>{STATUS_LABEL[nodeDetail.entity.status] || nodeDetail.entity.status}</Tag>
+                </Tooltip>
                         {nodeDetail.entity.source_type &&
                             <Tooltip title="知识来源：规则/AI 抽取，或人工编辑/新建">
                                 <Tag color={SOURCE_TYPE_COLOR[nodeDetail.entity.source_type] || 'default'}>
@@ -471,7 +478,11 @@ export const NodeDetailContent: React.FC<{
                                   render: (v, r) => <Tag color={r.direction === 'out' ? 'blue' : 'green'}>{v}{r.direction === 'out' ? ' →' : ' ←'}</Tag> },
                                 { title: '对方', dataIndex: 'other_label',
                                   render: (v, r) => r.other_id ? (
-                                      <a onClick={() => r.other_id && onNavigateNode?.(r.other_id)}>{v} <Text type="secondary" className="text-xs">{r.other_class}</Text></a>
+                                      <a onClick={() => r.other_id && onNavigateNode?.(r.other_id)}>
+                                          {v}
+                                          {r.other_class && r.other_class !== v &&
+                                              <Text type="secondary" className="text-xs"> {r.other_class}</Text>}
+                                      </a>
                                   ) : v },
                                 { title: <Term t="置信" />, dataIndex: 'confidence', width: 70,
                                   render: (v) => v != null ? v.toFixed(2) : '—' },

@@ -7,8 +7,9 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     Alert, Button, Card, Collapse, Descriptions, Empty, Input, Modal, Segmented, Select, Space, Spin, Table, Tag, Timeline as AntTimeline, Tooltip, message,
 } from 'antd';
-import { RollbackOutlined, SearchOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { ReloadOutlined, RollbackOutlined, SearchOutlined, ThunderboltOutlined } from '@ant-design/icons';
 
+import PublishDialog from '../graph/PublishDialog';
 import { GateEvaluationRow, ImpactSummary, gateApi, impactApi } from '../../../api/cqs';
 import {
     ClassModified, DiffResult, InstanceBrief, InstanceModified, RelationRow, VersionRow, publishApi, versionsApi,
@@ -222,6 +223,8 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
 
     // S21：进化触发器（due 提醒横幅）
     const [triggerInfo, setTriggerInfo] = useState<Awaited<ReturnType<typeof publishApi.evolutionTriggerCheck>> | null>(null);
+    // P1-4：门控子页直达发布（复用 PublishDialog）
+    const [publishOpen, setPublishOpen] = useState(false);
     // S22/FE11：进化运行状态机视图
     const [runs, setRuns] = useState<Awaited<ReturnType<typeof publishApi.evolutionRuns>>['items']>([]);
     const [runsLoading, setRunsLoading] = useState(false);
@@ -441,7 +444,7 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
                             { value: 'evolve', label: '进化' },
                         ]}
                     />
-                    <Button icon={<SearchOutlined />} onClick={load}>刷新</Button>
+                    <Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>
                 </Space>
             }
         >
@@ -583,6 +586,12 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
             )}
 
             {subTab === 'gate' && (
+                <>
+                <div className="mb-3 flex items-center gap-2">
+                    <Button type="primary" icon={<ThunderboltOutlined />}
+                            onClick={() => setPublishOpen(true)}>发布到资产中心</Button>
+                    <span className="text-xs text-gray-500">先跑门禁预检（机检链 + 配对评估），通过后落版本</span>
+                </div>
                 <Spin spinning={gateLoading}>
                     <Alert
                         type="info" showIcon className="mb-4"
@@ -692,6 +701,7 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
                         <Button size="small" icon={<ThunderboltOutlined />} onClick={loadGate}>刷新门控记录</Button>
                     </div>
                 </Spin>
+                </>
             )}
 
             {subTab === 'entity' && (
@@ -828,6 +838,8 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
                     </div>
                 </Spin>
             )}
+            <PublishDialog projectId={projectId} open={publishOpen}
+                           onClose={() => setPublishOpen(false)} onPublished={() => { load(); loadGate(); }} />
         </Card>
     );
 };
