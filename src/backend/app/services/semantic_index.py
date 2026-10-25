@@ -153,6 +153,16 @@ def grade_coverage(index: list[Entity], gd: dict, question: str) -> dict:
                 matched.append({"label": label, "kind": "property",
                                 "domain": op_.get("domain"), "range": op_.get("range"),
                                 "functional": bool(op_.get("functional"))})
+        # S24：治理指标也属本体词汇（口径命中计入覆盖）
+        for m in (gd.get("schema") or {}).get("metrics") or []:
+            if not isinstance(m, dict):
+                continue
+            label = str(m.get("label") or "").strip()
+            if len(label) >= 2 and label.lower() in ql:
+                matched.append({"label": label, "kind": "metric",
+                                "expression": m.get("expression"),
+                                "unit": m.get("unit"),
+                                "certified": bool(m.get("certified"))})
     n = len(matched)
     coverage = "no" if n == 0 else ("partial" if n == 1 else "likely")
     return {"coverage": coverage, "matched": matched, "matched_count": n}

@@ -354,8 +354,26 @@ def _authoritative_sources(query: RetrievalQuery, db: Session) -> list[Retrieved
     index = build_index(db, query.project_id)
     grade = grade_coverage(index, gd, query.question)
     out: list[RetrievedSource] = []
+    # S24：指标口径优先注入（口径的单一权威来源，最多 2 条）
+    from app.services.metrics_store import find_metrics_for
+
     for m in grade["matched"]:
-        if m.get("kind") == "property" or len(out) >= 2:
+        if m.get("kind") != "metric" or len(out) >= 2:
+            continue
+        hit = next((x for x in find_metrics_for(gd) if x.get("label") == m.get("label")), None)
+        if hit is None:
+            continue
+        mark = "（人工认证）" if hit.get("certified") else ""
+        out.append(RetrievedSource(
+            doc_file=f"指标口径{mark}",
+            quote=f"【{hit['label']}】{hit.get('expression') or hit.get('definition') or ''}"
+                  f"{'（单位：' + hit['unit'] + '）' if hit.get('unit') else ''}。"
+                  f"适用：{'、'.join(hit.get('applies_to') or []) or '全域'}。来源：本本体指标口径{mark}",
+            char_start=None, char_end=None,
+            ref_type="authoritative", score=1.0, source_document_id=None,
+        ))
+    for m in grade["matched"]:
+        if m.get("kind") in ("property", "metric") or len(out) >= 2:
             continue
         e = next((x for x in index if x.uri == m.get("uri")), None)
         if e is None:

@@ -146,3 +146,30 @@ export const reasoningApi = {
         return response.data;
     },
 };
+
+
+// ── S24 治理指标（口径的单一权威来源）──
+export interface GovernedMetric {
+    label: string; definition: string; expression: string; unit: string;
+    applies_to: string[]; severity: 'block' | 'warn';
+    source_type: string; certified: boolean; evidence?: any;
+}
+
+export const metricsApi = {
+    list: async (projectId: number): Promise<{ items: GovernedMetric[] }> => {
+        const response = await apiClient.get(`/api/projects/${projectId}/reasoning/metrics`);
+        return response.data;
+    },
+    declare: async (projectId: number, body: Partial<GovernedMetric>) => {
+        const response = await apiClient.post(`/api/projects/${projectId}/reasoning/metrics`, body);
+        return response.data;
+    },
+    remove: async (projectId: number, label: string) => {
+        await apiClient.delete(`/api/projects/${projectId}/reasoning/metrics`, { params: { label } });
+    },
+    certify: async (projectId: number, label: string, certified = true) => {
+        const response = await apiClient.post(
+            `/api/projects/${projectId}/reasoning/metrics/certify`, { label, certified });
+        return response.data;
+    },
+};

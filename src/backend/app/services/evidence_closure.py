@@ -99,6 +99,11 @@ def tbox_evidence_closure(db: Session, project_id: int, gd: dict) -> dict:
                           "source_chunk_no": d["source_chunk_no"]}
         _check_anchor(f"关系「{label}」", anchor)
 
+    # ── 指标（S24）：schema.metrics[].evidence 锚点（悬空=阻断；无锚点=missing 不阻断）
+    for m in (schema.get("metrics") or []):
+        if isinstance(m, dict) and m.get("label"):
+            _check_anchor(f"指标「{m['label']}」", m.get("evidence"))
+
     # ── 公理（S16-Step2）：axiom_provenance[key].evidence 锚点。无登记=missing
     #    （grandfather 不阻断）；有登记但锚点悬空（引用的 chunk 已删）=dangling 阻断。
     for key, meta in (schema.get("axiom_provenance") or {}).items():

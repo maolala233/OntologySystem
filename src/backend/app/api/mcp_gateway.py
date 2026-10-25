@@ -355,6 +355,25 @@ def _tool_specs(ctx: McpContext) -> list[dict]:
             },
         },
         {
+            "name": "precheck_action",
+            "description": "S24 执行前合规校验（金融复杂操作可信执行）：提交拟执行的业务操作"
+                           "（add_fact/add_entity），平台用 TBox/公理/指标口径做确定性机检，"
+                           "返回 verdict（allow/warn/block）+ 命中清单（含指标限额口径）。"
+                           "block=不得执行；写工具 add_* 内置同源检查不可绕过",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string", "enum": ["add_fact", "add_entity"]},
+                    "subject_label": {"type": "string", "description": "add_fact 主语（实例/类名）"},
+                    "predicate": {"type": "string", "description": "add_fact 谓词"},
+                    "object_label": {"type": "string", "description": "add_fact 宾语"},
+                    "class_label": {"type": "string", "description": "add_entity 所属类"},
+                    "properties": {"type": "object", "description": "add_entity 属性（可选）"},
+                },
+                "required": ["kind"],
+            },
+        },
+        {
             "name": "check_answerable",
             "description": "S19 答案性预检（确定性、无 LLM）：问题术语与本体词汇的命中覆盖分级 "
                            "（no/partial/likely）+ 命中清单；覆盖不足时不要硬答，改走澄清或提示构建",
@@ -662,6 +681,20 @@ def _entity_payload(ent: Entity) -> dict:
 
 
 def _t_add_entity(ctx: McpContext, db: Session, args: dict) -> dict:
+    # S24：执行前同源合规校验（不可绕过）
+    from app.services.action_gate import precheck_action
+
+    _pre = precheck_action(db, ctx.project, {
+        "kind": "add_entity",
+        "class_label": str(args.get("class_label") or ""),
+        "properties": args.get("properties") or {},
+    })
+    if _pre["verdict"] == "block":
+        _audit(ctx, db, "mcp.write", "add_entity",
+               {"blocked": True, "hits": _pre["hits"][:5]}, blocked=True)
+        raise _rpc_error(ERR_FORBIDDEN,
+                         "操作被合规校验拦截（block）：" + "；".join(
+                             h.get("message", "") for h in _pre["hits"][:3]))
     label = str(args.get("label", "")).strip()
     class_label = str(args.get("class_label", "")).strip()
     if not label or not class_label:
@@ -712,6 +745,21 @@ def _entity_payload_from_node(node: dict, project_id: int) -> dict:
 
 
 def _t_add_relationship(ctx: McpContext, db: Session, args: dict) -> dict:
+    # S24：执行前同源合规校验（不可绕过——与 precheck_action 同一实现）
+    from app.services.action_gate import precheck_action
+
+    _pre = precheck_action(db, ctx.project, {
+        "kind": "add_fact",
+        "subject_label": str(args.get("subject_uri") or ""),
+        "predicate": str(args.get("predicate") or ""),
+        "object_label": str(args.get("object_uri") or ""),
+    })
+    if _pre["verdict"] == "block":
+        _audit(ctx, db, "mcp.write", "add_relationship",
+               {"blocked": True, "hits": _pre["hits"][:5]}, blocked=True)
+        raise _rpc_error(ERR_FORBIDDEN,
+                         "操作被合规校验拦截（block）：" + "；".join(
+                             h.get("message", "") for h in _pre["hits"][:3]))
     subj = _resolve_entity(db, ctx.project.id, args.get("subject_uri"))
     obj = _resolve_entity(db, ctx.project.id, args.get("object_uri"))
     predicate = str(args.get("predicate", "")).strip()
@@ -820,8 +868,28 @@ def _t_resolve_semantics(ctx: McpContext, db: Session, args: dict) -> dict:
     _scope = scope_for(db, ctx.user)
     if _scope.active:
         index = [e for e in index if _scope.class_allowed(e.class_label)]
+    # S24：指标名（label/别名不存在，label 精确）优先于实体解析——口径的单一权威来源
+    from app.services.metrics_store import find_metrics_for
+
+    metric_by_label = {str(x.get("label") or ""): x for x in find_metrics_for(gd)}
     results = []
     for m in mentions:
+        if m.strip().lower() in {k.lower() for k in metric_by_label}:
+            hit = next(v for k, v in metric_by_label.items()
+                       if k.lower() == m.strip().lower())
+            results.append({
+                "mention": m, "coverage_status": "supported", "matched_via": "exact_metric",
+                "metric": {"label": hit.get("label"),
+                           "definition": hit.get("definition") or "",
+                           "expression": hit.get("expression") or "",
+                           "unit": hit.get("unit") or "",
+                           "applies_to": hit.get("applies_to") or [],
+                           "severity": hit.get("severity") or "warn",
+                           "certified": bool(hit.get("certified"))},
+                "axioms": [], "evidence": [],
+                "note": "治理指标：口径的单一权威来源；执行涉及其适用类的操作前先过 precheck_action",
+            })
+            continue
         match = _match_mention(index, m, context)
         if match["status"] == "unavailable":
             results.append({"mention": m, "coverage_status": "unavailable",
@@ -871,6 +939,16 @@ def _t_check_answerable(ctx: McpContext, db: Session, args: dict) -> dict:
         "note": "确定性预检只覆盖术语命中；实际可答性以检索与生成结果为准。"
                 "coverage=no 时不要硬答：改走澄清或提示补建本体。",
     })
+
+
+def _t_precheck_action(ctx: McpContext, db: Session, args: dict) -> dict:
+    """S24-3：执行前合规校验（确定性、无 LLM、只读不落库）。"""
+    from app.services.action_gate import precheck_action
+
+    result = precheck_action(db, ctx.project, args)
+    _audit(ctx, db, "mcp.precheck", "precheck_action",
+           {"kind": args.get("kind"), "verdict": result.get("verdict")})
+    return _text_content(result)
 
 
 def _session_manifest(ctx: McpContext, db: Session) -> dict:
@@ -923,6 +1001,7 @@ def _session_manifest(ctx: McpContext, db: Session) -> dict:
 # S19：语义工具注册（定义于上方，动态补入工具表）
 _TOOL_TABLE["resolve_semantics"] = _t_resolve_semantics
 _TOOL_TABLE["check_answerable"] = _t_check_answerable
+_TOOL_TABLE["precheck_action"] = _t_precheck_action
 
 
 def _read_resource(ctx: McpContext, db: Session, uri: str) -> dict:

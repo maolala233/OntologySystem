@@ -10,7 +10,7 @@ import {
     DeleteOutlined, DownloadOutlined, ExperimentOutlined, PlusOutlined, ReloadOutlined, SettingOutlined,
 } from '@ant-design/icons';
 
-import { reasoningApi, type DeclaredAxiom, type OntologyRule, type ReasoningItem, type ReasoningSummary, type RuleSuggestion } from '../../../api/reasoning';
+import { reasoningApi, metricsApi, type DeclaredAxiom, type GovernedMetric, type OntologyRule, type ReasoningItem, type ReasoningSummary, type RuleSuggestion } from '../../../api/reasoning';
 
 const SOURCE_TAG: Record<string, { color: string; label: string }> = {
     owlrl: { color: '#5B8DEF', label: 'OWL-RL 蕴含' },
@@ -128,6 +128,61 @@ const ReasoningModal: React.FC<{
             setPredicateLabels(r.predicate_labels);
         } catch { /* 公理加载失败不阻断 */ }
     }, [projectId]);
+
+    // S24：治理指标（口径的单一权威来源）
+    const [metrics, setMetrics] = useState<GovernedMetric[]>([]);
+    const [metricFormOpen, setMetricFormOpen] = useState(false);
+    const [metricForm, setMetricForm] = useState<{ label: string; expression: string;
+        unit: string; applies_to: string; severity: 'block' | 'warn' }>(
+        { label: '', expression: '', unit: '', applies_to: '', severity: 'warn' });
+
+    const loadMetrics = useCallback(async () => {
+        try {
+            setMetrics((await metricsApi.list(projectId)).items);
+        } catch { /* 静默 */ }
+    }, [projectId]);
+
+    const saveMetric = useCallback(async () => {
+        if (!metricForm.label.trim() || !metricForm.expression.trim()) {
+            message.warning('名称与口径必填（如：单笔等值金额 ≥ 500,000 USD）');
+            return;
+        }
+        try {
+            await metricsApi.declare(projectId, {
+                label: metricForm.label.trim(),
+                expression: metricForm.expression.trim(),
+                unit: metricForm.unit.trim() || undefined,
+                applies_to: metricForm.applies_to.split(/[,，、\s]+/).filter(Boolean),
+                severity: metricForm.severity,
+            });
+            message.success(`指标「${metricForm.label.trim()}」已登记（口径将进入问答与执行前校验）`);
+            setMetricForm({ label: '', expression: '', unit: '', applies_to: '', severity: 'warn' });
+            setMetricFormOpen(false);
+            loadMetrics();
+        } catch (e: any) {
+            message.error(e?.response?.data?.detail || '登记失败');
+        }
+    }, [projectId, metricForm, loadMetrics]);
+
+    const certifyMetric = useCallback(async (m: GovernedMetric, certified: boolean) => {
+        try {
+            await metricsApi.certify(projectId, m.label, certified);
+            message.success(certified ? '已认证：口径为权威来源' : '已撤销认证');
+            loadMetrics();
+        } catch (e: any) {
+            message.error(e?.response?.data?.detail || '操作失败');
+        }
+    }, [projectId, loadMetrics]);
+
+    const removeMetric = useCallback(async (m: GovernedMetric) => {
+        try {
+            await metricsApi.remove(projectId, m.label);
+            message.success(`指标「${m.label}」已删除`);
+            loadMetrics();
+        } catch (e: any) {
+            message.error(e?.response?.data?.detail || '删除失败');
+        }
+    }, [projectId, loadMetrics]);
 
     /** S16：公理一键认证/撤销（认证后重跑抽取与自进化不覆盖该公理） */
     const certifyAxiom = useCallback(async (a: DeclaredAxiom, certified: boolean) => {
@@ -580,6 +635,68 @@ const ReasoningModal: React.FC<{
                                 </Popconfirm>
                             </div>
                         ))}
+                    </div>
+                )}
+
+                {/* 治理指标区（S24）：口径的单一权威来源 */}
+                <div className="flex items-center gap-2 mb-2 mt-3">
+                    <span className="text-sm font-medium" style={{ color: '#B585F2' }}>治理指标</span>
+                    <Tooltip title="指标口径是金融操作的权威语义：问答中置顶引用（指标口径），智能体执行前经 precheck_action 命中限额/审批线">
+                        <Tag style={{ fontSize: 11 }}>口径权威</Tag>
+                    </Tooltip>
+                    <div className="flex-1" />
+                    <Button size="small" icon={<PlusOutlined />}
+                            onClick={() => setMetricFormOpen(v => !v)}>新增指标</Button>
+                </div>
+                {metricFormOpen && (
+                    <div className="mb-2 p-2 border rounded space-y-1.5" style={{ borderColor: '#1E2A44' }}>
+                        <Input size="small" placeholder="指标名（如：大额汇款审批线）"
+                               value={metricForm.label}
+                               onChange={(e) => setMetricForm({ ...metricForm, label: e.target.value })} />
+                        <Input size="small" placeholder="口径（如：单笔等值金额 ≥ 500,000 USD 须大额审批）"
+                               value={metricForm.expression}
+                               onChange={(e) => setMetricForm({ ...metricForm, expression: e.target.value })} />
+                        <div className="flex gap-2">
+                            <Input size="small" className="flex-1" placeholder="单位（USD/CNY，可空）"
+                                   value={metricForm.unit}
+                                   onChange={(e) => setMetricForm({ ...metricForm, unit: e.target.value })} />
+                            <Input size="small" className="flex-1" placeholder="适用类（逗号分隔，如：跨境汇款）"
+                                   value={metricForm.applies_to}
+                                   onChange={(e) => setMetricForm({ ...metricForm, applies_to: e.target.value })} />
+                            <Select size="small" value={metricForm.severity} style={{ width: 92 }}
+                                    onChange={(v) => setMetricForm({ ...metricForm, severity: v })}
+                                    options={[{ value: 'warn', label: 'warn 提示' },
+                                              { value: 'block', label: 'block 阻断' }]} />
+                        </div>
+                        <Button size="small" type="primary" onClick={saveMetric}>登记</Button>
+                    </div>
+                )}
+                {metrics.map((m) => (
+                    <div key={m.label} className="flex items-center gap-2 py-1.5 border-b text-sm"
+                         style={{ borderColor: '#1E2A44' }}>
+                        <Tag color={m.severity === 'block' ? 'red' : 'orange'} className="flex-shrink-0"
+                             style={{ fontSize: 11 }}>{m.severity}</Tag>
+                        <span className="font-medium flex-shrink-0">{m.label}</span>
+                        <span className="flex-1 text-xs text-gray-400 truncate">
+                            {m.expression}{m.unit ? `（${m.unit}）` : ''}
+                            {m.applies_to?.length ? ` · 适用：${m.applies_to.join('、')}` : ''}
+                        </span>
+                        {m.certified
+                            ? <Tooltip title="已人工认证：口径为权威来源"><Tag color="green" className="flex-shrink-0" style={{ fontSize: 11 }}>✓已认证</Tag></Tooltip>
+                            : <Button size="small" type="link" className="flex-shrink-0"
+                                      style={{ fontSize: 11, padding: 0 }}
+                                      onClick={() => certifyMetric(m, true)}>认证</Button>}
+                        {m.certified &&
+                            <Button size="small" type="text" className="flex-shrink-0" style={{ fontSize: 11 }}
+                                    onClick={() => certifyMetric(m, false)}>撤销</Button>}
+                        <Popconfirm title={`删除指标「${m.label}」？`} onConfirm={() => removeMetric(m)}>
+                            <Button size="small" type="text" danger icon={<DeleteOutlined />} />
+                        </Popconfirm>
+                    </div>
+                ))}
+                {metrics.length === 0 && !metricFormOpen && (
+                    <div className="text-xs text-gray-500 py-1">
+                        尚无治理指标：把制度里的限额/审批线/费率登记为指标口径，问答与智能体执行前校验都会引用
                     </div>
                 )}
 

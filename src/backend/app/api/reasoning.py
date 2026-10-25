@@ -259,3 +259,83 @@ def certify_axiom_endpoint(project_id: int, body: AxiomCertifyBody,
         raise HTTPException(status_code=400, detail=result["skipped"])
     db.commit()
     return result
+
+
+# ─────────────── S24：治理指标（docs/15 / GovernedMetric） ───────────────
+
+class MetricBody(BaseModel):
+    label: str
+    definition: str | None = None
+    expression: str | None = None      # 口径（如 "单笔等值 ≥ 50 万美元须大额审批"）
+    unit: str | None = None
+    applies_to: list[str] | None = None  # 适用类
+    severity: str | None = None        # block | warn
+    chunk_indices: list[int] | None = None
+    evidence: dict | None = None
+
+
+@router.get("/reasoning/metrics", dependencies=[Depends(require_module("resolution"))])
+def list_metrics_endpoint(project_id: int, current_user: User = Depends(get_current_user),
+                          db: Session = Depends(get_db)):
+    """治理指标列表（口径的单一权威来源）。"""
+    require_project_role(project_id, "viewer", current_user, db)
+    proj = _load_project_or_404(project_id, db)
+    from app.services.metrics_store import list_metrics
+
+    return {"items": list_metrics(proj)}
+
+
+@router.post("/reasoning/metrics", dependencies=[Depends(require_module("resolution"))])
+def declare_metric_endpoint(project_id: int, body: MetricBody,
+                            current_user: User = Depends(get_current_user),
+                            db: Session = Depends(get_db)):
+    """声明/更新指标（按 label 幂等；人工路径默认 steward_specified+certified）。"""
+    require_project_role(project_id, "editor", current_user, db)
+    proj = _load_project_or_404(project_id, db)
+    payload = body.model_dump()
+    if payload.get("chunk_indices") and not payload.get("evidence"):
+        from app.services.review_service import _evidence_anchor
+
+        anchor = _evidence_anchor(db, project_id, payload["chunk_indices"], "")
+        if anchor:
+            payload["evidence"] = anchor
+    from app.services.metrics_store import declare_metric
+
+    result = declare_metric(db, proj, payload)
+    if "skipped" in result:
+        raise HTTPException(status_code=400, detail=result["skipped"])
+    db.commit()
+    return result
+
+
+@router.delete("/reasoning/metrics", dependencies=[Depends(require_module("resolution"))])
+def remove_metric_endpoint(project_id: int, label: str = Query(..., min_length=1),
+                           current_user: User = Depends(get_current_user),
+                           db: Session = Depends(get_db)):
+    require_project_role(project_id, "editor", current_user, db)
+    proj = _load_project_or_404(project_id, db)
+    from app.services.metrics_store import remove_metric
+
+    result = remove_metric(db, proj, label)
+    if "skipped" in result:
+        raise HTTPException(status_code=400, detail=result["skipped"])
+    db.commit()
+    return result
+
+
+@router.post("/reasoning/metrics/certify", dependencies=[Depends(require_module("resolution"))])
+def certify_metric_endpoint(project_id: int, body: dict,
+                            current_user: User = Depends(get_current_user),
+                            db: Session = Depends(get_db)):
+    """指标一键认证/撤销（存量盘点）。"""
+    require_project_role(project_id, "editor", current_user, db)
+    proj = _load_project_or_404(project_id, db)
+    from app.services.metrics_store import certify_metric
+
+    result = certify_metric(db, proj, str(body.get("label") or ""),
+                            certified=bool(body.get("certified", True)),
+                            decided_by=current_user.id)
+    if "skipped" in result:
+        raise HTTPException(status_code=400, detail=result["skipped"])
+    db.commit()
+    return result
