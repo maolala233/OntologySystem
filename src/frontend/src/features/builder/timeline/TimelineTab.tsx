@@ -230,6 +230,9 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
     const [runsLoading, setRunsLoading] = useState(false);
     const [newHypothesis, setNewHypothesis] = useState('');
     const [evolving, setEvolving] = useState(false);
+    // S25：用量分析（Learn 闭环数据面）
+    const [usage, setUsage] = useState<Awaited<ReturnType<typeof publishApi.evolutionUsage>> | null>(null);
+    const [mining, setMining] = useState(false);
 
     // AI 协同操作历史（O5-B29/F15）
     const [audit, setAudit] = useState<CopilotAuditRow[]>([]);
@@ -284,7 +287,25 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
             setRuns((await publishApi.evolutionRuns(projectId)).items);
         } catch { /* 静默 */ }
         finally { setRunsLoading(false); }
+        try {
+            setUsage(await publishApi.evolutionUsage(projectId, 7));
+        } catch { /* 用量分析静默 */ }
     }, [projectId]);
+
+    const mineFailures = useCallback(async () => {
+        setMining(true);
+        try {
+            const r = await publishApi.evolutionAnalyze(projectId);
+            if (r.status === 'analyzed') {
+                message.success(`挖掘完成：${r.failure_count} 条失败问答聚类并生成建议，已进审核队列`);
+            } else {
+                message.info(r.reason ? `未触发挖掘：${r.reason}` : '没有足够失败样本，暂不挖掘');
+            }
+            loadEvolve();
+        } catch (e: any) {
+            message.error(e.response?.data?.error?.message || '挖掘失败');
+        } finally { setMining(false); }
+    }, [projectId, loadEvolve]);
 
     const startRun = useCallback(async () => {
         if (!newHypothesis.trim()) { message.warning('先写一句本轮进化假设（想改进什么）'); return; }
@@ -779,7 +800,37 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
             )}
             {subTab === 'evolve' && (
                 <Spin spinning={runsLoading}>
-                    <div className="mb-3 flex items-center gap-2 flex-wrap">
+                    {usage && (
+                    <div className="mb-3 border rounded p-2.5 bg-gray-50/60 text-sm">
+                        <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-medium">近 7 天问答</span>
+                            <Tag className="!m-0">{usage.total} 次</Tag>
+                            <Tag color={usage.failed > 0 ? 'orange' : 'green'} className="!m-0">
+                                失败/拒答 {usage.failed}
+                            </Tag>
+                            {usage.answer_rate != null &&
+                                <Tag color="geekblue" className="!m-0">
+                                    答率 {(usage.answer_rate * 100).toFixed(0)}%
+                                </Tag>}
+                            <Tag color="purple" className="!m-0">待审建议 {usage.pending_suggestions}</Tag>
+                            <span className="flex-1" />
+                            <Button size="small" loading={mining} onClick={mineFailures}>
+                                挖掘失败问答生成建议
+                            </Button>
+                        </div>
+                        {usage.top_failed.length > 0 && (
+                            <div className="text-xs text-gray-500 mt-1">
+                                失败 TOP：
+                                {usage.top_failed.slice(0, 3).map(f => (
+                                    <span key={f.question} className="mr-2">
+                                        「{f.question.slice(0, 24)}」×{f.count}
+                                    </span>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+                <div className="mb-3 flex items-center gap-2 flex-wrap">
                         <Input className="max-w-md" placeholder="本轮进化假设（如：补充企业客户子类以回答 XX 问题）"
                                value={newHypothesis} onChange={(e) => setNewHypothesis(e.target.value)} />
                         <Button type="primary" loading={evolving} onClick={startRun}>开始进化运行</Button>

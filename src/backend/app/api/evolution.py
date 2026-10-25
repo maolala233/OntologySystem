@@ -223,3 +223,14 @@ def incomplete_evolution_run(project_id: int, run_id: int, body: dict | None = N
                              user_id=user.id)
     db.commit()
     return result
+
+
+@router.get("/{project_id}/evolution/usage")
+def usage_overview(project_id: int, days: int = 7,
+                   db: Session = Depends(get_db),
+                   user: User = Depends(get_current_user)):
+    """S25-1 用量分析（Learn 闭环数据面）：问答量/答率/失败 TOP/建议现状。只读。"""
+    require_project_role(project_id, "viewer", user, db)
+    from app.services.usage_analytics import usage_summary
+
+    return usage_summary(db, project_id, days=days)

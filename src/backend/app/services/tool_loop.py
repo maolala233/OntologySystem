@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,10 @@ _ACTION_SCHEMA = {
 
 def iter_tool_loop(llm, system_prompt: str, user_prompt: str,
                    tools: dict[str, dict[str, Any]],
-                   max_rounds: int = 2):
+                   max_rounds: int | None = None):
+    from app.core.repair_budget import TOOL_LOOP_ROUNDS
+
+    max_rounds = TOOL_LOOP_ROUNDS if max_rounds is None else max(1, int(max_rounds))
     """生成器版 tool-loop：边执行边 yield ("tool", payload) 步骤事件（B31/F16 实时展示），
     结束时 return {"answer", "rounds", "tool_calls"}（调用方用 yield from 捕获）。"""
     tools_desc = "\n".join(

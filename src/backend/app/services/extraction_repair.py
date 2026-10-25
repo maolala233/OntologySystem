@@ -4,9 +4,17 @@
 from __future__ import annotations
 
 import logging
-from typing import Callable
+from collections.abc import Callable
+
+from app.core.repair_budget import EXTRACTION_REPAIR_ROUNDS
 
 logger = logging.getLogger(__name__)
+
+
+def _repair_rounds() -> int:
+    """S25-3：修复轮数统一取自 repair_budget 合同。"""
+    return EXTRACTION_REPAIR_ROUNDS
+
 
 # 违例率 = 违例条数 / (通过 + 违例)；超过该值触发定向修复
 REPAIR_VIOLATION_RATE = 0.4
@@ -86,7 +94,7 @@ def targeted_repair(chunks: list, violations: list[dict],
                  "re_extract": {"description": "带违例反馈重抽单 chunk，返回实体数组",
                                 "parameters": {"chunk_index": "int", "feedback": "str"},
                                 "fn": _reextract}},
-                max_rounds=2)
+                max_rounds=_repair_rounds())
             recovered = []
             for c in loop.get("tool_calls", []):
                 if c.get("tool") == "re_extract":

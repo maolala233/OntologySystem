@@ -225,6 +225,26 @@ export const publishApi = {
         return response.data;
     },
 
+    /** S25-1：用量分析（Learn 闭环数据面，只读聚合） */
+    evolutionUsage: async (projectId: number, days = 7) => {
+        const response = await apiClient.get(
+            `/api/projects/${projectId}/evolution/usage`, { params: { days } });
+        return response.data as {
+            days: number; total: number; ok: number; repaired: number; failed: number;
+            answer_rate: number | null;
+            trend: { day: string; total: number; failed: number }[];
+            top_failed: { question: string; count: number }[];
+            pending_suggestions: number;
+            last_analysis_at: string | null;
+        };
+    },
+
+    /** S25-2：一键挖掘（B16 失败聚类 → 审核建议项） */
+    evolutionAnalyze: async (projectId: number) => {
+        const response = await apiClient.post(`/api/projects/${projectId}/evolution/analyze`, {});
+        return response.data as { status: string; report_id?: number;
+                                  failure_count?: number; reason?: string };
+    },
     /**
      * S21：进化触发器检查（新轨迹 ≥N 或距 checkpoint ≥M 天 → due；幂等）。
      */
