@@ -109,6 +109,61 @@ export default function VerifyReportCard({ projectId, report, messageId }: Props
         </div>
     );
 
+    // FE2：机检推理链——每行 = 检查项 → 确定性结论 → 依据（severity 对齐）
+    const chainRows: { key: string; name: string; level: 'pass' | 'warn' | 'fail';
+                       icon: string; conclusion: string; evidence?: string }[] = [];
+    {
+        const owlErr = Number(cons.owlrl_errors ?? 0);
+        chainRows.push(owlErr === 0
+            ? { key: 'owlrl', name: '逻辑一致性（owlrl）', level: 'pass', icon: '✓',
+                conclusion: '无逻辑错误',
+                evidence: `蕴含 ${(cons as any).inferred_count ?? 0} 条推导事实` }
+            : { key: 'owlrl', name: '逻辑一致性（owlrl）', level: 'fail', icon: '✗',
+                conclusion: `${owlErr} 个逻辑错误，须修复`,
+                evidence: (cons.error_samples ?? [])
+                    .slice(0, 3)
+                    .map((e: any) => `${e.subject ?? '-'}${e.object ? ' → ' + e.object : ''}${e.message ? '：' + e.message : ''}`)
+                    .join('；') });
+        const sv = cons.shacl_violations;
+        if (sv == null) {
+            chainRows.push({ key: 'shacl', name: 'SHACL 合规', level: 'warn', icon: '⚠',
+                             conclusion: '未执行', evidence: cons.shacl_error });
+        } else if (Number(sv) === 0) {
+            chainRows.push({ key: 'shacl', name: 'SHACL 合规', level: 'pass', icon: '✓',
+                             conclusion: '无违例' });
+        } else {
+            const kinds = Object.entries(cons.shacl_by_kind ?? {})
+                .map(([k, v]) => `${k}×${v}`).join('、');
+            chainRows.push({ key: 'shacl', name: 'SHACL 合规', level: 'fail', icon: '✗',
+                             conclusion: `${sv} 条违例，须修复`,
+                             evidence: kinds || undefined });
+        }
+        if (cq.total) {
+            const rate = Number(cq.coverage_rate ?? 0);
+            const lvl = rate >= 0.6 ? 'pass' : 'warn';
+            chainRows.push({ key: 'cq', name: 'CQ 证据覆盖', level: lvl, icon: lvl === 'pass' ? '✓' : '⚠',
+                             conclusion: `可回答 ${cq.answerable}/${cq.total}，覆盖率 ${cq.coverage_rate ?? '-'}`,
+                             evidence: (cq.failed ?? []).length > 0
+                                 ? `未通过：${(cq.failed ?? []).slice(0, 2).map((f: any) => f.question).join('；')}` : undefined });
+        } else {
+            chainRows.push({ key: 'cq', name: 'CQ 证据覆盖', level: 'warn', icon: '⚠',
+                             conclusion: '未执行（项目未配置能力问题）' });
+        }
+        if (sample.sampled) {
+            const unsup = Number(sample.unsupported ?? 0);
+            const lvl = unsup === 0 ? 'pass'
+                : unsup > Number(sample.sampled) / 2 ? 'fail' : 'warn';
+            chainRows.push({ key: 'sample', name: '抽样溯源核验', level: lvl,
+                             icon: lvl === 'pass' ? '✓' : lvl === 'warn' ? '⚠' : '✗',
+                             conclusion: `核验 ${sample.sampled} 条，无支撑 ${unsup} 条`
+                                 + (sample.support_rate != null ? `，支撑率 ${sample.support_rate}` : ''),
+                             evidence: lvl !== 'pass' ? '无支撑条目见「③ 抽样溯源核验」逐条样例' : undefined });
+        } else {
+            chainRows.push({ key: 'sample', name: '抽样溯源核验', level: 'warn', icon: '⚠',
+                             conclusion: '未执行' });
+        }
+    }
+
     const samples = sample.samples ?? [];
     const sampleBody = (
         <div className="text-xs text-gray-600 space-y-1">
@@ -168,13 +223,39 @@ export default function VerifyReportCard({ projectId, report, messageId }: Props
                     </Button>
                 )}
             </div>
+            {/* FE2 机检推理链：确定性结论在前、依据在后；severity 对齐配色（绿通过/琥珀警告/红阻断） */}
+            <div className="mt-1.5 border border-blue-100 rounded bg-white/70 p-2">
+                <div className="text-[11px] font-medium text-gray-500 mb-1">机检链（逐项确定性结论）</div>
+                <div className="space-y-1">
+                    {chainRows.map((row) => (
+                        <div key={row.key} className="flex items-start gap-1.5 text-xs">
+                            <span className={
+                                row.level === 'fail' ? 'text-red-500'
+                                    : row.level === 'warn' ? 'text-amber-500' : 'text-green-600'
+                            }>{row.icon}</span>
+                            <div className="flex-1">
+                                <div>
+                                    <span className="font-medium">{row.name}</span>
+                                    <span className={
+                                        row.level === 'fail' ? 'text-red-600 ml-1'
+                                            : row.level === 'warn' ? 'text-amber-600 ml-1' : 'text-green-600 ml-1'
+                                    }>{row.conclusion}</span>
+                                </div>
+                                {row.evidence && (
+                                    <div className="text-[11px] text-gray-500">{row.evidence}</div>
+                                )}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
             <Collapse ghost size="small" className="mt-1 -ml-2"
                       items={[
                           { key: 'cq', label: <span className="text-xs">① CQ 评测</span>, children: cqBody },
                           { key: 'cons', label: <span className="text-xs">② 一致性</span>, children: consBody },
                           { key: 'sample', label: <span className="text-xs">③ 抽样溯源核验</span>, children: sampleBody },
                       ]}
-                      defaultActiveKey={['cq', 'cons', 'sample']} />
+                      defaultActiveKey={['cons']} />
             {cmp && (metricEntries.length > 0 || (cmp.newly_failed_cqs ?? []).length > 0
                      || (cmp.resolved_cqs ?? []).length > 0) && (
                 <div className="mt-1 border-t border-blue-100 pt-1.5">
