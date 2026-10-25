@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user, get_db, require_project_role
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import APIError, NotFoundError
 from app.infrastructure.database import EvolutionReport, Project, QaHistory, User
 from app.services import evolution_service
 from app.services.audit_service import log_action
@@ -118,5 +118,108 @@ def trigger_advance(project_id: int, db: Session = Depends(get_db),
     result = trigger.advance_checkpoint(db, project_id)
     db.commit()
     log_action(db, user.id, "evolution.trigger_advance", "project", str(project_id), result)
+    db.commit()
+    return result
+
+
+# ─────────────── S22（docs/15）：进化运行状态机 ───────────────
+
+@router.get("/{project_id}/evolution/runs")
+def list_evolution_runs(project_id: int, limit: int = 20,
+                        db: Session = Depends(get_db),
+                        user: User = Depends(get_current_user)):
+    """进化运行列表（状态机视图数据源；含每轮评估结论）。"""
+    require_project_role(project_id, "viewer", user, db)
+    from app.infrastructure.database import EvolutionRun
+    from app.services.evolution_session import serialize_run
+
+    rows = (db.query(EvolutionRun)
+            .filter(EvolutionRun.project_id == project_id)
+            .order_by(EvolutionRun.id.desc())
+            .limit(max(1, min(limit, 100))).all())
+    return {"items": [serialize_run(db, r) for r in rows], "total": len(rows)}
+
+
+@router.post("/{project_id}/evolution/runs/start")
+def start_evolution_run(project_id: int, body: dict | None = None,
+                        db: Session = Depends(get_db),
+                        user: User = Depends(get_current_user)):
+    """开新进化运行（单项目同时仅一个 running；resume 语义，拒绝并行）。"""
+    require_project_role(project_id, "editor", user, db)
+    from app.services.evolution_session import serialize_run, start_run
+
+    proj = db.query(Project).filter(Project.id == project_id).first()
+    if proj is None:
+        raise NotFoundError(f"项目不存在: {project_id}")
+    body = body or {}
+    run = start_run(db, proj, user.id,
+                    hypothesis=body.get("hypothesis"),
+                    budget_rounds=body.get("budget_rounds"))
+    db.commit()
+    return serialize_run(db, run)
+
+
+@router.post("/{project_id}/evolution/runs/{run_id}/diagnose")
+def diagnose_evolution_run(project_id: int, run_id: int,
+                           db: Session = Depends(get_db),
+                           user: User = Depends(get_current_user)):
+    """诊断步：B16 失败挖掘 + 触发器快照写入 run.diagnosis（不改状态）。"""
+    require_project_role(project_id, "editor", user, db)
+    from app.services.evolution_session import _run_or_404
+    from app.services.evolution_session import diagnose as _diagnose
+
+    proj = db.query(Project).filter(Project.id == project_id).first()
+    if proj is None:
+        raise NotFoundError(f"项目不存在: {project_id}")
+    run = _run_or_404(db, project_id, run_id)
+    result = _diagnose(db, proj, run, user_id=user.id)
+    db.commit()
+    return result
+
+
+@router.post("/{project_id}/evolution/runs/{run_id}/rounds")
+def evaluate_evolution_round(project_id: int, run_id: int,
+                             body: dict | None = None,
+                             db: Session = Depends(get_db),
+                             user: User = Depends(get_current_user)):
+    """一轮评估：候选（当前画布）→ 配对评估（确定性重算）→ 结论留痕。
+
+    pass → run=accepted（随后走 /publish 复评落版本）；reject → 继续修订假设。
+    """
+    require_project_role(project_id, "editor", user, db)
+    from app.services.evolution_session import _run_or_404, evaluate_round
+
+    proj = db.query(Project).filter(Project.id == project_id).first()
+    if proj is None:
+        raise NotFoundError(f"项目不存在: {project_id}")
+    run = _run_or_404(db, project_id, run_id)
+    body = body or {}
+    try:
+        result = evaluate_round(
+            db, proj, run, user_id=user.id,
+            hypothesis=body.get("hypothesis"), mode=body.get("mode"),
+            unacceptable_regressions=bool(body.get("unacceptable_regressions", False)))
+    except APIError as e:
+        if e.code == "GATE_EVAL_FAILED":
+            db.rollback()
+        raise
+    db.commit()
+    return result
+
+
+@router.post("/{project_id}/evolution/runs/{run_id}/incomplete")
+def incomplete_evolution_run(project_id: int, run_id: int, body: dict | None = None,
+                             db: Session = Depends(get_db),
+                             user: User = Depends(get_current_user)):
+    """中断运行（反停滞：判断类原因需 ≥2 次 reject；预算/用户中断例外）。"""
+    require_project_role(project_id, "editor", user, db)
+    from app.services.evolution_session import _run_or_404, mark_incomplete
+
+    proj = db.query(Project).filter(Project.id == project_id).first()
+    if proj is None:
+        raise NotFoundError(f"项目不存在: {project_id}")
+    run = _run_or_404(db, project_id, run_id)
+    result = mark_incomplete(db, proj, run, str((body or {}).get("reason") or ""),
+                             user_id=user.id)
     db.commit()
     return result

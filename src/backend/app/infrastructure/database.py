@@ -1098,3 +1098,50 @@ class EvolutionTriggerState(Base):
     min_days = Column(Integer, nullable=False, server_default="7")
     updated_at = Column(DateTime, nullable=False,
                         server_default=sa_text("CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"))
+
+
+class EvolutionRun(Base):
+    """进化运行状态机（S22，docs/15 / EvoOntology EvolutionSession 同构）。
+
+    running --reject--> running（记录 rounds，不推进 checkpoint，同一批轨迹可重试）
+    running --pass--> accepted（配对门禁通过；发布走 /publish 复评落版本并推进 checkpoint）
+    running --预算耗尽/中断--> incomplete（不发布不推进）。
+    反停滞：budget_exhausted 之外的 incomplete 原因需已积累 ≥2 次 reject。
+    """
+    __tablename__ = "evolution_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, nullable=False, index=True)
+    status = Column(Enum("running", "accepted", "incomplete", name="evolution_run_status"),
+                    nullable=False, server_default="running")
+    hypothesis = Column(Text, nullable=True)
+    budget_rounds = Column(Integer, nullable=False, server_default="8")
+    round = Column(Integer, nullable=False, server_default="0")
+    parent_version_id = Column(Integer, nullable=True)
+    diagnosis = Column(JSON, nullable=True)       # B16 失败诊断摘要 + 触发器快照
+    incomplete_reason = Column(String(32), nullable=True)
+    created_by = Column(Integer, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))
+    updated_at = Column(DateTime, nullable=False,
+                        server_default=sa_text("CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"))
+
+
+class EvolutionRoundRow(Base):
+    """进化轮次记录（S22）：一次候选假设 → 配对评估 → 结论；reject 留痕可审计。"""
+    __tablename__ = "evolution_rounds"
+
+    id = Column(Integer, primary_key=True, index=True)
+    run_id = Column(Integer, ForeignKey("evolution_runs.id", ondelete="CASCADE"),
+                    nullable=False, index=True)
+    round_no = Column(Integer, nullable=False)
+    hypothesis = Column(Text, nullable=True)
+    candidate_version_id = Column(Integer, nullable=True)
+    gate_evaluation_id = Column(Integer, nullable=True)
+    mode = Column(String(16), nullable=False, server_default="gt")
+    verdict = Column(String(8), nullable=False)   # pass | reject
+    wins = Column(Integer, nullable=False, server_default="0")
+    ties = Column(Integer, nullable=False, server_default="0")
+    losses = Column(Integer, nullable=False, server_default="0")
+    hard_failures = Column(Integer, nullable=False, server_default="0")
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=sa_text("CURRENT_TIMESTAMP"))

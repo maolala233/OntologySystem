@@ -201,7 +201,7 @@ const AUDIT_SUMMARY: Record<string, (d: Record<string, any>) => string> = {
 };
 
 const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
-    const [subTab, setSubTab] = useState<'versions' | 'entity' | 'gate' | 'audit'>('versions');
+    const [subTab, setSubTab] = useState<'versions' | 'entity' | 'gate' | 'audit' | 'evolve'>('versions');
     const [versions, setVersions] = useState<VersionRow[]>([]);
     const [loading, setLoading] = useState(false);
     const [selA, setSelA] = useState<number | null>(null);
@@ -222,6 +222,11 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
 
     // S21：进化触发器（due 提醒横幅）
     const [triggerInfo, setTriggerInfo] = useState<Awaited<ReturnType<typeof publishApi.evolutionTriggerCheck>> | null>(null);
+    // S22/FE11：进化运行状态机视图
+    const [runs, setRuns] = useState<Awaited<ReturnType<typeof publishApi.evolutionRuns>>['items']>([]);
+    const [runsLoading, setRunsLoading] = useState(false);
+    const [newHypothesis, setNewHypothesis] = useState('');
+    const [evolving, setEvolving] = useState(false);
 
     // AI 协同操作历史（O5-B29/F15）
     const [audit, setAudit] = useState<CopilotAuditRow[]>([]);
@@ -268,6 +273,65 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
             message.error(e.response?.data?.error?.message || '操作失败');
         }
     }, [projectId, loadTrigger]);
+
+    // S22/FE11：进化运行
+    const loadEvolve = useCallback(async () => {
+        setRunsLoading(true);
+        try {
+            setRuns((await publishApi.evolutionRuns(projectId)).items);
+        } catch { /* 静默 */ }
+        finally { setRunsLoading(false); }
+    }, [projectId]);
+
+    const startRun = useCallback(async () => {
+        if (!newHypothesis.trim()) { message.warning('先写一句本轮进化假设（想改进什么）'); return; }
+        setEvolving(true);
+        try {
+            await publishApi.evolutionRunStart(projectId, { hypothesis: newHypothesis.trim() });
+            message.success('进化运行已开始：先诊断，再逐轮"改本体→评估"');
+            setNewHypothesis('');
+            loadEvolve();
+        } catch (e: any) {
+            message.error(e.response?.data?.error?.message || '开始失败');
+        } finally { setEvolving(false); }
+    }, [projectId, newHypothesis, loadEvolve]);
+
+    const runRound = useCallback(async (runId: number) => {
+        setEvolving(true);
+        try {
+            const r = await publishApi.evolutionRunRound(projectId, runId, {});
+            if (r.verdict === 'pass') {
+                message.success(`第 ${r.round} 轮通过：候选优于当前版本。到「发布」完成落版本`);
+            } else {
+                message.warning(`第 ${r.round} 轮被拒：胜 ${r.wins}/平 ${r.ties}/负 ${r.losses}——修订假设后再评估`);
+            }
+            loadEvolve();
+        } catch (e: any) {
+            message.error(e.response?.data?.error?.message || '评估失败');
+        } finally { setEvolving(false); }
+    }, [projectId, loadEvolve]);
+
+    const diagnoseRun = useCallback(async (runId: number) => {
+        setEvolving(true);
+        try {
+            await publishApi.evolutionRunDiagnose(projectId, runId);
+            message.success('诊断完成：失败问答聚合已写入运行记录');
+            loadEvolve();
+        } catch (e: any) {
+            message.error(e.response?.data?.error?.message || '诊断失败');
+        } finally { setEvolving(false); }
+    }, [projectId, loadEvolve]);
+
+    const incompleteRun = useCallback(async (runId: number) => {
+        setEvolving(true);
+        try {
+            await publishApi.evolutionRunIncomplete(projectId, runId, 'user_interrupted');
+            message.info('运行已标记中断');
+            loadEvolve();
+        } catch (e: any) {
+            message.error(e.response?.data?.error?.message || '操作失败');
+        } finally { setEvolving(false); }
+    }, [projectId, loadEvolve]);
 
     const loadGate = useCallback(async () => {
         setGateLoading(true);
@@ -367,12 +431,14 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
                             setSubTab(v as any);
                             if (v === 'gate') loadGate();
                             if (v === 'audit') loadAudit();
+                            if (v === 'evolve') loadEvolve();
                         }}
                         options={[
                             { value: 'versions', label: '版本时间轴' },
                             { value: 'entity', label: '实体时间线' },
                             { value: 'gate', label: '发布门控' },
                             { value: 'audit', label: 'AI 协同' },
+                            { value: 'evolve', label: '进化' },
                         ]}
                     />
                     <Button icon={<SearchOutlined />} onClick={load}>刷新</Button>
@@ -699,6 +765,67 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
                             })}
                         />
                     )}
+                </Spin>
+            )}
+            {subTab === 'evolve' && (
+                <Spin spinning={runsLoading}>
+                    <div className="mb-3 flex items-center gap-2 flex-wrap">
+                        <Input className="max-w-md" placeholder="本轮进化假设（如：补充企业客户子类以回答 XX 问题）"
+                               value={newHypothesis} onChange={(e) => setNewHypothesis(e.target.value)} />
+                        <Button type="primary" loading={evolving} onClick={startRun}>开始进化运行</Button>
+                        <span className="text-xs text-gray-500">
+                            每轮：改本体 → 点「评估本轮」跑 40 题配对评估——通过才可发布，被拒可继续修订
+                        </span>
+                    </div>
+                    {runs.length === 0 && <Empty description="尚无进化运行：写一条假设开始" />}
+                    <div className="space-y-3">
+                        {runs.map((run) => (
+                            <div key={run.id} className="border rounded p-2.5">
+                                <div className="flex items-center gap-2 flex-wrap mb-1">
+                                    <Tag color={run.status === 'accepted' ? 'green'
+                                        : run.status === 'running' ? 'blue' : 'default'}>
+                                        {run.status === 'accepted' ? '已通过' : run.status === 'running' ? '进行中' : '已中断'}
+                                    </Tag>
+                                    <span className="text-sm font-medium">#{run.id}</span>
+                                    <span className="text-xs text-gray-600">{run.hypothesis}</span>
+                                    <Tag className="!m-0 !text-[10px]">第 {run.round}/{run.budget_rounds} 轮</Tag>
+                                    {run.incomplete_reason &&
+                                        <Tag color="orange" className="!m-0 !text-[10px]">{run.incomplete_reason}</Tag>}
+                                    <span className="flex-1" />
+                                    {run.status === 'running' && (
+                                        <Space size={4}>
+                                            <Button size="small" loading={evolving}
+                                                    onClick={() => diagnoseRun(run.id)}>诊断</Button>
+                                            <Button size="small" type="primary" ghost loading={evolving}
+                                                    onClick={() => runRound(run.id)}>评估本轮</Button>
+                                            <Button size="small" danger ghost loading={evolving}
+                                                    onClick={() => incompleteRun(run.id)}>中断</Button>
+                                        </Space>
+                                    )}
+                                    {run.status === 'accepted' && (
+                                        <span className="text-xs text-green-600">
+                                            已通过：到「发布」页完成落版本（复评）
+                                        </span>
+                                    )}
+                                </div>
+                                {(run.rounds ?? []).length > 0 && (
+                                    <Table size="small" rowKey={(r: any, i) => `${r.round_no}-${i}`}
+                                           pagination={false}
+                                           dataSource={run.rounds as any}
+                                           columns={[
+                                               { title: '轮', dataIndex: 'round_no', width: 50 },
+                                               { title: '假设', dataIndex: 'hypothesis', ellipsis: true },
+                                               { title: '结论', dataIndex: 'verdict', width: 90,
+                                                 render: (v: string) => v === 'pass'
+                                                     ? <Tag color="success">通过</Tag> : <Tag color="error">被拒</Tag> },
+                                               { title: '胜/平/负', key: 'score', width: 100,
+                                                 render: (_: any, r: any) => `${r.wins}/${r.ties}/${r.losses}` },
+                                               { title: '硬伤', dataIndex: 'hard_failures', width: 60 },
+                                           ] as any} />
+                                )}
+                            </div>
+                        ))}
+                    </div>
                 </Spin>
             )}
         </Card>

@@ -187,6 +187,44 @@ export const publishApi = {
         };
     },
 
+    /** S22：进化运行列表（状态机视图数据源，含每轮评估结论） */
+    evolutionRuns: async (projectId: number) => {
+        const response = await apiClient.get(`/api/projects/${projectId}/evolution/runs`);
+        return response.data as {
+            items: {
+                id: number; status: 'running' | 'accepted' | 'incomplete';
+                hypothesis: string | null; budget_rounds: number; round: number;
+                diagnosis: any; incomplete_reason: string | null;
+                rounds: { round_no: number; hypothesis: string | null; verdict: 'pass' | 'reject';
+                          mode: string; wins: number; ties: number; losses: number;
+                          hard_failures: number; notes: string | null }[];
+            }[]; total: number;
+        };
+    },
+    evolutionRunStart: async (projectId: number, body: { hypothesis?: string; budget_rounds?: number }) => {
+        const response = await apiClient.post(`/api/projects/${projectId}/evolution/runs/start`, body);
+        return response.data;
+    },
+    evolutionRunRound: async (projectId: number, runId: number,
+                              body: { hypothesis?: string; mode?: string;
+                                      unacceptable_regressions?: boolean }) => {
+        const response = await apiClient.post(
+            `/api/projects/${projectId}/evolution/runs/${runId}/rounds`, body);
+        return response.data as { status: string; verdict: string; round: number;
+                                  wins?: number; ties?: number; losses?: number;
+                                  hard_failures?: number; next: string };
+    },
+    evolutionRunDiagnose: async (projectId: number, runId: number) => {
+        const response = await apiClient.post(
+            `/api/projects/${projectId}/evolution/runs/${runId}/diagnose`, {});
+        return response.data;
+    },
+    evolutionRunIncomplete: async (projectId: number, runId: number, reason: string) => {
+        const response = await apiClient.post(
+            `/api/projects/${projectId}/evolution/runs/${runId}/incomplete`, { reason });
+        return response.data;
+    },
+
     /**
      * S21：进化触发器检查（新轨迹 ≥N 或距 checkpoint ≥M 天 → due；幂等）。
      */
