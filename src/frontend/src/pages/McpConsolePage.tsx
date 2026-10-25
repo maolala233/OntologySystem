@@ -658,6 +658,35 @@ asyncio.run(main())`} />
 }`} />
                                 </div>
 
+                                <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
+                                    <div className="font-medium text-gray-800">语义服务调用（resolve / precheck）</div>
+                                    <CodeBlock title="③ resolve_semantics（取概念 + 公理 + 证据）" code={`curl -s -X POST ${effEndpoint} \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer ${docTok}" \\
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 3,
+    "method": "tools/call",
+    "params": {
+      "name": "resolve_semantics",
+      "arguments": { "mentions": ["银行汇票", "支票"], "context": "对公结算" }
+    }
+  }'`} />
+                                    <CodeBlock title="④ precheck_action（执行前合规校验：金融复杂操作必过）" code={`curl -s -X POST ${effEndpoint} \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer ${docTok}" \\
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 4,
+    "method": "tools/call",
+    "params": {
+      "name": "precheck_action",
+      "arguments": { "kind": "add_fact", "subject_label": "国内汇票", "predicate": "汇往", "object_label": "西门子" }
+    }
+  }'
+# verdict=block（domain 违例/互斥矛盾/指标限额阻断）时不得执行；warn 须确认`} />
+                                </div>
+
                                 <div className="bg-white border border-gray-200 rounded-xl p-4">
                                     <div className="font-medium text-gray-800 mb-2">注意事项</div>
                                     <ul className="text-sm text-gray-600 list-disc pl-5 space-y-1 leading-relaxed">
@@ -666,7 +695,12 @@ asyncio.run(main())`} />
                                         <li>令牌与单个项目绑定，工具的读写范围仅限该项目图谱；撤销后立即失效</li>
                                         <li>限流：读类 60 次/分钟、写类 20 次/分钟，超限返回限流错误，稍后重试</li>
                                         <li>ask 的响应较大（sources 含命中文档原文整段，用于溯源核对），curl 调试建议配合 jq 取 answer</li>
-                                        <li>接入后建议 agent 先调 <span className="font-mono">get_ontology_schema</span> / <span className="font-mono">search_entities</span> 探索，再 <span className="font-mono">query_graph</span> / <span className="font-mono">ask</span> 深挖</li>
+                                        <li><b>推荐调用序列（语义服务面）</b>：① <span className="font-mono">resources/read ontology://session-manifest</span> 拿会话摘要 →
+                                            ② <span className="font-mono">resolve_semantics</span> 按提及词取概念+公理+证据（unavailable/ambiguous 时不要编造）→
+                                            ③ <span className="font-mono">check_answerable</span> 确认术语覆盖 →
+                                            ④ 执行业务动作前 <span className="font-mono">precheck_action</span> 过合规机检（block=不得执行；写工具内置同源校验不可绕过）→
+                                            ⑤ <span className="font-mono">ask</span> 问答 / <span className="font-mono">query_graph</span> 深挖</li>
+                                        <li>治理指标（限额/审批线口径）经 <span className="font-mono">resolve_semantics</span> 按指标名精确命中；涉及指标适用类的操作，precheck 会返回口径与 severity</li>
                                     </ul>
                                 </div>
                             </div>

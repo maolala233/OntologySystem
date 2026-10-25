@@ -44,11 +44,10 @@ const HomePage: React.FC = () => {
                 ]);
 
                 let totalNodes = 0;
-                // 只统计已发布的项目节点数（去重：按项目ID去重，避免个人项目在my和public中重复计算）
-                const allPublishedProjects = [...myProjects, ...publicProjects]
-                    .filter(project => project.is_published);
-
-                const uniqueProjects = Array.from(new Map(allPublishedProjects.map(p => [p.id, p])).values());
+                // 图谱节点统计全部可见项目（我的+公共，按项目ID去重）——与项目列表一致；
+                // 此前只统计已发布项目，草稿期项目数与列表显示矛盾（走查 P2）
+                const uniqueProjects = Array.from(
+                    new Map([...myProjects, ...publicProjects].map(p => [p.id, p])).values());
 
                 uniqueProjects.forEach(project => {
                     if (project.graph_data?.nodes) {

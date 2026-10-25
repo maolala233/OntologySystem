@@ -13,6 +13,7 @@ import {
 
 import { GateEvaluationRow, ImpactSummary, gateApi, impactApi } from '../../../api/cqs';
 import { publishApi, versionsApi } from '../../../api/governance';
+import { humanizeRuleText } from '../../../utils/ruleNames';
 import { LoadingOutlined } from '@ant-design/icons';
 
 const VERDICT_META = {
@@ -175,7 +176,7 @@ const PublishDialog: React.FC<Props> = ({ projectId, open, onClose, onPublished 
                         {gateReport.warnings.length > 0 && (
                             <Alert type="warning" showIcon className="mt-1"
                                    message={`${gateReport.warnings.length} 条非阻断告警`}
-                                   description={<ul className="list-disc pl-4 my-0">{gateReport.warnings.slice(0, 5).map((w, i) => <li key={i}>{w}</li>)}</ul>} />
+                                   description={<ul className="list-disc pl-4 my-0">{gateReport.warnings.slice(0, 5).map((w, i) => <li key={i}>{humanizeRuleText(w)}</li>)}</ul>} />
                         )}
                     </div>
                 )}

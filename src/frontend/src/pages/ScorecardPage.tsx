@@ -6,6 +6,7 @@
  * 品牌色 #5B8DEF（信息/图表），语义状态色只用于达标/关注/阻断判定。
  */
 import React, { useCallback, useEffect, useState } from 'react';
+import { humanizeRuleText, ruleLabel } from '../utils/ruleNames';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
     Alert, Button, Card, Empty, Popover, Spin, Tag, Tooltip, Typography, message,
@@ -247,6 +248,20 @@ const ScorecardPage: React.FC = () => {
                                    {data.maturity.warnings.map((w, i) => <li key={i}>{w}</li>)}
                                </ul>} />
                     )}
+                </Card>
+            )}
+
+            {/* S25-3：schema 机检改进建议（人话化） */}
+            {(data.schema_warnings ?? []).length > 0 && (
+                <Card size="small" title="改进建议（机检）" style={{ marginTop: 16 }}>
+                    <ul className="list-disc pl-5 text-sm space-y-1 my-0">
+                        {data.schema_warnings!.slice(0, 6).map((w, i) => (
+                            <li key={i}>
+                                {ruleLabel(w.rule) && <b className="text-gray-700">{ruleLabel(w.rule)}</b>}
+                                {w.message ? `${ruleLabel(w.rule) ? '：' : ''}${humanizeRuleText(w.message)}` : ''}
+                            </li>
+                        ))}
+                    </ul>
                 </Card>
             )}
 

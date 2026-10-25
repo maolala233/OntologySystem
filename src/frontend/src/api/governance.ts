@@ -319,6 +319,8 @@ export interface Scorecard {
     orphan_classes: string[];
     orphan_count: number;
     schema_checks: { passed: boolean; error_count: number; warning_count: number };
+    /** S25-3：schema 机检改进建议（人话化由前端 ruleNames 处理） */
+    schema_warnings?: { rule: string; message: string }[];
     /** S18 OntoQA 结构成熟度（Tier2 只打分不阻断） */
     maturity?: {
         relationship_richness: number;
