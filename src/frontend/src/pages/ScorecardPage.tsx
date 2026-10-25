@@ -111,8 +111,9 @@ interface MetricDef {
 }
 
 /** 单个指标块：标签 + 口径问号 + 数值（等宽数字）+ 状态 Tag + 脚注 */
-function MetricTile({ m }: { m: MetricDef }) {
-    const meta = STATUS_META[m.status];
+function MetricTile({ m, riskLabel = '阻断' }: { m: MetricDef; riskLabel?: string }) {
+    const meta = m.status === 'risk' ? { ...STATUS_META[m.status], label: riskLabel }
+        : STATUS_META[m.status];
     const neutral = m.status === 'info';
     return (
         <div className="min-w-0">
@@ -177,7 +178,9 @@ const ScorecardPage: React.FC = () => {
         { id: 'dangling', label: '悬空引用', value: String(data.dangling_refs),
           status: countStatus(data.dangling_refs) },
         { id: 'evidence', label: '证据闭合率', value: pct(data.evidence_closure_rate),
-          status: rateStatus(data.evidence_closure_rate) },
+          status: rateStatus(data.evidence_closure_rate),
+          footnote: data.evidence_missing_count > 0
+              ? `另有 ${data.evidence_missing_count} 个对象无证据锚点（不阻断，建议补齐）` : undefined },
     ];
     const qualityMetrics: MetricDef[] = [
         { id: 'naming', label: '命名一致率', value: pct(data.naming_consistency),
@@ -225,7 +228,7 @@ const ScorecardPage: React.FC = () => {
                   extra={<span className="text-xs text-gray-400">反映本体质量与工作量，不直接阻断发布</span>}
                   style={{ marginTop: 16 }}>
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-8 py-1">
-                    {qualityMetrics.map(m => <MetricTile key={m.id} m={m} />)}
+                    {qualityMetrics.map(m => <MetricTile key={m.id} m={m} riskLabel="不达标" />)}
                 </div>
             </Card>
 

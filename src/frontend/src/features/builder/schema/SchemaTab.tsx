@@ -2231,6 +2231,11 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
                                 nodes={displayNodes}
                                 edges={displayEdges}
                                 onNodeClick={onNodeClick}
+                                onNodeDoubleClick={(node: any) => {
+                                    // FE7 双击聚焦：一跳邻域高亮；再双击同节点取消
+                                    setNeighborhoodPinId((prev: string | null) =>
+                                        prev === node.id ? null : node.id);
+                                }}
                                 onEdgeClick={onEdgeClick}
                                 onNodesChange={(updatedNodes) => {
                                     if (Array.isArray(updatedNodes)) {

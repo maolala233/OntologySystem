@@ -72,28 +72,7 @@ const DocumentsTab: React.FC<Props> = ({ projectId, onChanged }) => {
     useEffect(() => {
         if (!docs.some((d) => d.parse_status === 'parsing')) return;
         const t = setInterval(load, 3000);
-        return () =>
-
-            {/* FE4：新项目三步引导（尚无文档时） */}
-            {docs.length === 0 && (
-                <div className="mb-4 border border-blue-100 rounded-lg p-4 bg-blue-50/40">
-                    <div className="font-medium text-gray-800 mb-2">从这里开始：三步把文档变成可问答的本体</div>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-                        <div className="bg-white rounded p-2.5 border border-blue-100">
-                            <div className="font-medium text-blue-600">① 上传并解析文档</div>
-                            <div className="text-xs text-gray-500 mt-1">支持 PPT/PDF/DOCX/MD/TXT；图文混排自动 OCR/视觉解析，切片写入向量库</div>
-                        </div>
-                        <div className="bg-white rounded p-2.5 border border-blue-100">
-                            <div className="font-medium text-blue-600">② 抽取与人工认证</div>
-                            <div className="text-xs text-gray-500 mt-1">骨架/实例抽取后到「审核」逐条认证——认证后重跑永不覆盖（✓已认证）</div>
-                        </div>
-                        <div className="bg-white rounded p-2.5 border border-blue-100">
-                            <div className="font-medium text-blue-600">③ 发布对外服务</div>
-                            <div className="text-xs text-gray-500 mt-1">五道门禁+配对评估通过后发布：QA/MCP 对外提供语义服务（先开启右上角「演示」看六步脚本）</div>
-                        </div>
-                    </div>
-                </div>
-            )} clearInterval(t);
+        return () => clearInterval(t);
     }, [docs, load]);
 
     const handleUpload = async () => {
@@ -246,6 +225,26 @@ const DocumentsTab: React.FC<Props> = ({ projectId, onChanged }) => {
                 </Space>
             }
         >
+            {/* FE4：新项目三步引导（尚无文档时） */}
+            {docs.length === 0 && (
+                <div className="mb-4 border border-blue-100 rounded-lg p-4 bg-blue-50/40">
+                    <div className="font-medium text-gray-800 mb-2">从这里开始：三步把文档变成可问答的本体</div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                        <div className="bg-white rounded p-2.5 border border-blue-100">
+                            <div className="font-medium text-blue-600">① 上传并解析文档</div>
+                            <div className="text-xs text-gray-500 mt-1">支持 PPT/PDF/DOCX/MD/TXT；图文混排自动 OCR/视觉解析，切片写入向量库</div>
+                        </div>
+                        <div className="bg-white rounded p-2.5 border border-blue-100">
+                            <div className="font-medium text-blue-600">② 抽取与人工认证</div>
+                            <div className="text-xs text-gray-500 mt-1">骨架/实例抽取后到「审核」逐条认证——认证后重跑永不覆盖（✓已认证）</div>
+                        </div>
+                        <div className="bg-white rounded p-2.5 border border-blue-100">
+                            <div className="font-medium text-blue-600">③ 发布对外服务</div>
+                            <div className="text-xs text-gray-500 mt-1">五道门禁+配对评估通过后发布：QA/MCP 对外提供语义服务（先开启右上角「演示」看六步脚本）</div>
+                        </div>
+                    </div>
+                </div>
+            )}
             <Table
                 rowKey="id"
                 size="small"
