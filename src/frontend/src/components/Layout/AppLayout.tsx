@@ -33,6 +33,7 @@ import { useAuthStore } from '../../shared/auth/authStore';
 import { confirmLeaveUnsaved } from '../../utils/unsavedGuard';
 import CopilotWidget from '../Copilot/CopilotWidget';
 import DemoGuide from './DemoGuide';
+import CommandPalette from './CommandPalette';
 
 const { Sider, Content } = Layout;
 
@@ -335,6 +336,7 @@ const AppLayout: React.FC = () => {
                 可见范围（仅构建器五 Tab）由组件内部按路由门控 */}
             <CopilotWidget />
             <DemoGuide />
+            <CommandPalette />
         </Layout>
     );
 };

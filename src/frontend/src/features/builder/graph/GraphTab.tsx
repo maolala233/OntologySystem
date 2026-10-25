@@ -964,6 +964,11 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                                         setHighlightNodeId(null);
                                         setSelectedNode(node ? { type: 'node', id: node.id } : null);
                                     }}
+                                    onNodeDoubleClick={(node) => {
+                                        // FE7 双击聚焦：一跳邻域高亮、其余淡化；再双击同节点取消
+                                        setNeighborhoodPinId(prev => prev === node.id ? null : node.id);
+                                        setSelectedNode({ type: 'node', id: node.id });
+                                    }}
                                     onEdgeClick={(edge) => {
                                         setSelectedNode(null);
                                         setSelectedEdge(edge);

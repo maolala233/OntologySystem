@@ -6,7 +6,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Modal, Progress, Button, Space, Typography, Alert } from 'antd';
-import { AuditOutlined, StopOutlined } from '@ant-design/icons';
+import { AuditOutlined, StopOutlined, LoadingOutlined } from '@ant-design/icons';
 
 import { extractionApi } from '../../../api/extraction';
 import { humanizeEta } from '../../../shared/format';
@@ -37,6 +37,8 @@ const TaskProgressModal: React.FC<Props> = ({
     const [stats, setStats] = useState<Record<string, any>>({});
     const [pendingReviews, setPendingReviews] = useState<number | null>(null);
     const [cancelReq, setCancelReq] = useState(false);
+    // FE5：转后台——关闭弹窗不打断轮询，右下角悬浮进度条可唤回
+    const [background, setBackground] = useState(false);
     const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     useEffect(() => {
@@ -106,19 +108,50 @@ const TaskProgressModal: React.FC<Props> = ({
     };
 
     return (
+        <>
+        {/* FE5：后台悬浮进度条（运行中且转后台时） */}
+        {open && background && !TERMINAL.has(status) && (
+            <div className="fixed z-[999] right-4 bottom-20 w-64 bg-white border border-blue-100 shadow-lg rounded-lg p-2.5 cursor-pointer"
+                 onClick={() => setBackground(false)}
+                 title="点击展开任务详情">
+                <div className="flex items-center gap-1.5 text-xs text-gray-600 mb-1">
+                    <LoadingOutlined className="text-blue-500" />
+                    <span className="flex-1 truncate">{title} · 后台运行中</span>
+                    <span className="text-blue-600 font-medium">{progress}%</span>
+                </div>
+                <Progress percent={progress} size="small" showInfo={false}
+                          status={cancelReq ? 'exception' : 'active'} />
+                <div className="text-[11px] text-gray-400 truncate mt-0.5">{message}</div>
+            </div>
+        )}
+        {/* 终态在后台时弹一次通知并自动消失 */}
+        {open && background && TERMINAL.has(status) && (
+            <div className="fixed z-[999] right-4 bottom-20 bg-white border shadow-lg rounded-lg p-2.5 text-xs cursor-pointer"
+                 onClick={() => { setBackground(false); if (status !== 'completed') onClose(); }}>
+                <span className={status === 'completed' ? 'text-green-600' : 'text-red-500'}>
+                    {status === 'completed' ? '✓ 任务完成，点击查看' : '✗ 任务' + (status === 'cancelled' ? '已取消' : '失败')}
+                </span>
+            </div>
+        )}
         <Modal
-            open={open}
+            open={open && !background}
             title={title}
             onCancel={() => {
-                // 终态可直接关；已请求取消的运行中任务也放行（结果将被丢弃，用户无需守着弹窗）
+                // 终态可直接关；运行中转后台（FE5：右下角悬浮条继续跟踪，不打断任务）；
+                // 已请求取消的运行中任务也放行（结果将被丢弃，用户无需守着弹窗）
                 if (TERMINAL.has(status) || cancelReq) onClose();
+                else setBackground(true);
             }}
+            afterClose={() => setBackground(false)}
             footer={
                 <Space>
                     {!TERMINAL.has(status) && (
-                        <Button icon={<StopOutlined />} danger disabled={cancelReq} onClick={handleCancel}>
-                            {cancelReq ? '取消中…' : '取消任务'}
-                        </Button>
+                        <>
+                            <Button icon={<StopOutlined />} danger disabled={cancelReq} onClick={handleCancel}>
+                                {cancelReq ? '取消中…' : '取消任务'}
+                            </Button>
+                            <Button onClick={() => setBackground(true)}>转后台</Button>
+                        </>
                     )}
                     {status === 'completed' && (pendingReviews ?? 0) > 0 && (
                         <Button
@@ -178,6 +211,7 @@ const TaskProgressModal: React.FC<Props> = ({
                 <Alert className="mt-3" type="info" showIcon message="任务已取消" />
             )}
         </Modal>
+        </>
     );
 };
 

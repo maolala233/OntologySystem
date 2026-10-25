@@ -87,6 +87,8 @@ interface D3ForceGraphProps {
     nodes: OntologyNode[];
     edges: OntologyEdge[];
     onNodeClick?: (node: OntologyNode | null) => void;
+    /** FE7：双击节点 → 固定邻域聚焦（一跳高亮、其余淡化）；再双击同节点取消 */
+    onNodeDoubleClick?: (node: OntologyNode) => void;
     onEdgeClick?: (edge: OntologyEdge) => void;
     onNodesChange?: (newNodes: OntologyNode[]) => void;
     onNodeRightClick?: (node: OntologyNode) => void;
@@ -105,6 +107,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
     nodes,
     edges,
     onNodeClick,
+    onNodeDoubleClick,
     onEdgeClick,
     onNodesChange,
     onNodeRightClick,
@@ -144,6 +147,9 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
 
     const onNodeClickRef = useRef(onNodeClick);
     onNodeClickRef.current = onNodeClick;
+    const onNodeDblRef = useRef(onNodeDoubleClick);
+    onNodeDblRef.current = onNodeDoubleClick;
+    const lastClickRef = useRef<{ id: string; t: number } | null>(null);
     const onEdgeClickRef = useRef(onEdgeClick);
     onEdgeClickRef.current = onEdgeClick;
     const onNodesChangeRef = useRef(onNodesChange);
@@ -761,6 +767,15 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                                 return nodeData?.id === d.id ? `url(#${uid}-glow-selected)` : null;
                             });
 
+                        // FE7 双击检测：同节点 300ms 内二次"点击"→ 聚焦回调（并吞掉这次 click）
+                        const now = Date.now();
+                        const last = lastClickRef.current;
+                        if (last && last.id === d.id && now - last.t < 300) {
+                            lastClickRef.current = null;
+                            if (onNodeDblRef.current) { onNodeDblRef.current(d.originalNode); return; }
+                        } else {
+                            lastClickRef.current = { id: d.id, t: now };
+                        }
                         if (onNodeClickRef.current) onNodeClickRef.current(d.originalNode);
                     } else {
                         pinnedNodesRef.current.add(d.id);
