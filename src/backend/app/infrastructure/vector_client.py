@@ -1,24 +1,48 @@
 # app/infrastructure/vector_client.py - 向量库客户端
 # 功能：封装Milvus向量库操作，提供向量存储、检索和管理功能
 
-import json
 import hashlib
+import json
 import os
+from typing import Optional
+
 import httpx
-from typing import List, Dict, Optional
 from openai import OpenAI
-from pymilvus import connections, Collection, FieldSchema, CollectionSchema, DataType, utility
+from pymilvus import Collection, CollectionSchema, DataType, FieldSchema, connections, utility
+
 from app.core.config import settings
 
 # 通过 settings 对象访问配置值
 from app.core.logging import logger
 
 
+def _flush_best_effort(collection, what: str = "flush") -> None:
+    """S24+ 防御：flush 永不阻塞主流程超过 60s（历史教训：2.3.5 通道失联时
+    flush 内部重试 59 次×5s 拖死解析流水线 5 分钟×2 处）。后台线程跑，超时放弃——
+    Milvus 自身也会周期性持久化 growing 段，放弃 flush 只影响立即落盘，不丢数据。"""
+    import threading
+
+    done = threading.Event()
+
+    def _do():
+        try:
+            collection.flush()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Milvus {what} 失败（best-effort 忽略）: {e}")
+        finally:
+            done.set()
+
+    t = threading.Thread(target=_do, daemon=True)
+    t.start()
+    if not done.wait(60):
+        logger.warning(f"Milvus {what} 超过 60s 未完成，放弃等待（数据仍可查询，落盘由 Milvus 周期任务兜底）")
+
+
 class VectorStoreManager:
     def __init__(self, collection_name: str = None, create_if_missing: bool = True):
         # 获取动态配置
         self._load_dynamic_config()
-        
+
         self.collection_name = collection_name if collection_name else self.milvus_collection_name
         self.embedding_dim = self.embedding_dim
         self.emb_model = self.embedding_model
@@ -30,22 +54,23 @@ class VectorStoreManager:
             self._emb_default_headers["apikey"] = self.embedding_api_key
 
         # 判断是否为外部API
-        is_external_api = self.embedding_base_url and ('openai' in self.embedding_base_url.lower() or 'api.' in self.embedding_base_url.lower() or 
-                                                  'http' in self.embedding_base_url and 'localhost' not in self.embedding_base_url and 
+        is_external_api = self.embedding_base_url and ('openai' in self.embedding_base_url.lower() or 'api.' in self.embedding_base_url.lower() or
+                                                  'http' in self.embedding_base_url and 'localhost' not in self.embedding_base_url and
                                                   '127.0.0.1' not in self.embedding_base_url and '.lan' not in self.embedding_base_url)
-        
+
         if is_external_api:
             # 对于外部API，可能需要代理
             try:
-                import httpx
                 from urllib.parse import urlparse
-                
+
+                import httpx
+
                 # 获取环境中的代理设置
                 http_proxy = os.environ.get('http_proxy') or os.environ.get('HTTP_PROXY')
                 https_proxy = os.environ.get('https_proxy') or os.environ.get('HTTPS_PROXY')
-                
+
                 proxy_to_use = https_proxy or http_proxy
-                
+
                 if proxy_to_use:
                     # 检查是否为 SOCKS 代理
                     if 'socks' in proxy_to_use.lower():
@@ -77,13 +102,13 @@ class VectorStoreManager:
                             # 移除环境变量中的代理设置来创建客户端
                             original_env = {}
                             proxy_vars = ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY']
-                            
+
                             # 临时移除代理环境变量
                             for var in proxy_vars:
                                 if var in os.environ:
                                     original_env[var] = os.environ[var]
                                     del os.environ[var]
-                            
+
                             try:
                                 self.client = OpenAI(
                                     api_key=self.embedding_api_key,
@@ -103,13 +128,13 @@ class VectorStoreManager:
                             # 移除环境变量中的代理设置来创建客户端
                             original_env = {}
                             proxy_vars = ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY']
-                            
+
                             # 临时移除代理环境变量
                             for var in proxy_vars:
                                 if var in os.environ:
                                     original_env[var] = os.environ[var]
                                     del os.environ[var]
-                            
+
                             try:
                                 self.client = OpenAI(
                                     api_key=self.embedding_api_key,
@@ -150,13 +175,13 @@ class VectorStoreManager:
             # 对于内部服务，移除代理环境变量
             original_env = {}
             proxy_vars = ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY']
-            
+
             # 临时移除代理环境变量
             for var in proxy_vars:
                 if var in os.environ:
                     original_env[var] = os.environ[var]
                     del os.environ[var]
-            
+
             try:
                 self.client = OpenAI(
                     api_key=self.embedding_api_key,
@@ -183,7 +208,7 @@ class VectorStoreManager:
                 if utility.has_collection(self.collection_name):
                     self.collection = Collection(self.collection_name)
                     self.collection.load()
-            
+
             # 只要连接成功，就认为可用（至少可以执行 list_collections）
             self.is_enabled = True
         except Exception as e:
@@ -192,7 +217,7 @@ class VectorStoreManager:
     def _force_check_milvus_config(self):
         """强制检查并更新 Milvus 配置状态"""
         try:
-            from app.infrastructure.database import get_db, SystemConfig
+            from app.infrastructure.database import SystemConfig, get_db
             db = next(get_db())
             # M2：Milvus 开关/连接参数属平台级杂项，改读 platform_config（导入脚本拆分自 llm_config）
             config = db.query(SystemConfig).filter(SystemConfig.key == 'platform_config').first()
@@ -203,20 +228,20 @@ class VectorStoreManager:
                 old_enabled = self.milvus_enabled
                 self.milvus_enabled = new_milvus_enabled
                 self.is_enabled = new_milvus_enabled and self.collection is not None
-                
+
                 if old_enabled != new_milvus_enabled:
                     logger.info(f"Milvus 状态变更: {old_enabled} -> {new_milvus_enabled}")
                     if not new_milvus_enabled:
                         logger.info("Milvus 已禁用，停止写入操作")
-            
+
             db.close()
         except Exception as e:
             logger.debug(f"强制检查配置失败: {e}")
-    
+
     def _check_milvus_enabled(self):
         """动态检查 Milvus 是否启用"""
         try:
-            from app.infrastructure.database import get_db, SystemConfig
+            from app.infrastructure.database import SystemConfig, get_db
             db = next(get_db())
             # M2：platform_config（见上）
             config = db.query(SystemConfig).filter(SystemConfig.key == 'platform_config').first()
@@ -234,16 +259,16 @@ class VectorStoreManager:
                     self.collection = self._get_or_create_collection()
                     self.is_enabled = True
                     logger.info("Milvus 动态启用")
-            
+
             db.close()
         except Exception as e:
             logger.debug(f"动态检查配置失败: {e}")
-    
+
     def _load_dynamic_config(self):
         """加载动态配置（M2：Milvus 参数读 platform_config；嵌入模型读 model_configs 表）"""
         try:
-            from app.infrastructure.database import get_db, SystemConfig
             from app.adapters.provider import ModelPurpose, resolve_provider
+            from app.infrastructure.database import SystemConfig, get_db
             db = next(get_db())
             platform = db.query(SystemConfig).filter(SystemConfig.key == 'platform_config').first()
             platform_cfg = platform.value if platform and platform.value else {}
@@ -268,7 +293,7 @@ class VectorStoreManager:
             self.milvus_host = platform_cfg.get('milvus_host', settings.MILVUS_HOST)
             self.milvus_port = platform_cfg.get('milvus_port', settings.MILVUS_PORT)
             self.milvus_collection_name = platform_cfg.get('milvus_collection', settings.MILVUS_COLLECTION_NAME)
-            
+
             db.close()
         except Exception as e:
             logger.warning(f"加载动态配置失败，使用默认配置：{e}")
@@ -281,24 +306,24 @@ class VectorStoreManager:
             self.embedding_base_url = settings.EMBEDDING_BASE_URL
             self.embedding_model = settings.EMBEDDING_MODEL
             self.embedding_dim = settings.EMBEDDING_DIM
-    
+
     # 添加属性别名，支持小写访问
     @property
     def EMBEDDING_BASE_URL(self):
         return self.embedding_base_url if hasattr(self, 'embedding_base_url') else settings.EMBEDDING_BASE_URL
-    
+
     @property
     def EMBEDDING_API_KEY(self):
         return self.embedding_api_key if hasattr(self, 'embedding_api_key') else settings.EMBEDDING_API_KEY
-    
+
     @property
     def EMBEDDING_MODEL(self):
         return self.embedding_model if hasattr(self, 'embedding_model') else settings.EMBEDDING_MODEL
-    
+
     @property
     def EMBEDDING_DIM(self):
         return self.embedding_dim if hasattr(self, 'embedding_dim') else settings.EMBEDDING_DIM
-    
+
     def _connect_milvus(self):
         try:
             if not connections.has_connection("default"):
@@ -307,7 +332,7 @@ class VectorStoreManager:
         except Exception as e:
             raise Exception(f"连接失败: {e}")
 
-    def list_collections(self) -> List[str]:
+    def list_collections(self) -> list[str]:
         """列出所有可用的 Milvus 集合"""
         if not self.is_enabled:
             return []
@@ -354,19 +379,19 @@ class VectorStoreManager:
                 "params": {"nlist": 128}
             }
             collection.create_index(field_name="vector", index_params=index_params)
-            
+
             # ★ 为 project_id 和 domain 创建标量索引，加速过滤查询
             collection.create_index(field_name="project_id", index_name="idx_project_id")
             collection.create_index(field_name="domain", index_name="idx_domain")
             collection.create_index(field_name="source_file", index_name="idx_source_file")
-            
+
             collection.load()
             return collection
         except Exception as e:
             logger.warning(f"集合创建/加载失败：{e}")
             return None
 
-    def get_embedding(self, text: str) -> List[float]:
+    def get_embedding(self, text: str) -> list[float]:
         """
         获取文本的 Embedding 向量，支持 OpenAI 标准格式和自定义格式。
         
@@ -376,63 +401,63 @@ class VectorStoreManager:
         """
         try:
             text = text.replace("\n", " ")
-            
+
             # 首先尝试使用 OpenAI SDK
             try:
                 resp = self.client.embeddings.create(input=[text], model=self.emb_model)
-                
+
                 # 尝试标准 OpenAI 格式
                 if hasattr(resp, 'data') and resp.data and len(resp.data) > 0:
                     embedding = resp.data[0].embedding
                     if embedding and len(embedding) > 0:
                         logger.debug(f"Embedding 获取成功 (OpenAI 格式): 维度={len(embedding)}")
                         return embedding
-                
+
                 # 如果 SDK 返回的是其他格式，尝试从响应对象中提取
                 resp_dict = self._extract_response_dict(resp)
                 embedding = self._parse_embedding_response(resp_dict)
                 if embedding and len(embedding) > 0:
                     logger.debug(f"Embedding 获取成功 (自定义格式): 维度={len(embedding)}")
                     return embedding
-                    
+
             except Exception as sdk_error:
                 # OpenAI SDK 调用失败，使用 requests 直接调用
                 logger.debug(f"OpenAI SDK 调用失败，尝试使用 requests: {sdk_error}")
                 embedding = self._get_embedding_by_requests(text)
                 if embedding and len(embedding) > 0:
                     return embedding
-            
-            logger.warning(f"Embedding 响应解析失败，返回空向量")
+
+            logger.warning("Embedding 响应解析失败，返回空向量")
             return [0.0] * self.embedding_dim
-            
+
         except Exception as e:
             logger.warning(f"Embedding error: {e}")
             return [0.0] * self.embedding_dim
-    
+
     def _extract_response_dict(self, resp) -> dict:
         """从响应对象中提取字典数据"""
         if resp is None:
             return {}
-        
+
         # 如果已经是字典，直接返回
         if isinstance(resp, dict):
             return resp
-        
+
         # 尝试 __dict__ 属性
         if hasattr(resp, '__dict__'):
             return resp.__dict__
-        
+
         # 尝试 _attributes 属性（某些 SDK 响应对象）
         if hasattr(resp, '_attributes'):
             return resp._attributes
-        
+
         # 尝试 data 属性
         if hasattr(resp, 'data'):
             return {'data': resp.data}
-        
+
         return {}
-    
-    def _parse_embedding_response(self, result: dict) -> List[float]:
+
+    def _parse_embedding_response(self, result: dict) -> list[float]:
         """
         解析 Embedding API 响应，支持多种格式。
         
@@ -444,7 +469,7 @@ class VectorStoreManager:
         """
         if not result:
             return []
-        
+
         # 格式 1: OpenAI 标准格式
         if 'data' in result and result['data'] and len(result['data']) > 0:
             first_item = result['data'][0]
@@ -452,7 +477,7 @@ class VectorStoreManager:
                 return first_item['embedding']
             elif hasattr(first_item, 'embedding'):
                 return first_item.embedding
-        
+
         # 格式 2: {"embeddings": [[...]]}
         if 'embeddings' in result and result['embeddings']:
             emb_list = result['embeddings']
@@ -461,20 +486,20 @@ class VectorStoreManager:
                 if isinstance(emb_list[0], list):
                     return emb_list[0]
                 return emb_list
-        
+
         # 格式 3: {"embedding": [...]}
         if 'embedding' in result and result['embedding']:
             emb = result['embedding']
             if isinstance(emb, list):
                 return emb
-        
+
         # 格式 4: 某些 API 返回的嵌套格式
         if 'result' in result and result['result']:
             return self._parse_embedding_response(result['result'])
-        
+
         return []
-    
-    def _get_embedding_by_requests(self, text: str) -> List[float]:
+
+    def _get_embedding_by_requests(self, text: str) -> list[float]:
         """
         使用 requests 直接调用 Embedding API，绕过 OpenAI SDK。
         用于兼容非标准 OpenAI API 格式的服务（如仓颉平台）。
@@ -494,12 +519,12 @@ class VectorStoreManager:
             "input": [text],
             "texts": [text]
         }
-        
+
         # ★ 打印请求参数日志（用于调试）
         logger.info(f"[Embedding 请求] URL: {self.embedding_base_url}/embeddings")
         logger.info(f"[Embedding 请求] Headers: {headers}")
         logger.info(f"[Embedding 请求] Payload: {json.dumps(payload, ensure_ascii=False)}")
-        
+
         # 发送请求
         response = httpx.post(
             f"{self.embedding_base_url}/embeddings",
@@ -509,32 +534,32 @@ class VectorStoreManager:
         )
         response.raise_for_status()
         result = response.json()
-        
+
         logger.info(f"[Embedding 响应] Status: {response.status_code}")
         logger.info(f"[Embedding 响应] Body: {json.dumps(result, ensure_ascii=False)[:500]}...")
-        
+
         # 解析响应
         embedding = self._parse_embedding_response(result)
-        
+
         if not embedding or len(embedding) == 0:
             logger.warning(f"Embedding 响应中未找到有效数据：{result}")
             return [0.0] * self.embedding_dim
-        
+
         return embedding
 
-    def _get_content_hash(self, text: str, metadata: Dict) -> str:
+    def _get_content_hash(self, text: str, metadata: dict) -> str:
         """生成内容哈希，用于去重"""
         content = f"{text}_{json.dumps(metadata, sort_keys=True)}"
         return hashlib.sha256(content.encode()).hexdigest()
 
     def insert_data(
-        self, 
-        texts: List[str], 
-        metadatas: List[Dict],
+        self,
+        texts: list[str],
+        metadatas: list[dict],
         project_id: Optional[int] = None,
         domain: Optional[str] = None,
-        chunk_texts: Optional[List[str]] = None,  # ★ 新增：完整 chunk 文本
-        source_types: Optional[List[str]] = None,  # ★ 新增：来源类型 (graph_node/graph_edge/vector_chunk)
+        chunk_texts: Optional[list[str]] = None,  # ★ 新增：完整 chunk 文本
+        source_types: Optional[list[str]] = None,  # ★ 新增：来源类型 (graph_node/graph_edge/vector_chunk)
     ):
         """
         插入数据到向量库，支持知识域隔离和溯源信息。
@@ -572,9 +597,9 @@ class VectorStoreManager:
                 safe_text = t[:65000] if len(t) > 65000 else t
                 meta_str = json.dumps(m, ensure_ascii=False)
                 safe_meta = meta_str[:65000] if len(meta_str) > 65000 else meta_str
-                
+
                 c_hash = self._get_content_hash(safe_text, m)
-                
+
                 # 逻辑唯一性检查
                 try:
                     existing = self.collection.query(expr=f'content_hash == "{c_hash}"', output_fields=["id"])
@@ -628,12 +653,12 @@ class VectorStoreManager:
                 b_source_quotes = source_quotes[i:i + batch_size]
                 b_chunk_texts = chunk_text_list[i:i + batch_size]
                 b_source_types = source_type_list[i:i + batch_size]
-                
+
                 try:
                     self.collection.insert([
-                        b_vectors, 
-                        b_texts, 
-                        b_metas, 
+                        b_vectors,
+                        b_texts,
+                        b_metas,
                         b_hashes,
                         b_project_ids,
                         b_domains,
@@ -645,8 +670,8 @@ class VectorStoreManager:
                     logger.info(f"Milvus 写入成功：{len(b_vectors)} 条记录 (project_id={project_id}, domain={domain})")
                 except Exception as e:
                     logger.error(f"Milvus 写入失败：{e}")
-            
-            self.collection.flush()
+
+            _flush_best_effort(self.collection, "insert后flush")
 
     def delete_by_expr(self, expr: str):
         """根据表达式删除记录"""
@@ -654,14 +679,14 @@ class VectorStoreManager:
             return
         try:
             self.collection.delete(expr)
-            self.collection.flush()
+            _flush_best_effort(self.collection, "delete后flush")
             logger.info(f"Milvus 记录已删除: {expr}")
         except Exception as e:
             logger.error(f"Milvus 删除失败: {e}")
 
     def search(
-        self, 
-        query_text: str, 
+        self,
+        query_text: str,
         top_k: int = 5,
         project_id: Optional[int] = None,
         domain: Optional[str] = None,
@@ -682,14 +707,14 @@ class VectorStoreManager:
         """
         if not self.is_enabled or not self.collection:
             return []
-        
+
         # 确保 top_k 是整数类型
         try:
             top_k_int = int(top_k)
         except (ValueError, TypeError):
             logger.warning(f"top_k 参数 '{top_k}' 无法转换为整数，使用默认值 5")
             top_k_int = 5
-        
+
         # 构建过滤表达式
         filter_expr = ""
         if project_id is not None:
@@ -704,10 +729,10 @@ class VectorStoreManager:
                 filter_expr += f" and source_file == \"{source_file}\""
             else:
                 filter_expr = f"source_file == \"{source_file}\""
-        
+
         query_vec = self.get_embedding(query_text)
         search_params = {"metric_type": "COSINE", "params": {"nprobe": 10}}
-        
+
         # ★ 使用 expr 参数进行过滤
         results = self.collection.search(
             data=[query_vec],
@@ -717,7 +742,7 @@ class VectorStoreManager:
             expr=filter_expr if filter_expr else None,
             output_fields=["text", "metadata", "project_id", "domain", "source_file", "source_quote"]
         )
-        
+
         hits = []
         for hit in results[0]:
             hits.append({
@@ -732,8 +757,8 @@ class VectorStoreManager:
         return hits
 
     def search_with_expr(
-        self, 
-        query_text: str, 
+        self,
+        query_text: str,
         expr: str,
         top_k: int = 5,
     ):
@@ -750,19 +775,19 @@ class VectorStoreManager:
         """
         if not self.is_enabled or not self.collection:
             return []
-        
+
         # 确保 top_k 是整数类型
         try:
             top_k_int = int(top_k)
         except (ValueError, TypeError):
             logger.warning(f"top_k 参数 '{top_k}' 无法转换为整数，使用默认值 5")
             top_k_int = 5
-        
+
         logger.info(f"[search_with_expr] 使用表达式：{expr}")
-        
+
         query_vec = self.get_embedding(query_text)
         search_params = {"metric_type": "COSINE", "params": {"nprobe": 10}}
-        
+
         # 使用 expr 参数进行过滤
         results = self.collection.search(
             data=[query_vec],
@@ -772,7 +797,7 @@ class VectorStoreManager:
             expr=expr if expr else None,
             output_fields=["text", "metadata", "project_id", "domain", "source_file", "source_quote"]
         )
-        
+
         hits = []
         for hit in results[0]:
             hits.append({
