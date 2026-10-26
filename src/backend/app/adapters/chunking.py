@@ -198,14 +198,31 @@ def _window(spans: list[tuple[int, int]], size: int, overlap: int) -> list[tuple
 
 
 def _hard_spans(text: str, base: int, size: int, overlap: int) -> list[tuple[int, int]]:
-    """无分隔符可用时的定长硬切（窗口间带 overlap）。"""
+    """无分隔符可用时的定长硬切（窗口间带 overlap）。
+
+    缺陷修复（3454 实测）：切点落在行中间会把表格行拦腰切断（半行丢失/下游
+    引用不可读）——切点回退到最近的行边界（\n 之后）；行超长（无 \n 可回退）
+    才允许字符位切割。
+    """
     step = max(1, size - overlap)
     out = []
-    for j in range(0, len(text), step):
-        if text[j:j + size].strip():
-            out.append((base + j, base + min(j + size, len(text))))
-        if j + size >= len(text):
+    j = 0
+    while j < len(text):
+        span = text[j:j + size]
+        if not span.strip():
             break
+        end = j + size
+        if end < len(text):
+            # 切点回退到最近行边界：end 处向前找 \n，切点放行尾（含该行）
+            nl = text.rfind("\n", j, end)
+            if nl > j:
+                end = nl  # 不含 \n 本身（下块从行首开始）
+        content = text[j:end]
+        if content.strip():
+            out.append((base + j, base + end))
+        if end >= len(text):
+            break
+        j = max(end, j + 1)
     return out
 
 

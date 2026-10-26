@@ -213,7 +213,7 @@ def _vector_sources(query: RetrievalQuery) -> list[RetrievedSource]:
         sim = max(0.0, min(1.0, distance))
         out.append(RetrievedSource(
             doc_file=h.get("source_file") or meta.get("source_file") or "未知来源",
-            quote=(h.get("source_quote") or meta.get("source_quote") or h.get("text") or "")[:1500],
+            quote=_quote_clip(h.get("source_quote") or meta.get("source_quote") or h.get("text") or ""),
             ref_type="vector_chunk",
             score=round(sim, 4),
             source_document_id=meta.get("source_document_id"),
@@ -293,7 +293,7 @@ def _keyword_sources(query: RetrievalQuery, db: Session) -> list[RetrievedSource
     for w, chunk, fname in scored[:min(query.top_k, 12)]:
         out.append(RetrievedSource(
             doc_file=fname,
-            quote=(chunk.text or "")[:1500],
+            quote=_quote_clip(chunk.text or ""),
             ref_type="keyword_chunk",
             score=round(min(0.99, 0.3 + 0.6 * w / top_score), 4),
             source_document_id=chunk.document_id,
@@ -407,6 +407,27 @@ def _authoritative_sources(query: RetrievalQuery, db: Session) -> list[Retrieved
     return out
 
 
+def _quote_clip(text: str, cap: int = 1500) -> str:
+    """引用截断（根修 3454"数据对不上"）：
+
+    - 表格型引用（markdown 表格行 ≥3 行）：cap 提高到 4000——大表被 2000 字切片后
+      quote[:1500] 会把尾部行从 LLM 上下文里整个吃掉（实测 51 个未接入系统丢 5 个）；
+    - 截断点回退到最近行边界（不拦腰切行/切单元格）；
+    - 截断时保留末尾"…"提示（LLM 知道有后续，不再静默丢失）。
+    """
+    if not text or len(text) <= cap:
+        return text or ""
+    is_table = sum(1 for ln in text.splitlines() if ln.strip().startswith("|")) >= 3
+    limit = 4000 if is_table else cap
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    nl = cut.rfind("\n")
+    if nl > limit * 0.6:
+        cut = cut[:nl]
+    return cut + "…"
+
+
 def retrieve(query: RetrievalQuery, db: Session | None = None) -> list[RetrievedSource]:
     """双路召回 + proximity 融合（07 §4）。db 为 None 时仅向量路径。
 
@@ -433,7 +454,7 @@ def retrieve(query: RetrievalQuery, db: Session | None = None) -> list[Retrieved
                     doc_names[doc_id] = d.filename if d else "未知来源"
                 sources.append(RetrievedSource(
                     doc_file=doc_names.get(doc_id, "未知来源" if doc_id else "本体图谱"),
-                    quote=quote[:1500],
+                    quote=_quote_clip(quote),
                     char_start=p.char_start if p else None,
                     char_end=p.char_end if p else None,
                     ref_type="graph_edge",
