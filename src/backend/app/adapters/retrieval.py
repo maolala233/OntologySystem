@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import Iterator
 from typing import Any
@@ -417,8 +418,12 @@ def _quote_clip(text: str, cap: int = 1500) -> str:
     """
     if not text or len(text) <= cap:
         return text or ""
-    is_table = sum(1 for ln in text.splitlines() if ln.strip().startswith("|")) >= 3
-    limit = 4000 if is_table else cap
+    # 行式枚举检测：markdown 表格行 / 列表行（- * • 数字. 数字）——枚举型内容
+    # （接入清单/限额表/操作步骤清单）截尾=数据点丢失，等同表格待遇（PPT/PDF/Word 常见）
+    enum_lines = sum(1 for ln in text.splitlines()
+                     if ln.strip().startswith("|")
+                     or re.match(r"^(?:[-*•]|\d+[.、)])\s*", ln.strip()))
+    limit = 4000 if enum_lines >= 3 else cap
     if len(text) <= limit:
         return text
     cut = text[:limit]
