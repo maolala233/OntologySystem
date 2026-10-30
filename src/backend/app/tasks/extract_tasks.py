@@ -364,6 +364,12 @@ def run_schema_extraction(self, project_id: int,
                                  f"骨架抽取完成：{len(result.classes)} 类 / "
                                  f"{len(result.object_properties)} 关系{stitch_note}{check_note}",
                                  stats=stats)
+            # QA 类锚定索引：骨架更新即重建（失败不阻塞抽取结果）
+            try:
+                from app.adapters.tbox_index import sync_tbox_index
+                sync_tbox_index(project_id, gd)
+            except Exception:  # noqa: BLE001
+                pass
             # O5-B27：抽取完成回调追加首轮诊断（后台线程，不阻塞任务返回）
             try:
                 from app.services.copilot_diagnosis import schedule_first_diagnosis
@@ -409,6 +415,19 @@ def _tbox_from_graph(gd: dict) -> dict:
         return {}
     classes = {}
     class_props = {}
+    # schema 级 datatype_properties 挂到类：UI 类面板属性即来源于此（domains 引用类 id），
+    # 实例抽取 prompt 的【各类属性清单】必须与 UI 同源，否则模型只能自行发明属性名
+    dtype_by_cls_id: dict[str, list[dict]] = {}
+    for dp in schema.get("datatype_properties") or []:
+        # 两套键约定：画布创建用 label，schema 抽取（M3 契约）用 name
+        name = str((dp or {}).get("label") or (dp or {}).get("name") or "").strip()
+        if not name:
+            continue
+        item = {"name": name,
+                "data_type": str((dp or {}).get("data_type") or "string"),
+                "description": str((dp or {}).get("description") or "")}
+        for d in (dp or {}).get("domains") or []:
+            dtype_by_cls_id.setdefault(str(d), []).append(item)
     for c in schema.get("classes") or []:
         label = str((c or {}).get("label") or "").strip()
         if not label:
@@ -419,14 +438,29 @@ def _tbox_from_graph(gd: dict) -> dict:
                   "description": str((p or {}).get("description") or "")}
                  for p in (c or {}).get("properties") or []
                  if str((p or {}).get("name") or "").strip()]
-        if props:
-            class_props[label] = props
+        props += dtype_by_cls_id.get(str((c or {}).get("id") or ""), [])
+        # 按 name 去重（类内 properties 与 schema 级可能重复声明）
+        seen_names: set[str] = set()
+        uniq = []
+        for p in props:
+            if p["name"] not in seen_names:
+                seen_names.add(p["name"])
+                uniq.append(p)
+        if uniq:
+            class_props[label] = uniq
     ops = {}
     for op in schema.get("object_properties") or []:
         label = str((op or {}).get("label") or "").strip()
         if label:
             ops[label] = {"domain": op.get("domain"), "range": op.get("range")}
-    return {"classes": classes, "object_properties": ops, "class_properties": class_props}
+    # 未挂靠任何类的 schema 级属性 → 属性建议（类未声明属性时实例抽取可用，
+    # 解决"服务细项详情抽不出"：细项声明存在但没归属，模型被键名白名单捆死）
+    suggested = [str((dp or {}).get("label") or (dp or {}).get("name") or "").strip()
+                 for dp in schema.get("datatype_properties") or []
+                 if str((dp or {}).get("label") or (dp or {}).get("name") or "").strip()
+                 and not (dp or {}).get("domains")]
+    return {"classes": classes, "object_properties": ops, "class_properties": class_props,
+            "suggested_properties": suggested[:40]}
 
 
 @celery_app.task(name="app.tasks.extract_tasks.run_instance_extraction",
@@ -608,16 +642,24 @@ def run_instance_extraction(self, project_id: int,
             class_nodes = [n for n in old_nodes
                            if (n.get("data") or {}).get("type") in CLASS_TYPES]
             class_ids = {str(n.get("id")) for n in class_nodes}
-            old_edges = [e for e in (gd.get("edges") or [])
+            all_old_edges = gd.get("edges") or []
+            old_edges = [e for e in all_old_edges
                          if str(e.get("source")) in class_ids
                          and str(e.get("target")) in class_ids]  # 旧实例边随重建丢弃
+            # steward 优先：人工编辑/新增的实例与关系、已批准的合并决策不因重抽丢失
+            inst_nodes, inst_edges = _preserve_human_decisions(
+                db, project_id, old_nodes, all_old_edges, inst_nodes, inst_edges,
+                by_label, label_ids, class_nodes)
             gd["nodes"] = class_nodes + inst_nodes
             gd["edges"] = old_edges + inst_edges + _build_type_edges(label_ids, class_nodes)
             proj.graph_data = gd
             flag_modified(proj, "graph_data")
 
             # 违例物化 review_items（04 §4.1/03 §8：promote/低置信/缺证据，各类型限额）
-            review_created = _materialize_gate_reviews(db, project_id, result)
+            review_created = _materialize_gate_reviews(
+                db, project_id, result,
+                existing_classes=list((tbox.get("classes") or {}).keys()),
+                existing_predicates=list((tbox.get("object_properties") or {}).keys()))
             db.commit()  # 触发 graph-rows 监听器 → entities/relations 双写
             version_no = _auto_version(db, project_id, "full", "实例抽取")
 
@@ -670,6 +712,12 @@ def run_instance_extraction(self, project_id: int,
                                  f"{len(result.relations)} 关系"
                                  + (f"（含反向补全 {inverse_added} 条）" if inverse_added else ""),
                                  stats=stats)
+            # QA 类锚定索引：实例抽取可能伴随骨架演进，一并重建（失败不阻塞）
+            try:
+                from app.adapters.tbox_index import sync_tbox_index
+                sync_tbox_index(project_id, gd)
+            except Exception:  # noqa: BLE001
+                pass
             # O5-B27：重抽/首抽完成均追加首轮诊断（后台线程，不阻塞任务返回）
             try:
                 from app.services.copilot_diagnosis import schedule_first_diagnosis
@@ -803,7 +851,26 @@ def _build_type_edges(label_ids: dict, class_nodes: list) -> list[dict]:
     return edges
 
 
-def _materialize_gate_reviews(db, project_id: int, result) -> int:
+def _similar_candidates(label: str, existing: list[str], top_k: int = 3,
+                        cutoff: float = 0.4) -> list[dict]:
+    """新类/新谓词的候选归并对象（coa grounding 思想）：低置信不丢弃，
+    带着最相似的已有项进审核，人可一键改判"并入已有类"。"""
+    import difflib
+
+    l = (label or "").strip()
+    if not l or not existing:
+        return []
+    scored = sorted(
+        ((ex, difflib.SequenceMatcher(None, l.lower(), str(ex).lower()).ratio())
+         for ex in existing),
+        key=lambda t: t[1], reverse=True)
+    return [{"label": ex, "score": round(s, 2)}
+            for ex, s in scored[:top_k] if s >= cutoff]
+
+
+def _materialize_gate_reviews(db, project_id: int, result,
+                              existing_classes: Optional[list[str]] = None,
+                              existing_predicates: Optional[list[str]] = None) -> int:
     """闸门违例 → review_items（04 §4.1/03 §8）。
 
     - new_class：promote_candidates（review/auto 政策）
@@ -826,19 +893,39 @@ def _materialize_gate_reviews(db, project_id: int, result) -> int:
                           reason=reason[:255], priority=priority, status="pending"))
         created += 1
 
+    # promote 候选按 (kind, label) 去重：同一新类/新关系在多个切片反复出现时
+    # 只建一条审核项（chunk_indices 合并），否则队列被同名项刷屏
+    deduped_cands: dict[tuple[str, str], dict] = {}
     for cand in result.promote_candidates or []:
+        key = (str(cand.get("kind") or ""), str(cand.get("label") or ""))
+        first = deduped_cands.get(key)
+        if first is None:
+            merged_cand = dict(cand)
+            merged_cand["chunk_indices"] = list(cand.get("chunk_indices") or [])
+            deduped_cands[key] = merged_cand
+        else:
+            first["chunk_indices"] += list(cand.get("chunk_indices") or [])
+    for cand in deduped_cands.values():
         if cand.get("kind") == "unknown_class":
+            cls_cands = _similar_candidates(cand.get("label"), existing_classes or [])
+            reason = (f"从文档中发现了新类型「{cand.get('label')}」，"
+                      f"当前本体中没有它，请审核是否加入")
+            if cls_cands:
+                reason += (f"（与已有类「{cls_cands[0]['label']}」相似度 "
+                           f"{cls_cands[0]['score']:.0%}，也可并入）")
             _add("new_class",
                  {"label": cand.get("label"), "chunk_indices": cand.get("chunk_indices"),
-                  "policy": cand.get("policy"), "auto_promoted": cand.get("auto_promoted")},
-                 f"新类型「{cand.get('label')}」待审入 TBox",
+                  "policy": cand.get("policy"), "auto_promoted": cand.get("auto_promoted"),
+                  "candidates": cls_cands},
+                 reason,
                  priority="high" if cand.get("auto_promoted") else "medium")
         elif cand.get("kind") == "unknown_predicate":
             # O1-B3：新谓词物化审核项（此前被静默跳过），批准后回写 TBox
             _add("new_predicate",
                  {"label": cand.get("label"), "chunk_indices": cand.get("chunk_indices"),
-                  "policy": cand.get("policy"), "auto_promoted": cand.get("auto_promoted")},
-                 f"新关系「{cand.get('label')}」待审入 TBox",
+                  "policy": cand.get("policy"), "auto_promoted": cand.get("auto_promoted"),
+                  "candidates": _similar_candidates(cand.get("label"), existing_predicates or [])},
+                 f"从文档中发现了新关系「{cand.get('label')}」，当前本体中没有它，请审核是否加入",
                  priority="high" if cand.get("auto_promoted") else "medium")
     for e in result.entities:
         if (e.confidence or 0.0) < LOW_CONFIDENCE_THRESHOLD:
@@ -861,6 +948,134 @@ def _materialize_gate_reviews(db, project_id: int, result) -> int:
                  f"关系「{r.subject_label}-{r.predicate}->{r.object_label}」"
                  f"置信度 {r.confidence:.2f} 低于阈值")
     return created
+
+
+def _preserve_human_decisions(db, project_id: int, old_nodes: list, old_edges: list,
+                              inst_nodes: list, inst_edges: list, by_label: dict,
+                              label_ids: dict, class_nodes: list) -> tuple[list, list]:
+    """steward 优先（coa 模式）：实例重抽为全量替换，人工成果在此合并回去。
+
+    1. 人工编辑/新增的实例（data.human_edited）：与重抽结果按节点 id 或
+       (归一化 label, 类) 匹配——命中则人工 label/别名/属性优先、AI 只补证据与置信；
+       未命中（AI 本轮没抽到）则原样保留节点。
+    2. 人工批准合并的标签（entities 行 status=merged，行尚未随本次 commit 重建）：
+       重抽不再把已合并标签拆回独立实例——丢弃该节点并把 label 重映射到规范节点。
+    3. 人工编辑/新增的关系边（data.human_edited）：两端节点仍在时保留，去重并入。
+    返回 (最终实例节点, 最终实例边)；by_label/label_ids 就地修正。
+    """
+    import hashlib
+
+    from app.adapters.resolution import normalize_label
+    from app.infrastructure.database import Entity
+
+    new_by_id = {str(n.get("id")): n for n in inst_nodes}
+
+    # ── 2) 已批准合并：label → 规范实体 ──
+    merged_map: dict[tuple[str, str], str] = {}  # (norm_label, class_label) → canonical label
+    try:
+        merged_rows = (db.query(Entity)
+                       .filter(Entity.project_id == project_id,
+                               Entity.status == "merged",
+                               Entity.is_class_node.is_(False))
+                       .all())
+        canon_ids = {r.canonical_id for r in merged_rows if r.canonical_id}
+        canon_rows = {c.id: c for c in db.query(Entity)
+                      .filter(Entity.id.in_(sorted(canon_ids))).all()} if canon_ids else {}
+        for r in merged_rows:
+            c = canon_rows.get(r.canonical_id)
+            if c is not None:
+                merged_map[(r.label_normalized, r.class_label)] = (c.label, c.class_label)
+    except Exception:  # noqa: BLE001 —— 行表读取失败不阻断重抽
+        merged_map = {}
+
+    final_nodes: list[dict] = []
+    dropped_label_to: dict[str, str] = {}  # 被合并丢弃的 label → 规范节点 id
+    for n in inst_nodes:
+        data = n.get("data") or {}
+        label = str(data.get("label") or "")
+        m = merged_map.get((normalize_label(label), str(data.get("class_label") or "")))
+        if m is not None:
+            canon_label, _cc = m
+            canon_node = next((x for x in inst_nodes
+                               if str((x.get("data") or {}).get("label") or "") == canon_label), None)
+            if canon_node is not None:
+                dropped_label_to[label] = str(canon_node.get("id"))
+                cd = canon_node.get("data") or {}
+                aliases = list(cd.get("aliases") or [])
+                if label not in aliases and label != canon_label:
+                    aliases.append(label)
+                cd["aliases"] = aliases
+                canon_node["data"] = cd
+                continue  # 丢弃：人工已裁定它是规范实体的同一事物
+        final_nodes.append(n)
+
+    # ── 1) 人工节点：命中合并（人工字段优先），未命中保留 ──
+    human_nodes = [n for n in old_nodes
+                   if (n.get("data") or {}).get("type") not in ("owl:Class", "Class")
+                   and (n.get("data") or {}).get("human_edited")]
+    kept_ids = {str(n.get("id")) for n in final_nodes}
+    final_ids = {str(n.get("id")) for n in final_nodes}
+    for h in human_nodes:
+        hd = h.get("data") or {}
+        h_label = str(hd.get("label") or "")
+        h_key = (normalize_label(h_label), str(hd.get("class_label") or ""))
+        twin = next((x for x in final_nodes
+                     if str(x.get("id")) == str(h.get("id"))
+                     or (normalize_label(str((x.get("data") or {}).get("label") or "")),
+                         str((x.get("data") or {}).get("class_label") or "")) == h_key), None)
+        if twin is not None:
+            td = twin.get("data") or {}
+            ai_label = str(td.get("label") or "")
+            # 人工字段优先；AI 的 label（可能是原文称呼）进别名，供关系重映射
+            aliases = list(hd.get("aliases") or [])
+            if ai_label and ai_label != h_label and ai_label not in aliases:
+                aliases.append(ai_label)
+            hd["aliases"] = aliases
+            hd["properties"] = {**{k: v for k, v in (td.get("properties") or {}).items()
+                                   if k not in (hd.get("properties") or {})},
+                                **(hd.get("properties") or {})}
+            for k in ("confidence", "source_quote", "source_document", "source_chunk_index",
+                      "source_document_id", "source_chunk_no", "source_char_start", "source_char_end"):
+                if td.get(k) is not None:
+                    hd[k] = td[k]
+            hd["human_edited"] = True
+            twin["data"] = hd
+            if h_label != ai_label:
+                by_label.setdefault(ai_label, str(twin.get("id")))
+        elif str(h.get("id")) not in final_ids:
+            final_nodes.append(h)  # AI 本轮没抽到：人工新增/确认的实例保留
+            final_ids.add(str(h.get("id")))
+
+    # by_label/label_ids 修正：被合并丢弃的 label 重映射；保留节点注册 type 边
+    by_label.update(dropped_label_to)
+    for label, target in list(by_label.items()):
+        if target not in final_ids:
+            by_label.pop(label, None)
+    label_ids.clear()
+    for n in final_nodes:
+        d = n.get("data") or {}
+        label_ids[(str(d.get("label") or ""), str(d.get("class_label") or ""))] = str(n.get("id"))
+
+    # ── 3) 人工关系边保留（两端仍存在，且不与重抽结果重复） ──
+    new_edge_keys = {(str(e.get("source")), str((e.get("data") or {}).get("relation")
+                                                or e.get("label") or ""), str(e.get("target")))
+                     for e in inst_edges}
+    final_node_ids = {str(n.get("id")) for n in final_nodes} \
+        | {str(n.get("id")) for n in class_nodes}
+    kept_edges: list[dict] = []
+    for e in old_edges:
+        d = e.get("data") if isinstance(e.get("data"), dict) else {}
+        if not d.get("human_edited"):
+            continue
+        s, t = str(e.get("source")), str(e.get("target"))
+        if s not in final_node_ids or t not in final_node_ids:
+            continue
+        key = (s, str(d.get("relation") or d.get("label") or ""), t)
+        if key in new_edge_keys:
+            continue
+        new_edge_keys.add(key)
+        kept_edges.append(e)
+    return final_nodes, inst_edges + kept_edges
 
 
 def _build_nodes(classes: list[dict], chunks: Optional[list] = None,

@@ -20,6 +20,9 @@ from pydantic import BaseModel, Field
 from app.adapters.resolution import normalize_label
 
 # prompt-hash 缓存 TTL（04 §3.1）
+# 单次 LLM 调用硬上限：本地小模型慢推理/云端拥堵时防无限等待；
+# 也是"取消"的最坏生效延迟——进行中的调用最多再跑这么多秒
+LLM_CALL_TIMEOUT_SECONDS = 180
 LLM_CACHE_TTL = 8 * 3600
 
 # ── 结构化输出约束（与 SchemaExtractionResult 对齐；字段化 prompt 的产物契约）──
@@ -199,7 +202,8 @@ def _default_llm_call(model_override: Optional[dict],
 
     def call(system_prompt: str, user_prompt: str, json_schema: Optional[dict]):
         out = client.call_llm(system_prompt, user_prompt, max_retries=2,
-                              stream=False, json_schema=json_schema)
+                              stream=False, json_schema=json_schema,
+                              timeout=LLM_CALL_TIMEOUT_SECONDS)
         if isinstance(out, dict) and isinstance(out.get("content"), str):
             # call_llm 返回 {"content": ...} 形态时解析内嵌 JSON
             return _loads_loose(out["content"])
@@ -803,6 +807,8 @@ INSTANCE_PROMPT_JSON_SCHEMA = {
 
 INSTANCE_SYSTEM_PROMPT = (
     "你是资深知识图谱构建专家。根据给定的本体（TBox）从文档切片中抽取实例（ABox）与实例间关系。\n"
+    "输出顶层结构固定为：{\"entities\": [...], \"relations\": [...]}——实体数组键名必须是 entities，"
+    "实体元素必须含 label（实例名）与 class_label（类名）字段。\n"
     "规则：\n"
     "1. class_label 必须严格取自【本体类清单】；predicate 必须严格取自【关系清单】，不要发明新类/新关系。\n"
     "2. 实例名使用文中原始称呼；同一实体的多种称呼都出现时各抽一次，后续消解会合并。\n"
@@ -816,6 +822,11 @@ INSTANCE_SYSTEM_PROMPT = (
 
 def _normalize_instance_payload(payload: dict) -> dict:
     """LLM 输出键漂移归一（同 _normalize_payload，实例契约版）。"""
+    ents = payload.get("entities")
+    if ents is None and isinstance(payload.get("instances"), list):
+        # json_object 降级场景下模型常见顶层键漂移（instances/nodes）
+        payload["entities"] = payload["instances"]
+    payload.pop("instances", None)
     rels = payload.get("relations")
     if rels is None and isinstance(payload.get("relationships"), list):
         rels = payload["relationships"]
@@ -852,6 +863,15 @@ def _validate_instance_payload(payload: Any) -> tuple[Optional[dict], str]:
     ents = payload.get("entities")
     if ents is None and isinstance(payload.get("relations"), list):
         ents = []  # 只有关系没有实体也算合法形状
+    if ents is None:
+        # 防静默丢实体：模型把实体放在未知键下（如 instances）时，不能当作 0 实体放行，
+        # 要让重试反馈把键名纠正回来
+        suspects = [k for k, v in payload.items()
+                    if k not in ("entities", "relations") and isinstance(v, list)
+                    and v and isinstance(v[0], dict)]
+        if suspects:
+            return None, f"缺少 entities 数组（实体疑似放在未知键 {suspects[0]} 下）"
+        ents = []
     if not isinstance(ents, list):
         return None, "缺少 entities 数组"
     for e in ents:
@@ -886,11 +906,21 @@ def _instance_user_prompt(chunk_text: str, tbox_summary: dict, known_entities: l
         if lines:
             parts.append("【各类属性清单】（实例的 props 键只能取自所属类这里的属性名）\n"
                          + "\n".join(lines))
+    sp = tbox_summary.get("suggested_properties") or []
+    if sp:
+        parts.append("【可用属性建议】\n" + "、".join(sp)
+                     + "\n（所属类未声明属性时，props 键优先取这里的名称；"
+                       "都不合适时用文中原词作属性名，不要漏掉文中的细项数值）")
     ops = tbox_summary.get("object_properties") or {}
     if ops:
         lines = [f"- {p}：{d.get('domain', '')} → {d.get('range', '')}"
                  for p, d in ops.items()]
         parts.append("【关系清单】（predicate 只能取自这里）\n" + "\n".join(lines))
+    else:
+        # 关系清单为空（如纯清单型文档）：明令禁止发明关系，否则模型用通用动词
+        # 硬连实体，闸门逐条拦截后刷爆审核队列
+        parts.append("【关系清单】当前本体未声明任何实例间关系——禁止输出 relations 数组"
+                     "（留空 []），也不要发明新关系；只抽取实例和它的属性。")
     if known_entities:
         parts.append("【已抽取实体】（重复提及可再抽，消解层会合并）\n"
                      + "、".join(known_entities[-80:]))
@@ -964,6 +994,8 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
         feedback = ""
         last_err = "未知错误"
         for _attempt in range(2):
+            if cancel_cb is not None:
+                cancel_cb()  # 取消即时生效：重试间隙不再发起新调用
             try:
                 raw = llm_call(INSTANCE_SYSTEM_PROMPT,
                                _instance_user_prompt(text, tbox_summary, known, prev_tail,

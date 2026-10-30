@@ -3,6 +3,7 @@ import json
 import time
 import os
 import asyncio
+import httpx
 from typing import Dict, Any, Iterator, Optional
 from openai import OpenAI, AsyncOpenAI
 from app.core.config import settings
@@ -38,6 +39,10 @@ class LLMClient:
             "api_key": self.api_key if self.api_key else "EMPTY",
             "timeout": 600.0,
         }
+        # openai 3.37（httpx2）对自定义 http_client 不套用 SDK timeout——挂住的连接
+        # 永远不超时。必须在 httpx 客户端自身上设传输层超时兜底。
+        # 300s：流式 QA 每次读间隙远小于它；非流式抽取调用另有 180s per-request 上限
+        self._httpx_timeout = httpx.Timeout(300.0, connect=15.0)
 
         headers = {}
         if self.api_key and self.api_key != "EMPTY":
@@ -113,24 +118,25 @@ class LLMClient:
                     from httpx_socks import SyncProxyTransport
                     parsed = urlparse(proxy_to_use)
                     if parsed.scheme.startswith('socks'):
-                        return httpx.Client(transport=SyncProxyTransport.from_url(proxy_to_use))
+                        return httpx.Client(transport=SyncProxyTransport.from_url(proxy_to_use),
+                                   timeout=self._httpx_timeout)
                 except ImportError:
                     logger.warning("httpx_socks not installed for SOCKS proxy support.")
-                    return httpx.Client()
+                    return httpx.Client(timeout=self._httpx_timeout)
                 except Exception as e:
                     logger.warning(f"Failed to create proxy client: {e}. Falling back to no proxy.")
-                    return httpx.Client()
+                    return httpx.Client(timeout=self._httpx_timeout)
             else:
                 try:
-                    return httpx.Client(proxy=proxy_to_use)
+                    return httpx.Client(proxy=proxy_to_use, timeout=self._httpx_timeout)
                 except ValueError as e:
                     logger.warning(f"Invalid proxy URL format: {e}. Falling back to no proxy.")
-                    return httpx.Client()
+                    return httpx.Client(timeout=self._httpx_timeout)
                 except Exception as e:
                     logger.warning(f"Failed to create HTTP proxy client: {e}. Falling back to no proxy.")
-                    return httpx.Client()
+                    return httpx.Client(timeout=self._httpx_timeout)
 
-        return httpx.Client()
+        return httpx.Client(timeout=self._httpx_timeout)
 
     def _create_proxy_async_http_client(self):
         import httpx
@@ -147,24 +153,25 @@ class LLMClient:
                     from httpx_socks import AsyncProxyTransport
                     parsed = urlparse(proxy_to_use)
                     if parsed.scheme.startswith('socks'):
-                        return httpx.AsyncClient(transport=AsyncProxyTransport.from_url(proxy_to_use))
+                        return httpx.AsyncClient(transport=AsyncProxyTransport.from_url(proxy_to_use),
+                                         timeout=self._httpx_timeout)
                 except ImportError:
                     logger.warning("httpx_socks not installed for SOCKS proxy support.")
-                    return httpx.AsyncClient()
+                    return httpx.AsyncClient(timeout=self._httpx_timeout)
                 except Exception as e:
                     logger.warning(f"Failed to create async proxy client: {e}. Falling back to no proxy.")
-                    return httpx.AsyncClient()
+                    return httpx.AsyncClient(timeout=self._httpx_timeout)
             else:
                 try:
                     return httpx.AsyncClient(proxy=proxy_to_use)
                 except ValueError as e:
                     logger.warning(f"Invalid proxy URL format: {e}. Falling back to no proxy.")
-                    return httpx.AsyncClient()
+                    return httpx.AsyncClient(timeout=self._httpx_timeout)
                 except Exception as e:
                     logger.warning(f"Failed to create async HTTP proxy client: {e}. Falling back to no proxy.")
-                    return httpx.AsyncClient()
+                    return httpx.AsyncClient(timeout=self._httpx_timeout)
 
-        return httpx.AsyncClient()
+        return httpx.AsyncClient(timeout=self._httpx_timeout)
 
     def _clean_base_url(self, url: str) -> str:
         if not url:
@@ -227,6 +234,12 @@ class LLMClient:
             if requires_json:
                 logger.info(f"[LLM] 检测到 JSON 输出要求，使用 json_object 格式")
                 api_kwargs["response_format"] = {"type": "json_object"}
+                # json_object 不承载 Schema：契约必须以文本进 prompt，否则模型只能
+                # 自行发明输出键名（如 instances/name），校验层拿到空壳实体
+                if json_schema:
+                    api_kwargs["messages"][0]["content"] += (
+                        "\n\n【输出 JSON Schema（顶层键与字段名必须严格一致）】\n"
+                        + json.dumps(json_schema, ensure_ascii=False))
 
         return api_kwargs
 
