@@ -108,7 +108,17 @@ const ReviewsPage: React.FC = () => {
 
     const approveCurrent = useCallback(() => {
         if (!detail) return;
-        decide('approve', detail.item_type === 'conflict_type' ? { chosen_class: chosenClass } : undefined);
+        if (detail.item_type === 'conflict_type') {
+            decide('approve', { chosen_class: chosenClass });
+        } else if (detail.item_type === 'new_class'
+                   && chosenClass && chosenClass !== '__new__') {
+            decide('approve', { merge_into_class: chosenClass });
+        } else if (detail.item_type === 'new_predicate'
+                   && chosenClass && chosenClass !== '__new__') {
+            decide('approve', { merge_into_predicate: chosenClass });
+        } else {
+            decide('approve');
+        }
     }, [detail, chosenClass, decide]);
 
     // 键盘流（05 §6.8：↑↓/J K 切换，1/2/3 裁决，E 展开证据）。

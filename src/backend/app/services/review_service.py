@@ -94,8 +94,12 @@ def _apply_approval(item, user, payload: dict, db: Session) -> dict:
     if kind == "schema_match_suggestion":
         return _approve_schema_match(item, user, payload, db)
     # conflict_value/conflict_relationship / low_confidence_* / missing_evidence：
-    # approve 即"确认处理"，留痕关闭
-    return {"closed": kind}
+    # approve 即"确认收录/以现状为准"，留痕关闭（effect 用人话，前端 toast 直接展示）
+    confirmed = (payload.get("label") or payload.get("entity_label")
+                 or (f"{payload.get('subject_label')}-{payload.get('predicate')}"
+                     f"->{payload.get('object_label')}" if payload.get('subject_label') else None)
+                 or kind)
+    return {"confirmed": confirmed}
 
 
 def _approve_conflict_type(item, user, payload: dict, db: Session) -> dict:
@@ -156,8 +160,13 @@ def _approve_conflict_type(item, user, payload: dict, db: Session) -> dict:
 
 
 def _approve_entity_merge(item, user, payload: dict, db: Session) -> dict:
-    """合并执行（可逆，merge_entities 自带留痕）。"""
+    """合并执行（可逆，merge_entities 自带留痕）+ **画布同步**：
+    行表合并（merge_entities）与 blob 更新（删重复节点/边重挂/别名与属性并入规范节点）
+    同时落地——画布与行表同源一致，重抽也不回拆（human_edited/merged 保留逻辑双保险）。"""
+    from sqlalchemy.orm.attributes import flag_modified
+
     from app.adapters.resolution import merge_entities
+    from app.infrastructure.database import Entity, Project
 
     ref = item.result_ref or payload or {}
     canonical_id = ref.get("canonical_id") or payload.get("canonical_id")
@@ -165,6 +174,62 @@ def _approve_entity_merge(item, user, payload: dict, db: Session) -> dict:
     if not canonical_id or not duplicate_ids:
         return {"skipped": "payload 缺 canonical_id/duplicate_ids"}
     res = merge_entities(int(canonical_id), [int(i) for i in duplicate_ids], db=db)
+
+    # ── 画布同步（blob 为准）：行表合并的镜像操作 ──
+    try:
+        proj = db.query(Project).filter(Project.id == item.project_id).first()
+        if proj is not None:
+            canon_row = db.query(Entity).filter(Entity.id == int(canonical_id)).first()
+            dup_rows = (db.query(Entity)
+                        .filter(Entity.id.in_([int(i) for i in duplicate_ids
+                                               if int(i) != int(canonical_id)]))
+                        .all())
+            if canon_row is not None and dup_rows:
+                gd = proj.graph_data if isinstance(proj.graph_data, dict) else {}
+                nodes = gd.get("nodes") or []
+                dup_canvas_ids = {str((r.uri or "").rsplit(":entity/", 1)[-1])
+                                  for r in dup_rows if (r.uri or "").rsplit(":entity/", 1)[-1]}
+                dup_labels = {r.label for r in dup_rows}
+                # 规范节点：uri 尾段匹配（label 可能已被人工改过，不能按 label 找）
+                canon_canvas = next((n for n in nodes
+                                     if str(n.get("id")) == str(
+                                         (canon_row.uri or "").rsplit(":entity/", 1)[-1])), None)
+                if canon_canvas is not None:
+                    cd = canon_canvas.get("data") or {}
+                    # 别名 + 属性并入（行表 merge_entities 的镜像）
+                    aliases = list(cd.get("aliases") or [])
+                    for lbl in dup_labels:
+                        if lbl and lbl != cd.get("label") and lbl not in aliases:
+                            aliases.append(lbl)
+                    cd["aliases"] = aliases
+                    props = dict(cd.get("properties") or {})
+                    for r in dup_rows:
+                        for k, v in (r.props or {}).items():
+                            if k not in props or props[k] in (None, ""):
+                                props[k] = v
+                    cd["properties"] = props
+                    canon_canvas["data"] = cd
+                    # 删重复节点；其边重挂到规范节点
+                    kept_nodes = [n for n in nodes if str(n.get("id")) not in dup_canvas_ids]
+                    remap = {cid: str(canon_canvas.get("id")) for cid in dup_canvas_ids}
+                    seen_edges: set[tuple[str, str, str]] = set()
+                    new_edges: list[dict] = []
+                    for e in gd.get("edges") or []:
+                        s = remap.get(str(e.get("source")), str(e.get("source")))
+                        t = remap.get(str(e.get("target")), str(e.get("target")))
+                        d = e.get("data") if isinstance(e.get("data"), dict) else {}
+                        key = (s, str(d.get("relation") or d.get("label") or ""), t)
+                        if key in seen_edges or s == t:
+                            continue
+                        seen_edges.add(key)
+                        e["source"], e["target"] = s, t
+                        new_edges.append(e)
+                    gd["nodes"] = kept_nodes
+                    gd["edges"] = new_edges
+                    proj.graph_data = gd
+                    flag_modified(proj, "graph_data")
+    except Exception:  # noqa: BLE001 —— 画布同步失败不影响行表合并结果
+        pass
     return {"merged": len(res.merged_ids), "relations_migrated": res.relations_migrated}
 
 
@@ -173,6 +238,8 @@ def _approve_new_class(item, user, payload: dict, db: Session) -> dict:
 
     B9：批准时把抽取时的 chunk 证据固化为 TBox 锚点（schema 类 evidence 字段），
     供证据闭合发布检查（悬空阻断）与画布/审核界面证据视图。
+    merge_into_class（coa grounding 裁决）：人判定新类型实为已有类的同一概念 →
+    不建新类，把该 label 作为别名并入目标类，并重分类已标注为该 label 的实例。
     """
     from sqlalchemy.orm.attributes import flag_modified
 
@@ -188,6 +255,48 @@ def _approve_new_class(item, user, payload: dict, db: Session) -> dict:
     gd.setdefault("schema", {}).setdefault("classes", [])
     gd["schema"].setdefault("object_properties", [])
     existing = {c.get("label") for c in gd["schema"]["classes"]}
+
+    merge_into = str(payload.get("merge_into_class") or "").strip()
+    if merge_into and merge_into != label and merge_into in existing:
+        # 1) schema：label 并入目标类别名
+        for c in gd["schema"]["classes"]:
+            if c.get("label") == merge_into:
+                aliases = list(c.get("aliases") or [])
+                if label not in aliases:
+                    aliases.append(label)
+                c["aliases"] = aliases
+                break
+        # 2) 画布：该 label 的实例重分类 + type 边重挂 + human_edited 标记
+        nodes = gd.setdefault("nodes", [])
+        target_node = next((n for n in nodes
+                            if str((n.get("data") or {}).get("label") or "") == merge_into
+                            and (n.get("data") or {}).get("type") in ("owl:Class", "Class")), None)
+        reclassified = 0
+        for n in nodes:
+            d = n.get("data") or {}
+            if d.get("type") in ("owl:Class", "Class") or d.get("class_label") != label:
+                continue
+            d["class_label"] = merge_into
+            d["human_edited"] = True
+            n["data"] = d
+            reclassified += 1
+        retyped = 0
+        if target_node is not None:
+            for e in gd.get("edges") or []:
+                src_node = next((x for x in nodes if str(x.get("id")) == str(e.get("source"))), None)
+                if src_node is None:
+                    continue
+                sd = src_node.get("data") or {}
+                if (sd.get("class_label") == merge_into
+                        and str((e.get("data") or {}).get("relation") or "") == "instance_of"
+                        and str(e.get("target")) != str(target_node.get("id"))):
+                    e["target"] = target_node.get("id")
+                    retyped += 1
+        proj.graph_data = gd
+        flag_modified(proj, "graph_data")
+        db.flush()
+        return {"merged_into": merge_into, "reclassified": reclassified, "retyped_edges": retyped}
+
     if label not in existing:
         anchor = _evidence_anchor(db, item.project_id,
                                   payload.get("chunk_indices") or [], label)
@@ -225,6 +334,8 @@ def _approve_new_predicate(item, user, payload: dict, db: Session) -> dict:
 
     payload 可带裁决时编辑的 domain/range（缺省 None，由用户后续在画布补全）；
     仅写 schema 权威键，画布边需两端类节点，由用户在画布上拖接。
+    merge_into_predicate（coa grounding 裁决）：人判定新关系实为已有关系的同一概念 →
+    不建新关系，画布上用该新关系连的实例边全部改判为已有关系。
     """
     from sqlalchemy.orm.attributes import flag_modified
 
@@ -239,6 +350,23 @@ def _approve_new_predicate(item, user, payload: dict, db: Session) -> dict:
     gd = proj.graph_data or {}
     gd.setdefault("schema", {}).setdefault("object_properties", [])
     existing = {str(op_.get("label") or "") for op_ in gd["schema"]["object_properties"]}
+
+    merge_into = str(payload.get("merge_into_predicate") or "").strip()
+    if merge_into and merge_into != label and merge_into in existing:
+        retyped = 0
+        for e in gd.get("edges") or []:
+            d = e.get("data") if isinstance(e.get("data"), dict) else {}
+            if str(d.get("relation") or d.get("label") or "") == label:
+                d["relation"] = merge_into
+                d["label"] = merge_into
+                d["human_edited"] = True  # steward 优先：人工改判的关系重抽时保留
+                e["data"] = d
+                retyped += 1
+        proj.graph_data = gd
+        flag_modified(proj, "graph_data")
+        db.flush()
+        return {"merged_into": merge_into, "retyped_edges": retyped}
+
     if label not in existing:
         # B9：新谓词批准时固化 chunk 证据锚点（schema 级 evidence 字段）
         anchor = _evidence_anchor(db, item.project_id,

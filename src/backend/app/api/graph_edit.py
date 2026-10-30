@@ -161,6 +161,7 @@ def add_instance(project_id: int, body: dict,
                      "y": float(pos.get("y") or 120 + len(nodes) * 26 % 320)},
         "data": {"label": label, "type": "owl:NamedIndividual", "class_label": class_label,
                  "properties": _clean_props(body.get("properties")),
+                 "human_edited": True,
                  "_source": "manual", "_created_by": current_user.username},
     }
     edge = {
@@ -228,6 +229,8 @@ def update_instance(project_id: int, node_id: str, body: dict,
 
     if not changes:
         raise APIError("没有需要修改的字段", code="NO_CHANGES", http_status=400)
+    # steward 优先：人工编辑标记，实例重抽时保留人工改动（不被 AI 重抽覆盖）
+    data["human_edited"] = True
     project.graph_data = gd
     res = _commit_edit(db, project, current_user,
                        f"手动：修改实例「{data.get('label')}」",
@@ -288,7 +291,7 @@ def add_relation(project_id: int, body: dict,
         raise APIError("相同的三元组关系已存在", code="DUPLICATE", http_status=400)
     edge = {
         "id": f"edge_{secrets.token_hex(6)}", "source": src, "target": dst,
-        "data": {"label": predicate, "relation": predicate,
+        "data": {"label": predicate, "relation": predicate, "human_edited": True,
                  "_source": "manual", "_created_by": current_user.username},
     }
     edges.append(edge)
@@ -346,6 +349,7 @@ def update_relation(project_id: int, edge_id: str, body: dict,
     data = edge.get("data") if isinstance(edge.get("data"), dict) else {}
     data["relation"] = predicate
     data["label"] = predicate
+    data["human_edited"] = True  # steward 优先：人工改过的关系重抽时保留
     edge["data"] = data
 
     # O2-B7：谓词变更后自动逆边跟随重同步（删旧逆边、按新谓词补新逆边）

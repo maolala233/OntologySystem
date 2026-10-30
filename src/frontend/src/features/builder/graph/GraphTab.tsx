@@ -998,7 +998,7 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                 confirmLoading={instStarting}
                 onCancel={() => setInstOpen(false)}
             >
-                <div className="mb-2 text-sm text-gray-600">选择本次实例抽取所基于的框架（TBox）：</div>
+                <div className="mb-2 text-sm text-gray-600">选择本次实例抽取所基于的框架（类与关系结构）：</div>
                 <Select
                     style={{ width: '100%' }}
                     value={instVersion ?? 'current'}

@@ -519,7 +519,7 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
                                         {impact.affected.pending_reviews}
                                     </span>
                                 </Descriptions.Item>
-                                <Descriptions.Item label="TBox 漂移">
+                                <Descriptions.Item label="骨架变更待复核">
                                     {impact.drift?.length
                                         ? <Tooltip title={impact.drift.map((d) => `${d.label}×${d.instance_count}`).join('、')}>{impact.drift.length} 类</Tooltip>
                                         : '无'}

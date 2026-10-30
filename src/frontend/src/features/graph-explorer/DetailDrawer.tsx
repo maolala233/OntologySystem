@@ -205,7 +205,6 @@ interface Props {
 }
 
 const DetailDrawer: React.FC<Props> = ({ projectId, selection, onClose, onNavigateNode, onExpandNode, extraNodeActions, reloadKey }) => {
-    const [nodeTitle, setNodeTitle] = useState<string>('节点详情');
     const [edgeDetail, setEdgeDetail] = useState<EdgeDetail | null>(null);
 
     useEffect(() => {
@@ -221,23 +220,12 @@ const DetailDrawer: React.FC<Props> = ({ projectId, selection, onClose, onNaviga
         load();
     }, [projectId, selection]);
 
-    const title = selection?.type === 'edge' ? '关系详情' : nodeTitle;
-
     return (
         <Drawer
             open={!!selection}
             onClose={onClose}
             width={560}
-            title={<Space><span>{title}</span></Space>}
-            extra={selection?.type === 'node' && (
-                <Space wrap size={4}>
-                    {extraNodeActions?.(selection.id)}
-                    {onExpandNode && <Button size="small" icon={<SendOutlined />}
-                                             onClick={() => onExpandNode(selection.id)}>在画布中聚焦</Button>}
-                    {onExpandNode && <Button size="small" type="primary" ghost icon={<ExpandOutlined />}
-                                             onClick={() => onExpandNode(selection.id, { expand: true })}>邻域展开</Button>}
-                </Space>
-            )}
+            title={selection?.type === 'edge' ? '关系详情' : '节点详情'}
         >
             {!selection && <Empty description="选择节点或关系查看详情" />}
             {selection?.type === 'node' && (
@@ -247,7 +235,15 @@ const DetailDrawer: React.FC<Props> = ({ projectId, selection, onClose, onNaviga
                     reloadKey={reloadKey}
                     onNavigateNode={onNavigateNode}
                     onExpandNode={onExpandNode}
-                    onLoaded={(d) => setNodeTitle(d.node?.label || '节点详情')}
+                    headerActions={selection ? (
+                        <Space wrap size={4}>
+                            {extraNodeActions?.(selection.id)}
+                            {onExpandNode && <Button size="small" icon={<SendOutlined />}
+                                                     onClick={() => onExpandNode(selection.id)}>在画布中聚焦</Button>}
+                            {onExpandNode && <Button size="small" type="primary" ghost icon={<ExpandOutlined />}
+                                                     onClick={() => onExpandNode(selection.id, { expand: true })}>邻域展开</Button>}
+                        </Space>
+                    ) : undefined}
                 />
             )}
             {selection?.type === 'edge' && edgeDetail && (
@@ -304,7 +300,9 @@ export const NodeDetailContent: React.FC<{
     reloadKey?: number;
     /** 节点可能尚未落库（如手动新增未保存）时的友好提示：加载失败时显示它而非报错 */
     unsavedHint?: string;
-}> = ({ projectId, nodeId, onNavigateNode, onExpandNode, onLoaded, reloadKey, unsavedHint }) => {
+    /** 抽屉宿主注入的操作按钮（编辑/加关系/删除/聚焦等），渲染在标题下方 */
+    headerActions?: React.ReactNode;
+}> = ({ projectId, nodeId, onNavigateNode, onExpandNode, onLoaded, reloadKey, unsavedHint, headerActions }) => {
     const [nodeDetail, setNodeDetail] = useState<NodeDetail | null>(null);
     const [loading, setLoading] = useState(false);
     const [refreshKey, setRefreshKey] = useState(0);
@@ -335,6 +333,12 @@ export const NodeDetailContent: React.FC<{
     if (!nodeDetail) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={unsavedHint || "详情加载失败或节点不存在"} />;
     return (
                 <div>
+                    <div className="mb-3">
+                        <Paragraph strong className="!mb-1" style={{ fontSize: 16, lineHeight: 1.5, wordBreak: 'break-word' }}>
+                            {nodeDetail.node.label || '未命名节点'}
+                        </Paragraph>
+                        {headerActions && <div className="mt-2">{headerActions}</div>}
+                    </div>
     <div className="flex justify-end mb-1">
         <Button size="small" type="text" icon={<ReloadOutlined />}
                 onClick={() => setRefreshKey((k) => k + 1)} />

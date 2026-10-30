@@ -9,7 +9,8 @@ export default defineConfig({
         host: '0.0.0.0', 
         proxy: {
             '/api': {
-                target: 'http://127.0.0.1:3001',
+                // 本地联调默认走容器化后端（compose 映射 3002）；源码直起后端时改 3001
+                target: process.env.VITE_API_TARGET || 'http://127.0.0.1:3002',
                 changeOrigin: true,
             }
         }

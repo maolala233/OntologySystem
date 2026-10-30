@@ -12,10 +12,10 @@ from app.infrastructure.database import Project, ProjectMember, ReviewItem, User
 
 router = APIRouter(prefix="/api", tags=["reviews"])
 
-ITEM_TYPES = ("entity_merge", "new_class", "low_confidence_entity",
+ITEM_TYPES = ("entity_merge", "new_class", "new_predicate", "low_confidence_entity",
               "low_confidence_relation", "conflict_value", "conflict_type",
               "conflict_relationship", "missing_evidence", "conflict_axiom",
-              "axiom_suggestion")
+              "axiom_suggestion", "schema_match_suggestion", "cq_suggestion")
 
 
 def _project_name_map(db: Session) -> dict[int, str | None]:
@@ -86,12 +86,14 @@ def list_project_reviews(project_id: int,
     require_project_role(project_id, "viewer", current_user, db)
     q = db.query(ReviewItem).filter(ReviewItem.project_id == project_id)
     if status:
-        q = q.filter(ReviewItem.status == status)
+        q = q.filter(ReviewItem.status.in_([s for s in status.split(",") if s]))
     if type:
-        if type not in ITEM_TYPES:
-            raise APIError(f"type 取值限 {ITEM_TYPES}", code="INVALID_TYPE",
-                           http_status=400)
-        q = q.filter(ReviewItem.item_type == type)
+        types = [t for t in type.split(",") if t]
+        for t in types:
+            if t not in ITEM_TYPES:
+                raise APIError(f"type 取值限 {ITEM_TYPES}", code="INVALID_TYPE",
+                               http_status=400)
+        q = q.filter(ReviewItem.item_type.in_(types))
     if priority:
         q = q.filter(ReviewItem.priority == priority)
     total = q.count()

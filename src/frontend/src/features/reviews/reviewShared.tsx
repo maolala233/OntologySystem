@@ -19,6 +19,7 @@ export const PRIORITY_TAG: Record<string, { color: string; label: string }> = {
 export const TYPE_LABEL: Record<string, string> = {
     entity_merge: '实体合并',
     new_class: '新类型',
+    new_predicate: '新关系',
     low_confidence_entity: '低置信实体',
     low_confidence_relation: '低置信关系',
     conflict_value: '属性值冲突',
@@ -101,8 +102,24 @@ export function humanSummary(item: ReviewItem): string {
             }
             return `关系「${prop}」的取值与本体声明的公理（函数性/基数）不符（${vals.join('、')}），请核实`;
         }
-        case 'new_class':
-            return `从文档中发现了新类别「${p.label || ''}」，它不在当前本体骨架中，请决定是否加入`;
+        case 'new_class': {
+            const cands: Array<{ label: string; score: number }> = Array.isArray(p.candidates)
+                ? p.candidates : [];
+            const top = cands[0];
+            if (top) {
+                return `从文档中发现了新类别「${p.label || ''}」，它与已有类别「${top.label}」相似度 ${Math.round((top.score || 0) * 100)}%——请判断是加入为新类别，还是并入已有类别`;
+            }
+            return `从文档中发现了新类别「${p.label || ''}」，它不在当前本体中，请决定是否加入`;
+        }
+        case 'new_predicate': {
+            const cands: Array<{ label: string; score: number }> = Array.isArray(p.candidates)
+                ? p.candidates : [];
+            const top = cands[0];
+            if (top) {
+                return `从文档中发现了新的关系「${p.label || ''}」，它与已有关系「${top.label}」相似度 ${Math.round((top.score || 0) * 100)}%——请判断是加入为新关系，还是视为同一个`;
+            }
+            return `从文档中发现了新的关系「${p.label || ''}」，它不在当前本体中，请决定是否加入`;
+        }
         case 'axiom_suggestion': {
             const kindLbl = AXIOM_KIND_LABEL[p.kind] || p.kind || '公理';
             const targets: string[] = p.kind === 'domain_fix' || p.kind === 'range_fix'
@@ -280,16 +297,91 @@ export const FriendlyPayload: React.FC<{
                 </div>
             );
         }
-        case 'new_class':
+        case 'new_class': {
+            const cands: Array<{ label: string; score: number }> = Array.isArray(p.candidates)
+                ? p.candidates : [];
             return (
                 <div className="space-y-3">
                     <div className="p-3 bg-blue-50 border border-blue-100 rounded text-sm">
                         文档中出现了新类别 <Text strong>「{p.label}」</Text>，当前本体骨架中没有它。
-                        通过后会加入骨架；驳回则忽略。
                     </div>
+                    {cands.length > 0 && (
+                        <div>
+                            <Text type="secondary" className="text-xs">
+                                与已有类别相似（若其实是同一概念，选一个并入，避免类别碎片化）
+                            </Text>
+                            <Radio.Group
+                                value={chosenClass ?? null}
+                                onChange={(e) => onChooseClass?.(e.target.value)}
+                                className="flex flex-col gap-2 mt-2"
+                            >
+                                <Radio value="__new__">
+                                    <Tag color="blue">加入为新类别</Tag>
+                                    {chosenClass === '__new__' && <Text type="secondary" className="text-xs">（通过后将加入骨架）</Text>}
+                                </Radio>
+                                {cands.map((c) => (
+                                    <Radio key={c.label} value={c.label}>
+                                        <Tag color={chosenClass === c.label ? 'purple' : 'default'}>并入「{c.label}」</Tag>
+                                        <Text type="secondary" className="text-xs">相似度 {Math.round((c.score || 0) * 100)}%</Text>
+                                    </Radio>
+                                ))}
+                            </Radio.Group>
+                            <div className="text-sm text-gray-600 mt-2">
+                                选择后点「通过」即生效；什么也不选直接「通过」= 加入为新类别。
+                            </div>
+                        </div>
+                    )}
+                    {cands.length === 0 && (
+                        <div className="text-sm text-gray-600">
+                            通过后会加入骨架；驳回则忽略。
+                        </div>
+                    )}
                     {p.definition && <Quote text={p.definition} title="定义" />}
                 </div>
             );
+        }
+        case 'new_predicate': {
+            const cands: Array<{ label: string; score: number }> = Array.isArray(p.candidates)
+                ? p.candidates : [];
+            return (
+                <div className="space-y-3">
+                    <div className="p-3 bg-blue-50 border border-blue-100 rounded text-sm">
+                        文档中出现了新的关系 <Text strong>「{p.label}」</Text>（描述两个事物之间的关联），当前本体中没有它。
+                    </div>
+                    {cands.length > 0 && (
+                        <div>
+                            <Text type="secondary" className="text-xs">
+                                与已有关系相似（若其实是同一个意思，选一个并入，避免关系名混乱）
+                            </Text>
+                            <Radio.Group
+                                value={chosenClass ?? null}
+                                onChange={(e) => onChooseClass?.(e.target.value)}
+                                className="flex flex-col gap-2 mt-2"
+                            >
+                                <Radio value="__new__">
+                                    <Tag color="blue">加入为新关系</Tag>
+                                    {chosenClass === '__new__' && <Text type="secondary" className="text-xs">（通过后将加入本体）</Text>}
+                                </Radio>
+                                {cands.map((c) => (
+                                    <Radio key={c.label} value={c.label}>
+                                        <Tag color={chosenClass === c.label ? 'purple' : 'default'}>视为同一个，改判为「{c.label}」</Tag>
+                                        <Text type="secondary" className="text-xs">相似度 {Math.round((c.score || 0) * 100)}%</Text>
+                                    </Radio>
+                                ))}
+                            </Radio.Group>
+                            <div className="text-sm text-gray-600 mt-2">
+                                选择后点「通过」即生效（已连的线会改判为所选关系）；什么也不选直接「通过」= 加入为新关系。
+                            </div>
+                        </div>
+                    )}
+                    {cands.length === 0 && (
+                        <div className="text-sm text-gray-600">
+                            通过后会加入本体；驳回则忽略。
+                        </div>
+                    )}
+                </div>
+            );
+        }
         case 'axiom_suggestion': {
             const kindLbl = AXIOM_KIND_LABEL[p.kind] || p.kind || '';
             const src = AXIOM_SOURCE_TAG[p.source] || { text: String(p.source || ''), color: 'default' };

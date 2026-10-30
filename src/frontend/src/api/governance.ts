@@ -6,9 +6,9 @@ import apiClient from './client';
 // ── 审核 ──
 
 export type ReviewItemType =
-    | 'entity_merge' | 'new_class' | 'low_confidence_entity' | 'low_confidence_relation'
+    | 'entity_merge' | 'new_class' | 'new_predicate' | 'low_confidence_entity' | 'low_confidence_relation'
     | 'conflict_value' | 'conflict_type' | 'conflict_relationship' | 'missing_evidence'
-    | 'conflict_axiom' | 'axiom_suggestion';
+    | 'conflict_axiom' | 'axiom_suggestion' | 'schema_match_suggestion' | 'cq_suggestion';
 export type ReviewPriority = 'low' | 'medium' | 'high' | 'critical';
 export type ReviewStatus = 'pending' | 'claimed' | 'approved' | 'rejected' | 'edited';
 

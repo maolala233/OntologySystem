@@ -109,7 +109,17 @@ const ProjectReviewsTab: React.FC<Props> = ({ projectId }) => {
 
     const approveCurrent = () => {
         if (!detail) return;
-        decide('approve', detail.item_type === 'conflict_type' ? { chosen_class: chosenClass } : undefined);
+        if (detail.item_type === 'conflict_type') {
+            decide('approve', { chosen_class: chosenClass });
+        } else if (detail.item_type === 'new_class'
+                   && chosenClass && chosenClass !== '__new__') {
+            decide('approve', { merge_into_class: chosenClass });
+        } else if (detail.item_type === 'new_predicate'
+                   && chosenClass && chosenClass !== '__new__') {
+            decide('approve', { merge_into_predicate: chosenClass });
+        } else {
+            decide('approve');
+        }
     };
 
     const batch = (action: 'approve' | 'reject') => {

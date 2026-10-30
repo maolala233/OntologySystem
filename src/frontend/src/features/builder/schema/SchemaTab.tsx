@@ -1406,7 +1406,7 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
             if (stats.classes !== undefined) parts.push(`类 ${stats.classes}`);
             if (stats.instances !== undefined) parts.push(`实例 ${stats.instances}`);
             if (stats.relations !== undefined) parts.push(`关系 ${stats.relations}`);
-            if (stats.discarded_count) parts.push(`闸门丢弃 ${stats.discarded_count}`);
+            if (stats.discarded_count) parts.push(`不符合本体结构被丢弃 ${stats.discarded_count}`);
             message.success(`任务完成${parts.length ? '：' + parts.join(' / ') : ''}（已自动落版本）`);
             // 产物已写库（画布+行表+版本）——重新拉取项目刷新画布
             loadProject();

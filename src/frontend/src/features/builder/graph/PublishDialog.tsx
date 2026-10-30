@@ -86,7 +86,7 @@ const PublishDialog: React.FC<Props> = ({ projectId, open, onClose, onPublished 
                     `发布门控未通过：胜 ${d.wins ?? '—'} / 平 ${d.ties ?? '—'} / 负 ${d.losses ?? '—'}，`
                     + `硬伤 ${d.hard_failures ?? '—'}。旧版本保持生效；修复图谱并重新落版后可重试。`);
             } else {
-                setPublishError(err?.message || '发布失败，请检查发布条件（知识域、高优先级审核项、TBox 机检、证据闭合）');
+                setPublishError(err?.message || '发布失败，请检查发布条件（知识域、高优先级审核项、本体结构机检、证据闭合）');
             }
             load();
         } finally {
@@ -156,7 +156,7 @@ const PublishDialog: React.FC<Props> = ({ projectId, open, onClose, onPublished 
                                         关系 <b>{impact.affected.relations}</b> 条 ·
                                         待审核项 <b className={impact.affected.pending_reviews > 0 ? 'text-red-600' : ''}>{impact.affected.pending_reviews}</b> 个
                                         {impact.drift?.length > 0 && (
-                                            <span> · TBox 漂移 <b className="text-amber-600">{impact.drift.length}</b> 类（已物化为审核项）</span>
+                                            <span> · 骨架已变更 <b className="text-amber-600">{impact.drift.length}</b> 类（已生成审核项待复核）</span>
                                         )}
                                     </td>
                                 </tr>
