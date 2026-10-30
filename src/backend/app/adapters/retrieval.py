@@ -79,7 +79,9 @@ def _milvus_expr(query: RetrievalQuery) -> str:
 
 
 def _match_entities(db: Session, query: RetrievalQuery) -> list[Entity]:
-    """问题与候选实体匹配：label/别名 子串命中（≥2 字符），按 label 长度降序。"""
+    """问题与候选实体加权匹配（EvoOntology browse 打分思想）：
+    label/别名整词命中（5+，长名更特异加分）> 属性值命中（4，编码/编号级锚点）。
+    此前无差别子串命中，"PCOPCM 的评级"这类按编码提问永远引不上图谱。"""
     q = query.question.strip()
     if not q:
         return []
@@ -93,16 +95,110 @@ def _match_entities(db: Session, query: RetrievalQuery) -> list[Entity]:
         .all()
     )
     ql = q.lower()
-    matched: list[Entity] = []
+    scored: list[tuple[float, int, Entity]] = []
     for e in ents:
-        names = [e.label] + list(e.aliases or [])
-        for name in names:
+        best = 0.0
+        for name in [e.label] + list(e.aliases or []):
             n = (name or "").strip().lower()
             if len(n) >= 2 and n in ql:
-                matched.append(e)
+                best = max(best, 5.0 + min(len(n), 20) / 20.0)
+        if best == 0.0:
+            # 属性值锚点：值长 ≥4（排除"已接入"/评级"A"这类低区分度值）
+            for v in (e.props or {}).values():
+                s = str(v).strip().lower()
+                if len(s) >= 4 and s in ql:
+                    best = 4.0
+                    break
+        if best > 0:
+            scored.append((best, len(e.label), e))
+    scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
+    return [e for _s, _l, e in scored[:8]]
+
+
+def _match_class_labels(db: Session, query: RetrievalQuery) -> list[str]:
+    """类锚定（词法）：问题文本命中 TBox 类节点的 label/别名（≥2 字符）。
+    解决"接入的系统有哪些"这类枚举问题——图谱事实路按实体名锚定，永远接不到它。"""
+    q = query.question.strip()
+    if not q:
+        return []
+    classes = (
+        db.query(Entity)
+        .filter(
+            Entity.project_id == query.project_id,
+            Entity.is_class_node.is_(True),
+            Entity.status != "rejected",
+        )
+        .all()
+    )
+    ql = q.lower()
+    scored: list[tuple[float, str]] = []
+    for c in classes:
+        for name in [c.label] + list(c.aliases or []):
+            n = (name or "").strip().lower()
+            if len(n) >= 2 and n in ql:
+                scored.append((min(len(n), 20) / 20.0, c.label))
                 break
-    matched.sort(key=lambda x: len(x.label), reverse=True)
-    return matched[:8]
+    scored.sort(key=lambda t: t[0], reverse=True)
+    return [label for _s, label in scored[:2]]
+
+
+def _class_inventory_sources(db: Session, query: RetrievalQuery,
+                             class_labels: list[str]) -> list[RetrievedSource]:
+    """类锚定枚举事实（graph_node）：列出该类全部实例（少量带属性摘要，量大只列名）。
+    作为一条独立引用参与融合——LLM 拿到它才能回答"有哪些 X"。"""
+    out: list[RetrievedSource] = []
+    for label in class_labels[:2]:
+        try:
+            insts = (
+                db.query(Entity)
+                .filter(
+                    Entity.project_id == query.project_id,
+                    Entity.is_class_node.is_(False),
+                    Entity.status != "rejected",
+                    Entity.class_label == label,
+                )
+                .all()
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[retrieval] 类 {label} 实例枚举失败：{e}")
+            continue
+        if not insts:
+            continue
+        if len(insts) <= 40:
+            items = []
+            for e in insts:
+                pv = "；".join(f"{k}={v}" for k, v in list((e.props or {}).items())[:3]
+                              if v not in (None, ""))
+                items.append(e.label + (f"（{pv}）" if pv else ""))
+            body = "；".join(items)
+        else:
+            body = "、".join(e.label for e in insts)
+        out.append(RetrievedSource(
+            doc_file="本体图谱",
+            quote=_quote_clip(f"「{label}」类共 {len(insts)} 个实例：{body}"),
+            ref_type="graph_node",
+            score=0.95,
+        ))
+    return out
+
+
+def _tbox_class_anchor(query: RetrievalQuery, db: Session) -> list[str]:
+    """类锚定（向量回退）：问题没逐字提到类名时，用 TBox 索引语义匹配 top 类。
+    索引为空（老项目未同步）时先按当前画布骨架补建一次再查。"""
+    try:
+        from app.adapters.tbox_index import search_class_anchors, sync_tbox_index
+
+        anchors = search_class_anchors(query.question, query.project_id)
+        if not anchors:
+            from app.infrastructure.database import Project
+
+            proj = db.query(Project).filter(Project.id == query.project_id).first()
+            if proj is not None and sync_tbox_index(query.project_id, proj.graph_data) > 0:
+                anchors = search_class_anchors(query.question, query.project_id)
+        return [label for label, _sim in anchors]
+    except Exception as e:  # noqa: BLE001 —— 锚定失败不阻断检索
+        logger.warning(f"[retrieval] TBox 类锚定向量回退失败：{e}")
+        return []
 
 
 def _graph_expand(db: Session, query: RetrievalQuery, seeds: list[Entity]) -> list[dict]:
@@ -367,7 +463,12 @@ def retrieve(query: RetrievalQuery, db: Session | None = None) -> list[Retrieved
     LLM 拿不到原文只能答"上下文没有"。
     """
     sources: list[RetrievedSource] = []
+    class_labels: list[str] = []
     if db is not None:
+        # 类锚定枚举：词法优先（问题逐字含类名），未命中走 TBox 向量回退
+        class_labels = _match_class_labels(db, query) if query.use_graph else []
+        if class_labels:
+            sources.extend(_class_inventory_sources(db, query, class_labels))
         seeds = _match_entities(db, query)
         facts = _graph_expand(db, query, seeds) if query.use_graph else []
         if facts:
@@ -392,32 +493,37 @@ def retrieve(query: RetrievalQuery, db: Session | None = None) -> list[Retrieved
                     score=round(f["score"], 4),
                     source_document_id=doc_id,
                 ))
+    if not class_labels and query.use_graph and db is not None:
+        vec_labels = _tbox_class_anchor(query, db)
+        if vec_labels:
+            sources.extend(_class_inventory_sources(db, query, vec_labels))
     sources.extend(_vector_sources(query))
     # 关键词兜底始终参与融合（混合检索）：向量相似度对短段落/专有词弱的场景由
     # 词项命中补位；向量正常时两路结果按 (doc_file, quote) 去重互补
     if db is not None:
         sources.extend(_keyword_sources(query, db))
 
-    text_hits = sorted((s for s in sources if s.ref_type != "graph_edge"),
+    inventory = [s for s in sources if s.ref_type == "graph_node"]
+    text_hits = sorted((s for s in sources if s.ref_type not in ("graph_edge", "graph_node")),
                        key=lambda s: s.score, reverse=True)
     graph_facts = sorted((s for s in sources if s.ref_type == "graph_edge"),
                          key=lambda s: s.score, reverse=True)
 
     # 先去重再限量：图事实大量共用同一实体证据原文，先截后去会把 5 个名额
     # 全花在重复引用上；图事实去重后最多占半数名额，文本证据保底另一半
-    seen: set[tuple[str, str]] = set()
-
     def _dedup(items: list[RetrievedSource]) -> list[RetrievedSource]:
         out: list[RetrievedSource] = []
+        key_seen: set[tuple[str, str]] = set()
         for s in items:
             key = (s.doc_file, s.quote[:50])
-            if key in seen:
+            if key in key_seen:
                 continue
-            seen.add(key)
+            key_seen.add(key)
             out.append(s)
         return out
 
-    fused = _dedup(graph_facts)[:MAX_GRAPH_FACTS] + _dedup(text_hits)
+    # 类锚定实例清单有保留名额（最多 2 条，一各类一条）——枚举问题的决定性证据
+    fused = _dedup(inventory)[:2] + _dedup(graph_facts)[:MAX_GRAPH_FACTS] + _dedup(text_hits)
     result = fused[:MAX_SOURCES]
     # 语义推理引用垫底补充（不与事实混排）：
     # 推理引用有保留名额——事实满额时压缩事实到 8 条，保证层级/归属类问题
