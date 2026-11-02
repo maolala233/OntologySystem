@@ -106,23 +106,23 @@ export default function ReportsPage() {
                 const pid = list.find(p => p.id === saved)?.id ?? list[0]?.id ?? null;
                 setProjectId(pid);
                 if (pid != null) {
-                    loadChips(pid);
+                    // 主题建议不自动生成（LLM 调用，网络抖动时挂几分钟）——点击「生成主题建议」按钮触发
                     loadTemplateInfo(pid);
                 }
             } catch {
                 message.error('加载项目列表失败');
             }
         })();
-    }, [loadChips, loadTemplateInfo]);
+    }, [loadTemplateInfo]);
 
-    // 切项目后刷新主题建议与模板信息
+    // 切项目后刷新模板信息；主题建议保持点击生成（不随切项目自动打 LLM）
     const onProjectChange = useCallback(async (pid: number) => {
         setProjectId(pid);
         setResult(null);
+        setChips([]);
         localStorage.setItem(QA_LAST_PROJECT_ID_KEY, String(pid));
-        loadChips(pid);
         loadTemplateInfo(pid);
-    }, [loadChips, loadTemplateInfo]);
+    }, [loadTemplateInfo]);
 
     // 生成耗时 60s+：显示计时
     useEffect(() => {
@@ -265,9 +265,18 @@ export default function ReportsPage() {
                                 </div>
                             </div>
                         )}
+                        <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                            <Button size="small" type="link" className="!px-1 !text-[11px]"
+                                loading={chipsLoading}
+                                disabled={busy || projectId == null}
+                                onClick={() => projectId != null && loadChips(projectId)}>
+                                生成主题建议
+                            </Button>
+                            <span className="text-xs text-gray-400">（AI 生成，点击触发；也可直接手填主题）</span>
+                        </div>
                         {chipsLoading && (
-                            <div className="flex items-center gap-1.5 mt-2 text-xs text-gray-500">
-                                <Spin size="small" /> 正在根据图谱内容生成主题建议…
+                            <div className="flex items-center gap-1.5 mt-1 text-xs text-gray-500">
+                                <Spin size="small" /> 正在根据图谱内容生成主题建议（AI 生成约需 1-2 分钟，超时会回退到知识锚点）…
                             </div>
                         )}
                         {!chipsLoading && chips.length > 0 && (

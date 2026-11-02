@@ -9,9 +9,12 @@ import io
 import json
 import logging
 import re
+import threading
 import time
 import uuid
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeout
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Request, UploadFile
@@ -1011,8 +1014,15 @@ SUGGEST_SYSTEM = (
     '4. 只输出 JSON：{"topics": ["主题1", "主题2", ...]}，不要 markdown 代码块。'
 )
 
-_SUGGEST_CACHE: dict[int, tuple[float, list[str]]] = {}  # project_id -> (ts, topics)
-_SUGGEST_TTL = 600  # 建议缓存 10 分钟（避免每次进页都等 LLM）
+_SUGGEST_CACHE: dict[int, tuple[float, list[str] | None]] = {}  # project_id -> (ts, topics)；topics=None=近期失败
+_SUGGEST_TTL = 600        # 成功建议缓存 10 分钟
+_SUGGEST_FAIL_TTL = 120   # 失败短缓存 2 分钟：网络抖动时别让刷新/双发反复打满 LLM 重试
+_SUGGEST_DEADLINE = 150.0  # 单次建议总预算（秒）：点击触发可接受等 2 分半；glm 大材料
+                          # 实测 1-3 分钟，75s 会把 LLM 通道全部裁成锚点回退。
+                          # 传输层超时对自定义 httpx 客户端不生效，端点层 future 硬闸兜底
+                          # （修复前无上限：3 重试×SDK 内部重试=4 分钟挂起）。
+_SUGGEST_LOCKS: dict[int, threading.Lock] = {}
+_SUGGEST_LOCKS_GUARD = threading.Lock()
 
 
 def _parse_topics(raw: str) -> list[str]:
@@ -1046,34 +1056,75 @@ def _fallback_chips(ctx: dict) -> list[str]:
 @router.get("/{project_id}/reports/suggest", dependencies=[Depends(require_any_module("report", "ppt"))])
 def suggest_topics(project_id: int, db: Session = Depends(get_db),
                    user: User = Depends(get_current_user)):
-    """主题建议：LLM 基于图谱材料生成具体分析主题（缓存 10 分钟；失败回退知识锚点）。"""
+    """主题建议：LLM 基于图谱材料生成具体分析主题。
+
+    防御三件（2026-11-02 网络抖动 4 分钟挂起事故）：①总预算硬闸（future 75s，
+    传输层超时对自定义 httpx 客户端不生效）；②失败短缓存 2 分钟；③单飞——并发
+    请求共享同一次计算。前端已改为点击生成，本端点是兜底防线。
+    """
     _ensure_qa_access(db, project_id, user)
     ctx = _collect_context(db, project_id)
     if ctx["entity_total"] == 0:
         return {"chips": [], "source": "empty"}
 
-    cached = _SUGGEST_CACHE.get(project_id)
-    if cached and time.time() - cached[0] < _SUGGEST_TTL:
-        return {"chips": cached[1], "source": "cache"}
+    def _cache_get() -> dict | None:
+        cached = _SUGGEST_CACHE.get(project_id)
+        if not cached:
+            return None
+        ts, val = cached
+        if time.time() - ts >= (_SUGGEST_TTL if val is not None else _SUGGEST_FAIL_TTL):
+            _SUGGEST_CACHE.pop(project_id, None)
+            return None
+        if val is None:  # 近期失败缓存：直接锚点回退，不再打 LLM
+            return {"chips": _fallback_chips(ctx), "source": "fallback"}
+        return {"chips": val, "source": "cache"}
+
+    hit = _cache_get()
+    if hit is not None:
+        return hit
+
+    lock = _SUGGEST_LOCKS.setdefault(project_id, threading.Lock())
+    if not lock.acquire(blocking=False):
+        # 已有一次建议在飞：等它落地读它的结果（single-flight，不重复打 LLM）
+        if not lock.acquire(timeout=_SUGGEST_DEADLINE):
+            return {"chips": _fallback_chips(ctx), "source": "fallback"}
+        lock.release()
+        return _cache_get() or {"chips": _fallback_chips(ctx), "source": "fallback"}
 
     try:
-        cfg = build_legacy_llm_config(db, project_id)
-        llm = LLMClient(api_key=cfg.get("api_key"), base_url=cfg.get("base_url"),
-                        model=cfg.get("model"))
-        result = llm.call_llm_text(SUGGEST_SYSTEM,
-                                   f"知识图谱材料：\n{_context_text(ctx)}", timeout=60)
+        def _call():
+            cfg = build_legacy_llm_config(db, project_id)
+            llm = LLMClient(api_key=cfg.get("api_key"), base_url=cfg.get("base_url"),
+                            model=cfg.get("model"))
+            return llm.call_llm_text(SUGGEST_SYSTEM,
+                                     f"知识图谱材料：\n{_context_text(ctx)}",
+                                     max_retries=1, timeout=45)
+
+        # 不用 with：__exit__ 会 join 工作线程，慢 LLM 会把"硬闸"拖回传输层超时
+        ex = ThreadPoolExecutor(max_workers=1)
+        fut = ex.submit(_call)
+        try:
+            result = fut.result(timeout=_SUGGEST_DEADLINE)
+        except FuturesTimeout:
+            fut.cancel()  # 运行中的 future 取消不动：弃车，线程自然结束（结果丢弃）
+            raise APIError(f"主题建议超过 {_SUGGEST_DEADLINE:.0f}s 预算",
+                           code="SUGGEST_TIMEOUT", http_status=504)
+        finally:
+            ex.shutdown(wait=False)
         content = result.get("content") if isinstance(result, dict) else str(result)
         if not content or not content.strip():
             raise APIError("模型未返回主题建议", code="SUGGEST_EMPTY", http_status=502)
         topics = _parse_topics(content)
         if not topics:
             raise APIError("主题建议解析失败", code="SUGGEST_BAD_FORMAT", http_status=502)
-    except Exception as e:  # LLM 不可用/解析失败 → 兜底锚点，页面不阻塞
+        _SUGGEST_CACHE[project_id] = (time.time(), topics)
+        return {"chips": topics, "source": "llm"}
+    except Exception as e:  # noqa: BLE001 —— LLM 不可用/超时/解析失败 → 锚点兜底 + 失败短缓存
         logger.warning(f"[reports] LLM 主题建议失败，回退知识锚点：{e}")
+        _SUGGEST_CACHE[project_id] = (time.time(), None)
         return {"chips": _fallback_chips(ctx), "source": "fallback"}
-
-    _SUGGEST_CACHE[project_id] = (time.time(), topics)
-    return {"chips": topics, "source": "llm"}
+    finally:
+        lock.release()
 
 
 @router.post("/{project_id}/reports/generate", dependencies=[Depends(require_any_module("report", "ppt"))])
