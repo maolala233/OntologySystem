@@ -152,7 +152,7 @@ const GUIDANCE_TEMPLATES: Array<{
     },
 ];
 
-const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
+const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectId, active }) => {
     const navigate = useNavigate();
 
     const [nodes, setNodes] = useState<any[]>([]);
@@ -502,6 +502,19 @@ const SchemaTab: React.FC<{ projectId: string }> = ({ projectId }) => {
         window.addEventListener(COPILOT_CANVAS_REFRESH, onRefresh);
         return () => window.removeEventListener(COPILOT_CANVAS_REFRESH, onRefresh);
     }, []);
+
+    // 页签激活时重拉画布：Tabs 不重挂载，去「实例探索」抽取实例后回来，
+    // graph_data 已变而本页 state 还是旧的（"0 个实例"假象）。脏画布绝不覆盖。
+    const wasActiveRef = useRef<boolean | undefined>(undefined);
+    useEffect(() => {
+        if (active && wasActiveRef.current === false) {
+            if (!hasUnsavedRef.current) {
+                loadProject();
+            }
+        }
+        wasActiveRef.current = active;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [active]);
 
     // ── 从其他项目导入框架（跨项目框架复用）──
     const openImportFromProject = async () => {

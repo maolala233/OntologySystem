@@ -395,6 +395,11 @@ def _to_candidate(raw: dict, kind: str, parsed: dict, reason: str) -> dict:
             cand[key] = parsed[key]
     if kind == "subclass_of":
         cand["classes"] = parsed["classes"]  # [子类, 父类] 有序，去重时按序比对
+    if kind == "cardinality" and cand.get("max_card") == 1:
+        # max=1 是最容易被模型过度推断的约束（一条样本边≠业务上限唯一）——
+        # 审核卡片必须带反例提醒，人审放行前多想一步
+        cand["caution"] = ("max=1 表示该关系全域「至多一次」。若业务允许一个主体有多条"
+                           "（如一位对公客户可开立基本/一般/专用多个账户），此候选不成立，请驳回或放宽。")
     cand["summary"] = _summary(kind, cand)
     return cand
 

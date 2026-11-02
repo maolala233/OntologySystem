@@ -5,6 +5,7 @@
 #   ③单直接子类（该层多余，建议合并或提升）与超宽父类（>12 直接子类建议分层）——warning
 #   ④命名规范（兄弟类单复数混用、中英文命名风格混用）——warning
 #   ⑤兄弟泛化层级（兄弟互为祖先，说明层次没对齐）——warning
+#   ⑥类不可满足（纯 TBox 矛盾，无需实例：A⊑B、A⊑C、B⊥C ⇒ A 恒为空）——error
 # 纯函数：输入 graph_data["schema"] dict，零 DB 依赖，风格对齐 conflicts.py 的
 # pydantic 记录式返回。error 只含机器可确证的硬伤；warning 全部是启发式建议。
 
@@ -19,6 +20,7 @@ __all__ = [
     "SchemaCheckIssue",
     "SchemaCheckReport",
     "run_schema_checks",
+    "find_unsatisfiable_classes",
     "RULE_CYCLE",
     "RULE_DANGLING_PARENT",
     "RULE_SELF_PARENT",
@@ -27,6 +29,7 @@ __all__ = [
     "RULE_NAMING_STYLE",
     "RULE_PLURAL_SIBLINGS",
     "RULE_SIBLING_LEVEL",
+    "RULE_UNSATISFIABLE",
 ]
 
 RULE_CYCLE = "class_hierarchy_cycle"
@@ -37,6 +40,7 @@ RULE_WIDE_PARENT = "wide_direct_children"
 RULE_NAMING_STYLE = "sibling_naming_style"
 RULE_PLURAL_SIBLINGS = "sibling_plural_inconsistency"
 RULE_SIBLING_LEVEL = "sibling_generalization_level"
+RULE_UNSATISFIABLE = "unsatisfiable_class"
 
 # 超过该数量的直接子类建议增设中间层（101 §4.2 的"15±"经验值取整）
 MAX_DIRECT_CHILDREN = 12
@@ -84,6 +88,8 @@ class _ClassNode:
         if not parents and raw.get("sub_class_of"):
             parents = [raw.get("sub_class_of")]
         self.parents = [_norm(p) for p in (parents or []) if _norm(p)]
+        self.disjoint = [_norm(x) for x in (raw.get("disjoint_with") or []) if _norm(x)]
+        self.equivalent = [_norm(x) for x in (raw.get("equivalent_to") or []) if _norm(x)]
 
 
 def _build_nodes(schema: dict) -> tuple[list[_ClassNode], dict[str, _ClassNode]]:
@@ -261,7 +267,7 @@ def _check_sibling_levels(nodes: list[_ClassNode], index: dict[str, _ClassNode],
 def run_schema_checks(schema: dict | None) -> SchemaCheckReport:
     """TBox 机检主入口（O1-B2）。输入 graph_data["schema"]，返回检查报告。
 
-    五类规则：环/悬空/自父（error，阻断发布）+ 子类形态/命名/层级（warning）。
+    六类规则：环/悬空/自父/不可满足（error，阻断发布）+ 子类形态/命名/层级（warning）。
     classes 元素兼容 {id,label,parent_classes[]}、{id,label,sub_class_of} 两种形态；
     父类引用可写 id 或 label，都解析不到才判悬空。
     """
@@ -280,4 +286,141 @@ def run_schema_checks(schema: dict | None) -> SchemaCheckReport:
             children[id(p)].append(n)
     _check_naming(children, report)
     _check_sibling_levels(nodes, index, report)
+    _check_unsatisfiable(nodes, index, schema, report)
     return report
+
+
+# ── ⑥ 纯 TBox 可满足性（L13 事故场景：A⊑B、A⊑C、B⊥C，无实例也判得出 A 恒为空）──
+# owlrl 的 owl:Nothing 只在实例上触发，纯 TBox 矛盾靠这里（等价塌缩后做祖先闭包
+# 上的互斥配对检测 + 基数 min>max），确定性多项式，无需 DL 推理机。
+
+def _equiv_reps(nodes: list[_ClassNode], index: dict[str, _ClassNode]) -> dict[int, int]:
+    """等价类并查集：equivalent_to（含 id/label 双向）合并为同一代表元。"""
+    parent: dict[int, int] = {}
+
+    def find(x: int) -> int:
+        while parent.setdefault(x, x) != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[max(ra, rb)] = min(ra, rb)
+
+    for n in nodes:
+        find(id(n))
+        for peer_key in n.equivalent:
+            peer = index.get(peer_key)
+            if peer is not None and peer is not n:
+                union(id(n), id(peer))
+    return {x: find(x) for x in list(parent)}
+
+
+def _supers(rep: int, members: dict[int, list[int]],
+            parent_links: dict[int, set[int]], memo: dict[int, set[int]]) -> set[int]:
+    """rep 的真超类代表元集合（沿 parent_links 传递闭包，含等价成员的父类）。"""
+    if rep in memo:
+        return memo[rep]
+    memo[rep] = set()  # 环保护：环本身由 RULE_CYCLE 报 error
+    out: set[int] = set()
+    for m in members.get(rep, [rep]):
+        for p in parent_links.get(m, ()):
+            if p not in out:
+                out.add(p)
+                out |= _supers(p, members, parent_links, memo)
+    memo[rep] = out
+    return out
+
+
+def find_unsatisfiable_classes(schema: dict | None) -> list[dict]:
+    """纯 TBox 不可满足类检测（无实例依赖）。返回 [{class, reason}]，空列表 = 全可满足。
+
+    判据（对 editor 产出的公理集完备于常见事故）：
+    - 某类在祖先闭包上同时触及一对互斥类（含互斥对自身等价塌缩的自斥）；
+    - 基数约束 min > max（该约束宿主类恒为空）。
+    """
+    schema = schema if isinstance(schema, dict) else {}
+    nodes, index = _build_nodes(schema)
+    if not nodes:
+        return []
+    by_id = {id(n): n for n in nodes}
+    eq = _equiv_reps(nodes, index)
+    rep_of = {id(n): eq[id(n)] for n in nodes}
+    members: dict[int, list[int]] = defaultdict(list)
+    for n in nodes:
+        members[rep_of[id(n)]].append(id(n))
+
+    parent_links: dict[int, set[int]] = {}
+    for n in nodes:
+        links = {rep_of[id(p)] for p in _resolve_parents(n, index)}
+        links.discard(rep_of[id(n)])  # 等价类之间互相 ⊑ 不产生有效信息
+        parent_links[id(n)] = links
+
+    # 互斥对 → 代表元（等价塌缩；对内互等价又互斥 = 直接自斥）
+    disjoint_pairs: set[tuple[int, int]] = set()
+    self_contradicted: set[int] = set()
+    for n in nodes:
+        for peer_key in n.disjoint:
+            peer = index.get(peer_key)
+            if peer is None or peer is n:
+                if peer is n:
+                    self_contradicted.add(rep_of[id(n)])
+                continue
+            ra, rb = rep_of[id(n)], rep_of[id(peer)]
+            if ra == rb:
+                self_contradicted.add(ra)
+            else:
+                disjoint_pairs.add((min(ra, rb), max(ra, rb)))
+
+    memo: dict[int, set[int]] = {}
+    unsat: dict[int, list[tuple[int, int]]] = {}
+    for pair in disjoint_pairs:
+        a, b = pair
+        for rep in set(members):
+            sup = _supers(rep, members, parent_links, memo)
+            if (a in sup and b in sup) or (a == rep and b in sup) or (b == rep and a in sup):
+                unsat.setdefault(rep, []).append(pair)
+    for rep in self_contradicted:
+        unsat.setdefault(rep, [])
+
+    out = []
+    for rep, pairs in unsat.items():
+        for nid in members.get(rep, [rep]):
+            n = by_id[nid]
+            name = n.label or n.id
+            if pairs:
+                wits = []
+                for a, b in pairs:
+                    wa = by_id[members.get(a, [a])[0]]
+                    wb = by_id[members.get(b, [b])[0]]
+                    na, nb = wa.label or wa.id, wb.label or wb.id
+                    wits.append(f"「{min(na, nb)}」⊥「{max(na, nb)}」")
+                wits.sort()
+                reason = f"它的祖先闭包上存在互斥对 {'、'.join(wits)}"
+            else:
+                reason = "互斥与等价声明自相矛盾（自己 ⊥ 自己的等价类）"
+            out.append({"class": name, "reason": reason})
+    # 基数 min>max：宿主类恒为空
+    for op in schema.get("object_properties") or []:
+        if not isinstance(op, dict):
+            continue
+        for restr in op.get("cardinality_restrictions") or []:
+            if not isinstance(restr, dict):
+                continue
+            mn, mx = restr.get("min"), restr.get("max")
+            if mn is None or mx is None or mn <= mx:
+                continue
+            cls = _norm(restr.get("class"))
+            out.append({"class": cls,
+                        "reason": f"关系「{op.get('label')}」基数约束 min({mn}) > max({mx})"})
+    return out
+
+
+def _check_unsatisfiable(nodes: list[_ClassNode], index: dict[str, _ClassNode],
+                         schema: dict, report: SchemaCheckReport) -> None:
+    for item in find_unsatisfiable_classes(schema):
+        report.add(RULE_UNSATISFIABLE, "error",
+                   f"类「{item['class']}」不可满足：{item['reason']}（纯 TBox 矛盾，"
+                   f"该类恒为空，无需实例即可判定）", [item["class"]])

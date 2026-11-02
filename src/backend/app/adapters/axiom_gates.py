@@ -1,9 +1,11 @@
 # app/adapters/axiom_gates.py - LLM 公理候选机检守门（O4-B19）
-# 四道闸顺序执行（docs/design/13 §4）：
+# 五道闸顺序执行（docs/design/13 §4 + L13 TBox 可满足性补强）：
 #   ① 存在性：axiom_llm.parse 已做（幻觉弃单），本层形式化幂等复查
 #   ② 已声明冲突：与画布已有公理矛盾（disjoint↔equivalent、子类环、重复声明）直接拒
-#   ③ 影子 SHACL：候选临时并入 schema 副本跑 pyshacl，违例激增即拒；只操作副本不触画布
-#   ④ 高风险加验：subclass_of/equivalent_classes/cardinality 过 owlrl 一致性（owl:Nothing 检测）
+#   ③ TBox 可满足性：候选并入后出现新的不可满足类即拒（纯 TBox 矛盾、无需实例——
+#      owlrl 的 owl:Nothing 只在实例上触发，本闸补齐无实例场景）
+#   ④ 影子 SHACL：候选临时并入 schema 副本跑 pyshacl，违例激增即拒；只操作副本不触画布
+#   ⑤ 高风险加验：subclass_of/equivalent_classes/cardinality 过 owlrl 一致性（owl:Nothing 检测）
 # 纯函数可测；pyshacl/owlrl 懒加载；批量闸不过时逐条定位（拒绝肇事者、放行无辜者）。
 
 from __future__ import annotations
@@ -205,7 +207,48 @@ def _declared_conflict_reason(cand: dict, ops_by_label: dict, classes_by_label: 
     return None
 
 
-# ── 闸③ 影子 SHACL ──
+# ── 闸③ TBox 可满足性（纯 TBox 矛盾，无实例也可判）──
+
+def gate_tbox_satisfiability(candidates: list[dict], schema: dict | None
+                             ) -> tuple[list[dict], list[dict], dict]:
+    """候选并入后出现基线之外的新不可满足类即拒；批量不过则逐条定位。
+
+    覆盖闸②够不着的传递场景（候选 A⊥C 本身无父子链，但已有 A⊑B、B⊥C 时
+    会使 A 的全部子类恒为空）。确定性多项式，零实例依赖，闸⑤的 owlrl 补位。
+    """
+    from app.adapters.schema_checks import find_unsatisfiable_classes
+
+    schema = schema or {}
+    stats: dict[str, Any] = {"enabled": True}
+    base = {u["class"] for u in find_unsatisfiable_classes(schema)}
+    stats["baseline_unsatisfiable"] = len(base)
+
+    def _new_unsat(s: dict) -> list[dict]:
+        return [u for u in find_unsatisfiable_classes(s) if u["class"] not in base]
+
+    batch = schema
+    for cand in candidates:
+        batch = apply_candidate_to_schema(batch, cand)
+    if not _new_unsat(batch):
+        stats["checked"] = len(candidates)
+        return candidates, [], stats
+
+    survivors, rejected = [], []
+    for cand in candidates:
+        solo = apply_candidate_to_schema(schema, cand)
+        broke = _new_unsat(solo)
+        if broke:
+            names = "、".join(f"「{u['class']}」" for u in broke[:5])
+            rejected.append({"candidate": cand,
+                             "reason": f"TBox 可满足性: 候选使 {names} 不可满足"
+                                       f"（{broke[0]['reason']}）"})
+        else:
+            survivors.append(cand)
+    stats["checked"] = len(candidates)
+    return survivors, rejected, stats
+
+
+# ── 闸④ 影子 SHACL ──
 
 def gate_shadow_shacl(candidates: list[dict], schema: dict | None,
                       ents: list, rels: list,
@@ -259,14 +302,14 @@ def gate_shadow_shacl(candidates: list[dict], schema: dict | None,
     return survivors, rejected, stats
 
 
-# ── 闸④ 高风险 owlrl 一致性 ──
+# ── 闸⑤ 高风险 owlrl 一致性 ──
 
 def _fact_graph(schema: dict, ents: list, rels: list, entity_index: dict | None) -> Any:
     """候选并入后的 schema 公理 + 真实 ABox → 单一 rdflib 图（与 shacl_checks 同一
     URI 方案：urn:o:cls / urn:o:prop / urn:o:inst），供 owlrl 闭包检查。
 
-    注意：owlrl 的 owl:Nothing 只在实例上触发——纯 TBox 矛盾（无实例）不可判，
-    闸② 已覆盖声明级矛盾，本闸专盯「候选让已有实例陷入逻辑矛盾」。
+    注意：owlrl 的 owl:Nothing 只在实例上触发——纯 TBox 矛盾（无实例）由
+    闸③（TBox 可满足性）负责，本闸专盯「候选让已有实例陷入逻辑矛盾」。
     """
     from urllib.parse import quote
 
@@ -391,7 +434,7 @@ def gate_owlrl_consistency(candidates: list[dict], schema: dict | None,
 def run_gates(candidates: list[dict], schema: dict | None,
               ents: list, rels: list,
               entity_index: dict | None = None) -> tuple[list[dict], dict]:
-    """四道闸流水线。返回 (幸存候选, 各闸统计)。
+    """五道闸流水线。返回 (幸存候选, 各闸统计)。
 
     ents/rels 支持 ORM 行或 _as_ent 归一形状（内部统一归一）。
     """
@@ -409,6 +452,9 @@ def run_gates(candidates: list[dict], schema: dict | None,
     survivors, rej2 = gate_declared_conflicts(survivors, schema)
     stats["declared_conflicts"] = {"passed": len(survivors), "rejected": len(rej2)}
     rejected = rejected + rej2
+    survivors, rej_tbox, tbox_stats = gate_tbox_satisfiability(survivors, schema)
+    stats["tbox_satisfiability"] = {**tbox_stats, "rejected": len(rej_tbox)}
+    rejected = rejected + rej_tbox
     survivors, rej3, shacl_stats = gate_shadow_shacl(survivors, schema,
                                                      e_dicts, r_dicts, entity_index)
     stats["shadow_shacl"] = {**shacl_stats, "rejected": len(rej3)}
@@ -424,6 +470,6 @@ def run_gates(candidates: list[dict], schema: dict | None,
 __all__ = [
     "SHADOW_NEW_VIOLATION_LIMIT", "SHADOW_ABSOLUTE_LIMIT",
     "apply_candidate_to_schema", "gate_existence", "gate_declared_conflicts",
-    "gate_shadow_shacl", "gate_owlrl_consistency", "_fact_graph",
-    "run_gates",
+    "gate_tbox_satisfiability", "gate_shadow_shacl", "gate_owlrl_consistency",
+    "_fact_graph", "run_gates",
 ]

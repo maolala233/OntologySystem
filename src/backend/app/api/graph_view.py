@@ -8,6 +8,7 @@ import json
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
@@ -494,3 +495,47 @@ def compute_and_store_layout(db: Session, project_id: int, algorithm: str = "spr
     db.add(row)
     db.commit()
     return {"layout_id": row.id, "node_count": len(nodes), "coords": len(coords)}
+
+
+# ── SPARQL 只读查询（L15/L16/L27 落地面：Oxigraph 四命名图首次有读接口）──
+
+class SparqlQueryIn(BaseModel):
+    query: str
+    limit: int = 200
+
+
+@router.post("/sparql")
+def graph_sparql(project_id: int, body: SparqlQueryIn,
+                 current_user: User = Depends(get_current_user),
+                 db: Session = Depends(get_db)):
+    """对项目 Oxigraph 命名图（tbox/abox/prov/pub:{vno}）执行只读 SPARQL。
+
+    项目隔离：default_graph 锁定本项目命名图并集，GRAPH 子句跨不出项目。
+    worker-rdf 持 RocksDB 独占锁时自动经 rdf 队列中继（prod 形态）。
+    """
+    require_project_role(project_id, "viewer", current_user, db)
+    _project_or_404(project_id, db)
+    sparql = str(body.query or "").strip()
+    if not sparql:
+        raise APIError("SPARQL 查询不能为空", code="SPARQL_EMPTY", http_status=400)
+    limit = max(1, min(int(body.limit or 200), 1000))
+
+    from app.services.oxigraph_sink import StoreBusy, query_sparql_standalone
+
+    try:
+        return query_sparql_standalone(sparql, project_id, limit)
+    except StoreBusy:
+        pass  # 写入进程持锁：走 rdf 队列中继（worker-rdf 天然持锁可查）
+    except SyntaxError as e:
+        raise APIError(f"SPARQL 语法错误：{e}", code="SPARQL_SYNTAX", http_status=400)
+
+    try:
+        from app.tasks.celery_app import celery_app
+
+        async_result = celery_app.send_task("app.tasks.rdf_tasks.query_sparql",
+                                            args=[sparql, project_id, limit])
+        return async_result.get(timeout=20)
+    except Exception as e:  # noqa: BLE001 —— broker/worker 不可达：如实报 503
+        raise APIError(
+            f"SPARQL 查询暂不可用：Oxigraph 被写入进程占用且 rdf 队列中继失败（{e}）。"
+            "确认 worker-rdf 在运行后重试。", code="SPARQL_UNAVAILABLE", http_status=503)

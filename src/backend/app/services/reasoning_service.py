@@ -117,9 +117,18 @@ def _abox_into_graph(g: Graph, db: Session, project: Project) -> dict[str, str]:
         Relation.status.notin_(("rejected",)),
     ).all()
     ent_by_id = {e.id: e for e in ents}
+    # instance_of 边的宾语是类节点（不在 ents 里）：单独取 id→label，翻译成 rdf:type。
+    # 不翻译的话双类型实例只剩 class_label 一个类型，disjoint 检测永远无从触发。
+    class_label_by_id = {e.id: e.label for e in db.query(Entity).filter(
+        Entity.project_id == project.id, Entity.is_class_node.is_(True)).all()}
     pred_uri_by_label: dict[str, URIRef] = {}
     for r in rels:
         s_ent, o_ent = ent_by_id.get(r.subject_id), ent_by_id.get(r.object_id)
+        if r.predicate in ("instance_of", "rdf:type", "type"):
+            cls_uri = class_uri_by_label.get(class_label_by_id.get(r.object_id) or "")
+            if cls_uri is not None and s_ent is not None and s_ent.uri:
+                g.add((URIRef(s_ent.uri), RDF.type, cls_uri))
+            continue
         if not s_ent or not o_ent or not s_ent.uri or not o_ent.uri:
             continue
         p_uri = pred_uri_by_label.get(r.predicate)
@@ -436,7 +445,12 @@ def run_reasoning(db: Session, project: Project, profile: str = "owlrl",
     fact_count = len(facts)
 
     closure_cls = owlrl.RDFS_Semantics if profile == "rdfs" else owlrl.OWLRL_Semantics
-    owlrl.DeductiveClosure(closure_cls, rdfs_closure=True).expand(fact_graph)
+    # 手动展开（不用 DeductiveClosure）：要拿到 error_messages——disjoint 共同实例等
+    # 不一致走 add_error 而非产出三元组，吞掉信号 = 矛盾静默（L13 事故场景）
+    sem = closure_cls(fact_graph, axioms=True, daxioms=True, rdfs=True)
+    sem.closure()
+    sem.flush_stored_triples()
+    inconsistency = [str(m) for m in (getattr(sem, "error_messages", None) or [])]
     raw_inferred = set(fact_graph) - facts
 
     # ── owlrl 蕴含 → dict 列表（过滤噪音 + 标注内置谓词中文名）──
@@ -453,9 +467,22 @@ def run_reasoning(db: Session, project: Project, profile: str = "owlrl",
             "subject_uri": str(s),
             "subject_label": s_label,
             "predicate_uri": str(p),
-            "predicate_label": _BUILTIN_PRED_LABELS.get(str(p), str(p).split("#")[-1].split("/")[-1]),
+            "predicate_label": _BUILTIN_PRED_LABELS.get(str(p))
+                               or label_by_uri.get(str(p))
+                               or str(p).split("#")[-1].split("/")[-1],
             "object_uri": str(o),
             "object_label": o_label,
+        })
+
+    # ── 不一致信号落结果（逻辑矛盾对使用者可见，而非仅内部日志）──
+    for msg in inconsistency[:20]:
+        entailment.append({
+            "source": profile, "rule_name": None,
+            "subject_uri": "urn:onto:consistency", "subject_label": "本体一致性",
+            "predicate_uri": "urn:onto:inconsistency",
+            "predicate_label": "逻辑矛盾（不一致）",
+            "object_uri": "urn:onto:consistency",
+            "object_label": msg[:200],
         })
 
     # ── 规则引擎（S9 链式：蕴含产出的实例级三元组也参与规则求值）──
@@ -480,8 +507,9 @@ def run_reasoning(db: Session, project: Project, profile: str = "owlrl",
         "batch_id": batch_id,
         "profile": profile,
         "fact_triples": fact_count,
-        "inferred_entailment": len(entailment),
+        "inferred_entailment": len(entailment) - len(inconsistency[:20]),
         "inferred_rule": len(rule_results),
+        "inconsistency_count": len(inconsistency),
         "inferred_total": len(entailment) + len(rule_results),
         "persisted": len(rows),
         "truncated": (len(entailment) + len(rule_results)) > MAX_PERSIST_INFERRED,

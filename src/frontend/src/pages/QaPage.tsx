@@ -213,6 +213,7 @@ export default function QaPage() {
                             next[next.length - 1] = { ...cur, streaming: false, error: msg };
                             return next;
                         });
+                        setQuestion(q);  // 失败回填：用户改都不用改，直接再点发送
                     },
                 },
                 {
@@ -235,6 +236,7 @@ export default function QaPage() {
                     next[next.length - 1] = { ...cur, streaming: false, error: e?.message || '问答失败' };
                     return next;
                 });
+                setQuestion(q);  // 失败回填，便于直接重试
             }
         } finally {
             setBusy(false);

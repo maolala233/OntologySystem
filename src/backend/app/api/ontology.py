@@ -1456,8 +1456,8 @@ def generate_ttl_from_graph_data(nodes: list[dict], edges: list[dict]) -> str:
         prop_id = edge_data.get('prop_id', '')
         label = edge_data.get('label', relation)
 
-        # 只收集 ObjectProperty 关系（排除 subClassOf 和 type）
-        if relation and relation not in ('rdf:type', 'type', 'subClassOf', 'subclass_of'):
+        # 只收集 ObjectProperty 关系（排除 subClassOf/type/instance_of）
+        if relation and relation not in ('rdf:type', 'type', 'subClassOf', 'subclass_of', 'instance_of'):
             # 检查 prop_id 是否有效
             if prop_id and prop_id not in INVALID_PROP_IDS:
                 existing_obj_properties[relation] = (prop_id, label)
@@ -1465,8 +1465,8 @@ def generate_ttl_from_graph_data(nodes: list[dict], edges: list[dict]) -> str:
                 # 如果没有有效的 prop_id，使用 label 生成有意义的 prop_id
                 generated_id = generate_safe_prop_id(label)
                 if not generated_id:
-                    # Fallback if generate_safe_prop_id somehow fails
-                    generated_id = f"prop_{abs(hash(label)) % 10000}"
+                    # Fallback：md5 确定性（hash() 跨进程加盐随机，破坏导出可复现）
+                    generated_id = f"prop_{hashlib.md5(str(label).encode('utf-8')).hexdigest()[:8]}"
                 existing_obj_properties[relation] = (generated_id, label)
 
     # ---- 公理导出 ①：类间互斥（owl:disjointWith，按 label 引用目标类）----
@@ -1527,7 +1527,9 @@ def generate_ttl_from_graph_data(nodes: list[dict], edges: list[dict]) -> str:
             source_uri = node_uris[source_id]
             target_uri = node_uris[target_id]
 
-            if relation_label in ('rdf:type', 'type'):
+            if relation_label in ('rdf:type', 'type', 'instance_of'):
+                # instance_of（第二类型边）也是 rdf:type——当 ObjectProperty 导出会
+                # 破坏 owl 语义（双类型实例消失，disjoint 检测失效）
                 g.add((source_uri, RDF.type, target_uri))
             elif relation_label in ('subClassOf', 'subclass_of') or relation == 'subclass_of':
                 g.add((source_uri, RDFS.subClassOf, target_uri))
@@ -1538,7 +1540,7 @@ def generate_ttl_from_graph_data(nodes: list[dict], edges: list[dict]) -> str:
                 else:
                     prop_id = generate_safe_prop_id(relation_label)
                     if not prop_id:
-                        prop_id = f"prop_{abs(hash(relation_label)) % 10000}"
+                        prop_id = f"prop_{hashlib.md5(str(relation_label).encode('utf-8')).hexdigest()[:8]}"
 
                 objprop_uri = ex[prop_id]
                 g.add((objprop_uri, RDF.type, OWL.ObjectProperty))
@@ -1575,7 +1577,9 @@ def generate_ttl_from_graph_data(nodes: list[dict], edges: list[dict]) -> str:
         max_card = edge_data.get('max_cardinality')
         if min_card is None and max_card is None:
             continue
-        restriction = ex[f"restr_{abs(hash(f'{relation_label}_{str(src_uri)}')) % 100000}"]
+        # 确定性 URI：md5（hash() 每进程加盐随机——同一本体两次导出必须是同一张图）
+        restr_key = f"{relation_label}_{src_uri}"
+        restriction = ex[f"restr_{hashlib.md5(restr_key.encode('utf-8')).hexdigest()[:12]}"]
         g.add((src_uri, RDFS.subClassOf, restriction))
         g.add((restriction, RDF.type, OWL.Restriction))
         g.add((restriction, OWL.onProperty, objprop_uri))

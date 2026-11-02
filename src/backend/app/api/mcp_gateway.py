@@ -309,6 +309,20 @@ def _tool_specs(ctx: McpContext) -> list[dict]:
             },
         },
         {
+            "name": "query_sparql",
+            "description": "执行只读 SPARQL 1.1 查询（Oxigraph 命名图：tbox/abox/prov/pub:{vno}）；"
+                           "查询自动限定本项目命名图（default_graph 并集 + GRAPH 子句隔离），"
+                           "只读（UPDATE 语法被拒）。适合 TBox 结构查询与跨图联合查询",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "sparql": {"type": "string", "description": "只读 SPARQL 查询（SELECT/ASK/CONSTRUCT）"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 200},
+                },
+                "required": ["sparql"],
+            },
+        },
+        {
             "name": "get_ontology_schema",
             "description": "获取项目 TBox：类清单 + 属性 + 关系声明（graph_data 快照）",
             "inputSchema": {"type": "object", "properties": {}},
@@ -544,6 +558,35 @@ def _t_query_graph(ctx: McpContext, db: Session, args: dict) -> dict:
     return _text_content(out)
 
 
+def _t_query_sparql(ctx: McpContext, db: Session, args: dict) -> dict:
+    sparql = str(args.get("sparql", "")).strip()
+    if not sparql:
+        raise _rpc_error(ERR_INVALID_PARAMS, "sparql 不能为空")
+    limit = max(1, min(int(args.get("limit") or 200), 1000))
+    from app.services.oxigraph_sink import StoreBusy, query_sparql_standalone
+
+    try:
+        out = query_sparql_standalone(sparql, ctx.project.id, limit)
+        _audit(ctx, db, "mcp.read", "query_sparql", args)
+        return _text_content(out)
+    except StoreBusy:
+        # worker-rdf 持锁（prod 形态）：经 rdf 队列中继
+        from app.tasks.celery_app import celery_app
+
+        try:
+            ar = celery_app.send_task("app.tasks.rdf_tasks.query_sparql",
+                                      args=[sparql, ctx.project.id, limit])
+            out = ar.get(timeout=20)
+        except Exception as e:
+            _audit(ctx, db, "mcp.read", "query_sparql", args, blocked=True)
+            raise _rpc_error(ERR_INTERNAL,
+                             f"SPARQL 查询中继失败（rdf 队列不可达）：{e}")
+        _audit(ctx, db, "mcp.read", "query_sparql", args)
+        return _text_content(out)
+    except SyntaxError as e:
+        raise _rpc_error(ERR_INVALID_PARAMS, f"SPARQL 语法错误：{e}")
+
+
 def _t_get_ontology_schema(ctx: McpContext, db: Session, args: dict) -> dict:
     gd = ctx.project.graph_data or {}
     classes = []
@@ -705,6 +748,7 @@ _TOOL_TABLE = {
     "get_entity": _t_get_entity,
     "get_neighbors": _t_get_neighbors,
     "query_graph": _t_query_graph,
+    "query_sparql": _t_query_sparql,
     "get_ontology_schema": _t_get_ontology_schema,
     "ask": _t_ask,
     "export_graph": _t_export_graph,

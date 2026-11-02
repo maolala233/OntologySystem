@@ -405,6 +405,11 @@ export const FriendlyPayload: React.FC<{
                             )}
                             {src.text && <Tag color={src.color}>{src.text}</Tag>}
                         </div>
+                        {p.caution && (
+                            <div className="mt-2 p-2 bg-orange-50 border border-orange-300 rounded text-sm">
+                                <Text strong type="warning">⚠ 请留意：</Text>{p.caution}
+                            </div>
+                        )}
                         {targets.length > 0 && (
                             <div className="mt-2 text-sm">
                                 涉及目标：

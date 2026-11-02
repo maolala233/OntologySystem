@@ -9,6 +9,18 @@ import datetime
 from app.tasks.celery_app import celery_app
 
 
+@celery_app.task(name="app.tasks.rdf_tasks.query_sparql")
+def query_sparql_task(sparql: str, project_id: int | None = None, limit: int = 200) -> dict:
+    """SPARQL 只读查询中继（API 进程被 RocksDB 独占锁挡住时走本任务）。
+
+    worker-rdf 是锁持有者，天然能查；只读（store.query 拒绝 UPDATE 语法），
+    project_id 给定时命名图级隔离。
+    """
+    from app.services.oxigraph_sink import query_sparql
+
+    return query_sparql(sparql, project_id, limit)
+
+
 @celery_app.task(name="app.tasks.rdf_tasks.drain_rdf_outbox",
                  bind=True, max_retries=0, acks_late=True)
 def drain_rdf_outbox(self, limit: int = 20) -> dict:

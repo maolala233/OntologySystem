@@ -77,7 +77,7 @@ const BuilderPage: React.FC = () => {
         {
             key: 'schema',
             label: tabLabel(<NodeIndexOutlined className="mr-1" />, '骨架编辑', '定义类、属性和关系'),
-            children: <SchemaTab projectId={String(pid)} />,
+            children: <SchemaTab projectId={String(pid)} active={activeTab === 'schema'} />,
         },
         {
             key: 'graph',

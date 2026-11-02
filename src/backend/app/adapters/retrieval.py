@@ -667,6 +667,24 @@ def _core_question(question: str) -> str:
     return q or question
 
 
+def _is_rate_limit(e: Exception) -> bool:
+    """供应商限流（429/TPM/RPM/TooManyRequests）。"""
+    return "429" in str(e) or "RateLimit" in str(e) or "TooManyRequests" in str(e)
+
+
+def _friendly_llm_error(e: Exception) -> str:
+    """供应商报错 → 可操作的人话（429"流式生成未完成"这类黑话用户没法行动）。"""
+    msg = str(e)
+    if _is_rate_limit(e):
+        return ("模型限流（429）：请求过于频繁或账号配额暂时超限，已自动重试仍未成功。"
+                "请稍等一两分钟再问，或在右上「对话模型」里换一个模型。")
+    if "401" in msg or "Unauthorized" in msg or "Authentication" in msg:
+        return "模型鉴权失败（401）：请到「系统配置→模型配置」检查该模型的 API Key。"
+    if "timeout" in msg.lower() or "timed out" in msg.lower():
+        return "模型响应超时：请稍后重试，或更换更快的对话模型。"
+    return f"模型调用失败：{msg[:200]}"
+
+
 def _strategy_label(repaired: RetrievalQuery, original: RetrievalQuery) -> str:
     if repaired.question != original.question:
         return "核心词重述 + 扩大召回 + 关推理引用"
@@ -689,19 +707,29 @@ def iter_answer(query: RetrievalQuery, db: Session | None = None,
         yield ("done", result)
         return
     answer_parts: list[str] = []
-    try:
-        for delta in llm.call_llm_stream(
-            system_prompt=_QA_SYSTEM_PROMPT,
-            user_prompt=_build_user_prompt(query.question, sources),
-            timeout=300.0,
-        ):
-            answer_parts.append(delta)
-            yield ("token", delta)
-    except Exception as e:  # 流中断：把已收内容聚合返回，不静默吞
-        logger.error(f"[retrieval] 流式生成中断：{e}")
-        yield ("error", str(e))
-        if not answer_parts:
-            return
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            for delta in llm.call_llm_stream(
+                system_prompt=_QA_SYSTEM_PROMPT,
+                user_prompt=_build_user_prompt(query.question, sources),
+                timeout=300.0,
+            ):
+                answer_parts.append(delta)
+                yield ("token", delta)
+            break
+        except Exception as e:  # 流中断：把已收内容聚合返回，不静默吞
+            # 限流（429）且尚未吐字：退避后整段重试一次（已有增量不能重试——会重复输出）
+            if _is_rate_limit(e) and not answer_parts and attempt == 1:
+                logger.warning("[retrieval] 模型限流（429），30s 后自动重试一次")
+                time.sleep(30)
+                continue
+            logger.error(f"[retrieval] 流式生成中断：{e}")
+            yield ("error", _friendly_llm_error(e))
+            if not answer_parts:
+                return
+            break
     answer = "".join(answer_parts).strip() or "（模型未返回内容）"
     yield ("done", QAResult(
         answer=answer,

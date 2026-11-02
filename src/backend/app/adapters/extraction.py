@@ -811,7 +811,12 @@ INSTANCE_SYSTEM_PROMPT = (
     "实体元素必须含 label（实例名）与 class_label（类名）字段。\n"
     "规则：\n"
     "1. class_label 必须严格取自【本体类清单】；predicate 必须严格取自【关系清单】，不要发明新类/新关系。\n"
-    "2. 实例名使用文中原始称呼；同一实体的多种称呼都出现时各抽一次，后续消解会合并。\n"
+    "2. 实例必须是文中具体的、可与其他个体区分开的对象（具体名称、编号、单据、组织）——"
+    "类本身、类的子类型、泛指的一类事物不是实例：例如类「结算账户」下的「基本存款账户」是子类概念，"
+    "不能抽成实例；实例的 label 也不得与任何类名相同。"
+    "若切片只是制度/定义/规则（没有任何具体个体），entities 返回空数组 []，这是正确答案，"
+    "不要为凑数把类或子类降格成实例。"
+    "同一实体的多种称呼都出现时各抽一次，后续消解会合并。\n"
     "3. 每个实例/关系必须给出 evidence：从切片中逐字摘录的原句；没有原文依据的不要抽。\n"
     "4. props：尽可能把实例在文中体现的属性值填入 props——键用【各类属性清单】中所属类的属性名，"
     "值为文中原值（数字/日期保留原样）；文中没有的属性不要编造；一个属性值都没有时 props 给空对象 {}。\n"
@@ -1097,9 +1102,22 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
     result.promote_count = len(gate.promote_candidates)
     result.missing_evidence_count = kinds.count("missing_evidence")
     result.low_confidence_count = kinds.count("low_confidence")
-    result.entities = _dedupe_entities([i for i in gate.passed
-                                        if isinstance(i, ExtractedEntity)])
-    result.relations = [i for i in gate.passed if isinstance(i, ExtractedRelation)]
+    passed_ents = [i for i in gate.passed if isinstance(i, ExtractedEntity)]
+    # 伪个体防御（L07 记录≠对象）：label 与所属类名同名的"实例"几乎必然是
+    # 把类/子类降格成个体（如 名为「基本存款账户」的结算账户实例），闸门后兜底剔除
+    pseudo = [e for e in passed_ents
+              if normalize_label(e.label) == normalize_label(e.class_label)]
+    if pseudo:
+        passed_ents = [e for e in passed_ents if e not in pseudo]
+        result.warnings.append(
+            f"剔除 {len(pseudo)} 个类名当实例名的伪个体（{', '.join(e.label for e in pseudo[:5])}"
+            f"{'…' if len(pseudo) > 5 else ''}）")
+    result.entities = _dedupe_entities(passed_ents)
+    # 伪个体剔除后，悬挂的关系（主/客体实例已删）一并丢弃
+    dropped = {normalize_label(e.label) for e in pseudo}
+    result.relations = [r for r in (i for i in gate.passed if isinstance(i, ExtractedRelation))
+                        if normalize_label(r.subject_label) not in dropped
+                        and normalize_label(r.object_label) not in dropped]
     result.gate_violations = [v.model_dump() for v in gate.violations[:500]]
     result.cache_hits = cache_hits
     return result
