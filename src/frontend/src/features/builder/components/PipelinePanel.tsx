@@ -36,6 +36,7 @@ const STATUS_ICON: Record<string, React.ReactNode> = {
     failed: <CloseCircleOutlined style={{ color: '#ef4444' }} />,
     running: <SyncOutlined spin style={{ color: '#3b82f6' }} />,
     skipped: <MinusCircleOutlined style={{ color: '#9ca3af' }} />,
+    cancelled: <PauseCircleOutlined style={{ color: '#f59e0b' }} />,
     pending: <span style={{ color: '#d1d5db' }}>○</span>,
 };
 
@@ -43,7 +44,9 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
     const [status, setStatus] = useState<PipelineStatus | null>(null);
     const [loaded, setLoaded] = useState(false);
     const [starting, setStarting] = useState(false);
-    const [dismissedId, setDismissedId] = useState<string | null>(null);
+    // 完结后可收起进度展示区；只折叠不卸载——收起后卡片头保留并出现「展开」，
+    // 重新发起构建时自动展开（旧版收起=整卡移除，页面再无恢复入口——2026-11-06 实测修复）
+    const [collapsed, setCollapsed] = useState(false);
 
     const refresh = useCallback(async () => {
         try {
@@ -73,6 +76,11 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
         const t = setInterval(refresh, 3000);
         return () => clearInterval(t);
     }, [refresh, runningNow, s?.task_id]);
+
+    // 重新发起构建（idle→running/queued）时自动展开折叠的进度区
+    useEffect(() => {
+        if (s && (s.status === 'running' || s.status === 'queued')) setCollapsed(false);
+    }, [s?.status, s]);
 
     const start = async (restart = false) => {
         setStarting(true);
@@ -115,8 +123,6 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
 
     const finished = s && (s.status === 'completed' || s.status === 'failed'
         || s.status === 'cancelled');
-    // 已完结且被用户收起 → 不再显示；空闲态常驻（快速开始清单即新手引导）
-    if (finished && dismissedId === s?.task_id) return null;
 
     const quickCurrent = published ? 3
         : s?.status === 'completed' ? 2
@@ -128,6 +134,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
         <Card
             size="small"
             className="mb-3"
+            styles={collapsed ? { body: { display: 'none' } } : undefined}
             title={(
                 <Space>
                     {runningNow && <SyncOutlined spin style={{ color: '#3b82f6' }} />}
@@ -178,12 +185,15 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
                     )}
                     {finished && (
                         <Button size="small" type="text"
-                                onClick={() => setDismissedId(s!.task_id)}>收起</Button>
+                                onClick={() => setCollapsed(!collapsed)}>
+                            {collapsed ? '展开' : '收起'}
+                        </Button>
                     )}
                 </Space>
             )}
         >
-            {/* 三步快速开始清单（当前所处状态高亮，蓝色） */}
+            {/* 三步快速开始清单（当前所处状态高亮，蓝色）+ 七阶段进度 + 提示：收起时整块隐藏 */}
+            {!collapsed && (<>
             <Steps
                 size="small"
                 current={quickCurrent}
@@ -191,19 +201,24 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
                 className="mb-3"
             />
 
-            {/* 七阶段实时进度（仅计数，无预估时间） */}
+            {/* 七阶段实时进度（仅计数，无预估时间）；历史快照里 running 的格子
+                在管线已停止/完成后按中断显示，不再转圈 */}
             {stages.length > 0 && (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-1.5 mb-1">
-                    {stages.map((st) => (
-                        <div key={st.key}
-                             className={`flex items-center gap-1.5 border rounded px-2 py-1 text-xs ${
-                                 st.status === 'running' ? 'border-blue-300 bg-blue-50'
-                                     : st.status === 'failed' ? 'border-red-200 bg-red-50'
-                                         : 'border-gray-100 bg-white'}`}>
-                            {STATUS_ICON[st.status] || STATUS_ICON.pending}
-                            <span className="font-medium whitespace-nowrap">{st.label}</span>
-                        </div>
-                    ))}
+                    {stages.map((st) => {
+                        const shown = st.status === 'running' && !runningNow ? 'cancelled' : st.status;
+                        return (
+                            <div key={st.key}
+                                 className={`flex items-center gap-1.5 border rounded px-2 py-1 text-xs ${
+                                     shown === 'running' ? 'border-blue-300 bg-blue-50'
+                                         : shown === 'failed' ? 'border-red-200 bg-red-50'
+                                             : shown === 'cancelled' ? 'border-amber-200 bg-amber-50'
+                                                 : 'border-gray-100 bg-white'}`}>
+                                {STATUS_ICON[shown] || STATUS_ICON.pending}
+                                <span className="font-medium whitespace-nowrap">{st.label}</span>
+                            </div>
+                        );
+                    })}
                 </div>
             )}
 
@@ -227,6 +242,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
                        description="裁决完成后自动留痕，无需人工确认；可在「AI 裁决明细」中查看与撤销。"
                        action={<Button size="small" onClick={() => onNavigate?.('reviews')}>查看明细</Button>} />
             ) : null}
+            </>)}
         </Card>
     );
 };

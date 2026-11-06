@@ -90,6 +90,15 @@ def run_pipeline_endpoint(
                        http_status=400)
     if options.get("restart") is not None:
         options["restart"] = bool(options["restart"])
+    # 0 文档直接拒绝：空管线除白烧一次 AI 调用（公理扫描等）外无任何产出，
+    # 还会把项目置成「构建中」误导用户（2026-11-06 项目 3784 实测）
+    from sqlalchemy import func as sa_func
+    from app.infrastructure.database import UploadedDocument
+    doc_count = (db.query(sa_func.count(UploadedDocument.id))
+                 .filter(UploadedDocument.project_id == project_id,
+                         UploadedDocument.deleted_at.is_(None)).scalar() or 0)
+    if doc_count == 0:
+        raise APIError("请先上传文档再开始构建", code="NO_DOCUMENTS", http_status=400)
     dispatched = dispatch_pipeline_run(project_id,
                                        trigger_user_id=current_user.id,
                                        options=options)

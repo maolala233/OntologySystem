@@ -140,17 +140,30 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
         depth = DEFAULT_DEPTH
     profile = DEPTH_PROFILES[depth]
 
-    def _check_stage_cancelled(res: Any, stage_key: str) -> None:
-        """子任务被取消（取消键传导到切片间隙）→ 阶段标记未完成并停止管线。
+    def _check_stage_result(res: Any, stage_key: str) -> None:
+        """子任务结果传导：cancelled 停管线；failed 同样必须停并报错。
+
+        子任务（如 run_instance_extraction 全切片失败）以 res.result={'status':
+        'failed', 'reason': ...} 字典返回而非抛异常——旧版只拦 cancelled，
+        failed 被无视后阶段照样标 done、管线假装继续跑，最终假 completed
+        （2026-11-06 测试2 实测：LLM 拒连，实例全丢却无任何报错）。
 
         重跑语义：该阶段从头发起（抽取产物只在阶段末尾落库，中断不留半成品）；
         已完成阶段不重跑（parse_status=parsed 的文档不再解析、已有骨架默认跳过）。
         """
-        if isinstance(res, dict) and res.get("status") == "cancelled":
+        if not isinstance(res, dict):
+            return
+        if res.get("status") == "cancelled":
             st = _stage(stages, stage_key)
             st["status"] = "pending"
             st["detail"] = "已取消（重新构建将重跑本阶段）"
             raise _PipelineCancelled()
+        if res.get("status") == "failed":
+            reason = str(res.get("reason") or "未知原因")
+            st = _stage(stages, stage_key)
+            st["status"] = "failed"
+            st["detail"] = reason
+            raise RuntimeError(f"{stage_key} 阶段失败: {reason}")
 
     summary: dict[str, Any] = {}
     db = None
@@ -307,7 +320,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                     guidance = guidance_from_cqs(db, project_id, guidance)
                 except Exception:  # noqa: BLE001
                     pass
-                _check_stage_cancelled(_run_stage_task(
+                _check_stage_result(_run_stage_task(
                     tasks["schema"], "schema", stages, task_id,
                     project_id=project_id, document_ids=None,
                     parallelism=4, guidance=guidance,
@@ -320,7 +333,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             st = _stage(stages, "instances")
             st["status"] = "running"
             _prog("instances", "AI 抽取实例中…", 0.0)
-            _check_stage_cancelled(_run_stage_task(
+            _check_stage_result(_run_stage_task(
                 tasks["instances"], "instances", stages, task_id,
                 project_id=project_id, document_ids=None,
                 strict_gate=True, promote_policy="review",
@@ -333,7 +346,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             st = _stage(stages, "resolution")
             st["status"] = "running"
             _prog("resolution", "实体消解中…", 0.0)
-            _check_stage_cancelled(_run_stage_task(
+            _check_stage_result(_run_stage_task(
                 tasks["resolution"], "resolution", stages, task_id,
                 project_id=project_id), "resolution")
             st["status"] = "done"
@@ -344,7 +357,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             st = _stage(stages, "conflicts")
             st["status"] = "running"
             _prog("conflicts", "冲突检测中…", 0.0)
-            _check_stage_cancelled(_run_stage_task(
+            _check_stage_result(_run_stage_task(
                 tasks["conflicts"], "conflicts", stages, task_id,
                 project_id=project_id), "conflicts")
             st["status"] = "done"
@@ -393,7 +406,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 try:
                     axiom_res = _run_stage_task(tasks["axioms"], "axioms", stages, task_id,
                                                 project_id=project_id, channel="llm")
-                    _check_stage_cancelled(axiom_res, "axioms")
+                    _check_stage_result(axiom_res, "axioms")
                     if (axiom_res.get("llm") or {}).get("skipped") or axiom_res.get("skipped"):
                         st["status"] = "skipped"
                         st["detail"] = "模型不可用，已跳过公理扫描"
@@ -455,10 +468,18 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 db.close()
             release_pipeline_lock(project_id)  # celery 模式的锁清理（inline 在线程 finally 兜底）
     except _PipelineCancelled:
+        # 终态落库前收尾阶段状态：正在跑的阶段快照仍是 running，不改会被
+        # 前端渲染成"已停止但格子还在转圈"（2026-11-06 测试2 实测）
+        for st in stages:
+            if st["status"] == "running":
+                st["status"] = "cancelled"
         finish_task_progress(task_id, "cancelled", "已取消：重新构建将从被中断的阶段继续",
                              stats={"project_id": project_id, "stages": stages})
         return {"status": "cancelled"}
     except Exception as e:  # noqa: BLE001
+        for st in stages:
+            if st["status"] == "running":
+                st["status"] = "failed"
         finish_task_progress(task_id, "failed", str(e)[:300],
                              stats={"project_id": project_id, "stages": stages})
         return {"status": "failed", "reason": str(e)[:300]}

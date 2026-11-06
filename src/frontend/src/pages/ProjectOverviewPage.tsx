@@ -47,7 +47,10 @@ const ProjectOverviewPage: React.FC = () => {
         } catch { /* 模块未开通等：静默 */ }
         try {
             const v = await versionsApi.list(pid);
-            setPublishedVersion((v.items || []).find((x) => x.is_current) || null);
+            // 已发布版本=publication 快照（is_current 是"最新快照"，schema/full 入库也会置 current，
+            // 拿它当发布状态会让所有已构建项目都显示假「已发布 vN」——2026-11-06 实测修复）
+            const pubs = (v.items || []).filter((x) => x.kind === 'publication');
+            setPublishedVersion(pubs.sort((a, b) => b.version_no - a.version_no)[0] || null);
         } catch { /* 版本信息失败不阻断 */ }
     }, [pid]);
 
@@ -80,12 +83,15 @@ const ProjectOverviewPage: React.FC = () => {
                 if (prev === null) return; // 首查只建立基线
                 if (s.status === 'completed') {
                     load();
+                    loadProject(pid); // 项目状态（草稿/构建中/已构建/已发布徽标）随管线终态同步
                     message.success('构建完成，结果已更新');
                 } else if (s.status === 'failed' || s.status === 'cancelled') {
                     load();
+                    loadProject(pid);
                     if (s.status === 'failed') message.error('构建失败：' + (s.message || '未知原因'));
                 } else {
                     load(); // idle/running/queued/scheduled 之间跃迁也同步摘要（结果区随构建态收放）
+                    loadProject(pid);
                 }
             } catch { /* 轮询失败下一轮再试 */ }
         }, 5000);

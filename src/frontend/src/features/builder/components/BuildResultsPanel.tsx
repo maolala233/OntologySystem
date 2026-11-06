@@ -27,7 +27,9 @@ interface Props {
 const BuildResultsPanel: React.FC<Props> = ({ projectId, summary, checks, publishedVersionNo, onPublishedChange }) => {
   const navigate = useNavigate();
   const [publishing, setPublishing] = useState(false);
-  const published = publishedVersionNo != null;
+  // 发布状态以后端 is_published 为准；版本号仅取自 publication 快照供展示
+  // （单看版本号会把"刚入库的 schema/full 快照"误判成已发布——2026-11-06 实测修复）
+  const published = !!summary.is_published && publishedVersionNo != null;
 
   const doPublish = async () => {
     setPublishing(true);

@@ -116,6 +116,7 @@ const MyProjectsPage: React.FC = () => {
             });
             const pid = newProject.id;
             let docNote = '';
+            let buildNote = '';
             if (pendingFiles.length > 0) {
                 // auto_parse=false：解析交给一键管线串行处理（避免解析与管线赛跑）
                 await documentsApi.upload(pid, pendingFiles, false);
@@ -127,10 +128,19 @@ const MyProjectsPage: React.FC = () => {
             if (values.build_mode === 'scheduled' && values.schedule_at) {
                 options.schedule_at = values.schedule_at.toISOString();
             }
-            const r = await pipelineApi.run(pid, options);
-            message.success(r.mode === 'scheduled'
-                ? `项目已创建${docNote}；构建已定时，将在指定时间自动开始`
-                : `项目已创建${docNote}；后台构建已启动，完成后在项目页确认结果即可`);
+            if (pendingFiles.length > 0) {
+                // 0 文档不发起构建：空管线会白跑一次 AI 调用（公理扫描等），
+                // 还让新项目直接显示「构建中」+全绿勾，与"还没构建"的事实相悖
+                const r = await pipelineApi.run(pid, options);
+                message.success(r.mode === 'scheduled'
+                    ? `项目已创建${docNote}；构建已定时，将在指定时间自动开始`
+                    : `项目已创建${docNote}；后台构建已启动，完成后在项目页确认结果即可`);
+            } else {
+                buildNote = values.build_mode === 'scheduled'
+                    ? '；定时构建已跳过（无文档），上传文档后请手动发起'
+                    : '；上传文档后点「一键构建」即可开始';
+                message.success(`项目已创建${buildNote}`);
+            }
             setIsModalOpen(false);
             form.resetFields();
             setPendingFiles([]);
