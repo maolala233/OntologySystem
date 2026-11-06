@@ -67,11 +67,13 @@ export interface RuleSuggestion {
 export interface DeclaredAxiom {
     key: string;
     kind: 'functional' | 'inverse_of' | 'disjoint_with' | 'subclass_of'
-        | 'equivalent_classes' | 'cardinality';
+        | 'equivalent_classes' | 'cardinality' | 'transitive' | 'symmetric'
+        | 'inverse_functional' | 'subproperty_of' | 'domain_fix' | 'range_fix';
     predicate?: string;
     predicates?: string[];
     classes?: string[];
     class?: string;
+    value?: string | null;
     min?: number | null;
     max?: number | null;
 }

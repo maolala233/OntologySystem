@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
 from sqlalchemy.orm import Session
 
@@ -17,7 +17,7 @@ from app.adapters.resolution import (
     merge_entities,
 )
 from app.core.logging import logger
-from app.infrastructure.database import Entity, ProvenanceRecord, Project, Relation, ReviewItem
+from app.infrastructure.database import Entity, Project, Relation, ReviewItem
 
 # 单次消解/冲突检测物化的审核项上限（防审核队列被一次大批次刷爆）
 MAX_REVIEW_ITEMS_PER_TYPE = 50
@@ -49,7 +49,7 @@ def _embeddings_fn(project_id: Optional[int] = None):
     try:
         from openai import OpenAI
 
-        from app.adapters.provider import ModelPurpose, resolve_embedding
+        from app.adapters.provider import resolve_embedding
         from app.infrastructure.database import SessionLocal
 
         s = SessionLocal()
@@ -136,16 +136,24 @@ def run_resolution(project_id: int, scope: str = "all",
 
 
 def _pending_merge_item_exists(db: Session, project_id: int, cluster: DuplicateCluster) -> bool:
-    """同聚类（canonical+成员集合一致）的待审项已存在 → 不重复生成。"""
+    """同聚类（成员标签集合一致）的待审项已存在 → 不重复生成。
+
+    按成员**归一化标签**比对而不是 member_ids：graph_data 每次写入都会触发
+    行表监听器删重建（id 全换），按 id 去重必然失效 → 每轮重抽/重扫都堆一条
+    重复聚类项（项目 245 实测 #592/#644 同簇两条）。
+    """
+    from app.adapters.resolution import normalize_label
+
     rows = db.query(ReviewItem).filter(
         ReviewItem.project_id == project_id,
         ReviewItem.item_type == "entity_merge",
         ReviewItem.status == "pending",
     ).all()
-    want = set(cluster.member_ids)
+    want = {normalize_label(str(lb)) for lb in (cluster.member_labels or [])}
     for r in rows:
-        got = (r.payload or {}).get("cluster", {}).get("member_ids") or []
-        if set(got) == want:
+        got = {normalize_label(str(lb)) for lb in
+               ((r.payload or {}).get("cluster", {}).get("member_labels") or [])}
+        if got and got == want:
             return True
     return False
 

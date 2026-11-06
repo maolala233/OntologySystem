@@ -1,5 +1,5 @@
-# Frontend Dockerfile
-FROM node:18-alpine AS builder
+# Frontend Dockerfile（vite 7 要求 node 20.19+，用 22）
+FROM node:22-alpine AS builder
 
 # 设置工作目录
 WORKDIR /app

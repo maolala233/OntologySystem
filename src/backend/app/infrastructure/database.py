@@ -514,6 +514,7 @@ MODULE_SEEDS = [
     {"code": "export",          "name": "导出",            "description": "18 种格式导出",          "is_default_on": False, "sort_order": 14},
     {"code": "report",          "name": "报告生成",        "description": "基于本体的主题分析报告（Word/MD）", "is_default_on": False, "sort_order": 15},
     {"code": "ppt",             "name": "PPT生成",         "description": "基于本体的主题演示文稿（PPT）", "is_default_on": False, "sort_order": 16},
+    {"code": "builder_pro",     "name": "专家构建工作台",   "description": "多 Tab 专家模式（文档/骨架/实例/时间轴/审核细粒度操作），未授权用户仅使用新版一键详情页", "is_default_on": False, "sort_order": 17},
 ]
 
 
@@ -633,8 +634,29 @@ def init_db():
         _create_initial_data(db)
         # 初始化知识域字典
         init_knowledge_domains(db)
+        # 模块码幂等补种（新增模块码不经 alembic——迁移链已多分支；
+        # 只补缺行，不改已有行，授权矩阵不受影响）
+        _ensure_modules(db)
     finally:
         db.close()
+
+
+def _ensure_modules(db):
+    """MODULE_SEEDS 里缺哪个码补哪个行（幂等；存量库重启即生效）。"""
+    try:
+        existing = {m.code for m in db.query(Module).all()}
+        missing = [s for s in MODULE_SEEDS if s["code"] not in existing]
+        for s in missing:
+            db.add(Module(code=s["code"], name=s["name"],
+                          description=s["description"],
+                          is_default_on=s["is_default_on"],
+                          sort_order=s["sort_order"]))
+        if missing:
+            db.commit()
+            print(f"📝 [Modules] 补种新模块码: {[s['code'] for s in missing]}")
+    except Exception as e:
+        db.rollback()
+        print(f"⚠️ [Modules] 补种失败（不影响启动）: {e}")
 
 def _create_initial_data(db):
     """创建初始测试数据"""

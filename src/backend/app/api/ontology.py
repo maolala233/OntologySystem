@@ -22,7 +22,7 @@ from app.infrastructure.neo4j_client import neo4j_client
 from app.schemas.extraction import (
     SaveGraphRequest,
 )
-from app.schemas.ontology import ProjectCreate, ProjectResponse, ProjectUpdate
+from app.schemas.ontology import ProjectCreate, ProjectListItem, ProjectResponse, ProjectUpdate
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -33,19 +33,58 @@ EXTRACTION_SEMAPHORE = asyncio.Semaphore(3)
 # ─────────────────────────────────────────────
 
 # 获取我的项目列表
-@router.get("/my", response_model=list[ProjectResponse])
+@router.get("/my", response_model=list[ProjectListItem])
 def get_my_projects(scope: str = "mine", current_user: User = Depends(get_current_user),
                     db: Session = Depends(get_db)):
-    """我的项目列表；scope=all 仅超级管理员可用，返回全部项目（含归属人）。"""
+    """我的项目列表；scope=all 仅超级管理员可用，返回全部项目（含归属人）。
+
+    每行附生命周期状态（2026-11 列表视图改版）：published > building（管线
+    运行中/排队/定时）> ready（已有骨架）> draft；附轻量统计（类/实例数），
+    免去前端逐项目拉构建摘要。
+    """
+    from sqlalchemy import func as sa_func
     from sqlalchemy.orm import joinedload
-    from app.core.deps import is_super_admin
+
+    from app.infrastructure.database import Entity
+    from app.tasks.pipeline_tasks import pipeline_running_task_id, pipeline_scheduled_at
+
     q = db.query(Project).options(joinedload(Project.owner))
     if scope == "all":
         if not is_super_admin(current_user):
-            from fastapi import HTTPException
             raise HTTPException(status_code=403, detail="仅超级管理员可查看全部项目")
-        return q.order_by(Project.id).all()
-    return q.filter(Project.owner_id == current_user.id).order_by(Project.id).all()
+        rows = q.order_by(Project.id).all()
+    else:
+        rows = q.filter(Project.owner_id == current_user.id).order_by(Project.id).all()
+
+    inst_counts: dict = {}
+    if rows:
+        inst_counts = dict(
+            db.query(Entity.project_id, sa_func.count())
+            .filter(Entity.project_id.in_([p.id for p in rows]),
+                    Entity.is_class_node.is_(False),
+                    Entity.status != "merged")
+            .group_by(Entity.project_id).all())
+
+    out: list[ProjectListItem] = []
+    for p in rows:
+        gd = p.graph_data if isinstance(p.graph_data, dict) else {}
+        schema = gd.get("schema") if isinstance(gd.get("schema"), dict) else {}
+        classes_total = len([c for c in (schema.get("classes") or [])
+                             if isinstance(c, dict) and c.get("label")])
+        item = ProjectListItem.model_validate(p)
+        if p.is_published:
+            item.status = "published"
+        elif (p.id is not None
+              and (pipeline_running_task_id(p.id) or pipeline_scheduled_at(p.id))):
+            item.status = "building"
+        elif classes_total > 0:
+            item.status = "ready"
+        else:
+            item.status = "draft"
+        item.classes_total = classes_total
+        item.instances_total = int(inst_counts.get(p.id, 0))
+        out.append(item)
+    return out
 
 # 获取公共已发布项目
 @router.get("/public", response_model=list[ProjectResponse])
@@ -54,7 +93,7 @@ def get_public_projects(db: Session = Depends(get_db)):
     return projects
 
 # 获取单个项目详情
-@router.get("/{project_id}", response_model=ProjectResponse)
+@router.get("/{project_id}", response_model=ProjectListItem)
 def get_project(project_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     from sqlalchemy.orm import joinedload
 
@@ -68,7 +107,27 @@ def get_project(project_id: int, current_user: User = Depends(get_current_user),
         raise HTTPException(status_code=404, detail="Project not found")
     from app.core.deps import require_project_role
     require_project_role(project_id, "viewer", current_user, db)  # R11：超管直通/成员/owner/已发布公开
-    return project
+    # 状态机与列表同口径（DB 的 status 列是旧字段常驻 draft——详情页头部
+    # 状态标签必须按发布/管线/骨架实况计算，2026-11-05）
+    from app.schemas.ontology import ProjectListItem
+
+    item = ProjectListItem.model_validate(project)
+    gd = project.graph_data if isinstance(project.graph_data, dict) else {}
+    schema = gd.get("schema") if isinstance(gd.get("schema"), dict) else {}
+    classes_total = len([c for c in (schema.get("classes") or [])
+                         if isinstance(c, dict) and c.get("label")])
+    if project.is_published:
+        item.status = "published"
+    else:
+        from app.tasks.pipeline_tasks import pipeline_running_task_id, pipeline_scheduled_at
+        if project.id is not None and (pipeline_running_task_id(project.id) or pipeline_scheduled_at(project.id)):
+            item.status = "building"
+        elif classes_total > 0:
+            item.status = "ready"
+        else:
+            item.status = "draft"
+    item.classes_total = classes_total
+    return item
 
 # 创建新项目
 @router.post("", response_model=ProjectResponse)

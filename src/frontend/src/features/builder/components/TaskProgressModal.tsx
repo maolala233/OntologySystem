@@ -1,7 +1,7 @@
 /**
  * 抽取任务进度 Modal（03 §8）：轮询 GET /extraction/tasks/{id}（2s）+ 取消。
  * Schema/Graph 两 Tab 共用；SSE 版（ticket）保留在 SchemaTab 兼容旧交互。
- * 完成后展示待人工确认数量（review_items pending），引导前往审核工作台（04 §6 审核队列）。
+ * 完成后展示待人工确认数量（review_items pending），引导前往项目内审核（04 §6 审核队列）。
  */
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -64,7 +64,7 @@ const TaskProgressModal: React.FC<Props> = ({
                     stop();
                     if (p.status === 'completed') {
                         onCompleted?.(p.stats || {});
-                        // 人工确认闸门：抽取完成后统计待审项，引导去审核工作台
+                        // 人工确认闸门：抽取完成后统计待审项，引导去项目内审核
                         try {
                             const r = await reviewsApi.listByProject(projectId, { status: 'pending' });
                             if (!stopped) setPendingReviews(r.total ?? r.items?.length ?? 0);
@@ -126,7 +126,7 @@ const TaskProgressModal: React.FC<Props> = ({
                             icon={<AuditOutlined />}
                             onClick={() => navigate(`/projects/${projectId}/reviews`)}
                         >
-                            去审核（{pendingReviews} 项待确认）
+                            查看待审明细（{pendingReviews} 项）
                         </Button>
                     )}
                     <Button type="primary" disabled={!TERMINAL.has(status)} onClick={onClose}>关闭</Button>

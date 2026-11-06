@@ -1,18 +1,21 @@
 /**
- * 构建器 · 文档解析 Tab（05 §6.4）：上传（弹窗：选文件+解析方法+解析时机）
- * → 解析（参数抽屉）→ 分块列表（游标分页）→ 删除/下载。数据源：M3-1/M3-2 documents API。
+ * 构建器 · 文档解析 Tab（05 §6.4）：上传（弹窗只选文件；解析方法自动路由）
+ * → 上传完自动跑一键管线（解析→抽取→AI 自动处理，见 PipelinePanel）
+ * → 分块列表（游标分页）→ 删除/下载。数据源：M3-1/M3-2 documents API。
+ * 专家路径保留：列表逐文档「解析」抽屉可指定解析后端与 chunk 参数。
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-    Button, Card, Drawer, Modal, Popconfirm, Radio, Select, Space, Table, Tag, Tooltip, Upload, Input, message,
+    Button, Card, Collapse, Drawer, Modal, Popconfirm, Radio, Select, Space, Table, Tag, Tooltip, Upload, Input, message,
 } from 'antd';
 import {
     CloudUploadOutlined, DeleteOutlined, DownloadOutlined, FileTextOutlined,
-    InboxOutlined, ReloadOutlined, ScissorOutlined,
+    InboxOutlined, ReloadOutlined, ScissorOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 
 import { DocumentChunkRow, DocumentRow, documentsApi } from '../../../api/documents';
+import { pipelineApi } from '../../../api/pipeline';
 
 const { TextArea } = Input;
 
@@ -44,7 +47,8 @@ const DocumentsTab: React.FC<Props> = ({ projectId, onChanged }) => {
     const [parseDrawer, setParseDrawer] = useState<DocumentRow | null>(null);
     const [backend, setBackend] = useState('auto');
     const [chunkSize, setChunkSize] = useState('2000');
-    // 上传弹窗：选文件 → 解析方法 → 完成即解析 / 仅上传（待解析）
+    // 上传弹窗：只选文件（解析方法自动路由 + 上传完自动进一键管线；
+    // 高级折叠项供专家手动覆盖解析方法/时机）
     const [uploadOpen, setUploadOpen] = useState(false);
     const [pendingFiles, setPendingFiles] = useState<File[]>([]);
     const [uploadBackend, setUploadBackend] = useState('auto');
@@ -81,13 +85,23 @@ const DocumentsTab: React.FC<Props> = ({ projectId, onChanged }) => {
         try {
             const autoParse = uploadMode === 'parse';
             const r = await documentsApi.upload(projectId, pendingFiles, autoParse, uploadBackend);
-            message.success(autoParse
-                ? (r.message || `已上传 ${r.saved?.length ?? 0} 个文档，解析任务已派发`)
-                : `已上传 ${r.saved?.length ?? 0} 个文档（待解析，可在列表点「解析」开始）`);
             setUploadOpen(false);
             setPendingFiles([]);
             load();
             onChanged?.();
+            if (autoParse) {
+                // 上传完自动进一键管线（解析已在跑，管线幂等接管后续阶段）；
+                // 管线启动失败（模块未开通等）不影响解析本身，静默即可
+                try {
+                    await pipelineApi.run(projectId);
+                    message.success(
+                        `已上传 ${r.saved?.length ?? 0} 个文档；一键构建已启动，完成后确认高优先级结果即可`);
+                } catch {
+                    message.success(`已上传 ${r.saved?.length ?? 0} 个文档，解析任务已派发`);
+                }
+            } else {
+                message.success(`已上传 ${r.saved?.length ?? 0} 个文档（待解析，可在列表点「解析」开始）`);
+            }
         } catch (e: any) {
             const code = e.response?.data?.error?.code;
             if (code === 'DUPLICATE_UPLOAD') {
@@ -103,6 +117,17 @@ const DocumentsTab: React.FC<Props> = ({ projectId, onChanged }) => {
             }
         } finally {
             uploadingRef.current = false;
+        }
+    };
+
+    /** 已解析但尚未构建/需重新构建 → 一键管线（骨架已有则自动跳过重抽） */
+    const startPipeline = async () => {
+        try {
+            await pipelineApi.run(projectId);
+            message.success('一键构建已启动，进度见上方「快速开始」面板');
+            onChanged?.();
+        } catch (e: any) {
+            message.error(e.response?.data?.error?.message || '启动失败');
         }
     };
 
@@ -217,7 +242,10 @@ const DocumentsTab: React.FC<Props> = ({ projectId, onChanged }) => {
             title="文档解析"
             extra={
                 <Space>
-                    <Button type="primary" icon={<CloudUploadOutlined />}
+                    <Button type="primary" icon={<ThunderboltOutlined />} onClick={startPipeline}>
+                        一键构建
+                    </Button>
+                    <Button icon={<CloudUploadOutlined />}
                             onClick={() => { setPendingFiles([]); setUploadBackend('auto'); setUploadMode('parse'); setUploadOpen(true); }}>
                         上传文档
                     </Button>
@@ -235,12 +263,13 @@ const DocumentsTab: React.FC<Props> = ({ projectId, onChanged }) => {
                 locale={{ emptyText: '暂无文档；点击右上角「上传文档」开始（txt/pdf/docx/md/xlsx/csv/pptx，≤200MB）' }}
             />
 
-            {/* 上传弹窗：选文件 → 解析方法 → 解析时机（完成即解析 / 待解析） */}
+            {/* 上传弹窗：只选文件；解析方法自动路由、上传完自动进一键管线。
+                高级选项折叠保留解析方法/时机，供专家覆盖（默认无需展开）。 */}
             <Modal
                 title="上传文档"
                 open={uploadOpen}
                 onCancel={() => { if (!uploadingRef.current) setUploadOpen(false); }}
-                okText={uploadMode === 'parse' ? '完成并开始解析' : '完成（仅上传）'}
+                okText="上传并开始构建"
                 okButtonProps={{ disabled: pendingFiles.length === 0 || uploadingRef.current }}
                 onOk={handleUpload}
                 width={520}
@@ -261,22 +290,37 @@ const DocumentsTab: React.FC<Props> = ({ projectId, onChanged }) => {
                         <p className="ant-upload-text">点击或拖拽文件到此处</p>
                         <p className="ant-upload-hint">支持 txt/pdf/docx/md/xlsx/csv/pptx 等，单文件 ≤200MB，可多选</p>
                     </Upload.Dragger>
-                    <div>
-                        <div className="mb-1 text-gray-600">解析方法</div>
-                        <Select
-                            style={{ width: '100%' }}
-                            value={uploadBackend}
-                            onChange={setUploadBackend}
-                            options={BACKEND_OPTIONS}
-                        />
+                    <div className="text-xs text-gray-500">
+                        上传后自动：解析（按文档内容自动选择解析方法，扫描件走 OCR）→ AI 抽取骨架与实例
+                        → AI 自动处理低风险结果。完成后只需在「审核」Tab 确认高优先级项。
                     </div>
-                    <div>
-                        <div className="mb-1 text-gray-600">解析时机</div>
-                        <Radio.Group value={uploadMode} onChange={(e) => setUploadMode(e.target.value)}>
-                            <Radio value="parse">完成后立即开始解析</Radio>
-                            <Radio value="defer">完成后保持「待解析」，稍后在列表点「解析」</Radio>
-                        </Radio.Group>
-                    </div>
+                    <Collapse
+                        ghost
+                        items={[{
+                            key: 'advanced',
+                            label: <span className="text-xs text-gray-400">高级选项（一般不用改）</span>,
+                            children: (
+                                <div className="space-y-3">
+                                    <div>
+                                        <div className="mb-1 text-gray-600">解析方法</div>
+                                        <Select
+                                            style={{ width: '100%' }}
+                                            value={uploadBackend}
+                                            onChange={setUploadBackend}
+                                            options={BACKEND_OPTIONS}
+                                        />
+                                    </div>
+                                    <div>
+                                        <div className="mb-1 text-gray-600">解析时机</div>
+                                        <Radio.Group value={uploadMode} onChange={(e) => setUploadMode(e.target.value)}>
+                                            <Radio value="parse">完成后立即开始构建</Radio>
+                                            <Radio value="defer">完成后保持「待解析」，稍后手动开始</Radio>
+                                        </Radio.Group>
+                                    </div>
+                                </div>
+                            ),
+                        }]}
+                    />
                 </div>
             </Modal>
 

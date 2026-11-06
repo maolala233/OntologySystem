@@ -3,7 +3,6 @@ import { Layout, Menu, Avatar, Dropdown, Button, Modal, Input, Tag, Spin, Table 
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import {
     HomeOutlined,
-    AuditOutlined,
     UserOutlined,
     BookOutlined,
 
@@ -126,7 +125,6 @@ const AppLayout: React.FC = () => {
     ];
 
     // M1：菜单按授权矩阵过滤（模块码见 docs/design/README §4.1）
-    // M3-7：构建器不再有独立菜单入口（从「我的项目」进入四 Tab）；新增审核工作台
     const menuItems = [
         {
             key: '/',
@@ -139,12 +137,6 @@ const AppLayout: React.FC = () => {
             icon: <UserOutlined />,
             label: '我的项目',
             module: 'projects',
-        },
-        {
-            key: '/reviews',
-            icon: <AuditOutlined />,
-            label: '审核工作台',
-            module: 'review',
         },
         {
             key: '/asset-center',

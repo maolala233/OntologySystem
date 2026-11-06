@@ -63,8 +63,11 @@ export default function QaPage() {
             try {
                 const list = await projectsApi.getSelectableProjects();
                 setProjects(list);
+                // ?projectId= 直达（项目详情页「去问答」带参）> localStorage 记忆 > 第一个
+                const fromUrl = Number(new URLSearchParams(location.search).get('projectId'));
                 const saved = Number(localStorage.getItem(CONV_ID_KEY));
-                const initial = list.find(p => p.id === saved)?.id ?? list[0]?.id ?? null;
+                const initial = list.find(p => p.id === fromUrl)?.id
+                    ?? list.find(p => p.id === saved)?.id ?? list[0]?.id ?? null;
                 setProjectId(initial);
             } catch {
                 message.error('加载项目列表失败');

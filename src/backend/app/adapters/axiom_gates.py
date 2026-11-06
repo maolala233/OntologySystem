@@ -105,6 +105,8 @@ def gate_existence(candidates: list[dict], schema: dict | None) -> tuple[list[di
         class_targets = [str(x) for x in (cand.get("classes") or [])]
         if kind in ("domain_fix", "range_fix") and cand.get("value"):
             class_targets.append(str(cand["value"]))
+        if kind == "subproperty_of" and cand.get("value"):
+            prop_targets.append(str(cand["value"]))  # 父关系也是谓词
         bad = [t for t in prop_targets if normalize_label(t) not in prop_norms]
         bad += [t for t in class_targets if normalize_label(t) not in class_norms]
         if bad:
@@ -198,6 +200,14 @@ def _declared_conflict_reason(cand: dict, ops_by_label: dict, classes_by_label: 
             return f"「{a}」与「{b}」已声明互斥，不能等价"
         if str(b) in _ancestors(str(a), parent_map) or str(a) in _ancestors(str(b), parent_map):
             return f"「{a}」与「{b}」存在父子链，等价会塌缩层次"
+    elif kind == "subproperty_of":
+        op_ = ops_by_label.get(str(cand.get("predicate") or ""))
+        if op_ is not None:
+            existing = str(op_.get("subproperty_of") or "")
+            if existing and existing != str(cand.get("value") or ""):
+                return f"「{op_['label']}」已声明 ⊑「{existing}」"
+            if str(op_.get("subproperty_of") or "") == str(cand.get("value") or ""):
+                return f"「{op_['label']}」已 ⊑「{cand.get('value')}」（重复）"
     elif kind == "cardinality":
         op_ = ops_by_label.get(str(cand.get("predicate") or ""))
         mn, mx = cand.get("min_card"), cand.get("max_card")
@@ -429,12 +439,262 @@ def gate_owlrl_consistency(candidates: list[dict], schema: dict | None,
     return survivors, rejected, stats
 
 
-# ── 编排：四道闸顺序执行 ──
+# ── 闸⑥ 数据反证（已声明公理 vs 实例数据，确定性）──
+
+def _entity_class_sets(ents: list, rels: list) -> tuple[dict, dict]:
+    """实体 → 类集合（class_label + instance_of 边指向的类）与 id → label 映射。
+
+    供互斥公理的"共同实例"反证：同一实体双类型 = 互斥被数据违反。
+    """
+    from app.adapters.conflicts import _as_ent
+
+    ent_classes: dict = {}
+    ent_cls: dict = {}
+    id_label: dict = {}
+    for e in ents:
+        try:
+            d = _as_ent(e)
+        except Exception:  # noqa: BLE001
+            continue
+        eid = d.get("id")
+        if eid is None:
+            continue
+        if d.get("status") == "merged":
+            continue
+        if str(d.get("class_label") or "").strip():
+            ent_classes_set = ent_classes.setdefault(eid, set())
+            ent_classes_set.add(str(d["class_label"]).strip())
+            ent_cls[eid] = str(d["class_label"]).strip()
+        id_label[eid] = str(d.get("label") or "")
+    for r in rels:
+        if isinstance(r, dict):
+            pred = str(r.get("predicate") or "").strip()
+            sid, oid = r.get("subject_id"), r.get("object_id")
+            olbl = r.get("object_label")
+        else:
+            pred = str(getattr(r, "predicate", "") or "").strip()
+            sid, oid = getattr(r, "subject_id", None), getattr(r, "object_id", None)
+            olbl = getattr(r, "object_label", None)
+        if pred in ("instance_of", "rdf:type", "type") and sid is not None:
+            cls_name = (ent_cls.get(oid) if oid in ent_cls else None) or (str(olbl) if olbl else None)
+            if cls_name:
+                ent_classes.setdefault(sid, set()).add(cls_name)
+    return ent_classes, id_label
+
+
+def _disjoint_violation_detail(a: str, b: str, ent_classes: dict, id_label: dict) -> str | None:
+    """类对 (a,b) 的共同实例反证：双类型实例优先，其次同名实例分挂两类。"""
+    co_typed = [eid for eid, cls_set in ent_classes.items()
+                if a in cls_set and b in cls_set]
+    if co_typed:
+        names = "、".join(f"「{id_label.get(eid, eid)}」" for eid in sorted(co_typed, key=str)[:3])
+        return f"存在共同实例 {names}（双类型），互斥不成立"
+    label_to_cls: dict[str, set] = {}
+    for eid, cls_set in ent_classes.items():
+        lbl_ = id_label.get(eid, "")
+        if lbl_:
+            for c_ in cls_set:
+                label_to_cls.setdefault(lbl_, set()).add(c_)
+    same_name = [lbl_ for lbl_, cs in label_to_cls.items() if {a, b} <= cs]
+    if same_name:
+        return f"同名实例「{same_name[0]}」分别挂两类，疑似同类，互斥不成立"
+    return None
+
+
+def find_data_contradictions(schema: dict | None, ents: list, rels: list) -> list[dict]:
+    """已声明公理与实例数据的矛盾清单（确定性扫描，零 LLM）。
+
+    owlrl 对「函数性多值」不报错——它按 prp-fp 把多值客体重建成同一实体
+    （sameAs），矛盾被静默"解决"成错误合并（2026-11-04 项目 246：下游声明
+    函数性 + DCBS 三个下游 ⇒ ABCS/PRSC/URSC 全被推成同一实体）。本扫描把
+    这类矛盾显式化，供闸⑥拦截新候选、自动申报复验撤回、推理弹窗展示。
+    返回条目：{axiom_kind, key, predicate|classes, message, witness}。
+    """
+    from app.adapters.conflicts import _as_ent
+
+    schema = schema or {}
+    ent_cls: dict = {}
+    for e in ents:
+        try:
+            d = _as_ent(e)
+        except Exception:  # noqa: BLE001
+            continue
+        if d.get("id") is not None and d.get("status") != "merged":
+            ent_cls[d["id"]] = str(d.get("class_label") or "").strip()
+
+    def _label_of(eid) -> str:
+        for e in ents:
+            d = e if isinstance(e, dict) else None
+            if d is None:
+                d = {c: getattr(e, c, None) for c in ("id", "label")}
+            if d.get("id") == eid:
+                return str(d.get("label") or "")
+        return str(eid)
+
+    # id → label（ORM/dict 双形状）
+    id_label: dict = {}
+    for e in ents:
+        if isinstance(e, dict):
+            id_label[e.get("id")] = str(e.get("label") or "")
+        else:
+            id_label[getattr(e, "id", None)] = str(getattr(e, "label", "") or "")
+
+    ops_by_label = {str(op.get("label") or ""): op
+                    for op in (schema.get("object_properties") or [])
+                    if isinstance(op, dict) and op.get("label")}
+    # 谓词 → [(subject_id, object_id)]（结构谓词 instance_of 不参与）
+    by_pred: dict[str, list[tuple]] = {}
+    for r in rels:
+        pred = str((r.get("predicate") if isinstance(r, dict) else getattr(r, "predicate", "")) or "").strip()
+        if not pred or pred in ("instance_of", "rdf:type", "type"):
+            continue
+        sid = r.get("subject_id") if isinstance(r, dict) else getattr(r, "subject_id", None)
+        oid = r.get("object_id") if isinstance(r, dict) else getattr(r, "object_id", None)
+        by_pred.setdefault(pred, []).append((sid, oid))
+
+    out: list[dict] = []
+
+    def _push(axiom_kind: str, key: tuple, message: str, witness: dict) -> None:
+        out.append({"axiom_kind": axiom_kind, "key": key,
+                    "message": message, "witness": witness})
+
+    # 函数性：谓词存在 >1 个不同客体的主体
+    for lbl, op_ in ops_by_label.items():
+        if not op_.get("functional"):
+            continue
+        by_subj: dict = {}
+        for sid, oid in by_pred.get(lbl, []):
+            by_subj.setdefault(sid, set()).add(oid)
+        multi = {sid: objs for sid, objs in by_subj.items() if len(objs) > 1}
+        if multi:
+            sid, objs = next(iter(multi.items()))
+            names = [id_label.get(o, str(o)) for o in sorted(objs, key=str)][:4]
+            _push("functional", ("functional", lbl), 
+                  f"关系「{lbl}」声明函数性（每主体至多一个客体），但「{id_label.get(sid, sid)}」"
+                  f"有 {len(objs)} 个取值（{'、'.join(names)}）——闭包会把它们强行合并为同一实体",
+                  {"predicate": lbl, "violating_subjects": len(multi),
+                   "example_subject": id_label.get(sid, str(sid)), "values": names})
+    # 反函数性：谓词存在被 >1 个主体指向的客体
+    for lbl, op_ in ops_by_label.items():
+        if not op_.get("inverse_functional"):
+            continue
+        by_obj: dict = {}
+        for sid, oid in by_pred.get(lbl, []):
+            by_obj.setdefault(oid, set()).add(sid)
+        multi = {oid: subj for oid, subj in by_obj.items() if len(subj) > 1}
+        if multi:
+            oid, subj = next(iter(multi.items()))
+            names = [id_label.get(s, str(s)) for s in sorted(subj, key=str)][:4]
+            _push("inverse_functional", ("inverse_functional", lbl),
+                  f"关系「{lbl}」声明反函数性（客体唯一确定主体），但「{id_label.get(oid, oid)}」"
+                  f"被 {len(subj)} 个主体指向（{'、'.join(names)}）",
+                  {"predicate": lbl, "violating_objects": len(multi),
+                   "example_object": id_label.get(oid, str(oid)), "subjects": names})
+    # 互斥：两类有共同实例（同一实体双类型，或同名实例）
+    classes_by_label = {str(c.get("label") or ""): c
+                        for c in (schema.get("classes") or [])
+                        if isinstance(c, dict) and c.get("label")}
+    ent_classes, ent_id_label = _entity_class_sets(ents, rels)
+    declared_disjoint: set[frozenset] = set()
+    for c in classes_by_label.values():
+        for peer in (c.get("disjoint_with") or []):
+            if peer and peer != c.get("label"):
+                declared_disjoint.add(frozenset((str(c["label"]), str(peer))))
+    for pair in sorted(declared_disjoint, key=sorted):
+        a, b = sorted(pair)
+        detail = _disjoint_violation_detail(a, b, ent_classes, ent_id_label)
+        if detail:
+            _push("disjoint_with", ("disjoint_with", a, b),
+                  f"类「{a}」与「{b}」声明互斥，但{detail}",
+                  {"classes": [a, b]})
+    return out
+
+
+def gate_data_contradiction(candidates: list[dict], schema: dict | None,
+                            ents: list, rels: list) -> tuple[list[dict], list[dict]]:
+    """闸⑥：候选公理被实例数据直接反证即拒（宁缺毋滥——错误的公理会污染
+    整个推理闭包，246 的 sameAs 事故即函数性公理与数据矛盾所致）。
+
+    覆盖 kind：functional / inverse_functional / cardinality(max) / disjoint_with。
+    其余 kind（inverse_of/symmetric/transitive 等补边型、domain/range 修正型）
+    数据不会反证（声明本身会推导补全边），不适用本闸。
+    """
+    from app.adapters.conflicts import _as_ent
+
+    schema = schema or {}
+    e_dicts = [_as_ent(e) for e in (ents or [])]
+    e_dicts = [e for e in e_dicts if e["label"] and e["status"] != "merged"]
+    contradictions = find_data_contradictions(schema, e_dicts, rels)
+
+    def _predicate_multi_values(pred: str, side: str) -> dict | None:
+        """谓词数据反证：side='object' 查函数性（主体多值），'subject' 查反函数性。"""
+        groups: dict = {}
+        for r in rels:
+            if str(r.get("predicate") or "").strip() != pred:
+                continue
+            k, v = ((r.get("subject_id"), r.get("object_id"))
+                    if side == "object" else (r.get("object_id"), r.get("subject_id")))
+            if k is None or v is None:
+                continue
+            groups.setdefault(k, set()).add(v)
+        multi = {k: v for k, v in groups.items() if len(v) > 1}
+        return multi or None
+
+    survivors, rejected = [], []
+    for cand in candidates:
+        kind = cand.get("kind")
+        reason = None
+        if kind == "functional":
+            pred = str(cand.get("predicate") or "")
+            multi = _predicate_multi_values(pred, "object")
+            if multi:
+                sid, objs = next(iter(multi.items()))
+                reason = (f"数据反证: 「{pred}」存在多值主体（某主体有 "
+                          f"{len(objs)} 个不同客体：{'、'.join(sorted(str(o) for o in objs)[:4])}），"
+                          "函数性不成立")
+        elif kind == "inverse_functional":
+            pred = str(cand.get("predicate") or "")
+            multi = _predicate_multi_values(pred, "subject")
+            if multi:
+                oid, subj = next(iter(multi.items()))
+                reason = (f"数据反证: 「{pred}」存在被 {len(subj)} 个主体指向的客体，"
+                          "反函数性不成立")
+        elif kind == "cardinality":
+            pred = str(cand.get("predicate") or "")
+            mx = cand.get("max_card")
+            if mx is not None:
+                groups: dict = {}
+                for r in rels:
+                    if str(r.get("predicate") or "").strip() == pred:
+                        sid = r.get("subject_id")
+                        if sid is not None:
+                            groups.setdefault(sid, set()).add(r.get("object_id"))
+                over = {k: v for k, v in groups.items() if len(v) > int(mx)}
+                if over:
+                    sid, objs = next(iter(over.items()))
+                    reason = (f"数据反证: 「{pred}」存在主体取值 {len(objs)} 个，"
+                              f"超过候选 max_card={mx}")
+        elif kind == "disjoint_with":
+            pair = [str(x or "") for x in (cand.get("classes") or [])[:2]]
+            if len(pair) == 2 and all(pair):
+                cls_sets, id_labels = _entity_class_sets(e_dicts, rels)
+                detail = _disjoint_violation_detail(pair[0], pair[1],
+                                                    cls_sets, id_labels)
+                if detail:
+                    reason = f"数据反证: 类「{pair[0]}」与「{pair[1]}」{detail}"
+        if reason:
+            rejected.append({"candidate": cand, "reason": reason})
+        else:
+            survivors.append(cand)
+    return survivors, rejected
+
+
+# ── 编排：六道闸顺序执行 ──
 
 def run_gates(candidates: list[dict], schema: dict | None,
               ents: list, rels: list,
               entity_index: dict | None = None) -> tuple[list[dict], dict]:
-    """五道闸流水线。返回 (幸存候选, 各闸统计)。
+    """六道闸流水线。返回 (幸存候选, 各闸统计)。
 
     ents/rels 支持 ORM 行或 _as_ent 归一形状（内部统一归一）。
     """
@@ -449,6 +709,11 @@ def run_gates(candidates: list[dict], schema: dict | None,
     stats: dict[str, Any] = {}
     survivors, rejected = gate_existence(candidates, schema)
     stats["existence"] = {"passed": len(survivors), "rejected": len(rejected)}
+    survivors, rej_data = gate_data_contradiction(survivors, schema,
+                                                  e_dicts, r_dicts)
+    stats["data_contradiction"] = {"passed": len(survivors),
+                                   "rejected": len(rej_data)}
+    rejected = rejected + rej_data
     survivors, rej2 = gate_declared_conflicts(survivors, schema)
     stats["declared_conflicts"] = {"passed": len(survivors), "rejected": len(rej2)}
     rejected = rejected + rej2
@@ -469,7 +734,8 @@ def run_gates(candidates: list[dict], schema: dict | None,
 
 __all__ = [
     "SHADOW_NEW_VIOLATION_LIMIT", "SHADOW_ABSOLUTE_LIMIT",
-    "apply_candidate_to_schema", "gate_existence", "gate_declared_conflicts",
+    "apply_candidate_to_schema", "gate_existence", "gate_data_contradiction",
+    "find_data_contradictions", "gate_declared_conflicts",
     "gate_tbox_satisfiability", "gate_shadow_shacl", "gate_owlrl_consistency",
     "_fact_graph", "run_gates",
 ]

@@ -16,6 +16,8 @@ import QaPage from './pages/QaPage';
 import ReportsPage from './pages/ReportsPage';
 import McpConsolePage from './pages/McpConsolePage';
 import BuilderPage from './features/builder/BuilderPage';
+import ProjectOverviewPage from './pages/ProjectOverviewPage';
+import BuildResultPage from './pages/BuildResultPage';
 import AssetCenterPage from './pages/AssetCenterPage';
 import AssetDetailPage from './pages/AssetDetailPage';
 import ScorecardPage from './pages/ScorecardPage';
@@ -24,13 +26,12 @@ import UserAdminPage from './features/admin/UserAdminPage';
 import ModuleGrantsPage from './features/admin/ModuleGrantsPage';
 import ModelConfigsPage from './features/admin/ModelConfigsPage';
 import EnvConfigPage from './features/admin/EnvConfigPage';
-import ReviewsPage from './features/reviews/ReviewsPage';
-import { RequireModule } from './shared/auth/guards';
+import { RequireModule, ExpertGuard } from './shared/auth/guards';
 
-/** 旧路由 /ontology-builder/:projectId → /projects/:projectId/documents（05 §2 新信息架构） */
+/** 旧路由 /ontology-builder/:projectId → 新版详情页（一键构建形态） */
 const RedirectBuilder: React.FC = () => {
     const { projectId } = useParams();
-    return <Navigate to={`/projects/${projectId || ''}/documents`} replace />;
+    return <Navigate to={`/projects/${projectId || ''}`} replace />;
 };
 
 function App() {
@@ -52,21 +53,21 @@ function App() {
                     >
                         <Route index element={<HomePage />} />
                         <Route path="my-projects" element={<MyProjectsPage />} />
-                        {/* M3-7 构建器四 Tab（05 §2）：URL 可分享 */}
-                        <Route path="projects/:projectId/documents" element={<BuilderPage />} />
-                        <Route path="projects/:projectId/schema" element={<BuilderPage />} />
-                        <Route path="projects/:projectId/graph" element={<BuilderPage />} />
-                        <Route path="projects/:projectId/timeline" element={<BuilderPage />} />
+                        {/* 新版详情页（默认）：后台构建状态 + 结果入口 + 发布/去问答 */}
+                        <Route path="projects/:projectId" element={<ProjectOverviewPage />} />
+                        <Route path="projects/:projectId/result" element={<BuildResultPage />} />
+                        {/* 专家模式五 Tab（需 builder_pro 模块授权；未授权跳回新版详情页） */}
+                        <Route path="projects/:projectId/documents" element={<ExpertGuard><BuilderPage /></ExpertGuard>} />
+                        <Route path="projects/:projectId/schema" element={<ExpertGuard><BuilderPage /></ExpertGuard>} />
+                        <Route path="projects/:projectId/graph" element={<ExpertGuard><BuilderPage /></ExpertGuard>} />
+                        <Route path="projects/:projectId/timeline" element={<ExpertGuard><BuilderPage /></ExpertGuard>} />
                         {/* 构建器第五 Tab：项目内审核队列（用户在构建过程中查看审核情况） */}
-                        <Route path="projects/:projectId/reviews" element={<BuilderPage />} />
-                        <Route path="projects/:projectId" element={<Navigate to="documents" replace />} />
+                        <Route path="projects/:projectId/reviews" element={<ExpertGuard><BuilderPage /></ExpertGuard>} />
                         {/* O2-F7 本体健康记分卡（实时聚合机检与审核指标） */}
                         <Route path="projects/:projectId/scorecard" element={<ScorecardPage />} />
                         {/* 旧路由兼容重定向 */}
                         <Route path="ontology-builder" element={<Navigate to="/my-projects" replace />} />
                         <Route path="ontology-builder/:projectId" element={<RedirectBuilder />} />
-                        {/* M3-7 审核工作台（跨项目队列，05 §6.8） */}
-                        <Route path="reviews" element={<RequireModule module="review"><ReviewsPage /></RequireModule>} />
                         <Route path="asset-center" element={<AssetCenterPage />} />
                         <Route path="asset-center/:projectId" element={<AssetDetailPage />} />
                         {/* M5 R8 本体问答独立页面（对话分组 + 模型选择） */}

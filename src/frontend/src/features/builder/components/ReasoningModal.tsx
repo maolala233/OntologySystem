@@ -25,6 +25,12 @@ const AXIOM_KIND_LABEL: Record<string, string> = {
     subclass_of: '上下位',
     equivalent_classes: '等价类',
     cardinality: '基数',
+    transitive: '传递关系',
+    symmetric: '对称关系',
+    inverse_functional: '反函数性',
+    subproperty_of: '关系层级',
+    domain_fix: '定义域修正',
+    range_fix: '值域修正',
 };
 
 /** 公理条目 → 人话描述 */
@@ -44,6 +50,18 @@ const axiomText = (a: DeclaredAxiom): string => {
             const parts = [a.min != null ? `≥${a.min}` : null, a.max != null ? `≤${a.max}` : null].filter(Boolean);
             return `「${a.predicate}」基数 ${parts.join(' 且 ')}（约束类：${a.class || '未指定'}）`;
         }
+        case 'transitive':
+            return `「${a.predicate}」是传递关系（A→B 且 B→C ⇒ A→C）`;
+        case 'symmetric':
+            return `「${a.predicate}」是对称关系（A→B ⇒ B→A）`;
+        case 'inverse_functional':
+            return `「${a.predicate}」的客体唯一确定主体`;
+        case 'subproperty_of':
+            return `「${a.predicate}」是「${(a as any).value || '…'}」的子关系`;
+        case 'domain_fix':
+            return `「${a.predicate}」定义域修正为「${(a as any).value || '…'}」`;
+        case 'range_fix':
+            return `「${a.predicate}」值域修正为「${(a as any).value || '…'}」`;
         default:
             return a.key;
     }

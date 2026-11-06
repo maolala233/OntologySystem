@@ -10,7 +10,7 @@ export interface QaSource {
     quote: string;
     char_start: number | null;
     char_end: number | null;
-    ref_type: 'vector_chunk' | 'graph_edge' | 'graph_node' | 'keyword_chunk' | 'inference';
+    ref_type: 'vector_chunk' | 'graph_edge' | 'graph_node' | 'keyword_chunk' | 'inference' | 'axiom';
     score: number;
     source_document_id: number | null;
     /** 溯源详情端点附加字段 */

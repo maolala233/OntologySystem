@@ -5,7 +5,7 @@
  */
 import React, { useEffect } from 'react';
 import { Result, Button, Spin } from 'antd';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useAuthStore } from './authStore';
 
 const NoAccess: React.FC<{ onBack: () => void; reason: string }> = ({ onBack, reason }) => (
@@ -58,6 +58,46 @@ export const RequireAdmin: React.FC<{ children: React.ReactElement }> = ({ child
     if (!user || user.role !== 'admin') {
         return <NoAccess reason="需要管理员权限" onBack={() => navigate('/')} />;
     }
+    return children;
+};
+
+/**
+ * ExpertGuard：专家模式（多 Tab 构建工作台）守卫。
+ * 需 builder_pro 模块授权——未授权用户不渲染 403，直接跳回新版项目详情页
+ * （新手形态：一键构建 + 结果查看，见 /projects/:id）。
+ */
+export const ExpertGuard: React.FC<{ children: React.ReactElement }> = ({ children }) => {
+    const { loaded, hydrate } = useAuthStore();
+    const { projectId } = useParams<{ projectId: string }>();
+    const navigate = useNavigate();
+
+    useEffect(() => {
+        if (!loaded && localStorage.getItem('access_token')) {
+            hydrate();
+        }
+    }, [loaded, hydrate]);
+
+    if (!loaded) {
+        return <Spin size="large" style={{ display: 'block', margin: '120px auto' }} />;
+    }
+    return <ExpertCheck projectId={projectId} onFallback={() => navigate(`/projects/${projectId}`, { replace: true })}>
+        {children}
+    </ExpertCheck>;
+};
+
+const ExpertCheck: React.FC<{ projectId?: string; onFallback: () => void; children: React.ReactElement }> = ({
+    projectId, onFallback, children,
+}) => {
+    const { hasModule, user } = useAuthStore();
+    const allowed = user?.role === 'admin' || hasModule('builder_pro');
+    useEffect(() => {
+        // admin 与已授权用户直通；未授权静默跳新版详情页
+        if (projectId && !allowed) {
+            onFallback();
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [projectId, allowed]);
+    if (projectId && !allowed) return null;
     return children;
 };
 

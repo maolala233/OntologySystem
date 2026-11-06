@@ -82,39 +82,54 @@ def chunk_text(text: str, params: ChunkParams | None = None) -> list[Chunk]:
     if not text or not text.strip():
         return []
 
-    spans: list[tuple[int, int, str | None]] = []  # (start, end, structural)
-    for off, content, kind in _structural_blocks(text):
-        if kind is not None:
-            spans.extend((s, e, kind) for s, e in _hard_spans(content, off, size, overlap))
+    blocks = _structural_blocks(text)
+    spans: list[tuple[int, int, str | None, str | None]] = []  # (start, end, kind, header)
+    for off, content, kind, header in blocks:
+        if kind == "table":
+            # 表格块：按行界窗口化，每片 meta 携带表头（列语义不再因切片丢失）
+            spans.extend((s, e, "table", header) for s, e in _table_spans(content, off, size, overlap))
+        elif kind is not None:
+            spans.extend((s, e, kind, None) for s, e in _hard_spans(content, off, size, overlap))
         else:
-            spans.extend((s, e, None) for s, e in _recursive_spans(content, off, size, overlap))
+            spans.extend((s, e, None, None) for s, e in _recursive_spans(content, off, size, overlap))
 
     chunks: list[Chunk] = []
-    for s, e, kind in spans:
+    for s, e, kind, header in spans:
         content = text[s:e].rstrip()
         if not content.strip():
             continue
-        meta: dict = {"structural": kind} if kind else {}
+        meta: dict = {}
+        if kind:
+            meta["structural"] = kind
+        if header:
+            meta["table_header"] = header
         chunks.append(Chunk(text=content, start_index=s, end_index=s + len(content), meta=meta))
     for i, c in enumerate(chunks):
         c.chunk_index = i
     return chunks
 
 
-def _structural_blocks(text: str) -> list[tuple[int, str, str | None]]:
-    """把文本切成结构块：markdown 表格（连续 | 行）与代码围栏整块保留，其余为普通块。"""
-    blocks: list[tuple[int, str, str | None]] = []
+def _structural_blocks(text: str) -> list[tuple[int, str, str | None, str | None]]:
+    """把文本切成结构块：markdown 表格（连续 | 行）与代码围栏整块保留，其余为普通块。
+
+    表格块额外返回表头（首行 + 分隔行，供切片 meta 携带——切片按行界硬切时
+    表头不重复出现，抽取 prompt 靠 meta 补列语义）。
+    表格块偏移向前吞并紧邻的短标题/说明行（<80 字符的 # 标题），避免
+    「### Sheet: X」落成 20 字符的孤儿切片。
+    """
+    blocks: list[tuple[int, str, str | None, str | None]] = []
     lines = text.split("\n")
     off = 0
     kind: str | None = None
     buf: list[str] = []
     buf_off = 0
+    pending_small: tuple[int, str] | None = None  # 未挂靠的短标题（偏移, 行）
     in_code = False
 
     def flush():
         nonlocal buf
         if buf:
-            blocks.append((buf_off, "\n".join(buf), kind))
+            blocks.append((buf_off, "\n".join(buf), kind, None))
             buf = []
 
     for line in lines:
@@ -136,16 +151,50 @@ def _structural_blocks(text: str) -> list[tuple[int, str, str | None]]:
             if kind != "table":
                 flush()
                 kind, buf_off = "table", off
+                # 表格块吸收紧邻短标题（孤儿标题块防御）：标题行真并入内容，
+                # 块起点=标题行起点（偏移与内容一致，精确子串不变量不破）
+                if pending_small is not None:
+                    buf_off, title_line = pending_small
+                    buf.insert(0, title_line)
+                    if buf_off < off:
+                        buf.insert(1, "")  # 标题与表格间原有空行
+                    pending_small = None
             buf.append(line)
             off += len(line) + 1
             continue
         if kind == "table":
             flush()
             kind = None
+        if not stripped and pending_small is not None:
+            off += len(line) + 1
+            continue  # 标题后的空行不认领挂起标题（让标题并进下一个内容块）
+        if (pending_small is None and kind is None and not in_code
+                and stripped.startswith("#") and len(stripped) < 80):
+            pending_small = (off, line)  # 短标题暂挂，等下一块来认领
+            off += len(line) + 1
+            continue
+        if pending_small is not None:
+            buf_off, title_line = pending_small
+            buf.insert(0, title_line)
+            if buf_off < off:
+                buf.insert(1, "")
+            pending_small = None
         buf.append(line)
         off += len(line) + 1
     flush()
-    return [(o, c.rstrip("\n"), k) for o, c, k in blocks if c.strip()]
+    out = []
+    for o, c, k, _header in blocks:
+        if not c.strip():
+            continue
+        header = None
+        if k == "table":
+            tlines = [ln for ln in c.split("\n") if ln.strip().startswith("|")]
+            if len(tlines) >= 2 and set(tlines[1].replace("|", "").strip()) <= set("-: "):
+                header = tlines[0].strip() + "\n" + tlines[1].strip()
+            elif tlines:
+                header = tlines[0].strip()
+        out.append((o, c.rstrip("\n"), k, header))
+    return out
 
 
 def _recursive_spans(text: str, base: int, size: int,
@@ -197,6 +246,56 @@ def _window(spans: list[tuple[int, int]], size: int, overlap: int) -> list[tuple
     return out
 
 
+def _table_spans(text: str, base: int, size: int, overlap: int) -> list[tuple[int, int]]:
+    """markdown 表格块的行窗口化：切点全部落在行边界（行永不拦腰断），
+    窗口间带 overlap 行回看；整表 ≤ size 时单块保留。"""
+    lines = text.split("\n")
+    offs: list[tuple[int, int, int]] = []  # (行起点偏移, 行终点偏移(不含\n), 行长含\n)
+    off = 0
+    for line in lines:
+        offs.append((off, off + len(line), len(line) + 1))
+        off += len(line) + 1
+    if not lines:
+        return []
+    # 数据行 = 表头行 + 分隔行之后的所有 | 行（块内容可能前置标题/空行）
+    first_pipe = next((i for i, ln in enumerate(lines) if ln.lstrip().startswith("|")), None)
+    if first_pipe is None:
+        return [(base, base + len(text.rstrip()))]
+    if len(lines) >= first_pipe + 2 and set(lines[first_pipe + 1].replace("|", "").strip()) <= set("-: "):
+        data_start = first_pipe + 2
+    else:
+        data_start = first_pipe + 1
+    if len(text) <= size or data_start >= len(lines):
+        return [(base, base + len(text.rstrip()))]
+
+    out: list[tuple[int, int]] = []
+    i = data_start
+    n = len(lines)
+    first = True
+    while i < n:
+        if not lines[i].strip():
+            i += 1
+            continue
+        s_line = i
+        if first:
+            s_line = 0  # 首窗从块头开始：前置标题与表头入文（列语义完整）
+            first = False
+        j = i
+        while j + 1 < n and offs[j + 1][1] - offs[s_line][0] <= size:
+            j += 1
+        out.append((base + offs[s_line][0], base + offs[j][1]))
+        if j + 1 >= n:
+            break
+        # overlap 行回看
+        back = max(1, int(round((size * 0.15) // max(1, (offs[j][1] - offs[s_line][0]) / max(1, j - s_line + 1)))))
+        i = max(j + 1 - back, j + 1)
+        while i < n and not lines[i].strip():
+            i += 1
+    if not out:
+        return [(base, base + len(text.rstrip()))]
+    return out
+
+
 def _hard_spans(text: str, base: int, size: int, overlap: int) -> list[tuple[int, int]]:
     """无分隔符可用时的定长硬切（窗口间带 overlap）。
 
@@ -204,7 +303,6 @@ def _hard_spans(text: str, base: int, size: int, overlap: int) -> list[tuple[int
     引用不可读）——切点回退到最近的行边界（\n 之后）；行超长（无 \n 可回退）
     才允许字符位切割。
     """
-    step = max(1, size - overlap)
     out = []
     j = 0
     while j < len(text):
@@ -228,5 +326,5 @@ def _hard_spans(text: str, base: int, size: int, overlap: int) -> list[tuple[int
 
 __all__ = [
     "CHINESE_SEPARATORS", "DEFAULT_CHUNK_SIZE", "DEFAULT_CHUNK_OVERLAP_RATIO",
-    "Chunk", "ChunkParams", "split_sentences_cn", "chunk_text",
+    "Chunk", "ChunkParams", "split_sentences_cn", "chunk_text", "_table_spans",
 ]

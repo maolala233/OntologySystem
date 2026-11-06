@@ -3,6 +3,7 @@ import json
 import time
 import os
 import asyncio
+import threading
 import httpx
 from typing import Dict, Any, Iterator, Optional
 from openai import OpenAI, AsyncOpenAI
@@ -248,6 +249,30 @@ class LLMClient:
         msg = str(err).lower()
         return "json_schema" in msg and ("not supported" in msg or "invalidparameter" in msg)
 
+    def _create_with_hard_gate(self, api_kwargs: Dict[str, Any], timeout: Optional[float]):
+        """create 调用的硬超时闸（2026-11-05）：自定义 http_client 下 openai SDK 的
+        timeout 参数失效（openai 3.37/httpx2 不套用），模型挂起时连接无限阻塞——
+        抽取/裁决任务卡死、"停止"按钮永远等不到分块检查点（248/252 实测）。
+        守护线程发起调用 + join(hard) 硬闸：超时弃车（线程自然消亡，不 join 回收），
+        上层重试循环接手（重试耗尽走正常失败路径）。"""
+        hard = (timeout or 300.0) + 30
+        box: Dict[str, Any] = {}
+
+        def _run():
+            try:
+                box["r"] = self.client.chat.completions.create(**api_kwargs)
+            except BaseException as e:  # noqa: BLE001 —— 原样回传上层分类处理
+                box["e"] = e
+
+        th = threading.Thread(target=_run, daemon=True, name="llm-hardgate")
+        th.start()
+        th.join(hard)
+        if "r" in box:
+            return box["r"]
+        if "e" in box:
+            raise box["e"]
+        raise TimeoutError(f"LLM 调用硬超时（{hard:.0f}s 无任何响应，弃车）")
+
     def call_llm(self, system_prompt: str, user_prompt: str, max_retries: int = 3, stream: bool = True,
                  timeout: Optional[float] = None, task_id: Optional[str] = None,
                  json_schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -264,7 +289,7 @@ class LLMClient:
             response = None
             try:
                 api_kwargs = self._build_api_kwargs(system_prompt, user_prompt, stream, timeout, json_schema)
-                response = self.client.chat.completions.create(**api_kwargs)
+                response = self._create_with_hard_gate(api_kwargs, timeout)
 
                 if stream:
                     logger.info(f"[LLM] 开始接收流式响应...")

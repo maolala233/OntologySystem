@@ -31,6 +31,9 @@ MAX_GRAPH_FACTS = 3
 # 事实满额时为推理保留 2 个名额（事实压缩到 MAX_SOURCES-2）
 MAX_INFERRED_SOURCES = 4
 MAX_INFERRED_RESERVED = 2
+# 已声明公理引用名额：公理是审核通过的结构约束（互斥/传递/函数性等），
+# 问题命中相关类/关系名时才注入，属高信任约束证据（与事实同级）
+MAX_AXIOM_SOURCES = 4
 
 
 class RetrievedSource(BaseModel):
@@ -40,7 +43,7 @@ class RetrievedSource(BaseModel):
     quote: str
     char_start: int | None = None
     char_end: int | None = None
-    ref_type: str = "vector_chunk"  # vector_chunk | graph_edge | graph_node | keyword_chunk | inference
+    ref_type: str = "vector_chunk"  # vector_chunk | graph_edge | graph_node | keyword_chunk | inference | axiom
     score: float = 0.0
     source_document_id: int | None = None  # 前端跳文档预览用
 
@@ -201,6 +204,98 @@ def _tbox_class_anchor(query: RetrievalQuery, db: Session) -> list[str]:
         return []
 
 
+def _schema_axioms(schema: dict | None) -> list[dict]:
+    """画布 schema → 已声明公理的人话摘要列表（preds/clses=涉及的关系/类标签，
+    quote=摘要）。公理涉及两类名字分权匹配：问题问到关系名比提到类名更定向。
+
+    只收「有意义」的结构约束：互斥/函数性/反函数性/传递/对称/互逆/定义域/值域。
+    层次（parent_classes）不收——类锚定与实例清单已覆盖 is-a 语义，重复注入
+    只会挤占引用名额。
+    """
+    schema = schema or {}
+    out: list[dict] = []
+    classes = [c for c in (schema.get("classes") or []) if isinstance(c, dict)]
+    for c in classes:
+        label = str(c.get("label") or "")
+        if not label:
+            continue
+        for peer in (c.get("disjoint_with") or []):
+            peer = str(peer or "")
+            if peer and peer != label:
+                out.append({"preds": [], "clses": [label, peer], "pair": True,
+                            "quote": f"类「{label}」与「{peer}」声明互斥（disjointWith）："
+                                     f"二者不可能有共同实例，答案不得同时归入两类"})
+    for op in (schema.get("object_properties") or []):
+        if not (isinstance(op, dict) and op.get("label")):
+            continue
+        p = str(op["label"])
+        dom, rng = str(op.get("domain") or ""), str(op.get("range") or "")
+        if dom:
+            out.append({"preds": [p], "clses": [dom],
+                        "quote": f"关系「{p}」的定义域是「{dom}」：只有「{dom}」的实例能作主体"})
+        if rng:
+            out.append({"preds": [p], "clses": [rng],
+                        "quote": f"关系「{p}」的值域是「{rng}」：客体只能是「{rng}」的实例"})
+        if op.get("functional"):
+            out.append({"preds": [p], "clses": [],
+                        "quote": f"关系「{p}」是函数性的：每个主体至多有一个客体，"
+                                 f"多值即矛盾"})
+        if op.get("inverse_functional"):
+            out.append({"preds": [p], "clses": [],
+                        "quote": f"关系「{p}」是反函数性的：每个客体至多被一个主体指向"})
+        if op.get("transitive"):
+            out.append({"preds": [p], "clses": [],
+                        "quote": f"关系「{p}」可传递：A→B 且 B→C ⇒ A→C，"
+                                 f"间接可达即视为成立"})
+        if op.get("symmetric"):
+            out.append({"preds": [p], "clses": [],
+                        "quote": f"关系「{p}」是对称的：A—{p}→B 则 B—{p}→A"})
+        if op.get("inverse_of"):
+            q = str(op["inverse_of"])
+            out.append({"preds": [p, q], "clses": [], "pair": True,
+                        "quote": f"关系「{p}」与「{q}」互逆：A—{p}→B ⇔ B—{q}→A"})
+    return out
+
+
+def _axiom_sources(query: RetrievalQuery, db: Session) -> list[RetrievedSource]:
+    """路径 D：已声明公理 → QA 引用（ref_type='axiom'，高信任约束证据）。
+
+    问题词项命中公理涉及的类/关系名才注入——公理是结构约束而非事实，
+    命中才相关（如「ABCS和URSC能是同一个系统吗」命中互斥公理）。命中的
+    公理进 LLM 上下文后，模型可以直接引用约束回答（而非只靠事实统计）。
+    排序按相关度：关系名命中权重 2（问谓词的场合关系公理最定向），
+    类名命中权重 1；同分保持声明顺序。
+    """
+    from app.infrastructure.database import Project
+
+    proj = db.query(Project).filter(Project.id == query.project_id).first()
+    schema = proj.graph_data.get("schema") \
+        if proj is not None and isinstance(proj.graph_data, dict) else None
+    axioms = _schema_axioms(schema)
+    if not axioms:
+        return []
+    question = query.question or ""
+    terms = set(_question_terms(question))
+    hits: list[tuple[int, int, RetrievedSource]] = []  # (-相关度, 序, 引用)
+    for order, ax in enumerate(axioms):
+        rel_hit = sum(1 for lbl in ax["preds"] if lbl in question or lbl in terms)
+        cls_hit = sum(1 for lbl in ax["clses"] if lbl in question or lbl in terms)
+        relevance = rel_hit * 2 + cls_hit
+        # 类对公理（互斥/等价）两个类名同时命中 = 问题正面问这两类的关系，+2 加成
+        if ax.get("pair") and cls_hit >= 2:
+            relevance += 2
+        if not relevance:
+            continue
+        hits.append((-relevance, order, RetrievedSource(
+            doc_file="本体公理（已声明约束）",
+            quote=ax["quote"],
+            ref_type="axiom",
+            score=0.9,
+        )))
+    hits.sort(key=lambda t: (t[0], t[1]))
+    return [s for _, _, s in hits[:MAX_AXIOM_SOURCES]]
+
+
 def _graph_expand(db: Session, query: RetrievalQuery, seeds: list[Entity]) -> list[dict]:
     """图扩展：种子实体沿 relations 行表 BFS 1~2 跳，返回事实三元组。
 
@@ -222,12 +317,17 @@ def _graph_expand(db: Session, query: RetrievalQuery, seeds: list[Entity]) -> li
                           "hop": 1, "score": 0.95, "entity_ids": [e.id]})
     frontier_ids = [e.id for e in seeds]
     seen_edges: set[tuple[int, str, int]] = set()
+    # 实体一次拉全（N+1 根治：旧实现对每条边再各查 2 次实体——大语料下 BFS
+    # 退化为数百次点查，图模式检索 240s 超时（项目 253 实测），RAG 只要 7s）
+    all_ids = {e.id for e in db.query(Entity.id).filter(Entity.project_id == query.project_id).all()}
+    ent_by_id = {e.id: e for e in db.query(Entity).filter(
+        Entity.project_id == query.project_id,
+        Entity.id.in_(all_ids)).all()} if all_ids else {}
     for hop in range(1, hops + 1):
         if not frontier_ids:
             break
         rows = (
-            db.query(Relation, Entity)
-            .join(Entity, Relation.subject_id == Entity.id)
+            db.query(Relation)
             .filter(
                 Relation.project_id == query.project_id,
                 Relation.subject_id.in_(frontier_ids),
@@ -236,8 +336,7 @@ def _graph_expand(db: Session, query: RetrievalQuery, seeds: list[Entity]) -> li
             .all()
         )
         rows += (
-            db.query(Relation, Entity)
-            .join(Entity, Relation.object_id == Entity.id)
+            db.query(Relation)
             .filter(
                 Relation.project_id == query.project_id,
                 Relation.object_id.in_(frontier_ids),
@@ -247,13 +346,13 @@ def _graph_expand(db: Session, query: RetrievalQuery, seeds: list[Entity]) -> li
         )
         next_ids: list[int] = []
         seen_ids: set[int] = set()
-        for rel, other in rows:
+        for rel in rows:
             key = (rel.subject_id, rel.predicate, rel.object_id)
             if key in seen_edges:
                 continue
             seen_edges.add(key)
-            subj = db.query(Entity).filter(Entity.id == rel.subject_id).first()
-            obj = db.query(Entity).filter(Entity.id == rel.object_id).first()
+            subj = ent_by_id.get(rel.subject_id)
+            obj = ent_by_id.get(rel.object_id)
             if not subj or not obj:
                 continue
             facts.append({
@@ -264,6 +363,7 @@ def _graph_expand(db: Session, query: RetrievalQuery, seeds: list[Entity]) -> li
                 "score": 1.0 / hop,
                 "entity_ids": [rel.subject_id, rel.object_id],
             })
+            other = obj if rel.subject_id in frontier_ids else subj
             if other.id not in seen_ids and other.id not in frontier_ids:
                 seen_ids.add(other.id)
                 next_ids.append(other.id)
@@ -464,11 +564,14 @@ def retrieve(query: RetrievalQuery, db: Session | None = None) -> list[Retrieved
     """
     sources: list[RetrievedSource] = []
     class_labels: list[str] = []
+    axiom_hits: list[RetrievedSource] = []
     if db is not None:
         # 类锚定枚举：词法优先（问题逐字含类名），未命中走 TBox 向量回退
         class_labels = _match_class_labels(db, query) if query.use_graph else []
         if class_labels:
             sources.extend(_class_inventory_sources(db, query, class_labels))
+        # 已声明公理：问题命中约束涉及的类/关系名时注入（高信任，保留名额）
+        axiom_hits = _axiom_sources(query, db) if query.use_graph else []
         seeds = _match_entities(db, query)
         facts = _graph_expand(db, query, seeds) if query.use_graph else []
         if facts:
@@ -522,8 +625,10 @@ def retrieve(query: RetrievalQuery, db: Session | None = None) -> list[Retrieved
             out.append(s)
         return out
 
-    # 类锚定实例清单有保留名额（最多 2 条，一各类一条）——枚举问题的决定性证据
-    fused = _dedup(inventory)[:2] + _dedup(graph_facts)[:MAX_GRAPH_FACTS] + _dedup(text_hits)
+    # 类锚定实例清单有保留名额（最多 2 条，一各类一条）——枚举问题的决定性证据；
+    # 公理引用紧随其后（最多 2 条）——约束类问题的决定性证据
+    fused = (_dedup(inventory)[:2] + axiom_hits[:2] + _dedup(graph_facts)[:MAX_GRAPH_FACTS]
+             + _dedup(text_hits))
     result = fused[:MAX_SOURCES]
     # 语义推理引用垫底补充（不与事实混排）：
     # 推理引用有保留名额——事实满额时压缩事实到 8 条，保证层级/归属类问题

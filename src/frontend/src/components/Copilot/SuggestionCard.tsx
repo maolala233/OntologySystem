@@ -48,7 +48,7 @@ export default function SuggestionCard({ projectId, item, onChanged }: Props) {
         setBusy(true);
         try {
             const res = await convertCopilotSuggestion(projectId, item.proposal_id);
-            message.success(`已转审核项 #${res.review_item_id}，可在「审核工作台」裁决`);
+            message.success(`已转审核项 #${res.review_item_id}，可在本项目的「审核」页签裁决`);
             onChanged?.('applied', { converted_review_item_id: res.review_item_id });
         } catch (e: any) {
             message.error(e?.response?.data?.error?.message || '转审核项失败');

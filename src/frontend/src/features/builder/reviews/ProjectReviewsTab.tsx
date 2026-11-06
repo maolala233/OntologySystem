@@ -1,16 +1,24 @@
 /**
- * 构建器 · 审核 Tab：本项目审核队列（审核工作台的项目内视图，05 §6.8）。
- * S12：详情能力与审核工作台对齐——人话说明区（FriendlyPayload 共享件）、
- * conflict_type 选类、备注、编辑后通过；完整键盘流仍在跨项目工作台。
+ * 构建器 · 审核 Tab（新手简化 2026-11 两区视图）：本项目审核队列。
+ * - 「需你裁决」：critical/high 待办（与发布门禁同口径），批量通过/驳回；
+ * - 「AI 已自动处理」：AI 自动合并/留痕关闭/公理申报，只读留痕，entity_merge 可撤销
+ *   （拆分恢复）、公理可撤销（remove_axiom）；
+ * - 「全部」：完整队列 + 状态/优先级/类型筛选（专家路径）。
+ * 详情能力与审核工作台对齐（FriendlyPayload、conflict_type 选类、编辑后通过）。
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-    Button, Drawer, Empty, Input, Modal, Select, Space, Table, Tag, Tooltip, Typography, message,
+    Button, Drawer, Empty, Input, Modal, Popconfirm, Segmented, Select, Space, Table, Tag,
+    Tooltip, Typography, message,
 } from 'antd';
-import { CheckOutlined, CloseOutlined, EditOutlined, ReloadOutlined } from '@ant-design/icons';
+import {
+    CheckOutlined, CloseOutlined, EditOutlined, ReloadOutlined, UndoOutlined,
+} from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 
 import { ReviewItem, reviewsApi } from '../../../api/governance';
+import { reasoningApi } from '../../../api/reasoning';
+import { pipelineApi } from '../../../api/pipeline';
 import { useAuthStore } from '../../../shared/auth/authStore';
 import { FriendlyPayload, humanSummary, PRIORITY_TAG, TYPE_LABEL } from '../../reviews/reviewShared';
 
@@ -23,6 +31,15 @@ const STATUS_TAG: Record<string, { color: string; text: string }> = {
     rejected: { color: 'error', text: '已驳回' },
     edited: { color: 'cyan', text: '已修订' },
 };
+
+type ViewMode = 'need_human' | 'low' | 'auto' | 'all';
+
+const VIEW_MODES: { value: ViewMode; label: string }[] = [
+    { value: 'need_human', label: '需你裁决（高优先级）' },
+    { value: 'low', label: '低优先级待确认' },
+    { value: 'auto', label: 'AI 已自动处理' },
+    { value: 'all', label: '全部' },
+];
 
 interface Props {
     projectId: number;
@@ -37,9 +54,12 @@ const ProjectReviewsTab: React.FC<Props> = ({ projectId }) => {
     const [total, setTotal] = useState(0);
     const [page, setPage] = useState(1);
     const [loading, setLoading] = useState(false);
-    const [statusFilter, setStatusFilter] = useState<string[]>(['pending']);
+    const [viewMode, setViewMode] = useState<ViewMode>('need_human');
+    const [statusFilter, setStatusFilter] = useState<string[]>([]);
+    const [priorityFilter, setPriorityFilter] = useState<string[]>([]);
     const [typeFilter, setTypeFilter] = useState<string[]>([]);
     const [selectedIds, setSelectedIds] = useState<React.Key[]>([]);
+    const [undoing, setUndoing] = useState<number | null>(null);
     // 详情抽屉：与审核工作台同款能力（选类/备注/编辑后通过）
     const [detail, setDetail] = useState<ReviewItem | null>(null);
     const [chosenClass, setChosenClass] = useState<string | null>(null);
@@ -48,27 +68,45 @@ const ProjectReviewsTab: React.FC<Props> = ({ projectId }) => {
     const [editText, setEditText] = useState('');
     const [showRaw, setShowRaw] = useState(false);
 
+    /** 视图模式 → 后端过滤参数（auto 视图再按 result_ref.auto_rule 前端过滤） */
+    const filtersFor = useCallback((mode: ViewMode) => {
+        if (mode === 'need_human') return { status: 'pending,claimed', priority: 'critical,high' };
+        if (mode === 'low') return { status: 'pending', priority: 'medium,low' };
+        if (mode === 'auto') return { status: 'approved,edited' };
+        return {
+            status: statusFilter.length ? statusFilter.join(',') : undefined,
+            priority: priorityFilter.length ? priorityFilter.join(',') : undefined,
+        };
+    }, [statusFilter, priorityFilter]);
+
     const load = useCallback(async (p = page) => {
         setLoading(true);
         try {
+            const f = filtersFor(viewMode);
             const r = await reviewsApi.listByProject(projectId, {
-                status: statusFilter.length ? statusFilter.join(',') : undefined,
+                ...f,
                 type: typeFilter.length ? typeFilter.join(',') : undefined,
                 limit: PAGE_SIZE,
                 offset: (p - 1) * PAGE_SIZE,
             });
-            setItems(r.items || []);
-            setTotal(r.total ?? (r.items || []).length);
-            setSelectedIds((prev) => prev.filter((id) => (r.items || []).some((i) => i.id === id)));
+            let rows = r.items || [];
+            if (viewMode === 'auto') {
+                // AI 自动处理 + 消解合并留痕（可撤销的合并执行记录）
+                rows = rows.filter((i) => (i.result_ref || {}).auto_rule || isMergeTrace(i));
+            }
+            setItems(rows);
+            setTotal(viewMode === 'auto' ? rows.length : (r.total ?? rows.length));
+            setSelectedIds((prev) => prev.filter((id) => rows.some((i) => i.id === id)));
         } catch (e: any) {
             message.error(e.response?.data?.error?.message || '加载审核队列失败');
         } finally {
             setLoading(false);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [projectId, statusFilter, typeFilter, page]);
+    }, [projectId, viewMode, typeFilter, page, filtersFor]);
 
-    useEffect(() => { load(page); }, [load]);
+    useEffect(() => { setPage(1); }, [viewMode, typeFilter]);
+    useEffect(() => { load(page); }, [load, page]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const openDetail = async (item: ReviewItem) => {
         setDetail(item);
@@ -156,6 +194,48 @@ const ProjectReviewsTab: React.FC<Props> = ({ projectId }) => {
         });
     };
 
+    /** 撤销 AI 自动操作：合并 → 拆分恢复；公理 → remove_axiom。
+     *  合并信息兼容两种来源：消解留痕（result_ref.canonical_id/merged_ids）
+     *  与自动裁决批准项（payload.canonical_id/duplicate_ids）。 */
+    const undoAuto = async (item: ReviewItem) => {
+        setUndoing(item.id);
+        try {
+            if (item.item_type === 'entity_merge') {
+                const ref = item.result_ref || {};
+                const payload = item.payload || {};
+                const canonical = Number(ref.canonical_id || payload.canonical_id);
+                const dups = ((ref.merged_ids || payload.duplicate_ids || []) as number[]).map(Number);
+                if (!canonical || dups.length === 0) {
+                    message.warning('该留痕项缺少撤销所需信息（历史人工合并请在画布处理）');
+                    return;
+                }
+                await pipelineApi.undoMerge(projectId, canonical, dups);
+                message.success('已拆分恢复：被并入的实体已独立还原（画布在下次构建/重抽时同步重建）');
+            } else if (item.item_type === 'axiom_suggestion'
+                       && (item.result_ref || {}).axiom_key) {
+                await reasoningApi.removeAxiom(projectId, (item.result_ref || {}).axiom_key);
+                message.success('已撤销该公理声明（可在推理页重新申报）');
+            } else {
+                message.info('该类自动操作为留痕关闭，不改变图谱数据，无需撤销');
+                return;
+            }
+            load();
+        } catch (e: any) {
+            message.error(e.response?.data?.error?.message || '撤销失败');
+        } finally {
+            setUndoing(null);
+        }
+    };
+
+    const isAutoItem = (r: ReviewItem) => !!(r.result_ref || {}).auto_rule;
+    const isMergeTrace = (r: ReviewItem) => r.item_type === 'entity_merge'
+        && !!(r.result_ref || {}).merged_ids;
+    const canUndo = (r: ReviewItem) => viewMode === 'auto' && (
+        (r.item_type === 'entity_merge'
+            && Number((r.result_ref || {}).canonical_id || (r.payload || {}).canonical_id)
+            && (((r.result_ref || {}).merged_ids || (r.payload || {}).duplicate_ids || []).length > 0))
+        || (r.item_type === 'axiom_suggestion' && (r.result_ref || {}).axiom_key));
+
     const columns: ColumnsType<ReviewItem> = [
         {
             title: '优先级', dataIndex: 'priority', key: 'priority', width: 90,
@@ -177,6 +257,23 @@ const ProjectReviewsTab: React.FC<Props> = ({ projectId }) => {
                 );
             },
         },
+        ...(viewMode === 'auto' ? [{
+            title: '处理方式', key: 'auto_rule', width: 130,
+            render: (_: any, r: ReviewItem) => {
+                const rule = (r.result_ref || {}).auto_rule || '';
+                if (String(rule).startsWith('axiom')) {
+                    return (r.result_ref || {}).rolled_back
+                        ? <Tag color="red">已自动撤回（引发矛盾）</Tag>
+                        : <Tag color="geekblue">公理已自动申报</Tag>;
+                }
+                if (r.item_type === 'entity_merge') {
+                    return isMergeTrace(r)
+                        ? <Tag color="geekblue">已自动合并（实体消解）</Tag>
+                        : <Tag color="geekblue">已自动合并</Tag>;
+                }
+                return <Tag>留痕关闭</Tag>;
+            },
+        }] : []),
         {
             title: '状态', dataIndex: 'status', key: 'status', width: 90,
             render: (s: string) => <Tag color={STATUS_TAG[s]?.color}>{STATUS_TAG[s]?.text || s}</Tag>,
@@ -185,32 +282,63 @@ const ProjectReviewsTab: React.FC<Props> = ({ projectId }) => {
             title: '时间', dataIndex: 'created_at', key: 'created_at', width: 100,
             render: (v: string | null) => (v ? v.slice(5, 16).replace('T', ' ') : '-'),
         },
+        ...(viewMode === 'auto' ? [{
+            title: '操作', key: 'undo', width: 90,
+            render: (_: any, r: ReviewItem) => canUndo(r) ? (
+                <Popconfirm title="撤销这条 AI 自动操作？" okText="撤销" cancelText="取消"
+                            onConfirm={(e) => { e?.stopPropagation(); undoAuto(r); }}
+                            onCancel={(e) => e?.stopPropagation()}>
+                    <Button size="small" icon={<UndoOutlined />} loading={undoing === r.id}
+                            onClick={(e) => e.stopPropagation()}>撤销</Button>
+                </Popconfirm>
+            ) : <span className="text-xs text-gray-400">—</span>,
+        }] : []),
     ];
 
     return (
         <div>
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                 <Text type="secondary" className="text-xs">
-                    本项目抽取产生的待确认项；跨项目全量队列见左侧导航「审核工作台」
+                    全部结果均由大模型裁决并留痕；此处可查看明细，误判可撤销
                 </Text>
-                <Space>
-                    <Select
-                        mode="multiple" style={{ minWidth: 140 }} allowClear maxTagCount="responsive"
-                        placeholder="全部状态" value={statusFilter} onChange={(v) => { setPage(1); setStatusFilter(v); }}
-                        options={Object.entries(STATUS_TAG).map(([v, m]) => ({ value: v, label: m.text }))}
-                    />
+                <Space wrap>
+                    {viewMode === 'all' && (
+                        <>
+                            <Select
+                                mode="multiple" style={{ minWidth: 120 }} allowClear maxTagCount="responsive"
+                                placeholder="全部状态" value={statusFilter} onChange={(v) => setStatusFilter(v)}
+                                options={Object.entries(STATUS_TAG).map(([v, m]) => ({ value: v, label: m.text }))}
+                            />
+                            <Select
+                                mode="multiple" style={{ minWidth: 120 }} allowClear maxTagCount="responsive"
+                                placeholder="全部优先级" value={priorityFilter} onChange={(v) => setPriorityFilter(v)}
+                                options={Object.entries(PRIORITY_TAG).map(([v, m]) => ({ value: v, label: m.label }))}
+                            />
+                        </>
+                    )}
                     <Select
                         mode="multiple" style={{ minWidth: 150 }} allowClear maxTagCount="responsive"
-                        placeholder="全部类型" value={typeFilter} onChange={(v) => { setPage(1); setTypeFilter(v); }}
+                        placeholder="全部类型" value={typeFilter} onChange={(v) => setTypeFilter(v)}
                         options={Object.entries(TYPE_LABEL).map(([v, l]) => ({ value: v, label: l }))}
                     />
                     <Button icon={<ReloadOutlined />} onClick={() => load()}>刷新</Button>
-                    <Button type="primary" disabled={selectedIds.length === 0 || !canDecide}
-                            onClick={() => batch('approve')}>批量通过</Button>
-                    <Button danger disabled={selectedIds.length === 0 || !canDecide}
-                            onClick={() => batch('reject')}>批量驳回</Button>
+                    {viewMode !== 'auto' && (
+                        <>
+                            <Button type="primary" disabled={selectedIds.length === 0 || !canDecide}
+                                    onClick={() => batch('approve')}>批量通过</Button>
+                            <Button danger disabled={selectedIds.length === 0 || !canDecide}
+                                    onClick={() => batch('reject')}>批量驳回</Button>
+                        </>
+                    )}
                 </Space>
             </div>
+
+            <Segmented
+                className="mb-3"
+                value={viewMode}
+                onChange={(v) => setViewMode(v as ViewMode)}
+                options={VIEW_MODES}
+            />
 
             <Table
                 rowKey="id"
@@ -218,7 +346,7 @@ const ProjectReviewsTab: React.FC<Props> = ({ projectId }) => {
                 loading={loading}
                 columns={columns}
                 dataSource={items}
-                rowSelection={{
+                rowSelection={viewMode === 'auto' ? undefined : {
                     selectedRowKeys: selectedIds,
                     onChange: setSelectedIds,
                     getCheckboxProps: (r) => ({
@@ -236,7 +364,11 @@ const ProjectReviewsTab: React.FC<Props> = ({ projectId }) => {
                     showSizeChanger: false,
                     showTotal: (t) => `共 ${t} 条`,
                 }}
-                locale={{ emptyText: <Empty description="本项目暂无待确认项 🎉" /> }}
+                locale={{
+                    emptyText: viewMode === 'need_human'
+                        ? <Empty description="没有需要你确认的高优先级项 🎉" />
+                        : <Empty description="暂无内容" />,
+                }}
             />
 
             <Drawer
@@ -271,6 +403,7 @@ const ProjectReviewsTab: React.FC<Props> = ({ projectId }) => {
                             <Tag color={PRIORITY_TAG[detail.priority]?.color}>{detail.priority}</Tag>
                             <Tag>{TYPE_LABEL[detail.item_type] || detail.item_type}</Tag>
                             <Tag color={STATUS_TAG[detail.status]?.color}>{STATUS_TAG[detail.status]?.text || detail.status}</Tag>
+                            {isAutoItem(detail) && <Tag color="geekblue">AI 自动处理</Tag>}
                             {detail.decided_at && <Text type="secondary" className="text-xs">裁决于 {detail.decided_at.slice(0, 19)}</Text>}
                         </Space>
                         {detail.reason && <div className="text-gray-700 text-sm">{detail.reason}</div>}
@@ -290,15 +423,17 @@ const ProjectReviewsTab: React.FC<Props> = ({ projectId }) => {
                         )}
                         {/* 人话说明区：与审核工作台同一共享件（conflict_type 内嵌选类） */}
                         <FriendlyPayload item={detail} chosenClass={chosenClass} onChooseClass={setChosenClass} />
-                        <div>
-                            <Text type="secondary" className="text-xs">备注（写入裁决备注）</Text>
-                            <Input.TextArea
-                                rows={2}
-                                value={note}
-                                onChange={(e) => setNote(e.target.value)}
-                                placeholder="可选：裁决理由"
-                            />
-                        </div>
+                        {viewMode !== 'auto' && (
+                            <div>
+                                <Text type="secondary" className="text-xs">备注（写入裁决备注）</Text>
+                                <Input.TextArea
+                                    rows={2}
+                                    value={note}
+                                    onChange={(e) => setNote(e.target.value)}
+                                    placeholder="可选：裁决理由"
+                                />
+                            </div>
+                        )}
                         <div>
                             <div className="flex items-center justify-between mb-1">
                                 <Text type="secondary" className="text-xs">原始数据（JSON，供排查用）</Text>

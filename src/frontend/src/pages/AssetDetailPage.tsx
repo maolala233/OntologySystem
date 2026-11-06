@@ -9,7 +9,7 @@ import {
     ExpandOutlined, ShrinkOutlined, SearchOutlined,
 } from '@ant-design/icons';
 import Navbar from '../components/Layout/Navbar';
-import { projectsApi } from '../api/projects';
+import { publishApi } from '../api/governance';
 import { ProjectData } from '../types/ontology';
 import { graphApi } from '../api/graphview';
 import D3ForceGraph from '../components/OntologyGraph/D3ForceGraph';
@@ -51,8 +51,9 @@ const AssetDetailPage: React.FC = () => {
     const loadProject = async () => {
         setLoading(true);
         try {
-            const data = await projectsApi.getProject(Number(projectId));
-            setProject(data);
+            // 已发布内容 = 发布版本快照（非活图谱）：重抽不影响展示，重新发布才更新
+            const data = await publishApi.assetDetail(Number(projectId));
+            setProject({ ...data, name: data.project_name || data.name });
             setGraphNodes(data.graph_data?.nodes || []);
             setGraphEdges(data.graph_data?.edges || []);
         } catch (error: any) {

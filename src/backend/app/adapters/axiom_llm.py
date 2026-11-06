@@ -24,6 +24,10 @@ KIND_META: dict[str, dict] = {
     "subclass_of":        {"risk": "high", "target": "classes"},     # + [子类, 父类]
     "equivalent_classes": {"risk": "high", "target": "classes"},
     "cardinality":        {"risk": "high", "target": "predicate"},   # + min_card/max_card
+    "transitive":         {"risk": "low",  "target": "predicate"},   # 传递关系
+    "symmetric":          {"risk": "low",  "target": "predicate"},   # 对称关系
+    "inverse_functional": {"risk": "low",  "target": "predicate"},   # 反函数性
+    "subproperty_of":     {"risk": "high", "target": "predicate"},   # + value（父关系）
 }
 
 LOW_RISK_LIMIT = 20    # 每轮低风险候选上限/kind（对齐统计通道 MAX_SUGGESTIONS_PER_KIND）
@@ -87,9 +91,17 @@ def build_materials(schema: dict | None, ents: list[dict],
                         "samples": inst_by_class.get(cls, [])}
                        for cls, count in _class_counts(ents).items()]
 
-    # 关系按谓词采样
+    # 关系按谓词采样 + 谓词级数据统计证据（semantica 思路：LLM 判公理要给数据分布，
+    # 不让它看名字猜——functional 看 values_per_subject，domain_fix 看主体/客体类分布）
+    cls_of: dict = {}
+    for e in ents:
+        if e.get("id") is not None and str(e.get("class_label") or "").strip():
+            cls_of[e["id"]] = str(e["class_label"]).strip()
     pairs_by_pred: dict[str, list[dict]] = {}
     pred_counts: dict[str, int] = {}
+    subj_dist: dict[str, dict[str, int]] = {}
+    obj_dist: dict[str, dict[str, int]] = {}
+    vals_per_subj: dict[str, dict[str, set]] = {}
     for r in rels:
         p = str(r.get("predicate") or "").strip()
         s = str(r.get("subject_label") or "").strip()
@@ -100,8 +112,35 @@ def build_materials(schema: dict | None, ents: list[dict],
         bucket = pairs_by_pred.setdefault(p, [])
         if len(bucket) < RELATION_SAMPLES:
             bucket.append({"subject": s, "object": o})
-    relation_samples = [{"predicate": p, "count": pred_counts[p],
-                         "samples": pairs_by_pred[p]} for p in sorted(pred_counts)]
+        s_cls = cls_of.get(r.get("subject_id"), "")
+        o_cls = cls_of.get(r.get("object_id"), "")
+        if s_cls:
+            subj_dist.setdefault(p, {})
+            subj_dist[p][s_cls] = subj_dist[p].get(s_cls, 0) + 1
+        if o_cls:
+            obj_dist.setdefault(p, {})
+            obj_dist[p][o_cls] = obj_dist[p].get(o_cls, 0) + 1
+        vals = vals_per_subj.setdefault(p, {})
+        vals.setdefault(s, set()).add(o)
+
+    def _top(dist: dict[str, int], total: int) -> dict[str, str]:
+        return {c: f"{n / total:.0%}" for c, n in
+                sorted(dist.items(), key=lambda kv: -kv[1])[:3]}
+
+    relation_samples = []
+    for p in sorted(pred_counts):
+        entry = {"predicate": p, "count": pred_counts[p],
+                 "samples": pairs_by_pred[p]}
+        total = pred_counts[p]
+        if p in subj_dist and len(subj_dist[p]) >= 1 and total >= 3:
+            entry["subject_class_distribution"] = _top(subj_dist[p], total)
+        if p in obj_dist and len(obj_dist[p]) >= 1 and total >= 3:
+            entry["object_class_distribution"] = _top(obj_dist[p], total)
+        if p in vals_per_subj:
+            entry["distinct_subjects"] = len(vals_per_subj[p])
+            entry["max_values_per_subject"] = max(
+                len(v) for v in vals_per_subj[p].values())
+        relation_samples.append(entry)
 
     materials = {
         "classes": classes[:MAX_CLASSES_IN_MATERIAL],
@@ -217,15 +256,19 @@ AXIOM_OUTPUT_JSON_SCHEMA: dict = {
     "additionalProperties": False,
 }
 
-_KIND_RULES = """八种公理类型与判定标准：
-1. functional：某关系在所有主体上均为单客体 → {"kind":"functional","predicate":"关系名"}
+_KIND_RULES = """八种公理类型与判定标准（关系采样自带数据统计，判定必须引用统计证据，不要凭名字猜）：
+1. functional：某关系在所有主体上均为单客体。判定看 max_values_per_subject=1 且 distinct_subjects 足够多 → {"kind":"functional","predicate":"关系名"}
 2. inverse_of：两个关系方向相反且成对出现 → {"kind":"inverse_of","predicates":["关系A","关系B"]}
 3. disjoint_with：同父兄弟类在业务上不可能有共同实例 → {"kind":"disjoint_with","classes":["类A","类B"]}
-4. domain_fix：某关系的 domain 声明与实例矛盾（主体实为别的类）→ {"kind":"domain_fix","predicate":"关系名","value":"正确的类名"}
-5. range_fix：某关系的 range 声明与实例矛盾（客体实为别的类）→ {"kind":"range_fix","predicate":"关系名","value":"正确的类名"}
-6. subclass_of：类 A 明显是类 B 的下位概念但未声明继承 → {"kind":"subclass_of","classes":["子类A","父类B"]}
+4. domain_fix：某关系的 domain 声明与实例矛盾。判定看 subject_class_distribution：主导类占比 ≥85% 且 ≠ 声明的 domain → {"kind":"domain_fix","predicate":"关系名","value":"占比最高的类名"}
+5. range_fix：某关系的 range 声明与实例矛盾。判定看 object_class_distribution → {"kind":"range_fix","predicate":"关系名","value":"占比最高的类名"}
+6. subclass_of：类 A 明显是类 B 的下位概念但未声明继承。名称含父类名（如「交易接口服务」之于「服务」）或定义表明特化关系 → {"kind":"subclass_of","classes":["子类A","父类B"]}
 7. equivalent_classes：两个类名指同一业务概念（非 merely 相似）→ {"kind":"equivalent_classes","classes":["类A","类B"]}
-8. cardinality：某关系有明确业务基数约束 → {"kind":"cardinality","predicate":"关系名","min_card":N,"max_card":N}（min/max 至少给一个）"""
+8. cardinality：某关系有明确业务基数约束 → {"kind":"cardinality","predicate":"关系名","min_card":N,"max_card":N}（min/max 至少给一个）
+9. transitive：关系语义天然可传递且数据中存在传递链（如「下游」「包含」「位于」：A→B 且 B→C ⇒ A→C）→ {"kind":"transitive","predicate":"关系名"}（只荐语义上确定可传递的，如「依赖」「调用」慎荐）
+10. symmetric：关系对称（A 对接 B ⇒ B 对接 A，如「相邻」「互联」「对接」）→ {"kind":"symmetric","predicate":"关系名"}
+11. inverse_functional：客体唯一确定主体（一个账号只属于一个账户）→ {"kind":"inverse_functional","predicate":"关系名"}
+12. subproperty_of：关系 A 是关系 B 的特化（「转账给」⊑「付款给」）→ {"kind":"subproperty_of","predicate":"子关系名","value":"父关系名"}"""
 
 _PROMPT_CONSTRAINTS = """硬性约束：
 - 类名/关系名必须从素材中【逐字】引用，禁止创造素材中不存在的名字（会被直接弃单）。

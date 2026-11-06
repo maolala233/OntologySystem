@@ -95,7 +95,9 @@ def list_project_reviews(project_id: int,
                                http_status=400)
         q = q.filter(ReviewItem.item_type.in_(types))
     if priority:
-        q = q.filter(ReviewItem.priority == priority)
+        # 逗号多值（与 status/type 口径一致；审核两区视图 critical,high / medium,low 用）
+        prios = [p for p in priority.split(",") if p]
+        q = q.filter(ReviewItem.priority.in_(prios))
     total = q.count()
     rows = q.order_by(ReviewItem.priority.desc(), ReviewItem.id).offset(offset).limit(limit).all()
     names = _project_name_map(db)
@@ -106,6 +108,7 @@ def list_project_reviews(project_id: int,
 @router.get("/reviews", dependencies=[Depends(require_module("review"))])
 def list_all_reviews(status: str | None = Query(None),
                      type: str | None = Query(None),
+                     priority: str | None = Query(None),
                      project_id: str | None = Query(None),
                      limit: int = Query(200, ge=1, le=2000),
                      offset: int = Query(0, ge=0),
@@ -113,7 +116,8 @@ def list_all_reviews(status: str | None = Query(None),
                      db: Session = Depends(get_db)):
     """跨项目审核队列（审核工作台首页）：自动过滤为用户可 view 的项目。
 
-    status/type/project_id 均支持逗号分隔多值（审核工作台多选过滤）。
+    status/type/priority/project_id 均支持逗号分隔多值（审核工作台多选过滤；与
+    项目内 /projects/{id}/reviews 口径一致）。
     limit/offset 分页，total 为真实总数（不随 limit 截断）。
     响应携带 projects（可读范围内有审核项的项目清单，供项目筛选下拉）。
     join Project：已删除项目的孤立审核项不再出现在工作台（items/total/projects 一致排除）。
@@ -132,6 +136,8 @@ def list_all_reviews(status: str | None = Query(None),
                 raise APIError(f"type 取值限 {ITEM_TYPES}", code="INVALID_TYPE",
                                http_status=400)
         q = q.filter(ReviewItem.item_type.in_(types))
+    if priority:
+        q = q.filter(ReviewItem.priority.in_([p for p in priority.split(",") if p]))
     if project_id:
         try:
             filter_ids = [int(x) for x in project_id.split(",") if x.strip()]

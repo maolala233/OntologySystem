@@ -10,7 +10,6 @@ from typing import Any
 from urllib.parse import quote
 
 from app.adapters.conflicts import ConflictRecord, ConflictType, ResolutionStrategy
-from app.adapters.resolution import normalize_label
 
 # 数据图规模护栏：超过后跳过验证（记 warning 违例），防超大项目拖死检测任务
 MAX_DATA_TRIPLES = 60000
@@ -66,7 +65,7 @@ def build_data_graph(ents: list[dict], rels: list[dict], schema: dict,
 
     返回 (graph, inst_by_id)；inst_by_id: {实体id: {uri,label,class_label}} 供违例回填。
     """
-    from rdflib import Graph, Literal, RDF
+    from rdflib import RDF, Graph, Literal
 
     classes = [c for c in (schema.get("classes") or []) if isinstance(c, dict)]
     classes_by_label = {c.get("label"): c for c in classes if c.get("label")}
@@ -136,7 +135,7 @@ def build_shacl_shapes(schema: dict) -> Any:
     （targetSubjectsOf/targetObjectsOf + sh:class）、disjointWith（sh:not sh:class）。
     每条 shape 的 sh:message 以 [tag] 前缀编码违例类别，供结果解析回填。
     """
-    from rdflib import BNode, Graph, Literal, Namespace, RDF, URIRef
+    from rdflib import RDF, BNode, Graph, Literal, Namespace
 
     SH = Namespace("http://www.w3.org/ns/shacl#")
     classes_by_label = {c.get("label"): c for c in (schema.get("classes") or [])
@@ -144,74 +143,104 @@ def build_shacl_shapes(schema: dict) -> Any:
     shapes = Graph()
     shapes.bind("sh", SH)
 
+    # 同名谓词在 schema 里可能有多条端点观察（不同切片抽出「属于:指标→对象」与
+    # 「属于:平台→系统」）。OWL 语义多条 range 取交集，会把每条实例边都判违例
+    # （互相踩踏，项目 245 实测「属于」全边违例）；抽取语义是"不同场景的观察"，
+    # 取**并集**（任一命中即合规）——真错误（客体哪个声明类都不是）照样暴露。
+    ops_by_label: dict[str, list[dict]] = {}
     for op in (schema.get("object_properties") or []):
-        if not isinstance(op, dict) or not op.get("label"):
-            continue
-        pred = _prop_ref(op["label"])
-        rng = op.get("range")
-        dom = op.get("domain")
+        if isinstance(op, dict) and op.get("label"):
+            ops_by_label.setdefault(str(op["label"]), []).append(op)
 
-        # range：客体必须是声明的类（含子类——数据图已显式展开父类类型）
-        if rng and rng in classes_by_label:
-            ns = BNode()
-            shapes.add((ns, RDF.type, SH.NodeShape))
-            shapes.add((ns, SH.targetObjectsOf, pred))
-            shapes.add((ns, SH["class"], _cls_ref(rng)))
-            shapes.add((ns, SH.message,
-                        Literal(f"[range] 谓词「{op['label']}」的客体必须是类「{rng}」及其子类的实例")))
+    def _add_class_constraint_shape(prop_label: str, side: str, cls_labels: list[str]) -> None:
+        """side ∈ range|domain：单类直接 sh:class，多类 sh:or 并集（任一命中即合规）。"""
+        pred = _prop_ref(prop_label)
+        target = SH.targetObjectsOf if side == "range" else SH.targetSubjectsOf
+        tag = f"[{side}]"
+        pos = "客体" if side == "range" else "主体"
+        ns = BNode()
+        shapes.add((ns, RDF.type, SH.NodeShape))
+        shapes.add((ns, target, pred))
+        if len(cls_labels) == 1:
+            shapes.add((ns, SH["class"], _cls_ref(cls_labels[0])))
+        else:
+            branches = []
+            for cl in cls_labels:
+                b = BNode()
+                shapes.add((b, SH["class"], _cls_ref(cl)))
+                branches.append(b)
+            # sh:or 取值是 rdf list（list 元素是各 sh:class 分支 shape）
+            head = BNode()
+            shapes.add((head, RDF.first, branches[0]))
+            cur = head
+            for b in branches[1:]:
+                nxt = BNode()
+                shapes.add((cur, RDF.rest, nxt))
+                shapes.add((nxt, RDF.first, b))
+                cur = nxt
+            shapes.add((cur, RDF.rest, RDF.nil))
+            shapes.add((ns, SH["or"], head))
+        shapes.add((ns, SH.message,
+                    Literal(f"{tag} 谓词「{prop_label}」的{pos}必须是类"
+                            f"「{'」或「'.join(cls_labels)}」及其子类的实例")))
 
-        # domain：主体必须是声明的类
-        if dom and dom in classes_by_label:
-            ns = BNode()
-            shapes.add((ns, RDF.type, SH.NodeShape))
-            shapes.add((ns, SH.targetSubjectsOf, pred))
-            shapes.add((ns, SH["class"], _cls_ref(dom)))
-            shapes.add((ns, SH.message,
-                        Literal(f"[domain] 谓词「{op['label']}」的主体必须是类「{dom}」及其子类的实例")))
+    for prop_label, op_rows in ops_by_label.items():
+        rngs = sorted({str(o.get("range")) for o in op_rows
+                       if o.get("range") and str(o.get("range")) in classes_by_label})
+        doms = sorted({str(o.get("domain")) for o in op_rows
+                       if o.get("domain") and str(o.get("domain")) in classes_by_label})
+        if rngs:
+            _add_class_constraint_shape(prop_label, "range", rngs)
+        if doms:
+            _add_class_constraint_shape(prop_label, "domain", doms)
 
-        # 函数性：同主体至多一个客体
-        if op.get("functional"):
-            ns = BNode()
-            shapes.add((ns, RDF.type, SH.NodeShape))
-            if dom and dom in classes_by_label:
-                shapes.add((ns, SH.targetClass, _cls_ref(dom)))
-            else:
-                shapes.add((ns, SH.targetSubjectsOf, pred))
-            ps = BNode()
-            shapes.add((ns, SH.property, ps))
-            shapes.add((ps, SH.path, pred))
-            shapes.add((ps, SH.maxCount, Literal(1)))
-            shapes.add((ps, SH.message,
-                        Literal(f"[functional] 谓词「{op['label']}」声明为函数性，每个主体至多一个客体")))
-
-        # 基数：按声明类定向的 min/max
-        for restr in (op.get("cardinality_restrictions") or []):
-            if not isinstance(restr, dict):
-                continue
-            rcls = restr.get("class")
-            rmin, rmax = restr.get("min"), restr.get("max")
-            if rcls not in classes_by_label:
-                continue
-            if rmax is not None:
+        # 函数性/基数：按各条 op 声明逐一生成（声明聚合在同 label 的任意一条上都生效）
+        for op in op_rows:
+            pred = _prop_ref(prop_label)
+            dom = op.get("domain")
+            # 函数性：同主体至多一个客体
+            if op.get("functional"):
                 ns = BNode()
                 shapes.add((ns, RDF.type, SH.NodeShape))
-                shapes.add((ns, SH.targetClass, _cls_ref(rcls)))
+                if dom and dom in classes_by_label:
+                    shapes.add((ns, SH.targetClass, _cls_ref(dom)))
+                else:
+                    shapes.add((ns, SH.targetSubjectsOf, pred))
                 ps = BNode()
                 shapes.add((ns, SH.property, ps))
                 shapes.add((ps, SH.path, pred))
-                shapes.add((ps, SH.maxCount, Literal(int(rmax))))
+                shapes.add((ps, SH.maxCount, Literal(1)))
                 shapes.add((ps, SH.message,
-                            Literal(f"[cardinality-max] 类「{rcls}」上「{op['label']}」至多 {int(rmax)} 个客体")))
-            if rmin is not None:
-                ns = BNode()
-                shapes.add((ns, RDF.type, SH.NodeShape))
-                shapes.add((ns, SH.targetClass, _cls_ref(rcls)))
-                ps = BNode()
-                shapes.add((ns, SH.property, ps))
-                shapes.add((ps, SH.path, pred))
-                shapes.add((ps, SH.minCount, Literal(int(rmin))))
-                shapes.add((ps, SH.message,
-                            Literal(f"[cardinality-min] 类「{rcls}」上「{op['label']}」至少 {int(rmin)} 个客体")))
+                            Literal(f"[functional] 谓词「{prop_label}」声明为函数性，每个主体至多一个客体")))
+
+            # 基数：按声明类定向的 min/max
+            for restr in (op.get("cardinality_restrictions") or []):
+                if not isinstance(restr, dict):
+                    continue
+                rcls = restr.get("class")
+                rmin, rmax = restr.get("min"), restr.get("max")
+                if rcls not in classes_by_label:
+                    continue
+                if rmax is not None:
+                    ns = BNode()
+                    shapes.add((ns, RDF.type, SH.NodeShape))
+                    shapes.add((ns, SH.targetClass, _cls_ref(rcls)))
+                    ps = BNode()
+                    shapes.add((ns, SH.property, ps))
+                    shapes.add((ps, SH.path, pred))
+                    shapes.add((ps, SH.maxCount, Literal(int(rmax))))
+                    shapes.add((ps, SH.message,
+                                Literal(f"[cardinality-max] 类「{rcls}」上「{prop_label}」至多 {int(rmax)} 个客体")))
+                if rmin is not None:
+                    ns = BNode()
+                    shapes.add((ns, RDF.type, SH.NodeShape))
+                    shapes.add((ns, SH.targetClass, _cls_ref(rcls)))
+                    ps = BNode()
+                    shapes.add((ns, SH.property, ps))
+                    shapes.add((ps, SH.path, pred))
+                    shapes.add((ps, SH.minCount, Literal(int(rmin))))
+                    shapes.add((ps, SH.message,
+                                Literal(f"[cardinality-min] 类「{rcls}」上「{prop_label}」至少 {int(rmin)} 个客体")))
 
     # disjointWith：A 的实例不得同时是 B 的实例（父类闭包已在数据图展开）
     for c in (schema.get("classes") or []):
@@ -245,7 +274,7 @@ def detect_shacl_conflicts(ents: list, rels: list, schema: dict | None = None,
         return []
     try:
         from pyshacl import validate
-        from rdflib import Namespace, RDF
+        from rdflib import RDF, Namespace
     except Exception:  # noqa: BLE001 —— pyshacl 缺失不阻断
         return []
 
@@ -282,8 +311,15 @@ def detect_shacl_conflicts(ents: list, rels: list, schema: dict | None = None,
             return unquote(s[len("urn:o:prop:"):])
         return ""
 
-    records: list[ConflictRecord] = []
-    seen: set[tuple] = set()
+    import re as _re
+
+    def _prop_from_message(message: str) -> str:
+        # domain/range 违例的 shape 无 resultPath（targetSubjectsOf/targetObjectsOf），
+        # 谓词名只能从 message 的「谓词「X」」取——取不到的回退 "shacl"
+        m = _re.search("谓词「(.+?)」", message)
+        return m.group(1) if m else "shacl"
+
+    raw: list[tuple[str, str, str, dict | None]] = []  # (tag, prop, message, info)
     for res in results_graph.subjects(RDF.type, SH.ValidationResult):
         focus = results_graph.value(res, SH.focusNode)
         msg = results_graph.value(res, SH.resultMessage)
@@ -292,21 +328,35 @@ def detect_shacl_conflicts(ents: list, rels: list, schema: dict | None = None,
         tag = message.split("]", 1)[0].lstrip("[").strip() if message.startswith("[") else "logical"
         eid = str(focus).rsplit(":", 1)[-1] if focus is not None else ""
         eid_key: Any = int(eid) if eid.isdigit() else eid
-        info = inst_by_id.get(eid_key) or {}
-        prop = _pred_label(path)
-        key = (tag, eid_key, prop, message)
-        if key in seen:
-            continue
-        seen.add(key)
-        entity_uri = str(info.get("uri") or eid_key)
+        info = inst_by_id.get(eid_key) or None
+        prop = _pred_label(path) or _prop_from_message(message)
+        raw.append((tag, prop, message, info))
+
+    # 按 (tag, prop, message) 聚合：同一 shape 违例的多个实例并成一条审核项
+    # （原来逐实例一条，同一条约束刷几十行；sources 列表保留全部涉事实体）
+    grouped: dict[tuple, list[dict | None]] = {}
+    order: list[tuple] = []
+    for tag, prop, message, info in raw:
+        key = (tag, prop, message)
+        if key not in grouped:
+            grouped[key] = []
+            order.append(key)
+        grouped[key].append(info)
+
+    records: list[ConflictRecord] = []
+    for key in order:
+        tag, prop, message = key
+        infos = [i for i in grouped[key] if i]
+        primary = infos[0] if infos else {}
+        entity_uri = str(primary.get("uri") or "shacl:*")
         records.append(ConflictRecord(
             conflict_type=ConflictType.LOGICAL,
             severity=_SEVERITY.get(tag, "medium"),
             entity_uri=entity_uri,
-            property_name=prop or "shacl",
+            property_name=prop,
             conflicting_values=[message],
-            sources=[{"uri": entity_uri, "label": info.get("label") or "",
-                      "class": info.get("class_label") or ""}] if info else [],
+            sources=[{"uri": str(i.get("uri") or ""), "label": str(i.get("label") or ""),
+                      "class": str(i.get("class_label") or "")} for i in infos[:20]],
             recommended_action=ResolutionStrategy.MANUAL_REVIEW,
             guide=_guide_for(tag, message),
         ))

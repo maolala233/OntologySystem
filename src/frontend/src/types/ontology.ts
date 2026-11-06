@@ -67,4 +67,8 @@ export interface ProjectData {
   domain?: KnowledgeDomain;
   created_at?: string;
   updated_at?: string;
+  /** 生命周期状态（/api/projects/my 下发）：draft/building/ready/published */
+  status?: string;
+  classes_total?: number;
+  instances_total?: number;
 }

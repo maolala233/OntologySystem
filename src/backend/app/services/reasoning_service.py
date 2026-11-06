@@ -65,18 +65,52 @@ def _node_uri(node_id: str) -> URIRef:
     return EX[f"{prefix}_{md5}"]
 
 
+# 元层级类型黑名单：owlrl/RDFS 闭包会把万物都推成这些类型的实例
+# （一切 URI ⊑ rdfs:Resource、owl:Class ⊑ rdfs:Class 等）——技术上必然、
+# 业务上零信息量，且曾把推理列表刷成 297 条噪音（2026-11-04 项目 246 实测）。
+_META_TYPE_OBJECTS: frozenset[str] = frozenset(str(u) for u in (
+    RDFS.Resource, RDFS.Class, RDFS.Datatype, RDF.Property,
+    OWL.Class, OWL.Thing, OWL.Nothing,
+    OWL.ObjectProperty, OWL.DatatypeProperty, OWL.AnnotationProperty,
+    OWL.FunctionalProperty, OWL.InverseFunctionalProperty,
+    OWL.SymmetricProperty, OWL.TransitiveProperty, OWL.NamedIndividual,
+))
+
+# 结构/公理谓词：任一端落在元词汇命名空间即为公理级噪音（用户词汇间的
+# 子类/子属性/互斥推导才有业务价值，须保留）
+_STRUCTURAL_PREDS: frozenset[str] = frozenset(str(u) for u in (
+    RDFS.subClassOf, RDFS.subPropertyOf, RDFS.domain, RDFS.range,
+    OWL.equivalentClass, OWL.equivalentProperty, OWL.inverseOf, OWL.disjointWith,
+))
+
+_META_NS = (str(RDF), str(RDFS), str(OWL), "http://www.w3.org/2001/XMLSchema#")
+
+
 def _filter_noise(s: URIRef, p: URIRef, o: Any) -> bool:
     """过滤 owlrl 闭包噪音：sameAs 自反、内置词汇主语上的公理三元组、
-    字面量数据类型标注（如 0.98 → xsd:double）、一切自指三元组。"""
+    字面量数据类型标注（如 0.98 → xsd:double）、一切自指三元组、
+    rdf:type 落到元层级类型（万物皆 Resource/Class/Property/Datatype）、
+    结构谓词任一端是元词汇。"""
     if s == o:
         return True
     if isinstance(s, Literal):
         return True
-    if p == RDF.type and isinstance(o, URIRef) and str(o).startswith("http://www.w3.org/2001/XMLSchema#"):
-        return True
+    if any(str(s).startswith(ns) for ns in _META_NS):
+        return True  # RDF/RDFS/OWL/XSD 词汇自身的公理三元组（含 xsd 数据类型）
+    if p == RDF.type:
+        if isinstance(o, URIRef):
+            if str(o) in _META_TYPE_OBJECTS:
+                return True
+            if str(o).startswith("http://www.w3.org/2001/XMLSchema#"):
+                return True
     if isinstance(o, URIRef) and str(o) == str(OWL.Thing):
         return True
     if str(s).startswith(str(RDF)) or str(s).startswith(str(RDFS)) or str(s).startswith(str(OWL)):
+        return True
+    # 结构谓词的宾语侧元词汇（如「系统 子类→ rdfs:Resource」）：主语是用户
+    # 词汇但推导对象是语义基础设施，对业务无意义
+    if str(p) in _STRUCTURAL_PREDS and isinstance(o, URIRef) \
+            and any(str(o).startswith(ns) for ns in _META_NS):
         return True
     return False
 
@@ -155,6 +189,42 @@ def _build_fact_graph(db: Session, project: Project) -> tuple[Graph, dict[str, s
     tbox_ttl = generate_ttl_from_graph_data(nodes, edges)
     g.parse(data=tbox_ttl, format="turtle")
     label_by_uri = {str(s): str(lbl) for s, _, lbl in g.triples((None, RDFS.label, None))}
+
+    # ── schema 权威键声明的公理 → OWL 词汇（TTL 只带画布边级 axioms；权威键里的
+    #    特征/互逆/互斥/等价在此补齐，否则推理闭包对 schema 声明失明——函数性多值
+    #    矛盾会静默扩散成 sameAs 错误合并而不被任何闸看见）──
+    schema = graph_data.get("schema") if isinstance(graph_data.get("schema"), dict) else None
+    if schema:
+        for op in (schema.get("object_properties") or []):
+            if not (isinstance(op, dict) and op.get("label")):
+                continue
+            p_uri = EX[_safe_prop_id(str(op["label"]))]
+            if op.get("functional"):
+                g.add((p_uri, RDF.type, OWL.FunctionalProperty))
+            if op.get("inverse_functional"):
+                g.add((p_uri, RDF.type, OWL.InverseFunctionalProperty))
+            if op.get("symmetric"):
+                g.add((p_uri, RDF.type, OWL.SymmetricProperty))
+            if op.get("transitive"):
+                g.add((p_uri, RDF.type, OWL.TransitiveProperty))
+            inv = str(op.get("inverse_of") or "")
+            if inv and inv != str(op["label"]):
+                g.add((p_uri, OWL.inverseOf, EX[_safe_prop_id(inv)]))
+        class_uris = _class_uris_by_label(nodes)
+        for c in (schema.get("classes") or []):
+            if not (isinstance(c, dict) and c.get("label")):
+                continue
+            c_uri = class_uris.get(str(c["label"]))
+            if c_uri is None:
+                continue
+            for peer in (c.get("disjoint_with") or []):
+                peer_uri = class_uris.get(str(peer))
+                if peer_uri is not None and peer_uri != c_uri:
+                    g.add((c_uri, OWL.disjointWith, peer_uri))
+            for peer in (c.get("equivalent_to") or []):
+                peer_uri = class_uris.get(str(peer))
+                if peer_uri is not None and peer_uri != c_uri:
+                    g.add((c_uri, OWL.equivalentClass, peer_uri))
 
     # ── ABox：实例 + 实例关系 ──
     label_by_uri.update(_abox_into_graph(g, db, project))
@@ -432,6 +502,39 @@ def merge_rule_suggestions(statistical: list[dict], llm: list[dict]) -> list[dic
     return merged
 
 
+def _axiom_violation_messages(g: Graph, facts: set, label_by_uri: dict[str, str]) -> list[str]:
+    """已声明函数性/反函数性公理 vs ABox 事实的矛盾（零 LLM，确定性扫描）。
+
+    owlrl 对函数性多值不报错——按 prp-fp 把多值客体重建成同一实体（sameAs），
+    矛盾被静默"解决"成错误合并（2026-11-04 项目 246：下游声明函数性 + DCBS
+    三个下游 ⇒ ABCS/PRSC/URSC 全被推成同一实体）。这里把矛盾显式亮出来。
+    """
+    msgs: list[str] = []
+    for p_type, name, side in ((OWL.FunctionalProperty, "函数性", "取值"),
+                               (OWL.InverseFunctionalProperty, "反函数性", "主体")):
+        for p in g.subjects(RDF.type, p_type):
+            if not isinstance(p, URIRef) or str(p).startswith((str(RDF), str(RDFS), str(OWL))):
+                continue  # 语义基础设施自身的函数性不是业务公理
+            by_node: dict = {}
+            for s, ep, o in facts:
+                if ep == p and s != p:
+                    by_node.setdefault(s, set()).add(o)
+            multi = {k: v for k, v in by_node.items() if len(v) > 1}
+            if not multi:
+                continue
+            p_label = label_by_uri.get(str(p)) or str(p).split("#")[-1].split("/")[-1]
+            for s, objs in sorted(multi.items(), key=lambda kv: str(kv[0]))[:3]:
+                s_label = label_by_uri.get(str(s), str(s).split("#")[-1].split("/")[-1])
+                vals = "、".join(
+                    str(o) if isinstance(o, Literal)
+                    else label_by_uri.get(str(o), str(o).split("#")[-1].split("/")[-1])
+                    for o in sorted(objs, key=str)[:4])
+                msgs.append(
+                    f"「{p_label}」声明{name}，但「{s_label}」有 {len(objs)} 个{side}"
+                    f"（{vals}）——闭包已把它们强行合并为同一实体，请修正数据或撤销该公理")
+    return msgs
+
+
 def run_reasoning(db: Session, project: Project, profile: str = "owlrl",
                   rule_ids: Optional[list[int]] = None) -> dict:
     """执行一次推理批次：owlrl 语义闭包 + 规则引擎，结果落 reasoning_results（latest-only）。
@@ -451,6 +554,9 @@ def run_reasoning(db: Session, project: Project, profile: str = "owlrl",
     sem.closure()
     sem.flush_stored_triples()
     inconsistency = [str(m) for m in (getattr(sem, "error_messages", None) or [])]
+    # 已声明公理 vs 数据的矛盾（owlrl 静默推 sameAs 场景）放在最前——
+    # 比 owl 报错更需要人先看见（错误的公理会污染实体归并与 QA）
+    inconsistency[:0] = _axiom_violation_messages(fact_graph, facts, label_by_uri)
     raw_inferred = set(fact_graph) - facts
 
     # ── owlrl 蕴含 → dict 列表（过滤噪音 + 标注内置谓词中文名）──

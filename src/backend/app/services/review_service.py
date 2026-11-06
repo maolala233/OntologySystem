@@ -159,6 +159,36 @@ def _approve_conflict_type(item, user, payload: dict, db: Session) -> dict:
     return {"reclassified": reclassified, "retyped_edges": retyped, "chosen_class": chosen}
 
 
+def _resolve_cluster_by_labels(db: Session, project_id: int, cluster: dict) -> tuple | None:
+    """按聚类成员标签解析现存实体 id（id 悬空时的回退；同类分组取覆盖最多者）。"""
+    from app.infrastructure.database import Entity
+
+    labels = [str(x) for x in (cluster.get("member_labels") or []) if str(x)]
+    canonical_label = str(cluster.get("canonical_label") or "").strip()
+    if not labels:
+        return None
+    rows = (db.query(Entity)
+            .filter(Entity.project_id == project_id,
+                    Entity.label.in_(labels),
+                    Entity.is_class_node.is_(False),
+                    Entity.status != "merged").all())
+    if not rows:
+        return None
+    # 同名标签可能落在多个类下：取覆盖标签数最多的类分组
+    by_class: dict[str, list] = {}
+    for r in rows:
+        by_class.setdefault(r.class_label or "", []).append(r)
+    best_class, members = max(by_class.items(), key=lambda kv: len({x.label for x in kv[1]}))
+    got_labels = {r.label for r in members}
+    canonical = (next((r for r in members if r.label == canonical_label), None)
+                 or members[0])
+    dups = [r.id for r in members
+            if r.id != canonical.id and r.label in got_labels]
+    if not dups:
+        return None
+    return canonical.id, dups
+
+
 def _approve_entity_merge(item, user, payload: dict, db: Session) -> dict:
     """合并执行（可逆，merge_entities 自带留痕）+ **画布同步**：
     行表合并（merge_entities）与 blob 更新（删重复节点/边重挂/别名与属性并入规范节点）
@@ -169,8 +199,25 @@ def _approve_entity_merge(item, user, payload: dict, db: Session) -> dict:
     from app.infrastructure.database import Entity, Project
 
     ref = item.result_ref or payload or {}
-    canonical_id = ref.get("canonical_id") or payload.get("canonical_id")
-    duplicate_ids = ref.get("merged_ids") or payload.get("duplicate_ids") or []
+    # payload 三种来源形态：merge_entities 留痕（顶层 canonical_id）、
+    # 消解聚类待审（{"cluster": {...}}，含 similarity）、前端裁决补传 edited_payload。
+    # 不取 cluster 兜底会让聚类项 approve 只留痕不落地（人工批量通过同型项同病）。
+    cluster = payload.get("cluster") or {}
+    canonical_id = (ref.get("canonical_id") or payload.get("canonical_id")
+                    or cluster.get("canonical_id"))
+    duplicate_ids = (ref.get("merged_ids") or payload.get("duplicate_ids")
+                     or [i for i in (cluster.get("member_ids") or [])
+                         if canonical_id is not None and int(i) != int(canonical_id)])
+
+    # id 失效回退：graph_data 每次写入触发行表监听器删重建（实体 id 全换），
+    # 待审聚类项里的 id 可能已悬空——按成员标签重新解析（项目 245 实测）
+    if canonical_id is not None:
+        live = db.query(Entity).filter(Entity.id == int(canonical_id)).first()
+        if live is None:
+            resolved = _resolve_cluster_by_labels(db, item.project_id, cluster)
+            if resolved is None:
+                return {"skipped": "聚类成员实体已不存在（重抽后丢失），无法执行合并"}
+            canonical_id, duplicate_ids = resolved
     if not canonical_id or not duplicate_ids:
         return {"skipped": "payload 缺 canonical_id/duplicate_ids"}
     res = merge_entities(int(canonical_id), [int(i) for i in duplicate_ids], db=db)

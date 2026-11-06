@@ -167,6 +167,11 @@ def run_axiom_suggestions(db: Session, project_id: int,
     # O4-B20 双通道合并（channel=statistical 时 llm 为空表，合并退化为透传）
     candidates, merged_both = _merge_dual_channel(stat_candidates, llm_candidates)
 
+    # 文档证据锚定：候选涉及的类/关系名回到文档切片找原文共现语句，
+    # 挂 evidence.doc_evidence（审核员在卡片上直接看到业务原文表述）
+    _prog(80, "公理候选文档证据锚定中…")
+    doc_evidence_attached = _attach_doc_evidence(db, project_id, candidates)
+
     existing = db.query(ReviewItem).filter(
         ReviewItem.project_id == project_id,
         ReviewItem.item_type == "axiom_suggestion",
@@ -178,7 +183,7 @@ def run_axiom_suggestions(db: Session, project_id: int,
 
     created = deduped = upgraded = 0
     seen_in_run: set[tuple] = set()
-    _prog(85, f"候选合并完成 {len(candidates)} 条；物化审核项中…")
+    _prog(85, f"候选合并完成 {len(candidates)} 条（{doc_evidence_attached} 条已锚定文档证据）；物化审核项中…")
     if _cancelled():
         return {"candidates": len(candidates), "review_created": 0,
                 "deduped": 0, "cancelled": True}
@@ -208,6 +213,7 @@ def run_axiom_suggestions(db: Session, project_id: int,
     result = {"candidates": len(candidates), "review_created": created,
               "deduped": deduped, "merged_both": merged_both,
               "upgraded_pending": upgraded,
+              "doc_evidence_attached": doc_evidence_attached,
               "entities_scanned": len(ents),
               "relations_scanned": len(rels)}
     if llm_stats is not None:
@@ -256,6 +262,25 @@ def _llm_candidates(db: Session, project_id: int, schema: dict | None,
                         "gates": gate_stats,
                         "rejected_reasons": (gate_stats.get("rejected_reasons") or [])
                         + rejected[:5]}
+
+
+def _attach_doc_evidence(db: Session, project_id: int, candidates: list[dict]) -> int:
+    """文档切片一次拉取 → 逐候选锚定原文证据（adaptateur 纯函数执行匹配）。"""
+    if not candidates:
+        return 0
+    from app.adapters.axiom_doc_evidence import attach_doc_evidence
+    from app.infrastructure.database import DocumentChunk, UploadedDocument
+
+    rows = (db.query(DocumentChunk.text, UploadedDocument.id, UploadedDocument.filename)
+            .join(UploadedDocument, DocumentChunk.document_id == UploadedDocument.id)
+            .filter(UploadedDocument.project_id == project_id,
+                    UploadedDocument.deleted_at.is_(None))
+            .limit(2000).all())
+    chunks = [{"document_id": rid, "filename": fname, "text": text}
+              for text, rid, fname in rows]
+    if not chunks:
+        return 0
+    return attach_doc_evidence(candidates, chunks)
 
 
 def _build_llm(db: Session, project_id: int):

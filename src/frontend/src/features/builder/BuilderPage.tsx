@@ -3,7 +3,7 @@
  * 四 Tab：文档解析 / 骨架编辑 / 实例探索 / 时间轴（URL 可分享，05 §2）。
  * 画布交互全部在 SchemaTab。
  */
-import React, { lazy, Suspense, useEffect } from 'react';
+import React, { lazy, Suspense, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Button, Spin, Tabs, Tag, Tooltip } from 'antd';
 import {
@@ -21,6 +21,7 @@ const SchemaTab = lazy(() => import('./schema/SchemaTab'));
 const GraphTab = lazy(() => import('./graph/GraphTab'));
 const TimelineTab = lazy(() => import('./timeline/TimelineTab'));
 const ProjectReviewsTab = lazy(() => import('./reviews/ProjectReviewsTab'));
+const PipelinePanel = lazy(() => import('./components/PipelinePanel'));
 
 // 状态映射唯一权威在 shared/projectStatus；构建器中发布态补充只读提示
 const STATUS_TAG: Record<string, { color: string; text: string }> = {
@@ -33,6 +34,8 @@ const BuilderPage: React.FC = () => {
     const navigate = useNavigate();
     const pid = Number(projectId);
     const { projectName, projectStatus, domainName, loading, loadError, loadProject } = useBuilderStore();
+    // 管线面板重查信号：上传完成等事件 +1（面板常驻 Tab 区上方，切页不丢进度）
+    const [pipelineSignal, setPipelineSignal] = useState(0);
 
     useEffect(() => {
         if (Number.isFinite(pid) && pid > 0) {
@@ -72,7 +75,7 @@ const BuilderPage: React.FC = () => {
         {
             key: 'documents',
             label: tabLabel(<CloudUploadOutlined className="mr-1" />, '文档解析', '上传资料，AI 解析'),
-            children: <DocumentsTab projectId={pid} onChanged={() => loadProject(pid)} />,
+            children: <DocumentsTab projectId={pid} onChanged={() => { setPipelineSignal((v) => v + 1); loadProject(pid); }} />,
         },
         {
             key: 'schema',
@@ -121,6 +124,14 @@ const BuilderPage: React.FC = () => {
                     </div>
                 </Spin>
             </div>
+
+            {/* 快速开始 + 一键管线进度（常驻，切 Tab 不丢；运行中自动轮询） */}
+            <Suspense fallback={null}>
+                <div className="px-4 pt-2 flex-shrink-0">
+                    <PipelinePanel projectId={pid} signal={pipelineSignal}
+                                   onNavigate={(tab) => navigate(`/projects/${pid}/${tab}`)} />
+                </div>
+            </Suspense>
 
             <Suspense fallback={<div className="p-10 text-center text-gray-500"><Spin /> 模块加载中…</div>}>
                 <Tabs

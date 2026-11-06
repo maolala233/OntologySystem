@@ -1,0 +1,694 @@
+# app/tasks/pipeline_tasks.py - 一键构建管线（新手简化，2026-11）
+# 编排：解析(待解析文档, backend=auto) → 骨架抽取(已有骨架跳过, guidance 从领域描述生成)
+#       → 实例抽取(promote_policy=review) → 实体消解 → 冲突检测 → AI 公理扫描(llm 通道)
+#       → AI 自动裁决(含公理自动申报+一致性复验撤回)。
+#
+# 执行模型：本任务体自身跑在 extract 队列（或无 worker 时 inline 线程），各阶段经
+# task.apply(task_id=子id) 就地同步执行——子任务照常写各自的 progress:{task_id} 键，
+# 管线任务把阶段清单聚合写进自己的 progress stats.stages；前端轮询
+# GET /pipeline/status 聚合展示，切页/刷新不丢（任务 id 存 Redis 锁，不再依赖组件 state）。
+#
+# 幂等：Redis 锁 pipeline:running:{project_id}（SET NX EX 6h）；重复 run 返回进行中
+# task_id 而非再起一条（StrictMode 双发安全）。
+#
+# LLM 硬约束：所有 LLM 调用点均复用既有分批/素材预算链路（骨架/实例按切片分批、
+# 公理素材 12000 字符预算降采样），管线自身不新增任何全量输入调用。
+
+from __future__ import annotations
+
+import json
+import uuid
+from typing import Any, Optional
+
+from app.tasks.celery_app import celery_app
+from app.tasks.progress import finish_task_progress, get_task_progress, set_task_progress
+
+_RUNNING_KEY = "pipeline:running:{project_id}"
+_RUNNING_TTL = 6 * 3600
+_SCHEDULE_KEY = "pipeline:schedule:{project_id}"   # 定时构建登记（未开跑）
+_SCHEDULE_TTL = 7 * 24 * 3600
+
+STAGE_DEFS: list[tuple[str, str]] = [
+    ("parse", "解析文档"),
+    ("schema", "骨架抽取"),
+    ("instances", "实例抽取"),
+    ("resolution", "实体消解"),
+    ("conflicts", "冲突检测"),
+    ("selfcheck", "自检修复"),
+    ("axioms", "AI 公理扫描"),
+    ("adjudicate", "AI 自动处理"),
+]
+
+# 构建深度档位（用户新建项目时可选）：自检修复轮数 + 是否跑公理扫描
+DEPTH_PROFILES: dict[str, dict] = {
+    "fast":     {"selfcheck_rounds": 1, "include_axioms": False, "label": "快速"},
+    "standard": {"selfcheck_rounds": 2, "include_axioms": True,  "label": "标准"},
+    "deep":     {"selfcheck_rounds": 3, "include_axioms": True,  "label": "深度"},
+}
+DEFAULT_DEPTH = "standard"
+
+
+class _PipelineCancelled(Exception):
+    """管线级取消（cancel:extract:{task_id} 键，阶段边界生效）。"""
+
+
+def _stages_reset() -> list[dict]:
+    return [{"key": k, "label": lbl, "status": "pending", "detail": "", "task_id": None}
+            for k, lbl in STAGE_DEFS]
+
+
+def _stage(stages: list[dict], key: str) -> dict:
+    return next(s for s in stages if s["key"] == key)
+
+
+def _task_index() -> dict:
+    """懒加载既有任务对象（apply 就地执行用）。"""
+    from app.tasks.extract_tasks import (
+        run_axiom_suggestion_task,
+        run_conflict_detection_task,
+        run_instance_extraction,
+        run_resolution_task,
+        run_schema_extraction,
+    )
+
+    return {
+        "schema": run_schema_extraction,
+        "instances": run_instance_extraction,
+        "resolution": run_resolution_task,
+        "conflicts": run_conflict_detection_task,
+        "axioms": run_axiom_suggestion_task,
+    }
+
+
+def _run_stage_task(task, stage_key: str, stages: list[dict], task_id: str,
+                    **kwargs) -> dict:
+    """经 task.apply 就地执行子任务；失败转异常（子任务体已写 failed 进度）。"""
+    sub_id = f"{task_id}:{stage_key}"
+    _stage(stages, stage_key)["task_id"] = sub_id
+    res = task.apply(kwargs=kwargs, task_id=sub_id)
+    if res.failed():
+        err = res.result
+        msg = str(getattr(err, "message", None) or err)[:300]
+        raise RuntimeError(f"{stage_key} 阶段失败: {msg}")
+    return res.result if isinstance(res.result, dict) else {}
+
+
+def _default_guidance(proj) -> Optional[str]:
+    """guidance 默认值：从项目知识域/描述自动生成（新手免填；CQ 追加注入）。"""
+    parts = []
+    if (proj.domains or "").strip():
+        parts.append(f"本项目属于知识域「{proj.domains.strip()}」。")
+    if (proj.description or "").strip():
+        parts.append(f"项目背景：{proj.description.strip()}")
+    if not parts:
+        return None
+    parts.append("请围绕上述领域抽取领域本体骨架，类与关系命名使用业务术语（中文），"
+                 "避免发明与领域无关的泛化类型。")
+    return " ".join(parts)
+
+
+@celery_app.task(name="app.tasks.pipeline_tasks.run_pipeline",
+                 bind=True, max_retries=0, acks_late=True)
+def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
+                 options: Optional[dict] = None) -> dict:
+    """一键构建管线（阶段同步串联；进度/失败语义见模块头注释）。"""
+    task_id = self.request.id
+    options = options or {}
+    stages = _stages_reset()
+    _stage_index = {k: i for i, (k, _) in enumerate(STAGE_DEFS)}
+
+    def _prog(stage_key: str, msg: str = "", pct_in_stage: float | None = None,
+              status_change: bool = True) -> None:
+        base = _stage_index[stage_key]
+        frac = (pct_in_stage if pct_in_stage is not None else (1.0 if status_change else 0.0))
+        percent = min(99, int((base + max(0.0, min(1.0, frac))) * 100 / len(STAGE_DEFS)))
+        set_task_progress(task_id, stage_key, percent, msg,
+                          {"project_id": project_id, "pipeline": True,
+                           "stages": stages},
+                          queue="extract")
+
+    def _cancel_check():
+        from app.tasks.extract_tasks import is_cancelled
+
+        if is_cancelled(task_id):
+            raise _PipelineCancelled()
+
+    restart = bool(options.get("restart"))
+    from app.tasks.extract_tasks import is_cancelled
+    depth = str(options.get("depth") or DEFAULT_DEPTH)
+    if depth not in DEPTH_PROFILES:
+        depth = DEFAULT_DEPTH
+    profile = DEPTH_PROFILES[depth]
+
+    def _check_stage_cancelled(res: Any, stage_key: str) -> None:
+        """子任务被取消（取消键传导到切片间隙）→ 阶段标记未完成并停止管线。
+
+        重跑语义：该阶段从头发起（抽取产物只在阶段末尾落库，中断不留半成品）；
+        已完成阶段不重跑（parse_status=parsed 的文档不再解析、已有骨架默认跳过）。
+        """
+        if isinstance(res, dict) and res.get("status") == "cancelled":
+            st = _stage(stages, stage_key)
+            st["status"] = "pending"
+            st["detail"] = "已取消（重新构建将重跑本阶段）"
+            raise _PipelineCancelled()
+
+    summary: dict[str, Any] = {}
+    db = None
+    try:
+        from app.infrastructure.database import Project, SessionLocal
+
+        db = SessionLocal()
+
+        def _fresh_read() -> None:
+            """阶段边界刷新本会话的读视图（项目 245 实测事故）。
+
+            管线主会话从首个查询起持有读事务，MySQL REPEATABLE READ 下快照
+            固定在事务起点——子任务（各自持会话）提交的骨架/审核项在主会话里
+            不可见：自检读到空骨架（0 轮假通过）、收尾裁决 scanned=0、收尾统计
+            全 0。commit 结束读事务 + expire_all 强制 ORM 重读。
+            """
+            try:
+                db.commit()
+            except Exception:  # noqa: BLE001
+                db.rollback()
+            db.expire_all()
+
+        try:
+            proj = db.query(Project).filter(Project.id == project_id).first()
+            if proj is None:
+                finish_task_progress(task_id, "failed", f"项目不存在: {project_id}",
+                                     stats={"project_id": project_id, "stages": stages})
+                return {"status": "failed", "reason": "project_not_found"}
+
+            # ── 阶段 1：解析待解析文档（backend=auto，自动路由含扫描件嗅探）──
+            from app.infrastructure.database import UploadedDocument
+            from app.services.document_pipeline import run_parse
+
+            st = _stage(stages, "parse")
+            st["status"] = "running"
+            _prog("parse", "检查待解析文档…", 0.0)
+            # 常规：uploaded/failed 待解析 + parsing 在途（上传 auto_parse 已在跑的，
+            # 管线等它结束而不是跳过——否则骨架阶段读到 0 切片直接失败）；
+            # 重头开始（restart）：已解析文档也全部重解析
+            parse_statuses = ("uploaded", "failed", "parsing", "parsed") if restart \
+                else ("uploaded", "failed", "parsing")
+            docs = (db.query(UploadedDocument)
+                    .filter(UploadedDocument.project_id == project_id,
+                            UploadedDocument.deleted_at.is_(None),
+                            UploadedDocument.parse_status.in_(parse_statuses))
+                    .all())
+            # 阶段 A：等待在途解析（10s 轮询，上限 30 分钟；取消可中断）
+            parsing_ids = [d.id for d in docs if d.parse_status == "parsing"]
+            if parsing_ids:
+                st["detail"] = f"等待 {len(parsing_ids)} 个解析中的文档…"
+                st["task_id"] = ",".join(f"{task_id}:parse:{i}" for i in parsing_ids[:3])
+                _prog("parse", st["detail"], 0.0)
+                import time as _time
+
+                for _ in range(180):
+                    _cancel_check()
+                    _time.sleep(10)
+                    db.expire_all()
+                    still = (db.query(UploadedDocument)
+                             .filter(UploadedDocument.id.in_(parsing_ids))
+                             .filter(UploadedDocument.parse_status == "parsing")
+                             .count())
+                    if not still:
+                        break
+                db.expire_all()
+                docs = (db.query(UploadedDocument)
+                        .filter(UploadedDocument.project_id == project_id,
+                                UploadedDocument.deleted_at.is_(None),
+                                UploadedDocument.parse_status.in_(parse_statuses))
+                        .all())
+            # 阶段 B：逐文档执行解析（uploaded/failed；restart 含 parsed）
+            todo = [d for d in docs
+                    if d.parse_status in ("uploaded", "failed")
+                    or (restart and d.parse_status == "parsed")]
+            if not todo:
+                if docs:  # 只有在途解析且已全部结束 → 文档就绪
+                    st["status"] = "done"
+                    st["detail"] = f"{len(docs)} 个文档已就绪"
+                    _prog("parse", st["detail"])
+                else:
+                    st["status"] = "skipped"
+                    st["detail"] = "没有待解析文档"
+                    _prog("parse", "没有待解析文档")
+            else:
+                parse_failed: list[str] = []
+                for i, d in enumerate(todo):
+                    _cancel_check()
+                    sub_id = f"{task_id}:parse:{d.id}"
+                    st["task_id"] = sub_id
+                    st["detail"] = f"{i + 1}/{len(todo)}"
+                    _prog("parse", f"解析中 {i + 1}/{len(todo)}：{d.filename}",
+                          i / len(todo))
+                    try:
+                        run_parse(d.id, backend="auto", task_id=sub_id)
+                    except Exception as e:  # noqa: BLE001 —— 单文档失败继续其余
+                        parse_failed.append(f"{d.filename}: {str(e)[:120]}")
+                if len(parse_failed) == len(todo):
+                    st["status"] = "failed"
+                    st["detail"] = f"全部 {len(todo)} 个文档解析失败"
+                    raise RuntimeError("全部文档解析失败，首因：" + parse_failed[0])
+                st["status"] = "done"
+                st["detail"] = f"{len(todo) - len(parse_failed)}/{len(todo)} 个文档"
+                if parse_failed:
+                    st["detail"] += f"（{len(parse_failed)} 个失败）"
+                summary["parse"] = {"total": len(todo), "failed": parse_failed}
+                _prog("parse", f"解析完成（{st['detail']}）")
+
+            # 模型前置检查：解析不需要 LLM，抽取需要——缺配置时文档已解析完，
+            # 报错提示人话（不浪费已完成的解析成果）
+            from app.adapters.provider import ModelPurpose, resolve_provider
+
+            try:
+                _llm = resolve_provider(ModelPurpose.EXTRACT, project_id, db=db)
+                has_llm = bool(_llm.model_name and _llm.base_url)
+            except Exception:  # noqa: BLE001 —— 未配置/密钥解密失败都按缺模型处理
+                has_llm = False
+            if not has_llm:
+                finish_task_progress(
+                    task_id, "failed",
+                    "文档解析已完成，但尚未配置可用的抽取模型：请在「模型配置」中"
+                    "添加并启用抽取模型后重新一键构建",
+                    stats={"project_id": project_id, "stages": stages})
+                return {"status": "failed", "reason": "no_extract_model"}
+
+            model_config_id = None
+            if trigger_user_id:
+                from app.infrastructure.database import UserModelPick
+
+                pick = (db.query(UserModelPick)
+                        .filter(UserModelPick.user_id == trigger_user_id,
+                                UserModelPick.purpose == "extract").first())
+                model_config_id = pick.config_id if pick else None
+
+            tasks = _task_index()
+
+            # ── 阶段 2：骨架抽取（已有骨架跳过，避免覆盖人工修订）──
+            _cancel_check()
+            _fresh_read()
+            st = _stage(stages, "schema")
+            proj = db.query(Project).filter(Project.id == project_id).first()
+            gd = proj.graph_data if isinstance(proj.graph_data, dict) else {}
+            schema = gd.get("schema") if isinstance(gd.get("schema"), dict) else {}
+            if schema.get("classes") and not restart:
+                st["status"] = "skipped"
+                st["detail"] = f"已有骨架（{len(schema['classes'])} 类），跳过重抽"
+                _prog("schema", st["detail"])
+            else:
+                st["status"] = "running"
+                _prog("schema", "AI 抽取骨架中…", 0.0)
+                guidance = _default_guidance(proj)
+                try:
+                    from app.services.cq_service import guidance_from_cqs
+
+                    guidance = guidance_from_cqs(db, project_id, guidance)
+                except Exception:  # noqa: BLE001
+                    pass
+                _check_stage_cancelled(_run_stage_task(
+                    tasks["schema"], "schema", stages, task_id,
+                    project_id=project_id, document_ids=None,
+                    parallelism=4, guidance=guidance,
+                    model_config_id=model_config_id, strict_config=None), "schema")
+                st["status"] = "done"
+                _prog("schema", "骨架抽取完成")
+
+            # ── 阶段 3：实例抽取 ──
+            _cancel_check()
+            st = _stage(stages, "instances")
+            st["status"] = "running"
+            _prog("instances", "AI 抽取实例中…", 0.0)
+            _check_stage_cancelled(_run_stage_task(
+                tasks["instances"], "instances", stages, task_id,
+                project_id=project_id, document_ids=None,
+                strict_gate=True, promote_policy="review",
+                parallelism=4, model_config_id=model_config_id), "instances")
+            st["status"] = "done"
+            _prog("instances", "实例抽取完成")
+
+            # ── 阶段 4：实体消解 ──
+            _cancel_check()
+            st = _stage(stages, "resolution")
+            st["status"] = "running"
+            _prog("resolution", "实体消解中…", 0.0)
+            _check_stage_cancelled(_run_stage_task(
+                tasks["resolution"], "resolution", stages, task_id,
+                project_id=project_id), "resolution")
+            st["status"] = "done"
+            _prog("resolution", "实体消解完成")
+
+            # ── 阶段 5：冲突检测 ──
+            _cancel_check()
+            st = _stage(stages, "conflicts")
+            st["status"] = "running"
+            _prog("conflicts", "冲突检测中…", 0.0)
+            _check_stage_cancelled(_run_stage_task(
+                tasks["conflicts"], "conflicts", stages, task_id,
+                project_id=project_id), "conflicts")
+            st["status"] = "done"
+            _prog("conflicts", "冲突检测完成")
+
+            # ── 阶段 6：自检修复环（准出标准：机检无硬伤；LLM 定向修复，最小动作）──
+            st = _stage(stages, "selfcheck")
+            st["status"] = "running"
+            _prog("selfcheck", "本体质量自检中…", 0.0)
+            _cancel_check()
+            _fresh_read()
+            try:
+                from app.services.pipeline_selfcheck import run_selfcheck_repair
+
+                def _sc_prog(msg: str, frac: float) -> None:
+                    _prog("selfcheck", msg, frac)
+
+                sc = run_selfcheck_repair(project_id, db=db,
+                                          rounds=profile["selfcheck_rounds"],
+                                          model_config_id=model_config_id,
+                                          progress_cb=_sc_prog,
+                                          cancel_fn=lambda: is_cancelled(task_id))
+                summary["selfcheck"] = sc
+                st["status"] = "done"
+                st["detail"] = (f"自检 {sc['rounds']} 轮：修复 {sc['fixed']} 处"
+                                + (f"，剩余 {sc['remaining']} 处硬伤"
+                                   if sc["remaining"] else "，无硬伤"))
+                _prog("selfcheck", st["detail"])
+            except _PipelineCancelled:
+                raise
+            except Exception as e:  # noqa: BLE001 —— 自检失败不阻断后续（机检结论照常出）
+                st["status"] = "failed"
+                st["detail"] = f"自检修复失败（不影响其余结果）: {str(e)[:120]}"
+                _prog("selfcheck", st["detail"])
+
+            # ── 阶段 7：AI 公理扫描（深度=fast 跳过；失败/跳过不阻断收尾）──
+            _cancel_check()
+            st = _stage(stages, "axioms")
+            if not profile["include_axioms"]:
+                st["status"] = "skipped"
+                st["detail"] = "快速档跳过公理扫描"
+                _prog("axioms", st["detail"])
+            else:
+                st["status"] = "running"
+                _prog("axioms", "AI 公理扫描中…", 0.0)
+                try:
+                    axiom_res = _run_stage_task(tasks["axioms"], "axioms", stages, task_id,
+                                                project_id=project_id, channel="llm")
+                    _check_stage_cancelled(axiom_res, "axioms")
+                    if (axiom_res.get("llm") or {}).get("skipped") or axiom_res.get("skipped"):
+                        st["status"] = "skipped"
+                        st["detail"] = "模型不可用，已跳过公理扫描"
+                    else:
+                        st["status"] = "done"
+                        st["detail"] = f"新增建议 {axiom_res.get('review_created', 0)} 条"
+                    _prog("axioms", "公理扫描结束")
+                except _PipelineCancelled:
+                    raise  # 取消传导：不得当作阶段失败吞掉
+                except Exception as e:  # noqa: BLE001 —— 公理扫描失败不阻碍自动裁决其余项
+                    st["status"] = "failed"
+                    st["detail"] = f"公理扫描失败（不影响其余结果）: {str(e)[:120]}"
+                    _prog("axioms", st["detail"])
+
+            # ── 阶段 8：AI 自动裁决（含公理自动申报 + 一致性复验撤回）──
+            _cancel_check()
+            _fresh_read()
+            st = _stage(stages, "adjudicate")
+            st["status"] = "running"
+            _prog("adjudicate", "AI 自动处理低风险项中…", 0.0)
+            from app.services.auto_adjudication import run_auto_adjudication
+
+            adj = run_auto_adjudication(project_id, db=db)
+            summary["adjudication"] = adj
+            st["status"] = "done"
+            llm_n = (adj.get("llm") or {}).get("llm_adjudicated", 0)
+            st["detail"] = (f"自动处理 {adj['auto_approved']} 项"
+                            + (f"，LLM 裁决 {llm_n} 项" if llm_n else "")
+                            + (f"，撤回 {adj['rolled_back']} 条引发矛盾的公理"
+                               if adj.get("rolled_back") else ""))
+
+            # 收尾统计：剩余需人裁决的数量
+            from sqlalchemy import func as sa_func
+
+            from app.infrastructure.database import ReviewItem
+
+            pending_rows = (db.query(ReviewItem.priority, sa_func.count())
+                            .filter(ReviewItem.project_id == project_id,
+                                    ReviewItem.status == "pending")
+                            .group_by(ReviewItem.priority).all())
+            by_priority = {p: int(c) for p, c in pending_rows}
+            need_human = by_priority.get("critical", 0) + by_priority.get("high", 0)
+            sc = summary.get("selfcheck") or {}
+            remaining = int(sc.get("remaining") or 0)
+            sc_note = (f"自检 {sc.get('rounds', 0)} 轮："
+                       + ("无硬伤" if remaining == 0
+                          else f"剩余 {remaining} 处硬伤待人工处理")) if sc else ""
+            finish_task_progress(
+                task_id, "completed",
+                f"一键构建完成（{profile['label']}档{'，' + sc_note if sc_note else ''}）："
+                f"还剩 {need_human} 个高优先级结果等你确认",
+                stats={"project_id": project_id, "pipeline": True, "stages": stages,
+                       "depth": depth, "pending_by_priority": by_priority,
+                       "need_human": need_human, **summary})
+            return {"status": "completed", "need_human": need_human,
+                    "pending_by_priority": by_priority, "adjudication": adj}
+        finally:
+            if db is not None:
+                db.close()
+            release_pipeline_lock(project_id)  # celery 模式的锁清理（inline 在线程 finally 兜底）
+    except _PipelineCancelled:
+        finish_task_progress(task_id, "cancelled", "已取消：重新构建将从被中断的阶段继续",
+                             stats={"project_id": project_id, "stages": stages})
+        return {"status": "cancelled"}
+    except Exception as e:  # noqa: BLE001
+        finish_task_progress(task_id, "failed", str(e)[:300],
+                             stats={"project_id": project_id, "stages": stages})
+        return {"status": "failed", "reason": str(e)[:300]}
+
+
+def _redis():
+    import redis
+
+    from app.services.env_config_service import redis_url
+
+    return redis.Redis.from_url(redis_url(), decode_responses=True,
+                                socket_connect_timeout=2)
+
+
+def _worker_alive() -> bool:
+    """extract 队列 worker 存活探测（复用 extract_tasks 实现）。"""
+    try:
+        from app.tasks.extract_tasks import _extract_worker_alive
+
+        return _extract_worker_alive()
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def dispatch_pipeline_run(project_id: int, trigger_user_id: Optional[int] = None,
+                          options: Optional[dict] = None) -> dict:
+    """派发一键管线（幂等）：已有进行中管线 → 返回其 task_id 不再新起。
+
+    options.schedule_at（ISO 时间串，未来时刻）→ 定时构建：登记 schedule 键 +
+    celery eta 派发（inline 模式用 threading.Timer 兜底，进程重启会丢——状态页可见），
+    到点才真正抢锁起跑；已登记定时 → 返回 already_scheduled。
+    立即构建返回 {"mode", "task_id", "already_running"}。
+    """
+    from app.core.logging import logger
+
+    options = options or {}
+    r = _redis()
+    key = _RUNNING_KEY.format(project_id=project_id)
+    sched_key = _SCHEDULE_KEY.format(project_id=project_id)
+
+    # 定时构建（2026-11-06 根治）：只登记 Redis schedule 键（fire 时间 + kwargs JSON），
+    # 由 beat 每 30s 的 check_scheduled_pipelines 轮询到点触发——
+    # 旧实现 eta 派发（redis broker 不持久化，worker 重启即丢）+ threading.Timer 兜底
+    # （挂 backend 进程内存，backend 重启即蒸发）都会让定时构建无声失效；
+    # 登记表方案在任何进程重启后自愈。
+    sched_at_raw = str(options.get("schedule_at") or "").strip()
+    if sched_at_raw:
+        import datetime as _dt
+
+        fire = _dt.datetime.fromisoformat(sched_at_raw.replace("Z", "+00:00"))
+        if fire.tzinfo is None:
+            # 无时区输入（datetime-local 表单）按服务器本地时间解释
+            fire = fire.replace(tzinfo=_dt.datetime.now().astimezone().tzinfo)
+        now_utc = _dt.datetime.now(_dt.timezone.utc)
+        if fire <= now_utc:
+            return {"mode": "invalid", "task_id": None, "error": "schedule_at 必须是未来时间"}
+        existing_sched = r.get(sched_key)
+        if existing_sched:
+            return {"mode": "scheduled", "task_id": None,
+                    "scheduled_at": sched_at_raw, "already_scheduled": True}
+        payload = json.dumps({"fire_at": fire.astimezone(_dt.timezone.utc).isoformat(),
+                              "trigger_user_id": trigger_user_id,
+                              "options": {k: v for k, v in options.items() if k != "schedule_at"}},
+                             ensure_ascii=False)
+        r.set(sched_key, payload, ex=_SCHEDULE_TTL)
+        return {"mode": "scheduled", "task_id": None,
+                "scheduled_at": sched_at_raw, "already_scheduled": False}
+
+    existing = r.get(key)
+    if existing:
+        prog = get_task_progress(existing)
+        if prog is not None and prog.get("status") not in ("completed", "failed", "cancelled"):
+            return {"mode": "existing", "task_id": existing, "already_running": True}
+        r.delete(key)  # 残留锁（worker 崩溃未清理）→ 重新发起
+
+    task_id = f"pipeline-{uuid.uuid4().hex[:12]}"
+    locked = r.set(key, task_id, nx=True, ex=_RUNNING_TTL)
+    if not locked:
+        winner = r.get(key) or ""
+        return {"mode": "existing", "task_id": winner, "already_running": True}
+
+    # 预写「已入队」进度：锁存在即进度可查，幂等判定不依赖 worker 已开工
+    set_task_progress(task_id, "queued", 0, "管线已入队",
+                      {"project_id": project_id, "pipeline": True,
+                       "stages": _stages_reset()},
+                      queue="extract")
+
+    kwargs = {"project_id": project_id, "trigger_user_id": trigger_user_id,
+              "options": options}
+    if _worker_alive():
+        try:
+            run_pipeline.apply_async(kwargs=kwargs, task_id=task_id)
+            return {"mode": "celery", "task_id": task_id, "already_running": False}
+        except Exception as e:  # noqa: BLE001 —— 派发失败降级进程内（锁继续沿用）
+            logger.warning(f"[pipeline dispatch] Celery 派发失败，降级进程内执行: {e}")
+
+    import threading
+
+    def _worker() -> None:
+        try:
+            run_pipeline.apply(kwargs=kwargs, task_id=task_id)
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"[pipeline dispatch] 进程内管线 project={project_id} 失败: {e}")
+        finally:
+            try:
+                _redis().delete(key)
+            except Exception:  # noqa: BLE001
+                pass
+
+    threading.Thread(target=_worker, name=f"pipeline-inline-{project_id}",
+                     daemon=True).start()
+    return {"mode": "inline", "task_id": task_id, "already_running": False}
+
+
+@celery_app.task(name="app.tasks.pipeline_tasks.run_scheduled_pipeline",
+                 bind=True, max_retries=0)
+def run_scheduled_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
+                           options: Optional[dict] = None) -> dict:
+    """定时构建的到点载体（兼容保留：beat 轮询也复用本入口）。"""
+    from app.core.logging import logger
+
+    try:
+        _redis().delete(_SCHEDULE_KEY.format(project_id=project_id))
+    except Exception:  # noqa: BLE001
+        pass
+    logger.info(f"[pipeline] 定时构建到点 project={project_id}")
+    return dispatch_pipeline_run(project_id, trigger_user_id=trigger_user_id,
+                                 options=options)
+
+
+@celery_app.task(name="app.tasks.pipeline_tasks.check_scheduled_pipelines")
+def check_scheduled_pipelines() -> dict:
+    """beat 每 30s 轮询：扫描定时构建登记表，到点的触发真正执行（重启自愈）。
+
+    登记键值 = JSON{fire_at(UTC ISO), trigger_user_id, options}；到点 → 删键 →
+    dispatch（抢锁幂等）。未到点跳过；解析失败/派发失败的键保留到下轮再试
+    （SCHEDULE_TTL 兜底过期）。
+    """
+    import datetime as _dt
+
+    from app.core.logging import logger
+
+    r = _redis()
+    fired = []
+    try:
+        for k in r.scan_iter("pipeline:schedule:*"):
+            key = k.decode() if isinstance(k, bytes) else k
+            if key.endswith(":task"):
+                continue  # 兼容旧 eta 载体键
+            raw = r.get(key)
+            if not raw:
+                continue
+            try:
+                payload = json.loads(raw)
+                fire = _dt.datetime.fromisoformat(str(payload["fire_at"]).replace("Z", "+00:00"))
+            except Exception:  # noqa: BLE001 —— 脏数据（旧版纯时间串）按到点处理
+                try:
+                    fire = _dt.datetime.fromisoformat(raw.decode() if isinstance(raw, bytes) else str(raw))
+                    if fire.tzinfo is None:
+                        fire = fire.replace(tzinfo=_dt.datetime.now().astimezone().tzinfo)
+                    payload = None
+                except Exception:  # noqa: BLE001
+                    r.delete(key)
+                    continue
+            if fire > _dt.datetime.now(_dt.timezone.utc):
+                continue  # 未到点
+            pid_match = key.rsplit(":", 1)[-1]
+            try:
+                project_id = int(pid_match)
+            except ValueError:
+                r.delete(key)
+                continue
+            r.delete(key)  # 先删登记（防重复触发），失败由下轮登记消失兜底
+            kwargs = {"project_id": project_id,
+                      "trigger_user_id": (payload or {}).get("trigger_user_id"),
+                      "options": (payload or {}).get("options") or {}}
+            try:
+                run_scheduled_pipeline.apply(kwargs=kwargs)
+                fired.append(project_id)
+                logger.info(f"[pipeline] beat 触发定时构建 project={project_id}")
+            except Exception as e:  # noqa: BLE001 —— 派发失败登记已删，日志留痕
+                logger.error(f"[pipeline] beat 触发定时构建 project={project_id} 失败: {e}")
+    except Exception as e:  # noqa: BLE001 —— redis 抖动下轮再扫
+        logger.warning(f"[pipeline] 定时构建扫描失败: {e}")
+    return {"fired": fired}
+
+
+def cancel_scheduled_pipeline(project_id: int) -> bool:
+    """取消定时构建（还没开跑的）：清登记键 + revoke eta 任务。返回是否有定时被取消。"""
+    r = _redis()
+    sched_key = _SCHEDULE_KEY.format(project_id=project_id)
+    had = r.get(sched_key) is not None
+    if not had:
+        return False
+    r.delete(sched_key)
+    carrier = r.get(sched_key + ":task")
+    if carrier:
+        r.delete(sched_key + ":task")
+        try:
+            from app.tasks.celery_app import celery_app
+
+            celery_app.control.revoke(carrier, terminate=False)
+        except Exception:  # noqa: BLE001
+            pass
+    return True
+
+
+def pipeline_scheduled_at(project_id: int) -> Optional[str]:
+    """已登记的定时构建时间（未开跑）；无则 None。"""
+    try:
+        return _redis().get(_SCHEDULE_KEY.format(project_id=project_id))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def pipeline_running_task_id(project_id: int) -> Optional[str]:
+    """当前（或最近 6h 内）管线的 task_id；锁过期/不存在返回 None。"""
+    try:
+        return _redis().get(_RUNNING_KEY.format(project_id=project_id))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def release_pipeline_lock(project_id: int) -> None:
+    try:
+        _redis().delete(_RUNNING_KEY.format(project_id=project_id))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+__all__ = ["STAGE_DEFS", "DEPTH_PROFILES", "run_pipeline", "dispatch_pipeline_run",
+           "run_scheduled_pipeline", "cancel_scheduled_pipeline",
+           "pipeline_scheduled_at", "pipeline_running_task_id", "release_pipeline_lock"]

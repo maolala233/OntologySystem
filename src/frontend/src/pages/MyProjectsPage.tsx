@@ -1,22 +1,28 @@
-import React, { useEffect, useState, useRef, useMemo } from 'react';
-import { Card, Button, Empty, Spin, Modal, Form, Input, message, Tag, Space, Checkbox, Select, InputNumber } from 'antd';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Button, Checkbox, Empty, Form, Input, message, Modal, Radio, Popconfirm, Select, Space, Spin, Statistic, Table, Tag, Tooltip, Upload, DatePicker } from 'antd';
 import {
     PlusOutlined,
     EditOutlined,
     DeleteOutlined,
     EyeOutlined,
-    CloudUploadOutlined,
+    ThunderboltOutlined,
+    InboxOutlined,
+    AppstoreOutlined,
+    BarsOutlined,
+    ReloadOutlined,
     SearchOutlined,
     SortAscendingOutlined,
-    DeleteFilled,
-    ReloadOutlined,
 } from '@ant-design/icons';
+import type { ColumnsType } from 'antd/es/table';
 import { useNavigate } from 'react-router-dom';
+import dayjs from 'dayjs';
 import { Segmented } from 'antd';
 import { useAuthStore } from '../shared/auth/authStore';
 import { PROJECT_STATUS, PUBLISHED_TAG } from '../shared/projectStatus';
 import Navbar from '../components/Layout/Navbar';
 import TechHero, { TECH_COLORS, GraphMotif } from '../components/TechHero';
+import { documentsApi } from '../api/documents';
+import { pipelineApi } from '../api/pipeline';
 import { projectsApi } from '../api/projects';
 import { ProjectData } from '../types/ontology';
 import KnowledgeDomainSelector from '../components/KnowledgeDomainSelector';
@@ -26,6 +32,21 @@ const TC = TECH_COLORS;
 
 type SortField = 'created_at' | 'name' | 'node_count';
 type SortOrder = 'asc' | 'desc';
+type ViewMode = 'list' | 'cards';
+
+/** 状态归一：后端 /my 直接下发 status；旧数据回退按 is_published 推导 */
+const statusOf = (p: ProjectData): string =>
+    p.status || (p.is_published ? 'published' : 'draft');
+
+const STATUS_OPTIONS = [
+    { value: 'draft', label: '草稿' },
+    { value: 'building', label: '构建中' },
+    { value: 'ready', label: '已构建' },
+    { value: 'published', label: '已发布' },
+];
+
+const fmtDate = (v?: string | null) =>
+    v ? new Date(v).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
 
 const MyProjectsPage: React.FC = () => {
     const navigate = useNavigate();
@@ -40,6 +61,10 @@ const MyProjectsPage: React.FC = () => {
     const [selectedDomainId, setSelectedDomainId] = useState<number | undefined>(undefined);
     const [selectedDomainName, setSelectedDomainName] = useState<string | undefined>(undefined);
     const scrollPositionRef = useRef<number>(0);
+
+    // 2026-11 列表视图改版：默认列表展示，可切卡片；按状态筛选
+    const [viewMode, setViewMode] = useState<ViewMode>('list');
+    const [statusFilter, setStatusFilter] = useState<string[]>([]);
 
     const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
     const [searchText, setSearchText] = useState('');
@@ -72,11 +97,16 @@ const MyProjectsPage: React.FC = () => {
             });
     };
 
+    // 新建项目：名称/域 + 可选上传文档 + 构建时机（一级菜单，默认标准构建）——创建即后台构建
+    const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+    const [creating, setCreating] = useState(false);
+
     const handleCreateProject = async (values: any) => {
         if (!selectedDomainId) {
             message.warning('请选择知识域');
             return;
         }
+        setCreating(true);
         try {
             const newProject = await projectsApi.createProject({
                 name: values.name,
@@ -84,15 +114,35 @@ const MyProjectsPage: React.FC = () => {
                 domain_id: selectedDomainId,
                 domain_name: selectedDomainName,
             });
-            message.success('项目创建成功！');
+            const pid = newProject.id;
+            let docNote = '';
+            if (pendingFiles.length > 0) {
+                // auto_parse=false：解析交给一键管线串行处理（避免解析与管线赛跑）
+                await documentsApi.upload(pid, pendingFiles, false);
+                docNote = `，已上传 ${pendingFiles.length} 个文档`;
+            }
+            const options: Record<string, any> = {
+                depth: 'standard', // 标准构建（构建深度设置已收起，统一走标准）
+            };
+            if (values.build_mode === 'scheduled' && values.schedule_at) {
+                options.schedule_at = values.schedule_at.toISOString();
+            }
+            const r = await pipelineApi.run(pid, options);
+            message.success(r.mode === 'scheduled'
+                ? `项目已创建${docNote}；构建已定时，将在指定时间自动开始`
+                : `项目已创建${docNote}；后台构建已启动，完成后在项目页确认结果即可`);
             setIsModalOpen(false);
             form.resetFields();
+            setPendingFiles([]);
             setSelectedDomainId(undefined);
             setSelectedDomainName(undefined);
 
-            navigate(`/projects/${newProject.id}/documents`);
+            navigate(`/projects/${pid}`);
         } catch (error: any) {
-            message.error('创建失败，请稍后重试');
+            const msg = error.response?.data?.error?.message || '创建失败，请稍后重试';
+            message.error(msg);
+        } finally {
+            setCreating(false);
         }
     };
 
@@ -158,68 +208,16 @@ const MyProjectsPage: React.FC = () => {
         });
     };
 
-    const handleBatchDelete = () => {
-        if (selectedIds.size === 0) {
-            message.warning('请先选择要删除的项目');
-            return;
-        }
-        confirmImpact({
-            title: `批量删除 ${selectedIds.size} 个项目`,
-            impact: [
-                `${selectedIds.size} 个项目内的文档、图谱数据、审核项与版本快照将一并删除，且无法恢复；`,
-                '已发布到资产中心的项目，公共区展示也会随之消失。',
-            ],
-            okText: '确认删除',
-            onOk: async () => {
-                let successCount = 0;
-                let failCount = 0;
-                for (const projectId of selectedIds) {
-                    try {
-                        await projectsApi.deleteProject(projectId);
-                        successCount++;
-                    } catch {
-                        failCount++;
-                    }
-                }
-                if (failCount === 0) {
-                    message.success(`成功删除 ${successCount} 个项目`);
-                } else {
-                    message.warning(`成功删除 ${successCount} 个项目，${failCount} 个删除失败`);
-                }
-                setSelectedIds(new Set());
-                loadProjects();
-            },
+    const statusCounts = useMemo(() => {
+        const c = { total: projects.length, published: 0, ready: 0, building: 0 };
+        projects.forEach((p) => {
+            const s = statusOf(p);
+            if (s === 'published') c.published++;
+            else if (s === 'ready') c.ready++;
+            else if (s === 'building') c.building++;
         });
-    };
-
-    const toggleSelect = (projectId: number) => {
-        setSelectedIds(prev => {
-            const next = new Set(prev);
-            if (next.has(projectId)) {
-                next.delete(projectId);
-            } else {
-                next.add(projectId);
-            }
-            return next;
-        });
-    };
-
-    const toggleSelectAll = () => {
-        if (selectedIds.size === filteredAndSortedProjects.length && filteredAndSortedProjects.length > 0) {
-            setSelectedIds(new Set());
-        } else {
-            setSelectedIds(new Set(filteredAndSortedProjects.map(p => p.id)));
-        }
-    };
-
-    const handleSortChange = (value: SortField) => {
-        if (value === sortField) {
-            setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
-        } else {
-            setSortField(value);
-            setSortOrder('desc');
-        }
-    };
+        return c;
+    }, [projects]);
 
     const filteredAndSortedProjects = useMemo(() => {
         let result = [...projects];
@@ -227,6 +225,9 @@ const MyProjectsPage: React.FC = () => {
         if (searchText.trim()) {
             const keyword = searchText.trim().toLowerCase();
             result = result.filter(p => p.name.toLowerCase().includes(keyword));
+        }
+        if (statusFilter.length > 0) {
+            result = result.filter(p => statusFilter.includes(statusOf(p)));
         }
 
         result.sort((a, b) => {
@@ -247,7 +248,7 @@ const MyProjectsPage: React.FC = () => {
         });
 
         return result;
-    }, [projects, searchText, sortField, sortOrder]);
+    }, [projects, searchText, statusFilter, sortField, sortOrder]);
 
     const sortOptions = [
         { label: '创建时间', value: 'created_at' },
@@ -258,6 +259,76 @@ const MyProjectsPage: React.FC = () => {
     const breadcrumbs = [
         { title: '首页', path: '/' },
         { title: '我的项目' },
+    ];
+
+    const actionsRenderer = (project: ProjectData) => (
+        // 阻断冒泡：操作列点击不得触发 onRow 的整行跳转（否则编辑弹窗被路由切换冲掉）
+        <div onClick={(e) => e.stopPropagation()}>
+        <Space size={0}>
+            <Button type="link" size="small" icon={<EyeOutlined />}
+                    onClick={() => navigate(`/projects/${project.id}`)}>
+                打开
+            </Button>
+            <Tooltip title="编辑项目名称与介绍">
+                <Button type="link" size="small" icon={<EditOutlined />}
+                        onClick={() => handleEditProject(project)}>
+                    项目信息
+                </Button>
+            </Tooltip>
+            <Popconfirm
+                title="确认删除项目？"
+                description="文档、图谱数据、审核项与版本快照将一并删除且无法恢复"
+                okText="删除" okButtonProps={{ danger: true }} cancelText="取消"
+                onConfirm={() => handleDeleteProject(project.id)}>
+                <Button type="link" size="small" danger icon={<DeleteOutlined />}>
+                    删除
+                </Button>
+            </Popconfirm>
+        </Space>
+        </div>
+    );
+
+    const statusTag = (project: ProjectData) => {
+        const meta = PROJECT_STATUS[statusOf(project)] || PROJECT_STATUS.draft;
+        return <Tag color={meta.color}>{meta.text}</Tag>;
+    };
+
+    const listColumns: ColumnsType<ProjectData> = [
+        {
+            title: '项目名称', dataIndex: 'name', key: 'name', width: 220,
+            render: (_, project) => (
+                <div className="flex items-center gap-2">
+                    <span className="font-medium text-gray-800">{project.name}</span>
+                    {isSuperAdmin && scope === 'all' && (
+                        <Tag className="ml-1" color="blue">{project.owner?.username || `用户#${project.owner_id ?? '?'}`}</Tag>
+                    )}
+                </div>
+            ),
+        },
+        {
+            title: '项目简介', dataIndex: 'description', key: 'description', ellipsis: true,
+            render: (v: string) => <span className="text-gray-500">{v || '暂无描述'}</span>,
+        },
+        {
+            title: '状态', key: 'status', width: 100, filters: STATUS_OPTIONS.map(s => ({ text: s.label, value: s.value })),
+            onFilter: (v, p) => statusOf(p) === v,
+            render: (_, project) => statusTag(project),
+        },
+        {
+            title: '类 / 实例', key: 'stats', width: 120,
+            render: (_, project) => (
+                <span className="tk-mono text-xs text-gray-500">
+                    <span style={{ color: TC.blue }}>{project.classes_total ?? project.graph_data?.nodes?.length ?? 0}</span> 类
+                    {' · '}
+                    <span style={{ color: TC.purple }}>{project.instances_total ?? 0}</span> 实例
+                </span>
+            ),
+        },
+        { title: '创建日期', dataIndex: 'created_at', key: 'created_at', width: 150,
+          render: (v: string) => <span className="text-gray-500 text-xs">{fmtDate(v)}</span> },
+        { title: '修改日期', dataIndex: 'updated_at', key: 'updated_at', width: 150,
+          render: (v: string) => <span className="text-gray-500 text-xs">{fmtDate(v)}</span> },
+        { title: '操作', key: 'actions', width: 240, render: (_, project) => actionsRenderer(project) },
     ];
 
     return (
@@ -300,6 +371,25 @@ const MyProjectsPage: React.FC = () => {
                     ) : undefined}
                 />
 
+                {/* 状态统计（2026-11 列表视图改版） */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                    <div className="bg-white border border-gray-100 rounded-xl px-4 py-3">
+                        <Statistic title="项目总数" value={statusCounts.total} />
+                    </div>
+                    <div className="bg-white border border-gray-100 rounded-xl px-4 py-3">
+                        <Statistic title="已发布" value={statusCounts.published}
+                                   valueStyle={{ color: '#722ed1' }} />
+                    </div>
+                    <div className="bg-white border border-gray-100 rounded-xl px-4 py-3">
+                        <Statistic title="已构建" value={statusCounts.ready}
+                                   valueStyle={{ color: '#52c41a' }} />
+                    </div>
+                    <div className="bg-white border border-gray-100 rounded-xl px-4 py-3">
+                        <Statistic title="处理中" value={statusCounts.building}
+                                   valueStyle={{ color: '#5B8DEF' }} />
+                    </div>
+                </div>
+
                 {projects.length > 0 && (
                     <div className="mb-4 flex flex-wrap items-center gap-3">
                         <Input
@@ -310,11 +400,24 @@ const MyProjectsPage: React.FC = () => {
                             allowClear
                             style={{ width: 260 }}
                         />
+                        <Select
+                            mode="multiple" allowClear maxTagCount="responsive"
+                            placeholder="全部状态" style={{ minWidth: 200 }}
+                            value={statusFilter} onChange={setStatusFilter}
+                            options={STATUS_OPTIONS}
+                        />
                         <div className="flex items-center gap-2">
                             <span className="text-gray-500 text-sm">排序：</span>
                             <Select
                                 value={sortField}
-                                onChange={handleSortChange}
+                                onChange={(v) => {
+                                    if (v === sortField) {
+                                        setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+                                    } else {
+                                        setSortField(v);
+                                        setSortOrder('desc');
+                                    }
+                                }}
                                 options={sortOptions}
                                 style={{ width: 130 }}
                                 size="small"
@@ -324,6 +427,16 @@ const MyProjectsPage: React.FC = () => {
                                 icon={<SortAscendingOutlined style={{ transform: sortOrder === 'desc' ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />}
                                 onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
                                 title={sortOrder === 'asc' ? '升序' : '降序'}
+                            />
+                        </div>
+                        <div className="ml-auto">
+                            <Segmented
+                                value={viewMode}
+                                onChange={(v) => setViewMode(v as ViewMode)}
+                                options={[
+                                    { value: 'list', icon: <BarsOutlined />, label: '列表' },
+                                    { value: 'cards', icon: <AppstoreOutlined />, label: '卡片' },
+                                ]}
                             />
                         </div>
                     </div>
@@ -354,7 +467,6 @@ const MyProjectsPage: React.FC = () => {
                                 type="primary"
                                 icon={<PlusOutlined />}
                                 onClick={() => setIsModalOpen(true)}
-                               
                             >
                                 创建项目
                             </Button>
@@ -366,41 +478,44 @@ const MyProjectsPage: React.FC = () => {
                             description="没有找到匹配的项目"
                             image={Empty.PRESENTED_IMAGE_SIMPLE}
                         >
-                            <Button onClick={() => setSearchText('')}>清除搜索</Button>
+                            <Button onClick={() => { setSearchText(''); setStatusFilter([]); }}>清除筛选</Button>
                         </Empty>
+                    </div>
+                ) : viewMode === 'list' ? (
+                    <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
+                        <Table
+                            rowKey="id" size="middle"
+                            columns={listColumns}
+                            dataSource={filteredAndSortedProjects}
+                            pagination={{ pageSize: 10, showSizeChanger: false }}
+                            rowSelection={{
+                                selectedRowKeys: [...selectedIds],
+                                onChange: (keys) => setSelectedIds(new Set(keys as number[])),
+                            }}
+                            onRow={(record) => ({
+                                onClick: () => navigate(`/projects/${record.id}`),
+                                style: { cursor: 'pointer' },
+                            })}
+                        />
                     </div>
                 ) : (
                     <>
-                        {filteredAndSortedProjects.length > 0 && (
+                        {selectedIds.size > 0 && (
                             <div className="mb-3 flex items-center gap-3">
-                                <Checkbox
-                                    checked={selectedIds.size === filteredAndSortedProjects.length && filteredAndSortedProjects.length > 0}
-                                    indeterminate={selectedIds.size > 0 && selectedIds.size < filteredAndSortedProjects.length}
-                                    onChange={toggleSelectAll}
+                                <span className="text-sm text-blue-600 font-medium">已选 {selectedIds.size} 项</span>
+                                <Button
+                                    danger
+                                    size="small"
+                                    icon={<DeleteOutlined />}
+                                    onClick={async () => {
+                                        for (const id of selectedIds) await projectsApi.deleteProject(id).catch(() => null);
+                                        setSelectedIds(new Set());
+                                        loadProjects();
+                                    }}
                                 >
-                                    <span className="text-sm text-gray-500">全选</span>
-                                </Checkbox>
-                                <span className="text-xs text-gray-500">共 {filteredAndSortedProjects.length} 个项目</span>
-                                {selectedIds.size > 0 && (
-                                    <>
-                                        <div className="flex-1" />
-                                        <span className="text-sm text-blue-600 font-medium">已选 {selectedIds.size} 项</span>
-                                        <Button
-                                            danger
-                                            size="small"
-                                            icon={<DeleteFilled />}
-                                            onClick={handleBatchDelete}
-                                        >
-                                            批量删除
-                                        </Button>
-                                        <Button
-                                            size="small"
-                                            onClick={() => setSelectedIds(new Set())}
-                                        >
-                                            取消选择
-                                        </Button>
-                                    </>
-                                )}
+                                    批量删除
+                                </Button>
+                                <Button size="small" onClick={() => setSelectedIds(new Set())}>取消选择</Button>
                             </div>
                         )}
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
@@ -413,110 +528,55 @@ const MyProjectsPage: React.FC = () => {
                                             aria-pressed={isSelected}
                                             aria-label={`选择项目 ${project.name}`}
                                             className={`absolute top-3 left-3 z-10 w-6 h-6 flex items-center justify-center rounded-full transition-all duration-200 cursor-pointer ${isSelected ? 'bg-blue-500' : 'bg-white/70 hover:bg-white shadow-sm'}`}
-                                            onClick={(e) => { e.stopPropagation(); toggleSelect(project.id); }}
+                                            onClick={(e) => { e.stopPropagation(); setSelectedIds(prev => {
+                                                const next = new Set(prev);
+                                                if (next.has(project.id)) next.delete(project.id); else next.add(project.id);
+                                                return next;
+                                            }); }}
                                         >
                                             <Checkbox checked={isSelected} className="[&_.ant-checkbox-inner]:border-gray-400 pointer-events-none" tabIndex={-1} aria-hidden />
                                         </button>
-                                        <Card
-                                            hoverable
-                                            className={`mp-card shadow-sm cursor-pointer ${isSelected ? 'ring-2 ring-blue-500 ring-offset-1' : ''}`}
-                                            cover={
-                                                <div
-                                                    className="mp-cover h-32 sm:h-40"
-                                                    style={{ background: TC.bgDark }}
-                                                    onClick={() => navigate(`/projects/${project.id}/documents`)}
-                                                >
-                                                    <div className="absolute inset-0 mp-cover-grid" />
-                                                    <div
-                                                        className="absolute -top-8 -right-8 w-36 h-36 rounded-full"
-                                                        style={{ background: TC.purple, filter: 'blur(60px)', opacity: 0.3 }}
-                                                    />
-                                                    <div
-                                                        className="absolute -bottom-10 -left-6 w-36 h-36 rounded-full"
-                                                        style={{ background: TC.blue, filter: 'blur(60px)', opacity: 0.3 }}
-                                                    />
-                                                    <GraphMotif seed={project.id} className="absolute inset-0 w-full h-full opacity-80" />
-                                                    <div
-                                                        className="absolute bottom-3 right-3 tk-mono text-[10px] tracking-widest"
-                                                        style={{ color: TC.textSub }}
-                                                    >
-                                                        {project.is_published ? 'PUBLISHED' : 'DRAFT'}
-                                                    </div>
-                                                </div>
-                                            }
-                                            actions={[
-                                                <Button
-                                                    type="text"
-                                                    icon={<EyeOutlined />}
-                                                    onClick={() => navigate(`/projects/${project.id}/documents`)}
-                                                    className="text-xs sm:text-sm"
-                                                >
-                                                    <span className="hidden sm:inline">打开</span>
-                                                </Button>,
-                                                <Button
-                                                    type="text"
-                                                    icon={<EditOutlined />}
-                                                    onClick={() => handleEditProject(project)}
-                                                    className="text-xs sm:text-sm"
-                                                >
-                                                    <span className="hidden sm:inline">信息</span>
-                                                </Button>,
-                                                <Button
-                                                    type="text"
-                                                    danger
-                                                    icon={<DeleteOutlined />}
-                                                    onClick={(e) => { e.stopPropagation(); handleDeleteProject(project.id); }}
-                                                    className="text-xs sm:text-sm"
-                                                >
-                                                    <span className="hidden sm:inline">删除</span>
-                                                </Button>,
-                                            ]}
+                                        <div
+                                            className="mp-cover h-32 sm:h-40 rounded-t-xl"
+                                            style={{ background: TC.bgDark }}
+                                            onClick={() => navigate(`/projects/${project.id}`)}
                                         >
-                                            <Card.Meta
-                                                title={
-                                                    <div className="flex items-center justify-between">
-                                                        <span
-                                                            className="truncate cursor-pointer hover:text-blue-500 transition-colors"
-                                                            onClick={() => navigate(`/projects/${project.id}/documents`)}
-                                                        >
-                                                            {project.name}
-                                                        </span>
-                                                        {project.is_published && (
-                                                            <Tag color={PUBLISHED_TAG.color} className="ml-2 flex-shrink-0">
-                                                                {PUBLISHED_TAG.text}
-                                                            </Tag>
-                                                        )}
-                                                    </div>
-                                                }
-                                                description={
-                                                    <div className="text-gray-500 text-sm">
-                                                        {isSuperAdmin && scope === 'all' && (
-                                                            <div className="mb-2 text-xs">
-                                                                归属：<span className="tk-mono" style={{ color: TC.blue }}>
-                                                                    {project.owner?.username || `用户#${project.owner_id ?? '?'}`}
-                                                                </span>
-                                                            </div>
-                                                        )}
-                                                        <div className="truncate mb-2">
-                                                            {project.description || '暂无描述'}
-                                                        </div>
-                                                        <div className="flex items-center justify-between text-xs">
-                                                            <span className="tk-mono">
-                                                                节点：<span style={{ color: TC.blue }}>{project.graph_data?.nodes?.length || 0}</span>
-                                                            </span>
-                                                            <span className="tk-mono">
-                                                                关系：<span style={{ color: TC.purple }}>{project.graph_data?.edges?.length || 0}</span>
-                                                            </span>
-                                                        </div>
-                                                        {project.created_at && (
-                                                            <div className="text-xs text-gray-500 mt-1">
-                                                                {new Date(project.created_at).toLocaleDateString('zh-CN')}
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                }
+                                            <div className="absolute inset-0 mp-cover-grid rounded-t-xl" />
+                                            <div
+                                                className="absolute -top-8 -right-8 w-36 h-36 rounded-full"
+                                                style={{ background: TC.purple, filter: 'blur(60px)', opacity: 0.3 }}
                                             />
-                                        </Card>
+                                            <div
+                                                className="absolute -bottom-10 -left-6 w-36 h-36 rounded-full"
+                                                style={{ background: TC.blue, filter: 'blur(60px)', opacity: 0.3 }}
+                                            />
+                                            <GraphMotif seed={project.id} className="absolute inset-0 w-full h-full opacity-80" />
+                                            <div
+                                                className="absolute bottom-3 right-3 tk-mono text-[10px] tracking-widest"
+                                                style={{ color: TC.textSub }}
+                                            >
+                                                {statusOf(project).toUpperCase()}
+                                            </div>
+                                        </div>
+                                        <div className="mp-card bg-white rounded-b-xl border-t-0 p-4" style={{ borderRadius: '0 0 14px 14px' }}>
+                                            <div className="flex items-center justify-between mb-1">
+                                                <span
+                                                    className="truncate font-medium text-gray-800 cursor-pointer hover:text-blue-500 transition-colors"
+                                                    onClick={() => navigate(`/projects/${project.id}`)}
+                                                >
+                                                    {project.name}
+                                                </span>
+                                                {statusTag(project)}
+                                            </div>
+                                            <div className="text-gray-500 text-sm truncate mb-2">
+                                                {project.description || '暂无描述'}
+                                            </div>
+                                            <div className="flex items-center justify-between text-xs text-gray-400 mb-2">
+                                                <span>创建 {fmtDate(project.created_at)}</span>
+                                                <span>修改 {fmtDate(project.updated_at)}</span>
+                                            </div>
+                                            {actionsRenderer(project)}
+                                        </div>
                                     </div>
                                 );
                             })}
@@ -525,7 +585,7 @@ const MyProjectsPage: React.FC = () => {
                 )}
             </div>
 
-            {/* 创建项目弹窗 */}
+            {/* 创建项目弹窗（2026-11 改版：文档可选；构建时机一级；标准构建；定时须晚于当前时间） */}
             <Modal
                 title="创建新项目"
                 open={isModalOpen}
@@ -566,11 +626,54 @@ const MyProjectsPage: React.FC = () => {
                         />
                     </Form.Item>
 
+                    <Form.Item label="上传文档（可选，可稍后补充）">
+                        <Upload.Dragger
+                            multiple
+                            showUploadList={{ showRemoveIcon: true }}
+                            beforeUpload={() => false}
+                            onChange={({ fileList }) => {
+                                setPendingFiles(fileList.map((f) => f.originFileObj).filter(Boolean) as File[]);
+                            }}
+                            accept=".txt,.md,.pdf,.doc,.docx,.xls,.xlsx,.csv,.ppt,.pptx,.html,.json"
+                        >
+                            <p className="ant-upload-drag-icon"><InboxOutlined /></p>
+                            <p className="ant-upload-hint">
+                                上传后系统自动完成：解析 → AI 本体构建（含质量自检修复）→ 完成后你来确认结果
+                            </p>
+                        </Upload.Dragger>
+                    </Form.Item>
+
+                    <Form.Item name="build_mode" label="构建时间" initialValue="now">
+                        <Radio.Group>
+                            <Radio value="now">立即开始构建</Radio>
+                            <Radio value="scheduled">定时开始构建</Radio>
+                        </Radio.Group>
+                    </Form.Item>
+                    <Form.Item noStyle shouldUpdate={(a, b) => a.build_mode !== b.build_mode}>
+                        {({ getFieldValue }) => getFieldValue('build_mode') === 'scheduled' ? (
+                            <Form.Item name="schedule_at" label="定时开始时间"
+                                       rules={[
+                                           { required: true, message: '请选择定时开始时间' },
+                                           {
+                                               validator: (_, v) => {
+                                                   if (!v || dayjs(v).isAfter(dayjs())) return Promise.resolve();
+                                                   // eslint-disable-next-line prefer-promise-reject-errors
+                                                   return Promise.reject('定时时间早于当前时间，请重新选择');
+                                               },
+                                           },
+                                       ]}>
+                                <DatePicker showTime format="YYYY-MM-DD HH:mm" style={{ width: '100%' }}
+                                            disabledDate={(d) => d.isBefore(dayjs().startOf('day'))} />
+                            </Form.Item>
+                        ) : null}
+                    </Form.Item>
+
                     <Form.Item>
                         <Space className="w-full justify-end">
                             <Button onClick={() => setIsModalOpen(false)}>取消</Button>
-                            <Button type="primary" htmlType="submit">
-                                创建
+                            <Button type="primary" htmlType="submit" loading={creating}
+                                    icon={<ThunderboltOutlined />}>
+                                {pendingFiles.length > 0 ? '创建并开始构建' : '创建'}
                             </Button>
                         </Space>
                     </Form.Item>
@@ -579,7 +682,7 @@ const MyProjectsPage: React.FC = () => {
 
             {/* 编辑项目信息弹窗 */}
             <Modal
-                title="编辑项目信息"
+                title="编辑项目信息（名称与介绍）"
                 open={isEditModalOpen}
                 onCancel={() => {
                     setIsEditModalOpen(false);
@@ -598,7 +701,7 @@ const MyProjectsPage: React.FC = () => {
                         <Input placeholder="例如：工业本体" />
                     </Form.Item>
 
-                    <Form.Item name="description" label="项目描述">
+                    <Form.Item name="description" label="项目介绍">
                         <Input.TextArea
                             rows={4}
                             placeholder="简要描述这个项目的用途..."

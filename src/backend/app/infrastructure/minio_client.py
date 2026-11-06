@@ -147,13 +147,21 @@ def get_minio_client() -> MinIOClient:
 
 
 def to_browser_url(presigned: str, request=None) -> str:
-    """内网预签名 URL → 浏览器同域 URL（/minio 前缀，方案C）。类方法与既有调用点共用。"""
-    prefix = (settings.MINIO_PUBLIC_PATH_PREFIX or "").rstrip("/")
-    if not prefix or request is None:
-        return presigned
-    host = request.headers.get("host")
-    if not host:
-        return presigned
+    """内网预签名 URL → 浏览器同域 /minio 相对路径（方案C，2026-11-06 加固）。
+
+    改写为**相对 URL**（/minio/bucket/key?签名）：浏览器按"当前访问域"解析——
+    服务器 IP/域名/端口怎么访问都成立，其他计算机不再 ERR_NAME_NOT_RESOLVED
+    （旧实现用 Host 头拼绝对 URL：经 vite 代理或 prefix 未配置时会把
+    127.0.0.1/内网容器名漏给浏览器）。签名校验不受影响：nginx /minio 段
+    原样回传 MINIO_ENDPOINT 作为 Host。
+    request 缺失时也返回相对改写（签名 URL 的 path/query 自带全部信息），
+    仅当 URL 本就不是本 MinIO 端点（防御）时原样返回。
+    """
+    prefix = (settings.MINIO_PUBLIC_PATH_PREFIX or "/minio").rstrip("/")
     parts = urlsplit(presigned)
-    scheme = request.headers.get("x-forwarded-proto") or "http"
-    return urlunsplit((scheme, host, f"{prefix}{parts.path}", parts.query, ""))
+    endpoint = urlsplit(str(settings.MINIO_ENDPOINT or "").replace("http://", "").replace("https://", ""))
+    # 防御：签名 URL 的 host 若与配置的 MinIO 端点完全无关（多 MinIO 场景），不改写
+    if endpoint.netloc and parts.netloc and endpoint.netloc not in parts.netloc \
+            and parts.netloc not in str(settings.MINIO_ENDPOINT):
+        return presigned
+    return urlunsplit(("", "", f"{prefix}{parts.path}", parts.query, ""))

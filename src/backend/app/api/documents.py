@@ -4,13 +4,15 @@
 #       秒传 = 服务端 SHA-256 命中同项目未删文档 → 409 DUPLICATE_UPLOAD（带既有 doc）。
 # 解析执行（parse 队列/SSE/text_key 回填）为 M3-2，本文件只落数据面：parse_status='uploaded'。
 import hashlib
+import io
 import mimetypes
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Query, Request, UploadFile
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -59,7 +61,7 @@ def _doc_out(doc: UploadedDocument, chunk_count: int | None = None) -> dict:
         "language": doc.language,
         "parse_backend": doc.parse_backend,
         "deleted_at": doc.deleted_at.isoformat() if doc.deleted_at else None,
-        "created_at": doc.created_at.isoformat() if doc.created_at else None,
+        "created_at": (doc.created_at.replace(tzinfo=timezone.utc).isoformat() if (doc.created_at and doc.created_at.tzinfo is None) else doc.created_at.isoformat() if doc.created_at else None),
     }
     if chunk_count is not None:
         out["chunk_count"] = chunk_count
@@ -377,14 +379,28 @@ def download_document(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """原件预签名 URL（302 直跳 MinIO，API 不代理字节流，03 §7）。"""
+    """原件下载（2026-11-06 改为后端流式代理，不再 302 预签名）。
+
+    旧方案 302 直跳 MinIO 预签名 URL——MINIO_PUBLIC_PATH_PREFIX 未配置时浏览器
+    拿到的是容器内网名（minio-business:9000），其他计算机访问直接
+    ERR_NAME_NOT_RESOLVED；同域反代方案也依赖部署侧 nginx 的 /minio 段与 Host
+    回传配置。流式代理同源直出：无 CORS、无 DNS 依赖、任何客户端可下载；
+    文件上限 200MB，单机部署代理成本与 nginx /minio 反代相同。"""
     require_project_role(project_id, "viewer", current_user, db)
     doc = _load_doc_or_404(project_id, doc_id, db)
     if not doc.storage_key:
         raise NotFoundError("该文档无 MinIO 原件（历史本地文档）")
-    url = get_minio_client().get_browser_presigned_url(
-        settings.MINIO_BUCKET_UPLOADS, doc.storage_key, request)
-    return RedirectResponse(url, status_code=302)
+    content = get_minio_client().get_bytes(settings.MINIO_BUCKET_UPLOADS, doc.storage_key)
+    media_type = mimetypes.guess_type(doc.filename or "")[0] or "application/octet-stream"
+    quoted = quote(doc.filename or f"document_{doc_id}")
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quoted}",
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 def _purge_document_derived(db: Session, doc: UploadedDocument) -> int:

@@ -28,7 +28,6 @@ import RagSyncModal from '../components/RagSyncModal';
 import TaskProgressModal from '../components/TaskProgressModal';
 import ExportDialog from '../components/ExportDialog';
 import ReasoningModal from '../components/ReasoningModal';
-import PublishDialog from './PublishDialog';
 
 const CLASS_TYPES = new Set(['owl:Class', 'Class']);
 
@@ -70,7 +69,6 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
     // 发布 / RAG 同步
     const [isPublished, setIsPublished] = useState(false);
     const [isRagModalOpen, setIsRagModalOpen] = useState(false);
-    const [publishDialogOpen, setPublishDialogOpen] = useState(false);
     // 保存（与骨架编辑同款）：拖拽布局等画布改动 → 更新当前抽取结果
     const [isSaving, setIsSaving] = useState(false);
     const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
@@ -605,7 +603,8 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                     },
                 });
             } else {
-                setPublishDialogOpen(true);
+                // 与普通模式同一发布检查（项目页「发布」阶段内容区）
+                navigate(`/projects/${projectId}?stage=publish`);
             }
         } catch (e: any) {
             message.error(e.message || '发布操作失败');
@@ -1117,17 +1116,6 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                 projectId={Number(projectId)}
                 open={isRagModalOpen}
                 onClose={() => setIsRagModalOpen(false)}
-            />
-
-            <PublishDialog
-                projectId={Number(projectId)}
-                open={publishDialogOpen}
-                onClose={() => setPublishDialogOpen(false)}
-                onPublished={async () => {
-                    const updated = await projectsApi.getProject(projectId);
-                    setIsPublished(!!updated.is_published);
-                    onChanged?.();
-                }}
             />
 
             <ExportDialog

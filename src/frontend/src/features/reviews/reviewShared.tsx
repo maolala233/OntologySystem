@@ -32,6 +32,10 @@ export const TYPE_LABEL: Record<string, string> = {
 
 /** 公理建议（O4-F11）：kind 中文名 / 来源徽标（统计推断、AI 生成、双通道佐证） */
 export const AXIOM_KIND_LABEL: Record<string, string> = {
+    transitive: '传递关系',
+    symmetric: '对称关系',
+    inverse_functional: '反函数性',
+    subproperty_of: '关系层级',
     functional: '函数性',
     inverse_of: '互逆关系',
     disjoint_with: '互斥类',
@@ -100,7 +104,21 @@ export function humanSummary(item: ReviewItem): string {
                 const cls = p.sources?.[0]?.class || '';
                 return `实体「${p.sources?.[0]?.label || ''}」被归入的类别「${cls}」同时落在互斥类别（${vals.join('、')}）的层级内，请判断真实归属`;
             }
-            return `关系「${prop}」的取值与本体声明的公理（函数性/基数）不符（${vals.join('、')}），请核实`;
+            // 按 SHACL 违例类别区分文案（消息带 [range]/[domain]/[functional]/[cardinality-*] 前缀）
+            const first = String(vals[0] || '');
+            const tag = first.startsWith('[') ? first.slice(1, first.indexOf(']')) : '';
+            const detail = first.replace(/^\[[^\]]+\]\s*/, '');
+            if (tag === 'range' || tag === 'domain') {
+                const pos = tag === 'range' ? '客体' : '主体';
+                return `${detail}——实例数据里出现了不符合该${pos}要求的数据，请判断是数据错了还是声明错了`;
+            }
+            if (tag.startsWith('cardinality')) {
+                return `${detail}——请核对实例数据中的数量，判断越界数据是否该删或约束是否该放宽`;
+            }
+            if (tag === 'functional' || tag === 'disjoint') {
+                return `${detail}——请核实实例数据并修正`;
+            }
+            return `关系「${prop}」在本体中声明的约束与实例数据不符（${detail || vals.join('、')}），请核实`;
         }
         case 'new_class': {
             const cands: Array<{ label: string; score: number }> = Array.isArray(p.candidates)
@@ -424,6 +442,17 @@ export const FriendlyPayload: React.FC<{
                         {scalars.length > 0 && (
                             <div className="mt-1 text-sm text-gray-600">
                                 统计证据：{scalars.map(([k, v]) => `${k}=${String(v)}`).join('；')}
+                            </div>
+                        )}
+                        {(ev.doc_evidence || []).length > 0 && (
+                            <div className="mt-2 space-y-1">
+                                {(ev.doc_evidence as any[]).slice(0, 2).map((d, i) => (
+                                    <div key={i} className="p-2 bg-white border border-blue-100 rounded text-xs">
+                                        <span className="text-gray-500">文档证据：</span>
+                                        <span className="text-gray-700">{d.doc_file}</span>
+                                        <div className="mt-1 text-gray-600 leading-relaxed">{d.quote}</div>
+                                    </div>
+                                ))}
                             </div>
                         )}
                         {examples.length > 0 && (

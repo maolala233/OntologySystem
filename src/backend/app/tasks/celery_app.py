@@ -22,6 +22,7 @@ celery_app = Celery(
         "app.tasks.parse_tasks",    # M3-2：解析/切片（parse 队列）
         "app.tasks.graph_tasks",    # M3-3 行表回填 + M4 outbox→Neo4j 消费（graph 队列）
         "app.tasks.extract_tasks",  # M3-4：Schema/Instance 抽取（extract 队列）
+        "app.tasks.pipeline_tasks",  # 一键构建管线（extract 队列；新手简化 2026-11）
         "app.tasks.rdf_tasks",      # M4：outbox→Oxigraph 命名图（rdf 队列，唯一写者）
         "app.tasks.evolution_tasks",  # O3-B16：QA 失败轨迹定时进化分析
     ],
@@ -38,6 +39,7 @@ celery_app.conf.update(
     task_routes={
         "app.tasks.parse_tasks.*": {"queue": "parse"},
         "app.tasks.extract_tasks.*": {"queue": "extract"},
+        "app.tasks.pipeline_tasks.*": {"queue": "extract"},
         "app.tasks.graph_tasks.*": {"queue": "graph"},
         "app.tasks.rdf_tasks.*": {"queue": "rdf"},
     },
@@ -64,6 +66,11 @@ celery_app.conf.update(
         # O3-B16：每日失败问答进化分析（graph 队列，轻量 DB+LLM 任务）
         "daily-evolution-scan": {"task": "app.tasks.evolution_tasks.daily_evolution_scan",
                                  "schedule": 86400.0, "options": {"queue": "graph"}},
+        # 定时构建登记表轮询（2026-11-06 根治"定时构建重启后蒸发"）：每 30s 扫描
+        # pipeline:schedule:*，到点触发——Redis 登记表不依赖任何进程内存，重启自愈
+        "check-scheduled-pipelines": {
+            "task": "app.tasks.pipeline_tasks.check_scheduled_pipelines",
+            "schedule": 30.0, "options": {"queue": "graph"}},
     },
 )
 

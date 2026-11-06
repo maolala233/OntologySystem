@@ -10,6 +10,7 @@ export const REF_TYPE_LABEL: Record<string, string> = {
     graph_node: '图节点',
     keyword_chunk: '关键词切片',
     inference: '语义推理',
+    axiom: '本体公理',
 };
 
 export default function SourceCard({ index, source, highlighted }: {
@@ -22,6 +23,7 @@ export default function SourceCard({ index, source, highlighted }: {
     };
 
     const isInferred = source.ref_type === 'inference';
+    const isAxiom = source.ref_type === 'axiom';
 
     // 清理 PDF 解析残留：表格换行符、分隔线（如 [---|---]）、连续空白
     const quote = source.quote?.trim()
@@ -35,12 +37,16 @@ export default function SourceCard({ index, source, highlighted }: {
                 ? 'border-blue-400 ring-2 ring-blue-200 shadow-sm'
                 : isInferred
                     ? 'border-purple-200 hover:border-purple-300'
-                    : 'border-gray-200 hover:border-blue-300'
+                    : isAxiom
+                        ? 'border-amber-200 hover:border-amber-300'
+                        : 'border-gray-200 hover:border-blue-300'
         }`}>
             <div className="flex items-center gap-1.5 mb-1 flex-wrap">
                 <Tag color="purple" className="mr-0">[{index + 1}]</Tag>
                 {isInferred ? (
                     <Tag color="magenta" className="mr-0">{REF_TYPE_LABEL[source.ref_type] ?? source.ref_type}</Tag>
+                ) : isAxiom ? (
+                    <Tag color="gold" className="mr-0">{REF_TYPE_LABEL[source.ref_type] ?? source.ref_type}</Tag>
                 ) : (
                     <Tag color="geekblue" className="mr-0">{REF_TYPE_LABEL[source.ref_type] ?? source.ref_type}</Tag>
                 )}

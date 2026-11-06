@@ -16,7 +16,9 @@ from sqlalchemy.orm import Session
 
 # 消解阈值（README §4.3 全局常量）
 AUTO_MERGE_THRESHOLD = 0.85   # 相似度 >= 0.85 自动合并
-MANUAL_REVIEW_THRESHOLD = 0.60  # 0.60–0.85 生成 review_items(entity_merge)
+MANUAL_REVIEW_THRESHOLD = 0.75  # 0.75–0.85 生成 review_items(entity_merge)；
+# （原 0.60：bge-m3 对共享后缀的无关短名（"XX系统"）实测也能到 0.7+，0.6 阈值把
+#  备份管理系统/服务台系统这类完全不同的实体聚成"疑似同一"噪声簇——项目 245 实测）
 
 # 拼音层候选判定（04 §5：jaro_winkler≥0.9 或 leva≤2）
 PINYIN_JW_THRESHOLD = 0.9
@@ -41,14 +43,18 @@ class MergeResult(BaseModel):
     provenance_preserved: bool = True
 
 
-def normalize_label(label: str) -> str:
+def normalize_label(label: str | None) -> str:
     """第 1 层·确定性归一（04 §5）：去空白 → 全角转半角 → NFKC → 小写（仅 ASCII）。
 
     ★ isascii 守卫：中文经 NFKC 后保持原样，禁止 isalnum() 类判定（修复缺陷 #10）。
-    纯函数，M0 可测试。
+    纯函数，M0 可测试。None 入参返回 ""（LLM 抽取的关系 domain/range 可为 null，
+    2026-11-05 实测 248 崩溃根因：缝合阶段 normalize_label(None) 上抛炸掉整个
+    schema 阶段——在根上兜住，保护全部调用点）。
     """
     import unicodedata
 
+    if not isinstance(label, str):
+        return ""
     out = []
     for ch in label.strip():
         if ch == "　":  # 全角空格
@@ -149,7 +155,10 @@ def _as_entity(e: Any) -> dict:
 
 
 def _embed_text(e: dict) -> str:
-    return f"{e['label']}｜{e['class_label']}｜{' '.join(f'{k}:{v}' for k, v in list(e['props'].items())[:8])}"
+    # 只嵌 label + props，不嵌 class_label：消解只在同类实体间比较，类名是常量，
+    # 拼进去只会把所有同类对的基线推高（项目 245 实测：裸人名 0.25-0.36 → 带类名 0.69-0.73，
+    # 无关人名/系统名被推过复核阈值聚成「疑似同一实体」）
+    return f"{e['label']}｜{' '.join(f'{k}:{v}' for k, v in list((e.get('props') or {}).items())[:8])}"
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -299,7 +308,11 @@ def detect_duplicates(entities: list, blocking: str = "pinyin",
             canonical_id=ents[root]["id"],
             similarity=round(best_sim, 4),
             layer=best_layer,
-            needs_review=(best_layer != "normalized" and best_sim < auto_threshold),
+            # 拼音层证据弱（长名共享前/后缀即可过 JW/leva 阈值：2026-11-03 项目 238 实测
+        # 「零售管理域/财务管理域/风险管理域」等 60 个不同实体被误并）——一律转人工，
+        # 自动合并只认 L1 归一化同名与 L3 向量 ≥auto 两条硬证据
+        needs_review=(best_layer != "normalized" and best_sim < auto_threshold)
+        or best_layer == "pinyin",
         )
         clusters.append(cluster)
     clusters.sort(key=lambda c: (-c.similarity, c.canonical_label))

@@ -23,7 +23,7 @@ from app.adapters.resolution import normalize_label
 # 单次 LLM 调用硬上限：本地小模型慢推理/云端拥堵时防无限等待；
 # 也是"取消"的最坏生效延迟——进行中的调用最多再跑这么多秒
 LLM_CALL_TIMEOUT_SECONDS = 180
-LLM_CACHE_TTL = 8 * 3600
+LLM_CACHE_TTL = 7 * 24 * 3600
 
 # ── 结构化输出约束（与 SchemaExtractionResult 对齐；字段化 prompt 的产物契约）──
 SCHEMA_PROMPT_JSON_SCHEMA = {
@@ -150,6 +150,8 @@ class SchemaExtractionResult(BaseModel):
     cache_hits: int = 0
     stitched_relations: int = 0   # 跨切片关系缝合补上的关系数
     strict_filtered: dict = Field(default_factory=dict)  # 严格白名单过滤计数 {classes, relations, properties}
+    normalized_concepts: int = 0  # 语义归一化并入别名的类数（相似概念聚成概念，确定性零 LLM）
+    table_inferred_relations: int = 0  # 边清单型表格推断出的关系数（确定性零 LLM）
 
 
 # ── 缺陷 #9：LLM 输出缓存（model, prompt_hash）→ Redis 8h ──
@@ -295,7 +297,8 @@ def _validate_schema_payload(payload: Any) -> tuple[Optional[dict], str]:
 
 
 def _user_prompt(chunk_text: str, known_classes: list[str], error_feedback: str = "",
-                 chunk_no: int = 0, guidance: str = "", strict: bool = False) -> str:
+                 chunk_no: int = 0, guidance: str = "", strict: bool = False,
+                 table_header: str = "") -> str:
     """字段化 prompt（修复缺陷 #2）：结构化字段传入，绝不塞原始 dict。
 
     strict=True（上传配置模板的严格白名单模式）时引导头改为强约束措辞：
@@ -313,30 +316,43 @@ def _user_prompt(chunk_text: str, known_classes: list[str], error_feedback: str 
     if known_classes:
         parts.append("【已发现类清单】（沿用这些命名，不要造同义新类）\n"
                      + "\n".join(f"- {c}" for c in known_classes))
+    if table_header:
+        parts.append(
+            "【表格切片上下文】本切片是 markdown 表格的一部分，行可能不带表头。"
+            "表头（列名）如下：\n" + table_header +
+            "\n判读规则：列名是实体的【属性】，数据行是实体的【实例取值】——"
+            "不要把列名或取值当作类；类名从表头与业务语义归纳（一行记录通常对应一个主体实例）。")
     parts.append(f"【文档切片 #{chunk_no}】\n{chunk_text}")
     if error_feedback:
         parts.append(f"【上次输出错误，必须修正】\n{error_feedback}")
     return "\n\n".join(parts)
 
 
-def _chunk_iter(chunks: list) -> list[tuple[int, str, str]]:
-    """兼容 str / dict{text,index} / 带 text 属性对象三种切片形态，返回 (idx, text, doc)。"""
+def _chunk_iter(chunks: list) -> list[tuple[int, str, str, str]]:
+    """兼容 str / dict{text,index} / 带 text 属性对象三种切片形态。
+
+    返回 (idx, text, doc, table_header)：table_header 来自切片 meta
+    （chunking 表格感知切片），供抽取 prompt 注入列语义——表格按行界切片
+    后表头不随行走，丢失列名的切片会让模型从取值里瞎归纳（过度抽取根因）。
+    """
     out = []
     for i, c in enumerate(chunks or []):
         if isinstance(c, str):
-            text = c
-            idx = i
-            doc = ""
+            text, idx, doc = c, i, ""
+            meta = {}
         elif isinstance(c, dict):
             text = str(c.get("text") or "")
             idx = int(c.get("index", c.get("chunk_index", i)) or i)
             doc = str(c.get("doc") or "")
+            meta = c.get("meta") if isinstance(c.get("meta"), dict) else {}
         else:
             text = str(getattr(c, "text", "") or "")
             idx = int(getattr(c, "chunk_index", i) or i)
             doc = str(getattr(c, "doc", "") or "")
+            meta = getattr(c, "meta", None)
+            meta = meta if isinstance(meta, dict) else {}
         if text.strip():
-            out.append((idx, text, doc))
+            out.append((idx, text, doc, str(meta.get("table_header") or "")))
     return out
 
 
@@ -417,7 +433,9 @@ def _stitch_class_list(classes: list[dict]) -> str:
         d = (c.get("definition") or "").strip()
         if len(d) > _STITCH_CLASS_DEF_CHARS:
             d = d[:_STITCH_CLASS_DEF_CHARS] + "…"
-        lines.append(f"- {c.get('label')}" + (f"：{d}" if d else ""))
+        aliases = "、".join(str(a) for a in (c.get("aliases") or []))
+        alias_note = f"（别名：{aliases}）" if aliases else ""
+        lines.append(f"- {c.get('label')}{alias_note}" + (f"：{d}" if d else ""))
     return "\n".join(lines)
 
 
@@ -428,7 +446,7 @@ def _stitch_doc_text(prepared: list[tuple[int, str]]) -> str:
     per = max(300, _STITCH_MAX_CHARS_TOTAL // len(prepared))
     parts = []
     used = 0
-    for idx, text, _doc in prepared:
+    for idx, text, _doc, _h in prepared:
         if used >= _STITCH_MAX_CHARS_TOTAL:
             break
         piece = text.strip()[:per]
@@ -573,10 +591,10 @@ def extract_schema(chunks: list, base_uri: str,
     if wl is not None and guidance_text:
         guidance_text = STRICT_GUIDANCE_HEADER + "\n" + guidance_text
 
-    def one(idx: int, text: str):
+    def one(idx: int, text: str, table_header: str = ""):
         key = _cache_key(model_name, SYSTEM_PROMPT,
                          _user_prompt(text, known, chunk_no=idx, guidance=guidance_text,
-                                      strict=wl is not None))
+                                      strict=wl is not None, table_header=table_header))
         if use_cache:
             cached = _cache_get(key)
             if cached is not None:
@@ -586,8 +604,9 @@ def extract_schema(chunks: list, base_uri: str,
         for _attempt in range(2):  # 首次 + 带错误反馈重试 1 次
             try:
                 raw = llm_call(SYSTEM_PROMPT,
-                               _user_prompt(text, known, feedback, chunk_no=idx, guidance=guidance_text,
-                                            strict=wl is not None),
+                               _user_prompt(text, known, feedback, chunk_no=idx,
+                                            guidance=guidance_text, strict=wl is not None,
+                                            table_header=table_header),
                                SCHEMA_PROMPT_JSON_SCHEMA)
             except Exception as e:  # noqa: BLE001  LLM 连接/超时：单切片失败不入全局
                 last_err = f"LLM调用异常: {e}"
@@ -608,51 +627,73 @@ def extract_schema(chunks: list, base_uri: str,
     cache_hits = 0
 
     with ThreadPoolExecutor(max_workers=max(1, parallelism)) as pool:
-        futures = {pool.submit(one, idx, text): idx for idx, text, _doc in prepared}
-        doc_by_idx = {idx: doc for idx, _text, doc in prepared}
+        futures = {pool.submit(one, idx, text, hdr): idx
+                   for idx, text, _doc, hdr in prepared}
+        doc_by_idx = {idx: doc for idx, _text, doc, _h in prepared}
+        # ★ 确定性关键①：先按切片序收齐全部结果，再按【固定切片顺序】归并——
+        #   不用 as_completed 的完成序（线程调度随机）：完成序会打乱 merged 插入序
+        #   → 类清单顺序变 → 缝合 prompt 变 → 缓存 miss + 缝合结果漂移
+        #   （2026-11-05 确定性实测：缓存 8/8 命中仍出现 27→29 关系漂移的根因）
+        results_by_idx: dict[int, tuple] = {}
         for fut in as_completed(futures):
             if cancel_cb is not None:
                 cancel_cb()  # 取消时抛异常，终结整个抽取
             done += 1
             idx, payload, hit, err = fut.result()
+            results_by_idx[idx] = (idx, payload, hit, err)
             cache_hits += 1 if hit else 0
             if payload is None:
                 result.warnings.append(f"chunk #{idx} 骨架抽取失败（已重试）: {err}")
-            else:
-                for c in payload.get("classes") or []:
-                    # 溯源来源：类首次出现的切片/文档（graph_rows 落 ProvenanceRecord 用）
-                    c["_source_chunk_index"] = idx
-                    c["_source_doc"] = doc_by_idx.get(idx, "")
-                    _merge_class(merged, c)
-                for op in payload.get("object_properties") or []:
-                    label = str(op.get("label") or "").strip()
-                    if label:
-                        d = normalize_label(str(op.get("domain") or "").strip())
-                        g = normalize_label(str(op.get("range") or "").strip())
-                        # 键含 domain/range：同名关系在不同类对之间不互相吞并
-                        obj_props.setdefault(f"{normalize_label(label)}|{d}|{g}", {
-                            "label": label,
-                            "domain": str(op.get("domain") or "").strip(),
-                            "range": str(op.get("range") or "").strip(),
-                            "confidence": _coerce_confidence(op.get("confidence")),
-                        })
-                for dp in payload.get("datatype_properties") or []:
-                    name = str(dp.get("name") or "").strip()
-                    if name:
-                        dt_props.setdefault(normalize_label(name), {
-                            "name": name,
-                            "data_type": str(dp.get("data_type") or "string"),
-                        })
             if progress_cb is not None:
                 progress_cb(done, len(prepared), cache_hits)
 
-    classes = list(merged.values())
+        for idx in sorted(results_by_idx):
+            idx, payload, hit, err = results_by_idx[idx]
+            if payload is None:
+                continue
+            for c in payload.get("classes") or []:
+                # 溯源来源：类首次出现的切片/文档（graph_rows 落 ProvenanceRecord 用）
+                c["_source_chunk_index"] = idx
+                c["_source_doc"] = doc_by_idx.get(idx, "")
+                _merge_class(merged, c)
+            for op in payload.get("object_properties") or []:
+                label = str(op.get("label") or "").strip()
+                if label:
+                    d = normalize_label(str(op.get("domain") or "").strip())
+                    g = normalize_label(str(op.get("range") or "").strip())
+                    # 键含 domain/range：同名关系在不同类对之间不互相吞并
+                    if d and g and d == g:
+                        continue  # 自环（两端同类）：抽取噪声，丢弃
+                    obj_props.setdefault(f"{normalize_label(label)}|{d}|{g}", {
+                        "label": label,
+                        "domain": str(op.get("domain") or "").strip(),
+                        "range": str(op.get("range") or "").strip(),
+                        "confidence": _coerce_confidence(op.get("confidence")),
+                    })
+            for dp in payload.get("datatype_properties") or []:
+                name = str(dp.get("name") or "").strip()
+                if name:
+                    dt_props.setdefault(normalize_label(name), {
+                        "name": name,
+                        "data_type": str(dp.get("data_type") or "string"),
+                    })
+
+    # ★ 确定性关键②：类清单按（出现切片数降序, 规范名）排序——下游 prompt
+    #   （缝合/实例抽取/公理扫描）与产物顺序稳定，LLM 缓存键才可复现
+    classes = sorted(merged.values(),
+                     key=lambda v: (-v.get("_count", 1), normalize_label(v["label"])))
 
     # ── 严格白名单硬过滤：prompt 约束拦不住的发散产出在这里兜底丢弃（缝合前过滤，
     #    缝合的类清单/关系谓词同样受限）──
     if wl is not None:
         result.strict_filtered = apply_strict_filter(merged, obj_props, dt_props, wl)
-        classes = list(merged.values())
+
+    # ── 语义归一化：相似概念聚成概念（别名降级），保证骨架不产同义类 ──
+    result.normalized_concepts = _semantic_normalize(merged, obj_props)
+    # ── 边清单型表格推断关系（列取值互指 → 列即关系），补关系清单空白 ──
+    result.table_inferred_relations = _infer_table_edge_relations(prepared, obj_props)
+    classes = sorted(merged.values(),
+                     key=lambda v: (-v.get("_count", 1), normalize_label(v["label"])))
 
     # ── 跨切片关系缝合：切片独立抽取只连得到同片共现的关系，这里归并后统一补一轮 ──
     # 依据 = 文档内容摘录（evidence 逐字摘录），只连类清单里已有的类，不造新类。
@@ -660,6 +701,9 @@ def extract_schema(chunks: list, base_uri: str,
     if len(classes) >= 2 and len(prepared) >= 2:
         class_list_text = _stitch_class_list(classes)
         norm2label = {k: v["label"] for k, v in merged.items()}
+        for _v in merged.values():  # 别名也解析到规范名（缝合/归并后谓词端点不丢）
+            for _a in _v.get("aliases") or []:
+                norm2label.setdefault(normalize_label(_a), _v["label"])
         existing_rk = {(normalize_label(v["label"]), normalize_label(v["domain"]),
                         normalize_label(v["range"])) for v in obj_props.values()}
         doc_text = _stitch_doc_text(prepared)
@@ -720,10 +764,200 @@ def extract_schema(chunks: list, base_uri: str,
                 classes.append(merged[normalize_label(ref)])
 
     result.classes = classes
-    result.object_properties = list(obj_props.values())
-    result.datatype_properties = list(dt_props.values())
+    # 终产物同样规范化排序（写进 schema/graph_data 的顺序稳定 → QA 检索/导出/比对全链确定）
+    result.object_properties = sorted(obj_props.values(),
+                                      key=lambda v: normalize_label(v["label"]))
+    result.datatype_properties = sorted(dt_props.values(),
+                                        key=lambda v: normalize_label(v["name"]))
     result.cache_hits = cache_hits
     return result
+
+
+# ── 语义归一化：相似概念聚成一个类（semantica class_inferrer 思路，确定性零 LLM）──
+# 背景：并行切片抽取对同一概念常给出略异名称（"日志中心"/"日志中心系统"），
+# 仅按 normalize_label 精确归并会留下同义类，骨架重复且后续实例分类漂移。
+# 防误并口径（消解事故教训）：短名（<4 字）不参与；仅「高相似（≥0.84）」或
+# 「泛化尾词包含」（短名 + 服务/系统/平台/中心/模块/应用/类）两种情形；
+# 谓词归并阈值更严（≥0.90，不含包含规则）。
+
+_GENERIC_TAILS = ("服务", "系统", "平台", "中心", "模块", "应用", "类")
+_CLASS_SIM_THRESHOLD = 0.87
+_PRED_SIM_THRESHOLD = 0.90
+
+
+def _same_concept(a: str, b: str) -> bool:
+    """类名级同义判定（纯函数）。"""
+    import difflib
+
+    if min(len(a), len(b)) < 4:
+        return False
+    if difflib.SequenceMatcher(None, a, b).ratio() >= _CLASS_SIM_THRESHOLD:
+        return True
+    for short, long_ in ((a, b), (b, a)):
+        if len(short) >= 4 and long_.startswith(short) and long_[len(short):] in _GENERIC_TAILS:
+            return True
+    return False
+
+
+def _same_predicate(a: str, b: str) -> bool:
+    import difflib
+
+    if min(len(a), len(b)) < 2:
+        return False
+    return difflib.SequenceMatcher(None, a, b).ratio() >= _PRED_SIM_THRESHOLD
+
+
+def _semantic_normalize(merged: dict[str, dict], obj_props: dict[str, dict]) -> int:
+    """相似概念聚成一类：簇内取出现切片数最多者为规范名，其余降别名
+    （properties/definition 并入）；谓词 domain/range 端点重映射后重建键去重。
+    返回并入别名的类数。确定性：排序后按序比较，同输入同结果。"""
+    keys = sorted(merged.keys())  # 排序保证聚类顺序确定
+    parent = {k: k for k in keys}
+
+    def find(x: str) -> str:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for i, a in enumerate(keys):
+        la = merged[a]["label"]
+        for b in keys[i + 1:]:
+            if _same_concept(la, merged[b]["label"]):
+                ra, rb = find(a), find(b)
+                if ra != rb:
+                    parent[max(ra, rb)] = min(ra, rb)
+    clusters: dict[str, list[str]] = {}
+    for k in keys:
+        clusters.setdefault(find(k), []).append(k)
+
+    merged_n = 0
+    for members in clusters.values():
+        if len(members) < 2:
+            continue
+        # 规范名：出现切片数多者优先（文档中更核心），其次更长（更具体）
+        members.sort(key=lambda k: (-(merged[k].get("_count") or 0),
+                                    -len(merged[k]["label"]), k))
+        canon = members[0]
+        for k in members[1:]:
+            src = merged.pop(k)
+            tgt = merged[canon]
+            for alias in [src["label"]] + list(src.get("aliases") or []):
+                if alias and alias != tgt["label"] and alias not in tgt["aliases"]:
+                    tgt["aliases"].append(alias)
+            for prop in src.get("properties") or []:
+                nm = normalize_label(prop.get("name") or "")
+                if nm and nm not in {normalize_label(q.get("name") or "")
+                                     for q in tgt["properties"]}:
+                    tgt["properties"].append(prop)
+            if not tgt.get("definition") and src.get("definition"):
+                tgt["definition"] = src["definition"]
+            merged_n += 1
+
+    if merged_n:
+        # 别名 → 规范名 映射，谓词端点重映射 + 键重建去重
+        alias2canon: dict[str, str] = {}
+        for c in merged.values():
+            for a in c.get("aliases") or []:
+                alias2canon.setdefault(normalize_label(a), c["label"])
+        rebuilt: dict[str, dict] = {}
+        for op in obj_props.values():
+            d = alias2canon.get(normalize_label(op.get("domain") or ""), op.get("domain") or "")
+            g = alias2canon.get(normalize_label(op.get("range") or ""), op.get("range") or "")
+            op["domain"], op["range"] = d, g
+            if normalize_label(d) == normalize_label(g):
+                continue  # 端点归并后自环（原两端本是同义类）→ 丢弃
+            rk = (f"{normalize_label(op['label'])}|{normalize_label(d)}|{normalize_label(g)}")
+            rebuilt.setdefault(rk, op)
+        obj_props.clear()
+        obj_props.update(rebuilt)
+    return merged_n
+
+
+def _infer_table_edge_relations(prepared: list, obj_props: dict[str, dict]) -> int:
+    """边清单型表格 → 关系推断（semantica 数据驱动思路，确定性零 LLM）。
+
+    判据：某列的取值 ≥50% 出现在其他列的取值集合里（值本身也是实体）→
+    该列是一条关系，列名（剥掉「系统/名称」尾词）作谓词，如
+    「系统名称|下游系统」→ 下游（系统→系统）。没有这一步，清单型文档
+    抽不出关系声明，实例侧"禁止发明关系"守卫会把上下游链路整体挡掉。
+    """
+    import re as _re
+
+    def _cells(text: str) -> tuple[list[str], list[list[str]]]:
+        header: list[str] | None = None
+        rows: list[list[str]] = []
+        for line in text.split("\n"):
+            s = line.strip()
+            if not (s.startswith("|") and s.endswith("|")):
+                continue
+            cells = [c.strip() for c in s.strip("|").split("|")]
+            if not cells or all(not c for c in cells):
+                continue
+            if _re.fullmatch(r"[\-: ]+", "".join(cells)):
+                continue  # 分隔行
+            if header is None:
+                header = cells
+            else:
+                rows.append(cells)
+        return (header or []), rows
+
+    col_values: dict[str, set[str]] = {}   # 列名 → 取值集合（跨表块聚合）
+    col_order: list[str] = []
+    subject_cols: set[str] = set()         # 每表首列 = 行主体列，不作关系候选
+    for _idx, text, _doc, _hdr in prepared:
+        header, rows = _cells(text)
+        if not header or len(header) < 2 or not rows:
+            continue
+        if str(header[0]).strip():
+            subject_cols.add(str(header[0]).strip())
+        for ci, name in enumerate(header):
+            name = str(name).strip()
+            if not name or name in col_values:
+                continue
+            col_order.append(name)
+            col_values[name] = set()
+        for row in rows:
+            for ci, name in enumerate(header):
+                if ci >= len(row):
+                    continue
+                name = str(header[ci]).strip()
+                if not name:
+                    continue
+                for v in _re.split(r"[;；,，、/]", str(row[ci] or "")):
+                    v = v.strip()
+                    if len(v) >= 2:
+                        col_values[name].add(v)
+
+    added = 0
+    for name in col_order:
+        if name in subject_cols:
+            continue  # 行主体列不是关系
+        values = col_values.get(name) or set()
+        if len(values) < 2:
+            continue
+        others: set[str] = set()
+        for other_name, vals in col_values.items():
+            if other_name != name:
+                others |= vals
+        if not others:
+            continue
+        hit = sum(1 for v in values if v in others)
+        if hit / len(values) < 0.5:
+            continue  # 取值自成一体（属性列），不是实体引用列
+        label = str(name)
+        for suffix in ("系统", "名称"):
+            if len(label) > 2 and label.endswith(suffix):
+                label = label[:-len(suffix)]
+                break
+        key = f"{normalize_label(label)}||"
+        if key not in obj_props and normalize_label(label) not in {
+                normalize_label(str(o.get("label") or "")) for o in obj_props.values()}:
+            obj_props[key] = {"label": label, "domain": None, "range": None,
+                              "confidence": 0.8,
+                              "evidence": f"表格列「{name}」取值与其他列互指（边清单型）"}
+            added += 1
+    return added
 
 
 def _merge_class(merged: dict[str, dict], c: dict) -> None:
@@ -743,6 +977,7 @@ def _merge_class(merged: dict[str, dict], c: dict) -> None:
                           "description": str((p or {}).get("description") or "")})
     if key in merged:
         tgt = merged[key]
+        tgt["_count"] = tgt.get("_count", 1) + 1  # 出现切片数（语义归一化的规范名选取依据）
         for p in props:
             if normalize_label(p["name"]) not in {normalize_label(q["name"]) for q in tgt["properties"]}:
                 tgt["properties"].append(p)
@@ -755,6 +990,7 @@ def _merge_class(merged: dict[str, dict], c: dict) -> None:
         "properties": props,
         "parent": c.get("parent") or None,
         "aliases": [],
+        "_count": 1,
         # 首现切片的溯源来源（保留先到者）
         "_source_chunk_index": c.get("_source_chunk_index"),
         "_source_doc": str(c.get("_source_doc") or ""),
@@ -892,7 +1128,7 @@ def _validate_instance_payload(payload: Any) -> tuple[Optional[dict], str]:
 
 def _instance_user_prompt(chunk_text: str, tbox_summary: dict, known_entities: list[str],
                           prev_tail: str = "", error_feedback: str = "",
-                          chunk_no: int = 0) -> str:
+                          chunk_no: int = 0, table_header: str = "") -> str:
     """字段化 TBox 摘要 prompt（04 §4.1：类/属性/关系清单 + 前块上下文）。"""
     parts = []
     classes = tbox_summary.get("classes") or {}
@@ -931,6 +1167,12 @@ def _instance_user_prompt(chunk_text: str, tbox_summary: dict, known_entities: l
                      + "、".join(known_entities[-80:]))
     if prev_tail:
         parts.append(f"【前块结尾上下文】\n{prev_tail[-200:]}")
+    if table_header:
+        parts.append(
+            "【表格切片上下文】本切片是 markdown 表格的一部分，行可能不带表头。"
+            "表头（列名）如下：\n" + table_header +
+            "\n判读规则：列名是实体的【属性】，数据行是实体的【实例取值】——"
+            "不要把列名或取值当作类；类名从表头与业务语义归纳（一行记录通常对应一个主体实例）。")
     parts.append(f"【文档切片 #{chunk_no}】\n{chunk_text}")
     if error_feedback:
         parts.append(f"【上次输出错误，必须修正】\n{error_feedback}")
@@ -986,11 +1228,13 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
     else:
         model_name = str((model_override or {}).get("model_name") or "injected")
     known = list(known_entities or [])
-    chunks_by_idx = {idx: text for idx, text, _doc in prepared}
+    chunks_by_idx = {idx: text for idx, text, _doc, _h in prepared}
+    hdr_by_idx = {idx: hdr for idx, _text, _doc, hdr in prepared}
 
     def one(idx: int, text: str):
         prev_tail = chunks_by_idx.get(idx - 1, "") if idx != prepared[0][0] else ""
-        user = _instance_user_prompt(text, tbox_summary, known, prev_tail, chunk_no=idx)
+        user = _instance_user_prompt(text, tbox_summary, known, prev_tail, chunk_no=idx,
+                                     table_header=hdr_by_idx.get(idx, ""))
         key = _cache_key(model_name, INSTANCE_SYSTEM_PROMPT, user)
         if use_cache:
             cached = _cache_get(key)
@@ -1004,7 +1248,8 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
             try:
                 raw = llm_call(INSTANCE_SYSTEM_PROMPT,
                                _instance_user_prompt(text, tbox_summary, known, prev_tail,
-                                                     feedback, chunk_no=idx),
+                                                     feedback, chunk_no=idx,
+                                                     table_header=hdr_by_idx.get(idx, "")),
                                INSTANCE_PROMPT_JSON_SCHEMA)
             except Exception as e:  # noqa: BLE001  LLM 连接/超时：单切片失败不入全局
                 last_err = f"LLM调用异常: {e}"
@@ -1023,7 +1268,7 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
     done = 0
     cache_hits = 0
     with ThreadPoolExecutor(max_workers=max(1, parallelism)) as pool:
-        futures = {pool.submit(one, idx, text): idx for idx, text, _doc in prepared}
+        futures = {pool.submit(one, idx, text): idx for idx, text, _doc, _h in prepared}
         for fut in as_completed(futures):
             if cancel_cb is not None:
                 cancel_cb()

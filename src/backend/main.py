@@ -23,6 +23,7 @@ from app.api import (
     modules,
     ontology,
     ontology_imports,
+    pipeline,
     publications,
     qa,
     reasoning,
@@ -129,6 +130,7 @@ app.include_router(roles.router)  # R8：角色配置（模块授权预设，adm
 app.include_router(model_configs.router)  # M2：模型配置
 app.include_router(documents.router)  # M3-1：文档上传/秒传/预签名（03 §7）
 app.include_router(extraction.router)  # M3-4/5：Schema/Instance 抽取 + 任务进度/SSE/取消（03 §8）
+app.include_router(pipeline.router)  # 一键构建管线（新手简化：上传→解析→抽取→自动裁决一条龙）
 app.include_router(resolution.router)  # M3-5：实体消解与冲突（03 §9）
 app.include_router(reasoning.router)  # 推理期 R1/R3：蕴含推理（owlrl）+ 规则引擎
 app.include_router(reviews.router)  # M3-6：审核队列与裁决（03 §11，状态机 pending→claimed→终态）
