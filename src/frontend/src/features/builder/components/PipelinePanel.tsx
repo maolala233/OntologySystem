@@ -50,8 +50,15 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
 
     const refresh = useCallback(async () => {
         try {
-            const lastTask = localStorage.getItem(lastTaskKey(projectId)) || undefined;
-            const s = await pipelineApi.status(projectId, lastTask);
+            // 先查项目当前任务（读运行锁）：非 idle 直接采用——否则 localStorage 的
+            // lastTask 会把面板钉死在上一次的终态，API 侧/定时触发的重建永远刷不出来
+            // （2026-11-06 项目 258 实测：面板一直显示上一轮 failed）。idle 时才用
+            // lastTask 兜底展示 24h 内历史（锁过期后仍可见）。
+            let s = await pipelineApi.status(projectId);
+            if (s.status === 'idle') {
+                const lastTask = localStorage.getItem(lastTaskKey(projectId)) || undefined;
+                if (lastTask) s = await pipelineApi.status(projectId, lastTask);
+            }
             setStatus(s);
             if (s.task_id && s.status !== 'idle') {
                 localStorage.setItem(lastTaskKey(projectId), s.task_id);

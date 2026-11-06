@@ -75,10 +75,15 @@ def _build_llm(db: Session, project_id: int,
             raise APIError("所选问答模型不可用", code="QA_MODEL_UNAVAILABLE", http_status=400)
         from app.core.security import decrypt_str
         api_key = decrypt_str(bytes(row.api_key_encrypted)) if row.api_key_encrypted else ""
-        return LLMClient(api_key=api_key, base_url=row.base_url, model=row.model_name)
+        # 行内 params 的 disable_think 接线到客户端（抽取行已实测：方舟必须用
+        # thinking 结构体方言关思考，否则长 prompt 稳撞 330s 硬闸/吐空壳响应）
+        params = row.params or {}
+        return LLMClient(api_key=api_key, base_url=row.base_url, model=row.model_name,
+                         think_mode="disabled" if params.get("disable_think") else None)
     cfg = build_legacy_llm_config(db, project_id)
     return LLMClient(api_key=cfg.get("api_key"), base_url=cfg.get("base_url"),
-                     model=cfg.get("model"))
+                     model=cfg.get("model"),
+                     think_mode="disabled" if cfg.get("disable_think") else None)
 
 
 def _sources_out(result: QAResult) -> list[dict]:

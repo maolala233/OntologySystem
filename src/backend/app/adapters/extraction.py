@@ -199,13 +199,22 @@ def _default_llm_call(model_override: Optional[dict],
                                     request_override=override, config_id=model_config_id)
     finally:
         db.close()
+    # disable_think 从抽取行 params 真正接线（原先只接到 VL 路径）：关思考直接砍掉
+    # 长思考延迟——缝合等长 prompt 调用不再顶穿 330s 硬闸（ce2f 等四连死根因）
     client = LLMClient(api_key=resolved.api_key, base_url=resolved.base_url,
-                       model=resolved.model_name)
+                       model=resolved.model_name,
+                       think_mode="disabled"
+                       if (resolved.params or {}).get("disable_think") else None)
+    # 远程服务提速/降载：单次调用超时与重试次数可由 extract 行 params 覆盖，
+    # 不配置时保持原行为（LLM_CALL_TIMEOUT_SECONDS / max_retries=2）；硬闸 =
+    # timeout+30s，总预算≈(timeout+30)×retries，注意别顶穿 celery 软超时。
+    llm_timeout = float((resolved.params or {}).get("llm_timeout") or LLM_CALL_TIMEOUT_SECONDS)
+    max_retries = int((resolved.params or {}).get("max_retries") or 2)
 
     def call(system_prompt: str, user_prompt: str, json_schema: Optional[dict]):
-        out = client.call_llm(system_prompt, user_prompt, max_retries=2,
+        out = client.call_llm(system_prompt, user_prompt, max_retries=max_retries,
                               stream=False, json_schema=json_schema,
-                              timeout=LLM_CALL_TIMEOUT_SECONDS)
+                              timeout=llm_timeout)
         if isinstance(out, dict) and isinstance(out.get("content"), str):
             # call_llm 返回 {"content": ...} 形态时解析内嵌 JSON
             return _loads_loose(out["content"])
@@ -602,6 +611,8 @@ def extract_schema(chunks: list, base_uri: str,
         feedback = ""
         last_err = "未知错误"
         for _attempt in range(2):  # 首次 + 带错误反馈重试 1 次
+            if cancel_cb is not None:
+                cancel_cb()  # 取消后不再发起新的调用（在途那次返回后立即中断）
             try:
                 raw = llm_call(SYSTEM_PROMPT,
                                _user_prompt(text, known, feedback, chunk_no=idx,
@@ -627,25 +638,33 @@ def extract_schema(chunks: list, base_uri: str,
     cache_hits = 0
 
     with ThreadPoolExecutor(max_workers=max(1, parallelism)) as pool:
-        futures = {pool.submit(one, idx, text, hdr): idx
-                   for idx, text, _doc, hdr in prepared}
         doc_by_idx = {idx: doc for idx, _text, doc, _h in prepared}
         # ★ 确定性关键①：先按切片序收齐全部结果，再按【固定切片顺序】归并——
         #   不用 as_completed 的完成序（线程调度随机）：完成序会打乱 merged 插入序
         #   → 类清单顺序变 → 缝合 prompt 变 → 缓存 miss + 缝合结果漂移
         #   （2026-11-05 确定性实测：缓存 8/8 命中仍出现 27→29 关系漂移的根因）
+        # 分批提交（每批 parallelism 个，批间取消检查）：一次性提交全部时，取消后
+        # 队列里排队的调用仍会继续跑——点停止还要等完整个队列（2026-11-06 实测）
         results_by_idx: dict[int, tuple] = {}
-        for fut in as_completed(futures):
+        remaining = list(prepared)
+        while remaining:
             if cancel_cb is not None:
-                cancel_cb()  # 取消时抛异常，终结整个抽取
-            done += 1
-            idx, payload, hit, err = fut.result()
-            results_by_idx[idx] = (idx, payload, hit, err)
-            cache_hits += 1 if hit else 0
-            if payload is None:
-                result.warnings.append(f"chunk #{idx} 骨架抽取失败（已重试）: {err}")
-            if progress_cb is not None:
-                progress_cb(done, len(prepared), cache_hits)
+                cancel_cb()  # 批间取消检查：不再提交新批次
+            batch = remaining[:max(1, parallelism)]
+            del remaining[:max(1, parallelism)]
+            futures = {pool.submit(one, idx, text, hdr): idx
+                       for idx, text, _doc, hdr in batch}
+            for fut in as_completed(futures):
+                if cancel_cb is not None:
+                    cancel_cb()  # 取消时抛异常，终结整个抽取
+                done += 1
+                idx, payload, hit, err = fut.result()
+                results_by_idx[idx] = (idx, payload, hit, err)
+                cache_hits += 1 if hit else 0
+                if payload is None:
+                    result.warnings.append(f"chunk #{idx} 骨架抽取失败（已重试）: {err}")
+                if progress_cb is not None:
+                    progress_cb(done, len(prepared), cache_hits)
 
         for idx in sorted(results_by_idx):
             idx, payload, hit, err = results_by_idx[idx]
@@ -720,6 +739,8 @@ def extract_schema(chunks: list, base_uri: str,
             if rels is None:
                 feedback = ""
                 for _attempt in range(2):  # 首次 + 带错误反馈重试 1 次
+                    if cancel_cb is not None:
+                        cancel_cb()  # 取消后不再发起新的缝合调用（在途那次返回后中断）
                     raw = llm_call(STITCH_SYSTEM_PROMPT,
                                    _stitch_user_prompt(class_list_text, seg, feedback),
                                    STITCH_JSON_SCHEMA)
@@ -1268,42 +1289,51 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
     done = 0
     cache_hits = 0
     with ThreadPoolExecutor(max_workers=max(1, parallelism)) as pool:
-        futures = {pool.submit(one, idx, text): idx for idx, text, _doc, _h in prepared}
-        for fut in as_completed(futures):
+        # 分批提交（每批 parallelism 个，批间取消检查）：一次性提交全部时取消后
+        # 队列排队的调用仍会跑——点停止还要等完整个队列（2026-11-06 实测）
+        remaining = list(prepared)
+        while remaining:
             if cancel_cb is not None:
                 cancel_cb()
-            done += 1
-            idx, payload, hit, err = fut.result()
-            cache_hits += 1 if hit else 0
-            if payload is None:
-                result.warnings.append(f"chunk #{idx} 实例抽取失败（已重试）: {err}")
-            else:
-                for e in payload.get("entities") or []:
-                    try:
-                        conf = float(e.get("confidence") or 0.0)
-                    except (TypeError, ValueError):
-                        conf = 0.0
-                    raw_entities.append(ExtractedEntity(
-                        label=str(e.get("label") or "").strip(),
-                        class_label=str(e.get("class_label") or "").strip(),
-                        props=e.get("props") or {},
-                        confidence=min(max(conf, 0.0), 1.0),
-                        evidence=str(e.get("evidence") or ""),
-                        chunk_index=idx))
-                for r in payload.get("relations") or []:
-                    try:
-                        conf = float(r.get("confidence") or 0.0)
-                    except (TypeError, ValueError):
-                        conf = 0.0
-                    raw_relations.append(ExtractedRelation(
-                        subject_label=str(r.get("subject_label") or "").strip(),
-                        predicate=str(r.get("predicate") or "").strip(),
-                        object_label=str(r.get("object_label") or "").strip(),
-                        confidence=min(max(conf, 0.0), 1.0),
-                        evidence=str(r.get("evidence") or ""),
-                        chunk_index=idx))
-            if progress_cb is not None:
-                progress_cb(done, len(prepared), cache_hits)
+            batch = remaining[:max(1, parallelism)]
+            del remaining[:max(1, parallelism)]
+            futures = {pool.submit(one, idx, text): idx
+                       for idx, text, _doc, _h in batch}
+            for fut in as_completed(futures):
+                if cancel_cb is not None:
+                    cancel_cb()
+                done += 1
+                idx, payload, hit, err = fut.result()
+                cache_hits += 1 if hit else 0
+                if payload is None:
+                    result.warnings.append(f"chunk #{idx} 实例抽取失败（已重试）: {err}")
+                else:
+                    for e in payload.get("entities") or []:
+                        try:
+                            conf = float(e.get("confidence") or 0.0)
+                        except (TypeError, ValueError):
+                            conf = 0.0
+                        raw_entities.append(ExtractedEntity(
+                            label=str(e.get("label") or "").strip(),
+                            class_label=str(e.get("class_label") or "").strip(),
+                            props=e.get("props") or {},
+                            confidence=min(max(conf, 0.0), 1.0),
+                            evidence=str(e.get("evidence") or ""),
+                            chunk_index=idx))
+                    for r in payload.get("relations") or []:
+                        try:
+                            conf = float(r.get("confidence") or 0.0)
+                        except (TypeError, ValueError):
+                            conf = 0.0
+                        raw_relations.append(ExtractedRelation(
+                            subject_label=str(r.get("subject_label") or "").strip(),
+                            predicate=str(r.get("predicate") or "").strip(),
+                            object_label=str(r.get("object_label") or "").strip(),
+                            confidence=min(max(conf, 0.0), 1.0),
+                            evidence=str(r.get("evidence") or ""),
+                            chunk_index=idx))
+                if progress_cb is not None:
+                    progress_cb(done, len(prepared), cache_hits)
 
     # O2-B10 指代消解 L0：闸门前按 chunk 合并代词/简称提及（失败静默，不影响主抽取）
     if coref_enabled and raw_entities:

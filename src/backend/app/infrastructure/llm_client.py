@@ -13,7 +13,8 @@ from app.infrastructure.task_manager import TaskCancelledError
 
 
 class LLMClient:
-    def __init__(self, api_key: str = None, base_url: str = None, model: str = None):
+    def __init__(self, api_key: str = None, base_url: str = None, model: str = None,
+                 think_mode: str = None):
         from app.core.config import settings as _settings
 
         self.api_key = api_key if api_key is not None else _settings.LLM_API_KEY
@@ -86,7 +87,9 @@ class LLMClient:
             logger.error(f"LLMClient 异步客户端创建失败：{e}")
             self.async_client = None
 
-        self.think_mode = _settings.LLM_THINK_MODE
+        # think_mode 可由调用方按模型行 params 覆盖（抽取路径读 disable_think），
+        # 不传则回退全局 LLM_THINK_MODE（auto=按模型名关键词自动判断）
+        self.think_mode = think_mode or _settings.LLM_THINK_MODE
         self._is_ollama = self._detect_ollama()
 
     def _detect_ollama(self) -> bool:
@@ -201,9 +204,13 @@ class LLMClient:
             "stop": ["</s>", "\n\n\n"]
         }
         if self._should_disable_think():
-            # 使用 chat_template_kwargs 兼容仓颉等平台（Qwen3.5/DeepSeek-V3.2）
+            # 按平台方言关思考：方舟用 thinking 结构体（chat_template_kwargs 是
+            # vLLM 方言，方舟会静默忽略→思考照开→长 prompt 缝合调用稳超 330s 硬闸）；
+            # ollama 用 reasoning_effort；其余平台用 chat_template_kwargs（Qwen3.5 等）
             if self._is_ollama:
                 api_kwargs["extra_body"] = {"reasoning_effort": "none"}
+            elif "volces.com" in (self.base_url or "").lower():
+                api_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
             else:
                 api_kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
 
@@ -271,7 +278,7 @@ class LLMClient:
             return box["r"]
         if "e" in box:
             raise box["e"]
-        raise TimeoutError(f"LLM 调用硬超时（{hard:.0f}s 无任何响应，弃车）")
+        raise TimeoutError(f"LLM 调用硬超时（{hard:.0f}s 无任何响应）")
 
     def call_llm(self, system_prompt: str, user_prompt: str, max_retries: int = 3, stream: bool = True,
                  timeout: Optional[float] = None, task_id: Optional[str] = None,

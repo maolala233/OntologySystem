@@ -80,6 +80,19 @@ def _task_index() -> dict:
     }
 
 
+def _extract_parallelism(db, project_id: int, model_config_id: Optional[int] = None) -> int:
+    """抽取并行度：extract 行 params.parallelism 可配置（远程服务慢时调小避免并发排队），
+    缺省 4。管线各 LLM 阶段共用（骨架/实例分批并发）。"""
+    try:
+        from app.adapters.provider import ModelPurpose, resolve_provider
+
+        resolved = resolve_provider(ModelPurpose.EXTRACT, project_id=project_id,
+                                    db=db, config_id=model_config_id)
+        return max(1, int((resolved.params or {}).get("parallelism") or 4))
+    except Exception:  # noqa: BLE001 —— 配置异常回落到默认并发
+        return 4
+
+
 def _run_stage_task(task, stage_key: str, stages: list[dict], task_id: str,
                     **kwargs) -> dict:
     """经 task.apply 就地执行子任务；失败转异常（子任务体已写 failed 进度）。"""
@@ -167,6 +180,32 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
 
     summary: dict[str, Any] = {}
     db = None
+    # 主进度键心跳（2026-11-06 项目 258 实测）：主键只在阶段边界更新，骨架缝合等
+    # 长阶段安静期可超 15 分钟——GET /pipeline/status 的「15 分钟无更新=worker 已死」
+    # 看门狗会误清 pipeline:running 锁 → 项目列表算成「草稿」+ 幂等锁失效可被二次
+    # 并发构建。60s 读改写一次主键刷新 updated_at；读到终态即自停（绝不覆盖
+    # cancel 端点已落的「已停止」）。
+    import threading as _threading
+
+    hb_stop = _threading.Event()
+
+    def _heartbeat() -> None:
+        while not hb_stop.wait(60):
+            try:
+                cur = get_task_progress(task_id)
+                if cur is None or cur.get("status") not in ("running", "queued"):
+                    return
+                set_task_progress(task_id, cur.get("stage") or "",
+                                  int(cur.get("percent") or 0),
+                                  cur.get("message") or "",
+                                  stats=cur.get("stats"),
+                                  queue=cur.get("queue") or "",
+                                  status=cur.get("status") or "running")
+            except Exception:  # noqa: BLE001 —— 心跳失败不影响管线本体
+                pass
+
+    _threading.Thread(target=_heartbeat, name=f"pipeline-hb-{task_id}",
+                      daemon=True).start()
     try:
         from app.infrastructure.database import Project, SessionLocal
 
@@ -323,7 +362,8 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 _check_stage_result(_run_stage_task(
                     tasks["schema"], "schema", stages, task_id,
                     project_id=project_id, document_ids=None,
-                    parallelism=4, guidance=guidance,
+                    parallelism=_extract_parallelism(db, project_id, model_config_id),
+                    guidance=guidance,
                     model_config_id=model_config_id, strict_config=None), "schema")
                 st["status"] = "done"
                 _prog("schema", "骨架抽取完成")
@@ -337,7 +377,8 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 tasks["instances"], "instances", stages, task_id,
                 project_id=project_id, document_ids=None,
                 strict_gate=True, promote_policy="review",
-                parallelism=4, model_config_id=model_config_id), "instances")
+                parallelism=_extract_parallelism(db, project_id, model_config_id),
+                model_config_id=model_config_id), "instances")
             st["status"] = "done"
             _prog("instances", "实例抽取完成")
 
@@ -464,6 +505,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             return {"status": "completed", "need_human": need_human,
                     "pending_by_priority": by_priority, "adjudication": adj}
         finally:
+            hb_stop.set()  # 停心跳：终态已落，别再刷新主键
             if db is not None:
                 db.close()
             release_pipeline_lock(project_id)  # celery 模式的锁清理（inline 在线程 finally 兜底）
@@ -477,6 +519,15 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                              stats={"project_id": project_id, "stages": stages})
         return {"status": "cancelled"}
     except Exception as e:  # noqa: BLE001
+        # 取消优先：子任务可能因 LLM 调用硬超时抛异常返回，但用户已点停止——
+        # 此时按取消收场（格子标 cancelled），不得以 failed 覆盖"已停止"终态
+        if is_cancelled(task_id):
+            for st in stages:
+                if st["status"] == "running":
+                    st["status"] = "cancelled"
+            finish_task_progress(task_id, "cancelled", "已停止（用户取消）",
+                                 stats={"project_id": project_id, "stages": stages})
+            return {"status": "cancelled"}
         for st in stages:
             if st["status"] == "running":
                 st["status"] = "failed"

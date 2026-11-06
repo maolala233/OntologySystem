@@ -11,8 +11,9 @@ from pydantic import BaseModel, Field
 # 中文优先的分隔符序列（recursive 策略；注意句号后无空格 —— 修复缺陷 #13）
 CHINESE_SEPARATORS = ["\n\n", "\n", "。", "！", "？", "；", ".", " "]
 
-# 平台默认切片参数（03 §7 可被请求覆盖）
-DEFAULT_CHUNK_SIZE = 2000
+# 平台默认切片参数（03 §7 可被请求覆盖；2026-11 远程抽取调优：2000→1200——
+# 单切片更小，远程 LLM 单次推理更快返回，超时命中率下降；代价是切片数增多）
+DEFAULT_CHUNK_SIZE = 1200
 DEFAULT_CHUNK_OVERLAP_RATIO = 0.15
 
 # 中文分句状态机的终结符与引号处理（04 §2.3 伪代码落地）

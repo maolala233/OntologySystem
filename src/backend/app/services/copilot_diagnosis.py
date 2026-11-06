@@ -94,7 +94,6 @@ def run_first_diagnosis(project_id: int, trigger: str = "schema_extract") -> int
     自开 DB 会话（在后台线程中执行）。
     """
     from app.infrastructure.database import SessionLocal
-    from app.services.ontology_copilot import build_llm
 
     db = SessionLocal()
     created = 0
@@ -103,7 +102,12 @@ def run_first_diagnosis(project_id: int, trigger: str = "schema_extract") -> int
         if proj is None:
             return 0
         try:
-            llm = build_llm(db, project_id, None)
+            # 与抽取同源：直接走 _build_llm 的 extract 默认行回落链（含行内
+            # disable_think/llm_timeout）——原先 pick 第一个 chat 行（glm-5 满血
+            # 思考模型），330s 硬闸必撞（2026-11-06 项目 258 实测）。诊断是抽取
+            # 链路自带的附属调用，跟着抽取配置走。
+            from app.api.qa import _build_llm
+            llm = _build_llm(db, project_id, None)
         except Exception as exc:  # noqa: BLE001 —— 无可用模型：跳过诊断
             logger.info(f"[copilot-diagnosis] 项目 {project_id} 无可用模型，跳过诊断：{exc}")
             return 0

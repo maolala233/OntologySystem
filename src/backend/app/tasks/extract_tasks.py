@@ -383,6 +383,12 @@ def run_schema_extraction(self, project_id: int,
         finish_task_progress(task_id, "cancelled", "用户取消", stats={"project_id": project_id})
         return {"status": "cancelled"}
     except Exception as e:  # noqa: BLE001
+        # 取消优先：LLM 调用刚超时/失败返回时可能已收到取消键——此时按取消收场，
+        # 不得再以 failed 覆盖 cancel 端点已写的"已停止"终态（2026-11-06 实测覆盖）
+        if is_cancelled(task_id):
+            finish_task_progress(task_id, "cancelled", "用户取消",
+                                 stats={"project_id": project_id})
+            return {"status": "cancelled"}
         finish_task_progress(task_id, "failed", str(e)[:300], stats={"project_id": project_id})
         raise
 
@@ -731,6 +737,12 @@ def run_instance_extraction(self, project_id: int,
         finish_task_progress(task_id, "cancelled", "用户取消", stats={"project_id": project_id})
         return {"status": "cancelled"}
     except Exception as e:  # noqa: BLE001
+        # 取消优先：LLM 调用刚超时/失败返回时可能已收到取消键——此时按取消收场，
+        # 不得再以 failed 覆盖 cancel 端点已写的"已停止"终态（2026-11-06 实测覆盖）
+        if is_cancelled(task_id):
+            finish_task_progress(task_id, "cancelled", "用户取消",
+                                 stats={"project_id": project_id})
+            return {"status": "cancelled"}
         finish_task_progress(task_id, "failed", str(e)[:300], stats={"project_id": project_id})
         raise
 
@@ -1175,6 +1187,12 @@ def run_resolution_task(self, project_id: int, scope: str = "all",
                              f"{stats['review_created']} 待审", stats=stats)
         return {"status": "completed", **stats}
     except Exception as e:  # noqa: BLE001
+        # 取消优先：LLM 调用刚超时/失败返回时可能已收到取消键——此时按取消收场，
+        # 不得再以 failed 覆盖 cancel 端点已写的"已停止"终态（2026-11-06 实测覆盖）
+        if is_cancelled(task_id):
+            finish_task_progress(task_id, "cancelled", "用户取消",
+                                 stats={"project_id": project_id})
+            return {"status": "cancelled"}
         finish_task_progress(task_id, "failed", str(e)[:300], stats={"project_id": project_id})
         raise
 
@@ -1197,6 +1215,12 @@ def run_conflict_detection_task(self, project_id: int,
                              f"{stats['review_created']} 新建待审", stats=stats)
         return {"status": "completed", **stats}
     except Exception as e:  # noqa: BLE001
+        # 取消优先：LLM 调用刚超时/失败返回时可能已收到取消键——此时按取消收场，
+        # 不得再以 failed 覆盖 cancel 端点已写的"已停止"终态（2026-11-06 实测覆盖）
+        if is_cancelled(task_id):
+            finish_task_progress(task_id, "cancelled", "用户取消",
+                                 stats={"project_id": project_id})
+            return {"status": "cancelled"}
         finish_task_progress(task_id, "failed", str(e)[:300], stats={"project_id": project_id})
         raise
 
@@ -1241,6 +1265,10 @@ def run_axiom_suggestion_task(self, project_id: int, channel: str = "all") -> di
                              stats=stats)
         return {"status": "completed", **stats}
     except Exception as e:  # noqa: BLE001
+        if is_cancelled(task_id):
+            finish_task_progress(task_id, "cancelled", "用户取消",
+                                 stats={"project_id": project_id})
+            return {"status": "cancelled"}
         finish_task_progress(task_id, "failed", str(e)[:300],
                              stats={"project_id": project_id})
         raise

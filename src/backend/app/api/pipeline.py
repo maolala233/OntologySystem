@@ -186,8 +186,16 @@ def cancel_pipeline_endpoint(
             celery_app.control.revoke(s["task_id"], terminate=True, signal="SIGTERM")
     # 进度键立即落"已停止"终态 + 清管线锁：前端下一次轮询立刻翻到停止态
     #（主按钮变「重头开始」），不等 worker 收尸
+    prog_stats = dict(prog.get("stats") or {})
+    stages = prog_stats.get("stages") or []
+    # 运行中的格子同步标 cancelled：前端 runningNow 的判定看格子状态，不标会
+    # 一直按"运行中"渲染（2026-11-06 项目 59 实测"点了停止看着还在跑"）
+    prog_stats["stages"] = [
+        {**s, "status": "cancelled"} if s.get("status") == "running" else s
+        for s in stages
+    ]
     finish_task_progress(tid, "cancelled", "已停止（用户取消）",
-                         stats=prog.get("stats"))
+                         stats=prog_stats)
     release_pipeline_lock(project_id)
     return {"task_id": tid, "cancelled": True}
 

@@ -571,6 +571,20 @@ if DB_URL.startswith("mysql"):
         max_overflow=10,
         pool_timeout=30,
     )
+
+    from sqlalchemy import event as _sa_event
+
+    @_sa_event.listens_for(engine, "connect")
+    def _widen_mysql_timeouts(dbapi_conn, _connection_record):
+        """会话级放宽读写超时：远程 MySQL 默认 net_read_timeout=30s，长事务
+        （写画布+行表双写等）执行稍慢即被服务端掐断，报 2013 Lost connection
+        （2026-11-06 d17 实测）。只影响本会话，不碰全局变量。"""
+        try:
+            cur = dbapi_conn.cursor()
+            cur.execute("SET SESSION net_read_timeout=600, net_write_timeout=600")
+            cur.close()
+        except Exception:  # noqa: BLE001 —— 老库/代理无权限时静默跳过
+            pass
 else:
     engine = create_engine(DB_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
