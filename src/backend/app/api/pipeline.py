@@ -168,7 +168,6 @@ async def pipeline_events(
     ticket: str = Query(...),
     last_task: str | None = Query(None),
     request: Request = None,
-    db: Session = Depends(get_db),
 ):
     """SSE 订阅管线进度：运行锁为唯一事实源，idle→running 的跃迁也推送。
 
@@ -180,6 +179,12 @@ async def pipeline_events(
     async 生成器 + 每秒 is_disconnected 检查（2026-11-08 事故）：客户端关页/
     断连后流必须退出，否则 uvicorn --reload 优雅关闭会被长连接拖住
     "Waiting for connections to close" 卡 9 分钟（旧 sync 生成器收不到取消）。
+
+    会话短作用域（2026-11-10）：db 只用于流前的 ticket/用户/角色校验，流内
+    只读 Redis。不走请求级 Depends(get_db)——生成器依赖的清理要等响应结束，
+    而本流终态不关+30min 上限+前端换票重连，等于每个开着的项目页永久钉死
+    一个池连接；30 连接池被若干标签页占满后所有接口排队 30s 超时（远程
+    QueuePool 事故根因）。
     """
     import asyncio
     import json as _json
@@ -187,6 +192,7 @@ async def pipeline_events(
     import redis as _redis
 
     from app.core.deps import require_project_role
+    from app.infrastructure.database import SessionLocal
     from app.services.env_config_service import redis_url
     from app.tasks.progress import get_task_progress
 
@@ -196,10 +202,11 @@ async def pipeline_events(
         raise APIError("SSE ticket 无效或已过期", code="TICKET_INVALID", http_status=401)
     client.delete(f"sse:ticket:{ticket}")  # 一次性
     payload = _json.loads(raw)
-    user = db.query(User).filter(User.id == payload.get("user_id")).first()
-    if user is None or not user.is_active:
-        raise APIError("SSE ticket 用户无效", code="TICKET_INVALID", http_status=401)
-    require_project_role(project_id, "viewer", user, db)
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.id == payload.get("user_id")).first()
+        if user is None or not user.is_active:
+            raise APIError("SSE ticket 用户无效", code="TICKET_INVALID", http_status=401)
+        require_project_role(project_id, "viewer", user, db)
 
     async def _stream():
         started = time.time()
@@ -268,9 +275,17 @@ def cancel_pipeline_endpoint(
 
     request_cancel(tid)
     # 传导：正在 running 的阶段子任务也写取消键——骨架/实例抽取按切片批次
-    # 检查各自的键，不传导则要等整个阶段跑完才停
+    # 检查各自的键，不传导则要等整个阶段跑完才停。
+    # 阶段子键按 _run_stage_task 的确定性规则 {主id}:{阶段key} 拼，不依赖快照
+    # 里的 task_id：那个快照可能停留在子任务入场前（task_id=null），照它遍历
+    # 会整段漏写（2026-11-10 项目 272 inline 实测"停止了还在跑"根因①）；
+    # parse 阶段的子键 {tid}:parse:{doc_id} 结构不同，仍从快照 task_id 读。
     for s in (prog.get("stats") or {}).get("stages") or []:
-        if s.get("status") == "running" and s.get("task_id"):
+        if s.get("status") != "running":
+            continue
+        if s.get("key") and s["key"] != "parse":
+            request_cancel(f"{tid}:{s['key']}")
+        if s.get("task_id"):
             request_cancel(s["task_id"])
     # 强制终结：terminate=False 靠任务在分块间隙自查取消键——但 LLM 调用挂住时
     # 永远走不到检查点（2026-11-05 实测"停止停不下来"）——terminate=True 直接

@@ -210,11 +210,14 @@ def parse_events(
     project_id: int,
     task_id: str = Query(...),
     ticket: str = Query(..., description="一次性 SSE ticket（GET /api/auth/sse-ticket 签发）"),
-    db: Session = Depends(get_db),
 ):
     """SSE：parse 队列进度（Redis 进度键 → text/event-stream，03 §7）。
 
     EventSource 无法携带 Authorization 头，鉴权靠 ticket（M1 auth.sse-ticket，60s 一次性）。
+
+    会话短作用域（2026-11-10）：db 只用于流前的 ticket/用户/模块校验，流内只读
+    Redis。不走请求级 Depends(get_db)——生成器依赖的清理要等响应结束，流挂多久
+    连接就被钉多久（每开一个文档页漏一个池连接，连接池被钉满后全站接口超时）。
     """
     import json as _json
     import time
@@ -223,7 +226,7 @@ def parse_events(
     from fastapi.responses import StreamingResponse
 
     from app.core.config import settings
-    from app.infrastructure.database import User
+    from app.infrastructure.database import SessionLocal, User
 
     from app.services.env_config_service import redis_url
     client = _redis.Redis.from_url(redis_url(), socket_connect_timeout=2)
@@ -232,17 +235,18 @@ def parse_events(
         raise APIError("SSE ticket 无效或已过期", code="TICKET_INVALID", http_status=401)
     client.delete(f"sse:ticket:{ticket}")  # 一次性
     payload = _json.loads(raw)
-    user = db.query(User).filter(User.id == payload.get("user_id")).first()
-    if user is None or not user.is_active:
-        raise APIError("SSE ticket 用户无效", code="TICKET_INVALID", http_status=401)
-    # ticket 已证明身份；这里补模块码校验（admin 直通）
-    if user.role != "admin":
-        from app.core.deps import _user_module_context
-        from app.core.permissions import resolve_user_modules
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.id == payload.get("user_id")).first()
+        if user is None or not user.is_active:
+            raise APIError("SSE ticket 用户无效", code="TICKET_INVALID", http_status=401)
+        # ticket 已证明身份；这里补模块码校验（admin 直通）
+        if user.role != "admin":
+            from app.core.deps import _user_module_context
+            from app.core.permissions import resolve_user_modules
 
-        grants, default_on, all_codes = _user_module_context(db, user)
-        if "documents" not in resolve_user_modules("user", grants, default_on, all_codes):
-            raise APIError("未开通模块: documents", code="MODULE_NOT_GRANTED", http_status=403)
+            grants, default_on, all_codes = _user_module_context(db, user)
+            if "documents" not in resolve_user_modules("user", grants, default_on, all_codes):
+                raise APIError("未开通模块: documents", code="MODULE_NOT_GRANTED", http_status=403)
 
     from app.tasks.progress import get_task_progress
 

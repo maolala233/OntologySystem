@@ -147,6 +147,18 @@ def _run_stage_task(task, stage_key: str, stages: list[dict], task_id: str,
     否则冲突检测/自检修复"一闪而过"用户根本不知道它们干了什么。"""
     sub_id = f"{task_id}:{stage_key}"
     _stage(stages, stage_key)["task_id"] = sub_id
+    # 立即重推一份快照：上面的 task_id 只改了内存里的 stages，Redis 里停留在
+    # 子任务入场前的版本（task_id=null）——cancel 端点照旧快照遍历会整段漏写
+    # 本阶段的子任务取消键（2026-11-10"停止了还在跑"根因之一）。重推失败不影响阶段。
+    try:
+        cur = get_task_progress(task_id)
+        if cur:
+            set_task_progress(task_id, cur.get("stage") or stage_key,
+                              cur.get("percent") or 0,
+                              cur.get("message") or "",
+                              cur.get("stats") or {})
+    except Exception:  # noqa: BLE001 —— 快照推送失败不阻断阶段
+        pass
     res = task.apply(kwargs=kwargs, task_id=sub_id)
     if res.failed():
         err = res.result
