@@ -92,6 +92,11 @@ class Settings(BaseSettings):
     # 耗时与 token。目录相对路径按 src/backend 解析；logs/ 已在 .gitignore。
     PIPELINE_PROFILE_ENABLED: bool = True
     PIPELINE_PROFILE_DIR: str = "logs/pipeline_profiles"
+    # 逐次 LLM 调用采样：每次调用一个 JSON（完整入参/出参/耗时/序号），后台
+    # 线程异步落盘，不阻塞管线。默认只抓骨架抽取阶段（含该阶段内 CQ 生成）；
+    # 逗号分隔可扩展，如 "schema,instances"。
+    PIPELINE_LLM_DUMP_ENABLED: bool = True
+    PIPELINE_LLM_DUMP_STAGES: str = "schema"
 
     @property
     def cors_origins_list(self) -> list:

@@ -13,6 +13,7 @@ from app.infrastructure.task_manager import TaskCancelledError
 from app.services.pipeline_profiler import (
     note_llm_attempt,
     note_llm_chunk,
+    note_llm_final_output,
     note_llm_response,
     note_llm_retry_wait,
 )
@@ -49,6 +50,15 @@ def _profile_llm_call(func):
             stream = a.get("stream")
             if stream is None:
                 stream = bool(getattr(self, "_default_stream", None) or False)
+            # 采样文件里保留影响模型行为的调用参数（json_schema 可能很大，
+            # 但只在命中的阶段（默认 schema）落盘，用于复盘入参差异）
+            request_params = {}
+            for key in ("json_schema", "temperature", "timeout",
+                        "max_retries", "response_format"):
+                val = a.get(key)
+                if val is not None:
+                    request_params[key] = val
+            request_params["stream"] = bool(stream)
             return begin_llm_call(
                 model=getattr(self, "model", "unknown"),
                 stream=bool(stream),
@@ -56,6 +66,7 @@ def _profile_llm_call(func):
                 user_prompt=a.get("user_prompt") or "",
                 task_id=a.get("task_id"),
                 caller=f"LLMClient.{call_name}",
+                request_params=request_params,
             )
         except Exception:  # noqa: BLE001 —— 采集失败不影响调用
             return None
@@ -530,6 +541,7 @@ class LLMClient:
                             full_content += continued_content
                             logger.info(f"[LLM] 自动续写完成，追加内容长度={len(continued_content)} 字符，总长度={len(full_content)} 字符")
 
+                        note_llm_final_output(full_content)
                         self._register_endpoint_success()
                         return self._repair_truncated_json(full_content)
                     except GeneratorExit:
@@ -562,6 +574,7 @@ class LLMClient:
                         message_content += continued_content
                         logger.info(f"[LLM] 自动续写完成，追加内容长度={len(continued_content)} 字符，总长度={len(message_content)} 字符")
 
+                    note_llm_final_output(message_content)
                     self._register_endpoint_success()
                     return self._repair_truncated_json(message_content)
 
@@ -1351,6 +1364,7 @@ class LLMClient:
                                 if chunk_count % 50 == 0:
                                     logger.info(f"[LLM] 已接收 {chunk_count} 个 chunk, 当前内容长度={len(full_content)} 字符，耗时={time.time()-stream_start:.2f}s")
                         logger.info(f"[LLM] 流式响应完成，总内容长度={len(full_content)} 字符，总耗时={time.time()-stream_start:.2f}s")
+                        note_llm_final_output(full_content)
                         return {"content": full_content}
                     except GeneratorExit:
                         if response and hasattr(response, 'close'):
@@ -1371,6 +1385,7 @@ class LLMClient:
                         logger.warning("LLM 响应内容为空，返回空字符串")
                         return {"content": ""}
                     logger.info(f"[LLM] 非流式响应，内容长度={len(message_content)} 字符")
+                    note_llm_final_output(message_content)
                     return {"content": message_content}
 
             except TaskCancelledError as e:

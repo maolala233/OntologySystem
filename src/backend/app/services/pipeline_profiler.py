@@ -19,6 +19,7 @@ import contextvars
 import inspect
 import json
 import os
+import queue
 import re
 import socket
 import threading
@@ -57,6 +58,68 @@ _current_call_scope: contextvars.ContextVar[Optional["LLMCallScope"]] = \
 
 _ACTIVE_RUNS: dict[str, "PipelineRunProfile"] = {}
 _ACTIVE_LOCK = threading.Lock()
+
+# ── 逐次 LLM 调用文件（仅指定阶段，默认 schema）──
+# 写盘完全异步：调用线程只把「路径 + 原始内容」放进队列，序列化/落盘由后台
+# 单线程完成，绝不占用管线（尤其模型调用）的墙钟。队列无界但条目很短命，
+# 正常情况下单个调用结束即被消费；写盘失败只 warning，不影响管线。
+_DUMP_QUEUE: "queue.Queue[Optional[tuple[Path, dict]]]" = queue.Queue()
+_DUMP_THREAD: Optional[threading.Thread] = None
+_DUMP_THREAD_LOCK = threading.Lock()
+
+
+def _dump_settings() -> tuple[bool, set[str]]:
+    """读取逐次调用落盘开关：enabled + 需要抓取的阶段集合（逗号分隔）。"""
+    enabled = True
+    raw: Any = "schema"
+    try:
+        from app.core.config import settings
+        enabled = bool(getattr(settings, "PIPELINE_LLM_DUMP_ENABLED", True))
+        raw = getattr(settings, "PIPELINE_LLM_DUMP_STAGES", raw) or raw
+    except Exception:  # noqa: BLE001 —— 配置不可用时按默认抓 schema
+        pass
+    stages = {s.strip().lower() for s in str(raw).split(",") if s.strip()}
+    return (enabled and bool(stages)), stages
+
+
+def _ensure_dump_worker() -> None:
+    global _DUMP_THREAD
+    if _DUMP_THREAD is not None and _DUMP_THREAD.is_alive():
+        return
+    with _DUMP_THREAD_LOCK:
+        if _DUMP_THREAD is not None and _DUMP_THREAD.is_alive():
+            return
+        _DUMP_THREAD = threading.Thread(target=_dump_worker,
+                                        name="pipeline-llm-dump", daemon=True)
+        _DUMP_THREAD.start()
+
+
+def _dump_worker() -> None:
+    while True:
+        item = _DUMP_QUEUE.get()
+        try:
+            if item is None:  # 退出哨兵（当前不主动发，留给进程关停扩展）
+                return
+            path, payload = item
+            path = Path(path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, path)
+        except Exception as e:  # noqa: BLE001 —— 采样落盘失败绝不影响管线
+            _log_warning(f"[profiler] LLM 调用文件写盘失败: {e}")
+        finally:
+            _DUMP_QUEUE.task_done()
+
+
+def _enqueue_llm_dump(path: Path, payload: dict) -> None:
+    """把一次调用的完整入参/出参交给后台线程落盘（调用方零阻塞）。"""
+    try:
+        _ensure_dump_worker()
+        _DUMP_QUEUE.put_nowait((Path(path), payload))
+    except Exception as e:  # noqa: BLE001
+        _log_warning(f"[profiler] LLM 调用文件入队失败: {e}")
 
 
 def current_profile() -> Optional["PipelineRunProfile"]:
@@ -178,7 +241,8 @@ class LLMCallScope:
 
     def __init__(self, profile: "PipelineRunProfile", model: str, stream: bool,
                  system_prompt: str, user_prompt: str,
-                 task_id: Optional[str], caller: str):
+                 task_id: Optional[str], caller: str,
+                 request_params: Optional[dict] = None):
         self.profile = profile
         self.t0 = time.perf_counter()
         self.wall_start = time.time()
@@ -186,6 +250,29 @@ class LLMCallScope:
         self._content_chars = 0
         self._est_completion_tokens = 0
         self._usage_seen = False
+        self._stage = current_stage_key()
+        self._system_prompt = system_prompt or ""
+        self._user_prompt = user_prompt or ""
+        try:
+            self._request_params = _jsonable(request_params or {})
+        except Exception:  # noqa: BLE001
+            self._request_params = {}
+        # 序号在“发起调用”时分配：并行调用也能得到稳定、唯一的第几次记录，
+        # 阶段内序号用于文件名/排序，全局序号用于跨阶段对账。
+        try:
+            self._stage_call_index, self._run_call_index = \
+                profile.allocate_call_indices(self._stage)
+        except Exception:  # noqa: BLE001
+            self._stage_call_index, self._run_call_index = 0, 0
+        # 只有命中的阶段才保留出参全文，其余阶段仍只做字符/token 统计。
+        self._response_parts: list[str] = []
+        self._dump_path: Optional[Path] = None
+        try:
+            if profile.should_dump_stage(self._stage):
+                self._dump_path = profile.llm_dump_path(
+                    self._stage, self._stage_call_index, caller)
+        except Exception as e:  # noqa: BLE001
+            _log_warning(f"[profiler] 初始化调用文件路径失败: {e}")
         prompt_text = (system_prompt or "") + "\n" + (user_prompt or "")
         self._est_prompt_tokens = estimate_tokens(prompt_text)
         self.record: dict[str, Any] = {
@@ -195,8 +282,11 @@ class LLMCallScope:
             "caller": caller,
             "caller_hint": _caller_hint(),
             "thread": threading.current_thread().name,
-            "stage": current_stage_key(),
+            "stage": self._stage,
             "stage_label": current_stage_label(),
+            "call_index_in_stage": self._stage_call_index,
+            "call_index_in_run": self._run_call_index,
+            "dump_file": str(self._dump_path) if self._dump_path else None,
             "started_at": _iso_now(self.wall_start),
             "duration_seconds": None,
             "first_token_seconds": None,
@@ -232,6 +322,21 @@ class LLMCallScope:
         self.note_first_token()
         self._content_chars += len(text)
         self._est_completion_tokens += estimate_tokens(text)
+        if self._dump_path is not None:
+            self._response_parts.append(text)
+
+    def set_final_output(self, text: Optional[str]) -> None:
+        """用调用最终返回内容覆盖流式片段/自动续写前的半成品。
+
+        call_llm 在 finish_reason=length 时会内部续写，片段采集只拿到前一半；
+        这里在返回前写入最终全文，保证 dump 文件里的出参与真实返回一致。
+        """
+        if self._dump_path is None:
+            return
+        out = text if isinstance(text, str) else ("" if text is None else str(text))
+        self._response_parts = [out]
+        self._content_chars = len(out)
+        self._est_completion_tokens = estimate_tokens(out)
 
     def note_retry_wait(self, seconds: float) -> None:
         try:
@@ -303,6 +408,26 @@ class LLMCallScope:
                 self.profile.record_llm_call(dict(rec))
             except Exception as e:  # noqa: BLE001
                 _log_warning(f"[profiler] 记录 LLM 调用失败: {e}")
+        # 逐次调用文件：只入队，不在此线程序列化/写盘（异步，零阻塞）
+        if self._dump_path is not None and self.profile is not None:
+            try:
+                response_text = "".join(self._response_parts)
+                _enqueue_llm_dump(self._dump_path, {
+                    "schema_version": 1,
+                    "run": self.profile.run_meta(),
+                    "call": dict(rec),
+                    "input": {
+                        "system_prompt": self._system_prompt,
+                        "user_prompt": self._user_prompt,
+                        "request_params": self._request_params,
+                    },
+                    "output": {
+                        "content": response_text,
+                        "chars": len(response_text),
+                    },
+                })
+            except Exception as e:  # noqa: BLE001
+                _log_warning(f"[profiler] 组织 LLM 调用文件失败: {e}")
         # 恢复上一层作用域（续写/嵌套调用）
         try:
             _current_call_scope.reset(self._token)
@@ -312,14 +437,16 @@ class LLMCallScope:
 
 def begin_llm_call(model: str, stream: bool, system_prompt: str,
                    user_prompt: str, task_id: Optional[str] = None,
-                   caller: str = "call_llm") -> Optional[LLMCallScope]:
+                   caller: str = "call_llm",
+                   request_params: Optional[dict] = None) -> Optional[LLMCallScope]:
     prof = _current_profile.get()
     if prof is None or prof.finished:
         return None
     try:
         return LLMCallScope(prof, model=model, stream=stream,
                             system_prompt=system_prompt, user_prompt=user_prompt,
-                            task_id=task_id, caller=caller)
+                            task_id=task_id, caller=caller,
+                            request_params=request_params)
     except Exception as e:  # noqa: BLE001
         _log_warning(f"[profiler] 初始化 LLM 计时失败: {e}")
         return None
@@ -352,6 +479,13 @@ def note_llm_content(text: Optional[str]) -> None:
     s = _current_call_scope.get()
     if s is not None:
         s.note_content(text)
+
+
+def note_llm_final_output(text: Optional[str]) -> None:
+    """调用返回前写入最终出参全文（覆盖流式片段/内部自动续写的半成品）。"""
+    s = _current_call_scope.get()
+    if s is not None:
+        s.set_final_output(text)
 
 
 def note_llm_chunk(chunk: Any) -> None:
@@ -470,6 +604,41 @@ class PipelineRunProfile:
             f"pipeline_profile_{_safe_component(project_id)}_"
             f"{time.strftime('%Y%m%d-%H%M%S', time.localtime(self.started_wall))}_"
             f"{_safe_component(self.task_id, 64)}.json")
+        # 逐次调用文件目录：与汇总 JSON 同名（去后缀）的文件夹，便于一一对应
+        self.dump_dir = self.file_path.with_suffix("")
+        self._dump_enabled, self._dump_stages = _dump_settings()
+        self._call_seq = 0
+        self._stage_call_seq: dict[str, int] = {}
+
+    # -- 逐次调用文件 --
+    def allocate_call_indices(self, stage: Optional[str]) -> tuple[int, int]:
+        """分配「阶段内第几次 / 整条管线第几次」，并发调用下也唯一且按发起序。"""
+        with self._lock:
+            self._call_seq += 1
+            key = stage or "__no_stage__"
+            self._stage_call_seq[key] = self._stage_call_seq.get(key, 0) + 1
+            return self._stage_call_seq[key], self._call_seq
+
+    def should_dump_stage(self, stage: Optional[str]) -> bool:
+        if not (self._enabled and self._dump_enabled) or not stage:
+            return False
+        return str(stage).lower() in self._dump_stages
+
+    def llm_dump_path(self, stage: Optional[str], index: int,
+                      caller: str) -> Path:
+        return (self.dump_dir / "llm_calls"
+                / _safe_component(stage or "unknown", 40)
+                / f"{int(index):04d}_{_safe_component(caller, 48)}.json")
+
+    def run_meta(self) -> dict:
+        return {
+            "project_id": self.project_id,
+            "task_id": self.task_id,
+            "trigger_user_id": self.trigger_user_id,
+            "options": _jsonable(self.options),
+            "started_at": _iso_now(self.started_wall),
+            "profile_file": str(self.file_path) if self._enabled else None,
+        }
 
     # -- 指标 --
     def add_metric(self, key: str, value: Any) -> None:
@@ -871,7 +1040,11 @@ class PipelineRunProfile:
             "llm_calls": self.llm_calls,
             "metrics": _jsonable(self.metrics),
             "extra": _jsonable(self.extra),
-            "files": {"profile_json": str(self.file_path) if self._enabled else None},
+            "files": {
+                "profile_json": str(self.file_path) if self._enabled else None,
+                "llm_call_dumps": (str(self.dump_dir) if (self._enabled and self._dump_enabled)
+                                   else None),
+            },
         }
 
     def _write(self) -> None:
