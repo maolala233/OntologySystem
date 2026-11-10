@@ -39,20 +39,42 @@ from app.core.config import cleanup_dir_if_exceeded, ensure_dirs, settings, star
 from app.core.logging import logger
 from app.infrastructure.database import SessionLocal, UploadedDocument, User, init_db
 
+logger.info("[startup] 模块导入完成，开始执行启动步骤（后续每步打印耗时）")
+
+# 导入期 Neo4j 客户端已按单例建立连接（见上方 [Neo4j] 日志），这里只确认最终状态
+try:
+    from app.infrastructure.neo4j_client import neo4j_client as _neo4j_probe
+    logger.info("[startup] Neo4j 客户端状态：%s（连接细节见上方 [Neo4j] 日志）",
+                "已连接" if _neo4j_probe.driver is not None else "未连接")
+except Exception as _neo4j_probe_err:  # noqa: BLE001
+    logger.warning(f"[startup] 检查 Neo4j 客户端状态失败：{_neo4j_probe_err}")
+
 # 多 worker 部署（UVICORN_WORKERS>1）时必须由启动命令先跑一次预初始化
 # （python -c "from app.infrastructure.database import init_db; init_db()"），
 # 再设 PRESTART_INIT_DONE=1 跳过 import 期初始化——否则每个 worker 各自并发
 # 跑 alembic/种子数据，空库首次部署会竞态。单机直跑保持默认（=执行）。
+_t_db = time.perf_counter()
 if os.environ.get("PRESTART_INIT_DONE", "") == "1":
-    print("⏭️  [Database] PRESTART_INIT_DONE=1，跳过 import 期 init_db（预初始化已由启动命令完成）")
+    logger.info("[startup] PRESTART_INIT_DONE=1，跳过 import 期 init_db"
+                "（预初始化已由启动命令完成）")
 else:
+    logger.info("[startup] 开始 init_db（MySQL 连接 + Alembic + 种子数据）…")
     init_db()
+    logger.info(f"[startup] init_db 完成，耗时 {time.perf_counter() - _t_db:.2f}s")
 
+_t_dirs = time.perf_counter()
 ensure_dirs()
+logger.info(f"[startup] ensure_dirs 完成，耗时 {time.perf_counter() - _t_dirs:.2f}s")
 
-cleanup_dir_if_exceeded(settings.UPLOAD_DIR, settings.UPLOAD_MAX_SIZE_MB)
-cleanup_dir_if_exceeded(settings.TEMP_DIR, settings.UPLOAD_MAX_SIZE_MB)
+for _dir, _label in ((settings.UPLOAD_DIR, "uploads"),
+                     (settings.TEMP_DIR, "temp")):
+    _t_clean = time.perf_counter()
+    logger.info(f"[startup] 开始目录清理检查：{_label}（{_dir}）…")
+    cleanup_dir_if_exceeded(_dir, settings.UPLOAD_MAX_SIZE_MB)
+    logger.info(f"[startup] 目录清理检查完成：{_label}，耗时 {time.perf_counter() - _t_clean:.2f}s")
 
+_t_dbcheck = time.perf_counter()
+logger.info("[startup] 开始旧文档路径迁移 + 用户密码格式检查…")
 db = SessionLocal()
 try:
     old_docs = db.query(UploadedDocument).filter(
@@ -75,10 +97,13 @@ try:
         if not user.hashed_password.startswith("$2b$"):
             user.hashed_password = bcrypt.hashpw(user.hashed_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     db.commit()
+    logger.info(f"[startup] DB 启动检查完成，耗时 {time.perf_counter() - _t_dbcheck:.2f}s"
+                f"（旧文档 {len(old_docs)} 个，用户 {len(all_users)} 个）")
 finally:
     db.close()
 
 start_periodic_cleanup(interval_seconds=600)
+logger.info("[startup] 后台目录清理线程已启动（每 600s）")
 
 
 def _start_schedule_poller():
@@ -103,6 +128,7 @@ def _start_schedule_poller():
 
 
 _start_schedule_poller()
+logger.info("[startup] 定时构建轮询线程已启动；开始创建 FastAPI app 并注册路由…")
 
 app = FastAPI(title="AI 本体构建系统 API", version="1.0.0")
 
@@ -172,6 +198,7 @@ app.include_router(env_configs.router)  # 环境配置（admin）：中间件连
 app.include_router(cqs.router)  # O3-B12：Competency Question 资产 CRUD + 自动评测
 app.include_router(evolution.router)  # O3-B16：QA 失败轨迹分析 → 进化建议
 app.include_router(ontology_imports.router)  # O3-B17：本体导入 + schema 对齐建议
+logger.info("[startup] FastAPI app 创建完成，全部路由已注册")
 
 
 @app.get('/health')
@@ -180,11 +207,14 @@ def get_health():
 
 
 if __name__ == '__main__':
+    _uvicorn_workers = int(os.environ.get("UVICORN_WORKERS", "1"))
+    logger.info(f"[startup] 准备启动 uvicorn：workers={_uvicorn_workers}, port=3001 "
+                f"（多 worker 时每个 worker 会再走一遍导入/启动检查）")
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
         port=3001,
-        workers=int(os.environ.get("UVICORN_WORKERS", "1")),  # 多 worker 由环境变量控制，默认单进程
+        workers=_uvicorn_workers,  # 多 worker 由环境变量控制，默认单进程
         limit_concurrency=100,
         timeout_keep_alive=30,
         # SSE 长连接（pipeline/events 30min 流）会拖住优雅关闭——uvicorn 默认无限等

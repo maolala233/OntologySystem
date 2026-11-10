@@ -20,7 +20,11 @@ from pydantic import BaseModel, Field
 
 from app.adapters.resolution import normalize_label
 from app.infrastructure.llm_client import LLMEndpointUnreachableError
-from app.services.pipeline_profiler import profile_metric, submit_with_context
+from app.services.pipeline_profiler import (
+    profile_metric,
+    profile_metric_accumulate,
+    submit_with_context,
+)
 
 # prompt-hash 缓存 TTL（04 §3.1）
 # 单次 LLM 调用硬上限：本地小模型慢推理/云端拥堵时防无限等待；
@@ -1986,7 +1990,7 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
         result.entities = _dedupe_entities([i for i in gate.passed
                                             if isinstance(i, ExtractedEntity)])
         result.relations = [i for i in gate.passed if isinstance(i, ExtractedRelation)]
-        profile_metric("instance_phases", _phases)
+        profile_metric_accumulate("instance_phases", _phases)
         return result
 
     kinds = [v.kind for v in gate.violations]
@@ -2014,8 +2018,8 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
                         and normalize_label(r.object_label) not in dropped]
     result.gate_violations = [v.model_dump() for v in gate.violations[:500]]
     result.cache_hits = cache_hits
-    _phases.update({"entities": len(result.entities), "relations": len(result.relations)})
-    profile_metric("instance_phases", _phases)
+    # 多轮调用（主抽取/修复/展开）时累加各阶段耗时；最终实体/关系数看 instances_stats
+    profile_metric_accumulate("instance_phases", _phases)
     return result
 
 

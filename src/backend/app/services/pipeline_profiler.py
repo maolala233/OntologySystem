@@ -483,6 +483,28 @@ class PipelineRunProfile:
         for k, v in (values or {}).items():
             self.add_metric(k, v)
 
+    def add_metric_accumulate(self, key: str, values: dict) -> None:
+        """同一指标被多次调用时累加（如 extract_instances 主抽取 + 修复/展开多轮）。
+
+        数值键相加、其余键保留最新值；避免后一次调用把前一次的 coref/抽取耗时覆盖掉。
+        """
+        try:
+            with self._lock:
+                cur = self.metrics.get(key)
+                values = _jsonable(values or {})
+                if not isinstance(cur, dict):
+                    self.metrics[key] = values
+                    return
+                for k, v in values.items():
+                    if (isinstance(v, (int, float)) and not isinstance(v, bool)
+                            and isinstance(cur.get(k), (int, float))
+                            and not isinstance(cur.get(k), bool)):
+                        cur[k] = cur[k] + v
+                    else:
+                        cur[k] = v
+        except Exception:  # noqa: BLE001
+            pass
+
     def record_llm_call(self, record: dict) -> None:
         with self._lock:
             self.llm_calls.append(record)
@@ -664,7 +686,8 @@ class PipelineRunProfile:
             d["completion_tokens"] = agg.get("completion_tokens", 0)
             d["total_tokens"] = agg.get("total_tokens", 0)
             # 便于直接回答“这一步里模型占了多少、非模型占了多少”
-            d["llm_share_of_stage"] = round(union / dur, 4) if dur > 0 else 0.0
+            # 个别调用可能跨过阶段边界，占比封顶 1.0，避免出现 115% 的误导值
+            d["llm_share_of_stage"] = round(min(1.0, union / dur), 4) if dur > 0 else 0.0
             d["non_llm_seconds"] = round(max(0.0, dur - union), 6)
             d["llm_speedup"] = round(calls_sum / union, 2) if union > 0 else None
             d["tokens_per_llm_second"] = round(tokens / union, 1) if union > 0 else None
@@ -786,10 +809,19 @@ class PipelineRunProfile:
             timeline.append(self._segment_view(self._open, now, in_progress=True))
         timeline_sum = sum(float(s.get("duration_seconds") or 0) for s in timeline)
         stage_segments = self._stage_summary(now)
-        tracked_sum = sum(float(s.get("duration_seconds") or 0)
-                          for s in stage_segments if s.get("tracked"))
+        tracked_segs = [s for s in stage_segments if s.get("tracked")]
+        tracked_sum = sum(float(s.get("duration_seconds") or 0) for s in tracked_segs)
         aux_sum = sum(float(s.get("duration_seconds") or 0)
                       for s in stage_segments if not s.get("tracked"))
+        # 只统计“业务阶段内”的 LLM 占用：总 LLM 并集还包含 cq_eval 等辅助阶段
+        # 和异步诊断；直接拿总并集除以业务阶段时长会出现 >100% 的假值。
+        tracked_llm_union = 0.0
+        non_llm_stage = 0.0
+        for s in tracked_segs:
+            dur = float(s.get("duration_seconds") or 0)
+            used = min(dur, float(s.get("llm_wall_union_seconds") or 0))
+            tracked_llm_union += used
+            non_llm_stage += max(0.0, dur - used)
         gap_sum = sum(float(s.get("duration_seconds") or 0)
                       for s in timeline if s.get("kind") in ("gap", "bootstrap", "finalize"))
         llm = self._llm_totals()
@@ -823,11 +855,15 @@ class PipelineRunProfile:
                 "aux_seconds_sum": round(aux_sum, 6),
                 "gap_seconds_sum": round(gap_sum, 6),
                 "stage_share_of_total": round(tracked_sum / total, 6) if total else 0,
+                # 业务阶段内的 LLM 占用（不含辅助阶段/异步诊断）
+                "llm_wall_union_seconds_tracked": round(tracked_llm_union, 6),
                 "llm_share_of_stage": round(
-                    float(llm.get("wall_union_seconds") or 0) / tracked_sum, 4
-                ) if tracked_sum else 0,
-                "non_llm_stage_seconds": round(max(
-                    0.0, tracked_sum - float(llm.get("wall_union_seconds") or 0)), 6),
+                    tracked_llm_union / tracked_sum, 4) if tracked_sum else 0,
+                "non_llm_stage_seconds": round(non_llm_stage, 6),
+                # 全管线口径：所有 LLM 调用（含辅助阶段）占用了多少墙钟
+                "llm_share_of_total": round(min(
+                    1.0, float(llm.get("wall_union_seconds") or 0) / total
+                ), 4) if total else 0,
                 "llm": llm,
             },
             "stages": stage_segments,
@@ -933,6 +969,12 @@ def profile_metrics(values: dict) -> None:
     prof = _current_profile.get()
     if prof is not None and not prof.finished:
         prof.add_metrics(values)
+
+
+def profile_metric_accumulate(key: str, values: dict) -> None:
+    prof = _current_profile.get()
+    if prof is not None and not prof.finished:
+        prof.add_metric_accumulate(key, values)
 
 
 def active_profile(task_id: str) -> Optional[PipelineRunProfile]:

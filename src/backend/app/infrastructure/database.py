@@ -5,8 +5,10 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy import create_engine
 import datetime
+import time
 import bcrypt
 from app.core.config import settings
+from app.core.logging import logger
 
 Base = declarative_base()
 
@@ -606,7 +608,10 @@ def _run_migrations() -> None:
     backend_root = Path(__file__).resolve().parents[2]  # src/backend
     alembic_cfg = Config(str(backend_root / "alembic.ini"))
     alembic_cfg.set_main_option("script_location", str(backend_root / "alembic"))
+    t0 = time.perf_counter()
+    logger.info(f"[DB] Alembic 开始执行（script_location={backend_root / 'alembic'}）…")
     command.upgrade(alembic_cfg, "head")
+    logger.info(f"[DB] Alembic upgrade head 完成，耗时 {time.perf_counter() - t0:.2f}s")
 
 
 def init_db():
@@ -615,44 +620,72 @@ def init_db():
     1. 创建数据库（如果使用 MySQL）
     2. Alembic upgrade head（R1 baseline 建表；后续演进走新增 revision）
     3. 创建种子数据（用户 / 知识域 / 示例项目）
+
+    整个过程按步骤打耗时日志：启动卡住时能直接看到停在 MySQL 连接、Alembic
+    迁移还是种子数据写入，而不是只剩一句“日志初始化完成”后长时间无输出。
     """
+    t_all = time.perf_counter()
+    logger.info(
+        f"[DB] 开始初始化：host={settings.MYSQL_HOST}:{settings.MYSQL_PORT}/"
+        f"{settings.MYSQL_DATABASE}，user={settings.MYSQL_USER}")
+
     # 如果是 MySQL，尝试先连接到服务器创建数据库（如果不存在）
     if settings.DATABASE_URL.startswith("mysql"):
         import pymysql
 
-        # 提取不包含数据库名的连接信息
+        t_conn = time.perf_counter()
         try:
-            print(f"🔍 [Database] Connecting to MySQL at {settings.MYSQL_HOST}:{settings.MYSQL_PORT}...")
+            logger.info(
+                f"[DB] 连接 MySQL 服务器 {settings.MYSQL_HOST}:{settings.MYSQL_PORT} "
+                f"（connect_timeout=5s, read/write_timeout=10s）…")
             conn = pymysql.connect(
                 host=settings.MYSQL_HOST,
                 port=settings.MYSQL_PORT,
                 user=settings.MYSQL_USER,
-                password=settings.MYSQL_PASSWORD
+                password=settings.MYSQL_PASSWORD,
+                connect_timeout=5,
+                read_timeout=10,
+                write_timeout=10,
             )
+            logger.info(f"[DB] MySQL 连接成功（{time.perf_counter() - t_conn:.2f}s），"
+                        f"检查/创建数据库 {settings.MYSQL_DATABASE}…")
             with conn.cursor() as cursor:
                 cursor.execute(f"CREATE DATABASE IF NOT EXISTS {settings.MYSQL_DATABASE} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;")
-                print(f"✅ [Database] Database '{settings.MYSQL_DATABASE}' is ready")
             conn.commit()
             conn.close()
+            logger.info(f"[DB] 数据库就绪（本步耗时 {time.perf_counter() - t_conn:.2f}s）")
         except Exception as e:
-            print(f"⚠️ [Database Init Warning] Failed to check/create database: {e}")
+            logger.warning(f"[DB] 检查/创建数据库失败（本步耗时 {time.perf_counter() - t_conn:.2f}s），"
+                           f"继续尝试 Alembic 迁移：{e}")
 
     # Alembic 迁移到最新版本
-    print("🔨 [Database] Running alembic upgrade head...")
+    t_mig = time.perf_counter()
+    logger.info("[DB] 开始 Alembic 迁移…")
     _run_migrations()
-    print("✅ [Database] Migrations up to date")
+    logger.info(f"[DB] Alembic 迁移完成（本步耗时 {time.perf_counter() - t_mig:.2f}s）")
 
     # 创建种子数据
+    t_seed = time.perf_counter()
+    logger.info("[DB] 开始写入/校验种子数据…")
     db = SessionLocal()
     try:
         _create_initial_data(db)
-        # 初始化知识域字典
+        logger.info(f"[DB] 初始用户/示例数据就绪（累计 {time.perf_counter() - t_seed:.2f}s）")
+        t_domains = time.perf_counter()
+        logger.info("[DB] 初始化知识域字典…")
         init_knowledge_domains(db)
+        logger.info(f"[DB] 知识域字典完成（{time.perf_counter() - t_domains:.2f}s）")
         # 模块码幂等补种（新增模块码不经 alembic——迁移链已多分支；
         # 只补缺行，不改已有行，授权矩阵不受影响）
+        t_modules = time.perf_counter()
+        logger.info("[DB] 补种模块码…")
         _ensure_modules(db)
+        logger.info(f"[DB] 模块码补种完成（{time.perf_counter() - t_modules:.2f}s）")
+        logger.info(f"[DB] 种子数据全部完成（本步耗时 {time.perf_counter() - t_seed:.2f}s）")
     finally:
         db.close()
+
+    logger.info(f"[DB] 数据库初始化完成，总耗时 {time.perf_counter() - t_all:.2f}s")
 
 
 def _ensure_modules(db):

@@ -2,52 +2,91 @@
 # 功能：封装 Neo4j 操作，支持溯源信息存储到节点和边
 
 from neo4j import GraphDatabase
-import logging
 import json
+import os
+import time
 from typing import List, Dict, Any, Optional, Tuple
 from app.core.config import settings
-
-logger = logging.getLogger(__name__)
+from app.core.logging import logger
 
 
 class Neo4jClient:
+    # 启动/热重建时的连接超时：Neo4j 不可达时不再按系统默认超时长时间阻塞。
+    # 可用 NEO4J_CONNECT_TIMEOUT_SECONDS 覆盖（默认 5s；Neo4j 启动较慢的环境可调大）
+    CONNECT_TIMEOUT_SECONDS = float(os.environ.get("NEO4J_CONNECT_TIMEOUT_SECONDS", "5"))
+
     def __init__(self):
         self.driver = None
         self._connect()
 
     def _resolve_config(self) -> tuple[str, str, str]:
-        """连接参数：platform_config（DB 覆盖，env_config_service）→ .env 默认。"""
+        """连接参数：platform_config（DB 覆盖，env_config_service）→ .env 默认。
+
+        这里会顺带打开一次 MySQL 会话读平台配置，因此把耗时也打出来——启动
+        卡住时能区分是“读 DB 配置慢”还是“Neo4j 握手慢”。
+        """
+        t0 = time.perf_counter()
         try:
             from app.services.env_config_service import get_effective_raw
             from app.infrastructure.database import SessionLocal
             db = SessionLocal()
             try:
                 cfg = get_effective_raw(db)
+                elapsed = time.perf_counter() - t0
+                logger.info(f"[Neo4j] 连接参数来自平台配置（DB），读取耗时 {elapsed:.2f}s")
                 return cfg["neo4j_uri"], cfg["neo4j_username"], cfg["neo4j_password"]
             finally:
                 db.close()
         except Exception as e:
-            logger.debug(f"[Neo4j] 读 DB 配置失败，回退 .env：{e}")
+            elapsed = time.perf_counter() - t0
+            logger.warning(f"[Neo4j] 读取平台配置失败（{elapsed:.2f}s），回退 .env：{e}")
             return settings.NEO4J_URI, settings.NEO4J_USERNAME, settings.NEO4J_PASSWORD
 
     def _connect(self):
+        t0 = time.perf_counter()
+        logger.info("[Neo4j] 开始初始化连接…")
         self.uri, self.username, self.password = self._resolve_config()
-        if self.uri and self.password:
+        logger.info(
+            f"[Neo4j] 目标地址 uri={self.uri or '(空)'}，用户={self.username or '(空)'}，"
+            f"密码={'***' if self.password else '(空)'}，"
+            f"connect_timeout={self.CONNECT_TIMEOUT_SECONDS:.0f}s")
+        if not (self.uri and self.password):
+            logger.warning("[Neo4j] 未配置 URI 或密码，跳过连接（driver=None，相关功能不可用）")
+            return
+        try:
+            t_driver = time.perf_counter()
+            self.driver = GraphDatabase.driver(
+                self.uri,
+                auth=(self.username, self.password),
+                connection_timeout=self.CONNECT_TIMEOUT_SECONDS,
+            )
+            logger.info(f"[Neo4j] 驱动创建完成（{time.perf_counter() - t_driver:.2f}s），"
+                        f"开始 verify_connectivity…")
+            t_verify = time.perf_counter()
+            self.driver.verify_connectivity()
+            logger.info(
+                f"[Neo4j] 连接成功：verify={time.perf_counter() - t_verify:.2f}s，"
+                f"总耗时={time.perf_counter() - t0:.2f}s")
+        except Exception as e:
+            logger.error(f"[Neo4j] 连接失败（总耗时 {time.perf_counter() - t0:.2f}s）：{e}")
             try:
-                self.driver = GraphDatabase.driver(self.uri, auth=(self.username, self.password))
-                self.driver.verify_connectivity()
-                logger.info("Successfully connected to Neo4j")
-            except Exception as e:
-                logger.error(f"Failed to connect to Neo4j: {e}")
+                if self.driver is not None:
+                    self.driver.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self.driver = None
 
     def reconfigure(self) -> bool:
         """环境配置保存后热重建连接（env_configs API 调用）。返回是否连上。"""
+        logger.info("[Neo4j] 收到重配置请求，重建连接…")
         try:
             self.close()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         self._connect()
-        return self.driver is not None
+        connected = self.driver is not None
+        logger.info(f"[Neo4j] 重配置完成：{'已连接' if connected else '未连接'}")
+        return connected
 
     def close(self):
         if self.driver:
