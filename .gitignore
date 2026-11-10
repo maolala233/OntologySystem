@@ -57,3 +57,11 @@ src/backend/reports/
 # 设计文档与测试（仅本地保留，不入库）
 docs/design/
 src/backend/tests/
+
+# 本地耗时剖析产物（报告/截图/补丁包，不入库）
+pipeline_profile_*.json
+pipeline_profile_*_report.html
+report_preview*.png
+pipeline_profiling_patch.zip
+pipeline_profiler_fix.zip
+startup_visibility_patch.zip

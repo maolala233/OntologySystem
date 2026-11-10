@@ -636,16 +636,12 @@ def init_db():
         t_conn = time.perf_counter()
         try:
             logger.info(
-                f"[DB] 连接 MySQL 服务器 {settings.MYSQL_HOST}:{settings.MYSQL_PORT} "
-                f"（connect_timeout=5s, read/write_timeout=10s）…")
+                f"[DB] 连接 MySQL 服务器 {settings.MYSQL_HOST}:{settings.MYSQL_PORT}…")
             conn = pymysql.connect(
                 host=settings.MYSQL_HOST,
                 port=settings.MYSQL_PORT,
                 user=settings.MYSQL_USER,
                 password=settings.MYSQL_PASSWORD,
-                connect_timeout=5,
-                read_timeout=10,
-                write_timeout=10,
             )
             logger.info(f"[DB] MySQL 连接成功（{time.perf_counter() - t_conn:.2f}s），"
                         f"检查/创建数据库 {settings.MYSQL_DATABASE}…")
