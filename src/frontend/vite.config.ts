@@ -13,6 +13,12 @@ export default defineConfig({
                 // 需要指向别的地址（如容器化后端）时用 VITE_API_TARGET 覆盖
                 target: process.env.VITE_API_TARGET || 'http://127.0.0.1:3001',
                 changeOrigin: true,
+            },
+            // MCP 网关（HTTP Streamable）同域转发：client.ts 端点推导在非 3001 端口下
+            // 返回相对路径 /mcp，缺这条代理会打到 vite 自身 404（空响应体→前端报 -32700）
+            '/mcp': {
+                target: process.env.VITE_API_TARGET || 'http://127.0.0.1:3001',
+                changeOrigin: true,
             }
         }
     },
