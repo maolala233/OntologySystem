@@ -5,6 +5,7 @@
 # 不做运行时主动推送（14 §5 B27 验收口径）；线程异步，不阻塞抽取完成耗时。
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import threading
@@ -169,10 +170,23 @@ def run_first_diagnosis(project_id: int, trigger: str = "schema_extract") -> int
 
 
 def schedule_first_diagnosis(project_id: int, trigger: str = "schema_extract") -> None:
-    """抽取完成回调入口：后台线程跑诊断（≤30s 增量在后台消化，不阻塞任务返回）。"""
+    """抽取完成回调入口：后台线程跑诊断（≤30s 增量在后台消化，不阻塞任务返回）。
+
+    复制当前 ContextVar 再进线程：诊断里的 LLM 调用才能归到触发它的管线阶段/
+    剖析文件（线程默认不继承上下文；剖析已结束时 begin_llm_call 自动跳过）。
+    """
+    ctx = contextvars.copy_context()
+
+    def _run_in_ctx() -> None:
+        # 后台诊断并发于主阶段之外：单独归组，避免把它的耗时算进 schema/instances
+        from app.services.pipeline_profiler import set_current_stage
+
+        set_current_stage("async_diagnosis", "异步诊断（后台）")
+        run_first_diagnosis(project_id, trigger)
+
     threading.Thread(
-        target=run_first_diagnosis,
-        args=(project_id, trigger),
+        target=ctx.run,
+        args=(_run_in_ctx,),
         name=f"copilot-diagnosis-{project_id}", daemon=True).start()
 
 

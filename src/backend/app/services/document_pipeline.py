@@ -4,6 +4,8 @@
 #       → document_chunks 落库 → 元数据回填（text_key/page_count/language/parse_backend）。
 # 兼容期：同步双写 text_content（旧 extract-* 端点直接读该列，M3-3 R5 行表双写后收口）。
 
+import time
+
 from sqlalchemy.orm import Session
 
 from app.adapters.chunking import ChunkParams, chunk_text
@@ -12,6 +14,7 @@ from app.core.config import settings
 from app.core.logging import logger
 from app.infrastructure.database import DocumentChunk, SessionLocal, UploadedDocument
 from app.infrastructure.minio_client import get_minio_client
+from app.services.pipeline_profiler import profile_metric
 from app.tasks.progress import finish_task_progress, set_task_progress
 
 
@@ -67,6 +70,16 @@ def run_parse(document_id: int, backend: str = "auto",
     def _progress(stage: str, pct: int, msg: str = "", stats: dict | None = None) -> None:
         set_task_progress(task_id, stage, pct, msg, stats or {}, queue="parse")
 
+    # 解析子步骤计时（剖析用；无活动管线时 profile_metric 是空操作）
+    _sub: dict = {}
+    _last = time.perf_counter()
+
+    def _mark(name: str) -> None:
+        nonlocal _last
+        now = time.perf_counter()
+        _sub[name] = round(now - _last, 6)
+        _last = now
+
     db: Session = SessionLocal()
     doc = None
     try:
@@ -79,24 +92,29 @@ def run_parse(document_id: int, backend: str = "auto",
         doc.parse_status = "parsing"
         doc.parse_error = None
         db.commit()
+        _mark("set_parsing")
         _progress("fetch", 5, "正在获取原件")
 
         minio = get_minio_client()
         content = minio.get_bytes(settings.MINIO_BUCKET_UPLOADS, doc.storage_key)
+        _mark("fetch")
 
         _progress("parse", 30, f"解析中（{backend}）", {"filename": doc.filename})
         parsed = parse_document(content, doc.filename,
                                 backend=ParseBackend(backend) if backend in {b.value for b in ParseBackend} else ParseBackend.AUTO)
+        _mark("parse")
 
         _progress("store_text", 55, "全文写入对象存储")
         text_key = f"{doc.project_id}/{doc.id}.md"
         full_text = parsed.full_text_md or ""
         minio.put_bytes(settings.MINIO_BUCKET_PARSED, text_key, full_text.encode("utf-8"),
                         content_type="text/markdown")
+        _mark("store_text")
 
         _progress("chunk", 70, "中文切片中", {"chars": len(full_text)})
         params = ChunkParams(**chunk_params) if chunk_params else _default_chunk_params(doc.project_id)
         chunks = chunk_text(full_text, params)
+        _mark("chunk")
 
         _progress("save", 88, "分块落库", {"chunks": len(chunks)})
         db.query(DocumentChunk).filter(DocumentChunk.document_id == doc.id).delete(
@@ -118,19 +136,34 @@ def run_parse(document_id: int, backend: str = "auto",
         doc.parse_backend = parsed.backend.value if hasattr(parsed.backend, "value") else str(parsed.backend)
         doc.parse_status = "parsed"
         db.commit()
+        _mark("save")
 
         # 07 §4 入库环节：切片写入向量库（QA 向量召回的数据源；失败不阻断解析）
         _progress("vector", 94, "切片写入向量库", {"chunks": len(chunks)})
         vector_count = _sync_chunks_to_vector(doc, chunks)
+        _mark("vector")
         stats = {"chunks": len(chunks), "chars": len(full_text), "vectors": vector_count,
                  "backend": doc.parse_backend, "language": doc.language,
                  "page_count": doc.page_count}
         finish_task_progress(task_id, "completed", "解析完成", stats)
+        _mark("finalize")
+        _sub.update({
+            "document_id": document_id,
+            "filename": doc.filename,
+            "backend": doc.parse_backend,
+            "chunks": len(chunks),
+            "chars": len(full_text),
+            "vectors": vector_count,
+        })
+        profile_metric(f"parse_doc_{document_id}", _sub)
         logger.info(f"[pipeline] 文档 {document_id} 解析完成: {stats}")
         return {"chunks": len(chunks), "chars": len(full_text),
                 "backend": doc.parse_backend, "language": doc.language,
                 "page_count": doc.page_count}
     except Exception as e:
+        _mark("until_error")
+        _sub["error"] = str(e)[:300]
+        profile_metric(f"parse_doc_{document_id}", _sub)
         try:
             if doc is not None:
                 doc.parse_status = "failed"

@@ -396,7 +396,14 @@ def run_schema_extraction(self, project_id: int,
             # QA 类锚定索引：骨架更新即重建（失败不阻塞抽取结果）
             try:
                 from app.adapters.tbox_index import sync_tbox_index
-                sync_tbox_index(project_id, gd)
+                from app.services.pipeline_profiler import profile_metric
+
+                _t_idx = time.perf_counter()
+                try:
+                    sync_tbox_index(project_id, gd)
+                finally:
+                    profile_metric("tbox_index_seconds",
+                                   round(time.perf_counter() - _t_idx, 6))
             except Exception:  # noqa: BLE001
                 pass
             # O5-B27：抽取完成回调追加首轮诊断（后台线程，不阻塞任务返回）
@@ -825,7 +832,14 @@ def run_instance_extraction(self, project_id: int,
             # QA 类锚定索引：实例抽取可能伴随骨架演进，一并重建（失败不阻塞）
             try:
                 from app.adapters.tbox_index import sync_tbox_index
-                sync_tbox_index(project_id, gd)
+                from app.services.pipeline_profiler import profile_metric
+
+                _t_idx = time.perf_counter()
+                try:
+                    sync_tbox_index(project_id, gd)
+                finally:
+                    profile_metric("tbox_index_seconds",
+                                   round(time.perf_counter() - _t_idx, 6))
             except Exception:  # noqa: BLE001
                 pass
             # O5-B27：重抽/首抽完成均追加首轮诊断（后台线程，不阻塞任务返回）

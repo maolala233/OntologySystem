@@ -110,13 +110,30 @@ def _call_vl_model(image_paths: list[str], prompt: str, vl_config: dict) -> str:
     if vl_config.get("disable_think", True):
         extra_body["chat_template_kwargs"] = {"enable_thinking": False}
 
-    response = client.chat.completions.create(
-        model=vl_config["model"],
-        messages=[{"role": "user", "content": content}],
-        max_tokens=VL_MAX_TOKENS,
-        extra_body=extra_body if extra_body else None,
+    # 耗时剖析：视觉模型调用同样计入 parse 阶段（此前绕过 LLMClient，未被统计）
+    from app.services.pipeline_profiler import (
+        begin_llm_call,
+        finish_llm_call,
+        note_llm_attempt,
+        note_llm_response,
     )
-    return response.choices[0].message.content
+
+    _scope = begin_llm_call(
+        model=vl_config["model"], stream=False,
+        system_prompt="", user_prompt=prompt,
+        caller="vl_parser._call_vl_model")
+    try:
+        note_llm_attempt()
+        response = client.chat.completions.create(
+            model=vl_config["model"],
+            messages=[{"role": "user", "content": content}],
+            max_tokens=VL_MAX_TOKENS,
+            extra_body=extra_body if extra_body else None,
+        )
+        note_llm_response(response)
+        return response.choices[0].message.content
+    finally:
+        finish_llm_call(_scope)
 
 
 def describe_images(image_paths: list[str]) -> str:

@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from app.adapters.resolution import normalize_label
 from app.infrastructure.llm_client import LLMEndpointUnreachableError
+from app.services.pipeline_profiler import profile_metric, submit_with_context
 
 # prompt-hash 缓存 TTL（04 §3.1）
 # 单次 LLM 调用硬上限：本地小模型慢推理/云端拥堵时防无限等待；
@@ -698,6 +699,7 @@ def extract_schema(chunks: list, base_uri: str,
     llm_call 注入用于测试；生产走 resolve_provider(EXTRACT) + LLMClient。
     """
     result = SchemaExtractionResult()
+    _phases: dict = {}
     prepared = _chunk_iter(chunks)
     result.chunks_processed = len(prepared)
     if not prepared:
@@ -754,6 +756,7 @@ def extract_schema(chunks: list, base_uri: str,
     done = 0
     cache_hits = 0
 
+    _t_parallel = time.perf_counter()
     with ThreadPoolExecutor(max_workers=max(1, parallelism)) as pool:
         doc_by_idx = {idx: doc for idx, _text, doc, _h in prepared}
         # ★ 确定性关键①：先按切片序收齐全部结果，再按【固定切片顺序】归并——
@@ -773,7 +776,7 @@ def extract_schema(chunks: list, base_uri: str,
             # 配置，此前是死字段；仅还有后续批次时等待
             if remaining and request_interval > 0:
                 time.sleep(request_interval)
-            futures = {pool.submit(one, idx, text, hdr): idx
+            futures = {submit_with_context(pool, one, idx, text, hdr): idx
                        for idx, text, _doc, hdr in batch}
             for fut in as_completed(futures):
                 if cancel_cb is not None:
@@ -787,6 +790,9 @@ def extract_schema(chunks: list, base_uri: str,
                 if progress_cb is not None:
                     progress_cb(done, len(prepared), cache_hits)
 
+        _phases["parallel_extract_seconds"] = round(
+            time.perf_counter() - _t_parallel, 6)
+        _t_merge = time.perf_counter()
         for idx in sorted(results_by_idx):
             idx, payload, hit, err = results_by_idx[idx]
             if payload is None:
@@ -841,6 +847,8 @@ def extract_schema(chunks: list, base_uri: str,
     if wl is not None:
         result.strict_filtered = apply_strict_filter(merged, obj_props, dt_props, wl)
 
+    _phases["merge_seconds"] = round(time.perf_counter() - _t_merge, 6)
+    _t_assemble = time.perf_counter()
     # ── 语义归一化：相似概念聚成概念（别名降级），保证骨架不产同义类 ──
     result.normalized_concepts = _semantic_normalize(merged, obj_props)
     # ── 边清单型表格推断关系（列取值互指 → 列即关系），补关系清单空白 ──
@@ -859,6 +867,8 @@ def extract_schema(chunks: list, base_uri: str,
                 use_cache=use_cache, cancel_cb=cancel_cb, prepared=prepared)
         except Exception as e:  # noqa: BLE001 —— 组装是增强不是闸门，失败退回原形态
             result.warnings.append(f"骨架组装跳过: {e}")
+    _phases["assemble_seconds"] = round(time.perf_counter() - _t_assemble, 6)
+    _t_structure = time.perf_counter()
     classes = sorted(merged.values(),
                      key=lambda v: (-v.get("_count", 1), normalize_label(v["label"])))
 
@@ -889,6 +899,8 @@ def extract_schema(chunks: list, base_uri: str,
                                      "evidence": "结构映射：列「" + col.get("column") + "」为引用列"}
     except Exception as e:  # noqa: BLE001 —— 映射是增强，失败退回纯 LLM 形态
         result.warnings.append(f"结构映射跳过: {e}")
+    _phases["structure_maps_seconds"] = round(time.perf_counter() - _t_structure, 6)
+    _t_stitch = time.perf_counter()
     classes = sorted(merged.values(),
                      key=lambda v: (-v.get("_count", 1), normalize_label(v["label"])))
 
@@ -941,7 +953,7 @@ def extract_schema(chunks: list, base_uri: str,
         seg_results: dict[int, tuple] = {}
         done_si = 0
         with ThreadPoolExecutor(max_workers=_STITCH_PARALLELISM) as spool:
-            futures = {spool.submit(_stitch_one, si, seg): si
+            futures = {submit_with_context(spool, _stitch_one, si, seg): si
                        for si, seg in enumerate(segs)}
             for fut in as_completed(futures):
                 if cancel_cb is not None:
@@ -976,6 +988,7 @@ def extract_schema(chunks: list, base_uri: str,
                 stitched += 1
     result.stitched_relations = stitched
     result.stitch_segments = len(segs) if len(classes) >= 2 and len(prepared) >= 2 else 0
+    _phases["stitch_seconds"] = round(time.perf_counter() - _t_stitch, 6)
 
     # 悬空引用 → 占位类标记 pending（04 §3.1 SchemaGate 归一）
     class_norms = set(merged.keys())
@@ -998,6 +1011,9 @@ def extract_schema(chunks: list, base_uri: str,
     result.datatype_properties = sorted(dt_props.values(),
                                         key=lambda v: normalize_label(v["name"]))
     result.cache_hits = cache_hits
+    _phases["cache_hits"] = cache_hits
+    _phases["chunks"] = len(prepared)
+    profile_metric("schema_phases", _phases)
     return result
 
 
@@ -1825,6 +1841,7 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
     from app.adapters.schema_gate import PromotePolicy, apply_gate
 
     result = ExtractionResult()
+    _phases: dict = {}
     prepared = _chunk_iter(chunks)
     result.chunks_processed = len(prepared)
     if not prepared:
@@ -1876,6 +1893,7 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
     raw_relations: list[ExtractedRelation] = []
     done = 0
     cache_hits = 0
+    _t_parallel = time.perf_counter()
     with ThreadPoolExecutor(max_workers=max(1, parallelism)) as pool:
         # 分批提交（每批 parallelism 个，批间取消检查）：一次性提交全部时取消后
         # 队列排队的调用仍会跑——点停止还要等完整个队列（2026-11-06 实测）
@@ -1887,7 +1905,7 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
             del remaining[:max(1, parallelism)]
             if remaining and request_interval > 0:
                 time.sleep(request_interval)  # params.request_interval 批间隔（同骨架）
-            futures = {pool.submit(one, idx, text): idx
+            futures = {submit_with_context(pool, one, idx, text): idx
                        for idx, text, _doc, _h in batch}
             for fut in as_completed(futures):
                 if cancel_cb is not None:
@@ -1924,8 +1942,11 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
                             chunk_index=idx))
                 if progress_cb is not None:
                     progress_cb(done, len(prepared), cache_hits)
+    _phases["parallel_extract_seconds"] = round(
+        time.perf_counter() - _t_parallel, 6)
 
     # O2-B10 指代消解 L0：闸门前按 chunk 合并代词/简称提及（失败静默，不影响主抽取）
+    _t_coref = time.perf_counter()
     if coref_enabled and raw_entities:
         from app.adapters.coref import apply_coref, run_coref_ll0
 
@@ -1937,8 +1958,10 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
         raw_entities, raw_relations, _relabeled = apply_coref(
             raw_entities, raw_relations, mapping)
         result.coref_stats = cstats
+    _phases["coref_seconds"] = round(time.perf_counter() - _t_coref, 6)
 
     # O2-B11 pattern 层：结构化属性直抽补全 + LLM 值校准（毫秒级正则，零 LLM 成本）
+    _t_pattern = time.perf_counter()
     if pattern_enabled and raw_entities:
         from app.adapters.pattern_extract import fill_and_calibrate
 
@@ -1946,18 +1969,24 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
             raw_entities, chunks, tbox_summary)
         result.pattern_filled_count = p_filled
         result.pattern_calibrated_count = p_cal
+    _phases["pattern_seconds"] = round(time.perf_counter() - _t_pattern, 6)
 
     # 严格闸门（04 §4.1）：类/谓词四级匹配 + domain/range + evidence 定位 + confidence 阈值
+    _t_gate = time.perf_counter()
     tbox = {"classes": tbox_summary.get("classes") or {},
             "object_properties": tbox_summary.get("object_properties") or {},
             "chunks": chunks_by_idx}
     gate = apply_gate(raw_entities + raw_relations, tbox,
                       PromotePolicy(promote_policy) if isinstance(promote_policy, str)
                       else promote_policy)
+    _phases["gate_seconds"] = round(time.perf_counter() - _t_gate, 6)
+    _phases.update({"chunks": len(prepared), "cache_hits": cache_hits,
+                    "raw_entities": len(raw_entities), "raw_relations": len(raw_relations)})
     if not strict_gate:
         result.entities = _dedupe_entities([i for i in gate.passed
                                             if isinstance(i, ExtractedEntity)])
         result.relations = [i for i in gate.passed if isinstance(i, ExtractedRelation)]
+        profile_metric("instance_phases", _phases)
         return result
 
     kinds = [v.kind for v in gate.violations]
@@ -1985,6 +2014,8 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
                         and normalize_label(r.object_label) not in dropped]
     result.gate_violations = [v.model_dump() for v in gate.violations[:500]]
     result.cache_hits = cache_hits
+    _phases.update({"entities": len(result.entities), "relations": len(result.relations)})
+    profile_metric("instance_phases", _phases)
     return result
 
 

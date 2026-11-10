@@ -18,11 +18,20 @@ from __future__ import annotations
 
 import json
 import re
+import time
 import uuid
 from typing import Any, Optional
 
 from app.tasks.celery_app import celery_app
 from app.tasks.progress import finish_task_progress, get_task_progress, set_task_progress
+from app.services.pipeline_profiler import (
+    begin_pipeline_profile,
+    finish_pipeline_profile,
+    profile_metric,
+    profile_metrics,
+    profile_stage_begin,
+    profile_stage_end,
+)
 
 _RUNNING_KEY = "pipeline:running:{project_id}"
 _RUNNING_TTL = 6 * 3600
@@ -160,6 +169,9 @@ def _run_stage_task(task, stage_key: str, stages: list[dict], task_id: str,
             detail = re.sub(r"^(骨架抽取|实例抽取|冲突检测|消解|公理扫描|结构自检|裁决)完成：",
                             "", str(sub_prog["message"]))
             _stage(stages, stage_key)["detail"] = detail[:80]
+        # 剖析：把子任务进度里的统计（切片数/缓存命中/批次数等）带进阶段指标
+        if sub_prog and isinstance(sub_prog.get("stats"), dict):
+            profile_metric(f"{stage_key}_stats", sub_prog["stats"])
     except Exception:  # noqa: BLE001 —— 摘要拿不到不影响主流程
         pass
     return res.result if isinstance(res.result, dict) else {}
@@ -263,6 +275,35 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
         depth = DEFAULT_DEPTH
     profile = DEPTH_PROFILES[depth]
 
+    # 耗时剖析（2026-11）：每次 run 一个本地 JSON；采集失败绝不影响管线本体
+    try:
+        _prof = begin_pipeline_profile(project_id, task_id,
+                                       trigger_user_id=trigger_user_id,
+                                       options=options)
+        _prof.add_metrics({
+            "depth": depth,
+            "depth_label": profile.get("label"),
+            "restart": restart,
+            "selfcheck_rounds": profile.get("selfcheck_rounds"),
+            "include_axioms": profile.get("include_axioms"),
+        })
+        _enqueued_at = options.get("_enqueued_at")
+        if _enqueued_at:
+            try:
+                _prof.add_metric("queue_wait_seconds",
+                                 round(max(0.0, time.time() - float(_enqueued_at)), 6))
+            except (TypeError, ValueError):
+                pass
+    except Exception:  # noqa: BLE001
+        _prof = None
+
+    def _prof_extra() -> dict:
+        """把本次剖析文件路径带进进度 stats，页面/日志可直接定位。"""
+        try:
+            return {"profile_file": str(_prof.file_path)} if _prof is not None else {}
+        except Exception:  # noqa: BLE001
+            return {}
+
     def _check_stage_result(res: Any, stage_key: str) -> None:
         """子任务结果传导：cancelled 停管线；failed 同样必须停并报错。
 
@@ -313,6 +354,10 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 cur = get_task_progress(task_id)
                 if cur is None or cur.get("status") not in ("running", "queued"):
                     return
+                # 半途快照：进程被强杀（SIGKILL/OOM，finally 不会执行）时，
+                # 仍能保留至少到最近 60s 的耗时与 LLM 调用现场
+                if _prof is not None:
+                    _prof.write_snapshot()
                 set_task_progress(task_id, cur.get("stage") or "",
                                   int(cur.get("percent") or 0),
                                   cur.get("message") or "",
@@ -346,6 +391,9 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
         try:
             proj = db.query(Project).filter(Project.id == project_id).first()
             if proj is None:
+                if _prof is not None:
+                    _prof.status = "failed"
+                    _prof.error = "project_not_found"
                 finish_task_progress(task_id, "failed", f"项目不存在: {project_id}",
                                      stats={"project_id": project_id, "stages": stages})
                 return {"status": "failed", "reason": "project_not_found"}
@@ -356,6 +404,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
 
             st = _stage(stages, "parse")
             st["status"] = "running"
+            profile_stage_begin("parse", "解析文档")
             _prog("parse", "检查待解析文档…", 0.0)
             # 常规：uploaded/failed 待解析 + parsing 在途（上传 auto_parse 已在跑的，
             # 管线等它结束而不是跳过——否则骨架阶段读到 0 切片直接失败）；
@@ -412,6 +461,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                     _prog("parse", "没有待解析文档")
             else:
                 parse_failed: list[str] = []
+                parse_doc_times: list[dict] = []
                 for i, d in enumerate(todo):
                     _cancel_check()
                     sub_id = f"{task_id}:parse:{d.id}"
@@ -419,13 +469,30 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                     st["detail"] = f"{i + 1}/{len(todo)}"
                     _prog("parse", f"解析中 {i + 1}/{len(todo)}：{d.filename}",
                           i / len(todo))
+                    _doc_t0 = time.perf_counter()
+                    _parse_res: dict = {}
                     try:
-                        run_parse(d.id, backend="auto", task_id=sub_id)
+                        _parse_res = run_parse(d.id, backend="auto", task_id=sub_id) or {}
+                        _doc_ok, _doc_err = True, None
                     except Exception as e:  # noqa: BLE001 —— 单文档失败继续其余
+                        _doc_ok, _doc_err = False, str(e)[:300]
                         parse_failed.append(f"{d.filename}: {str(e)[:120]}")
+                    parse_doc_times.append({
+                        "document_id": d.id,
+                        "filename": d.filename,
+                        "seconds": round(time.perf_counter() - _doc_t0, 6),
+                        "ok": _doc_ok,
+                        "error": _doc_err,
+                        "chunks": _parse_res.get("chunks"),
+                        "chars": _parse_res.get("chars"),
+                        "backend": _parse_res.get("backend"),
+                        "page_count": _parse_res.get("page_count"),
+                    })
+                profile_metric("parse_documents", parse_doc_times)
                 if len(parse_failed) == len(todo):
                     st["status"] = "failed"
                     st["detail"] = f"全部 {len(todo)} 个文档解析失败"
+                    profile_stage_end("parse", status="failed", detail=st["detail"])
                     raise RuntimeError("全部文档解析失败，首因：" + parse_failed[0])
                 st["status"] = "done"
                 st["detail"] = f"{len(todo) - len(parse_failed)}/{len(todo)} 个文档"
@@ -433,9 +500,11 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                     st["detail"] += f"（{len(parse_failed)} 个失败）"
                 summary["parse"] = {"total": len(todo), "failed": parse_failed}
                 _prog("parse", f"解析完成（{st['detail']}）")
+            profile_stage_end("parse", status=st["status"], detail=st["detail"])
 
             # 模型前置检查：解析不需要 LLM，抽取需要——缺配置时文档已解析完，
             # 报错提示人话（不浪费已完成的解析成果）
+            profile_stage_begin("preflight", "构建前置检查", tracked=False)
             from app.adapters.provider import ModelPurpose, resolve_provider
 
             try:
@@ -444,11 +513,16 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             except Exception:  # noqa: BLE001 —— 未配置/密钥解密失败都按缺模型处理
                 has_llm = False
             if not has_llm:
+                profile_stage_end("preflight", status="failed",
+                                  detail="未配置可用的抽取模型")
+                if _prof is not None:
+                    _prof.status = "failed"
+                    _prof.error = "no_extract_model"
                 finish_task_progress(
                     task_id, "failed",
                     "文档解析已完成，但尚未配置可用的抽取模型：请在「模型配置」中"
                     "添加并启用抽取模型后重新一键构建",
-                    stats={"project_id": project_id, "stages": stages})
+                    stats={"project_id": project_id, "stages": stages, **_prof_extra()})
                 return {"status": "failed", "reason": "no_extract_model"}
 
             model_config_id = None
@@ -459,6 +533,18 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                         .filter(UserModelPick.user_id == trigger_user_id,
                                 UserModelPick.purpose == "extract").first())
                 model_config_id = pick.config_id if pick else None
+            profile_metrics({"model_config_id": model_config_id})
+            profile_stage_end("preflight", status="done",
+                              detail="抽取模型已配置")
+            try:
+                profile_metrics({
+                    "extract_parallelism": _extract_parallelism(
+                        db, project_id, model_config_id),
+                    "extract_request_interval": _extract_request_interval(
+                        db, project_id, model_config_id),
+                })
+            except Exception:  # noqa: BLE001
+                pass
 
             tasks = _task_index()
 
@@ -466,6 +552,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             _cancel_check()
             _fresh_read()
             st = _stage(stages, "schema")
+            profile_stage_begin("schema", "骨架抽取")
             proj = db.query(Project).filter(Project.id == project_id).first()
             gd = proj.graph_data if isinstance(proj.graph_data, dict) else {}
             schema = gd.get("schema") if isinstance(gd.get("schema"), dict) else {}
@@ -473,6 +560,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 st["status"] = "skipped"
                 st["detail"] = f"已有骨架（{len(schema['classes'])} 类），跳过重抽"
                 _prog("schema", st["detail"])
+                profile_stage_end("schema", status="skipped", detail=st["detail"])
             else:
                 st["status"] = "running"
                 _prog("schema", "AI 抽取骨架中…", 0.0)
@@ -490,8 +578,11 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                                          UploadedDocument.deleted_at.is_(None))
                                  .order_by(UploadedDocument.id,
                                            DocumentChunk.chunk_index).limit(30).all()]
+                    _cq_t0 = time.perf_counter()
                     cq_res = generate_cqs(db, project_id, created_by=trigger_user_id,
                                           doc_texts=doc_heads)
+                    profile_metric("cq_generation_seconds",
+                                   round(time.perf_counter() - _cq_t0, 6))
                     summary["cq_generation"] = cq_res
                     n_cq = int(cq_res.get("generated") or 0)
                     if n_cq:
@@ -515,10 +606,13 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                     model_config_id=model_config_id, strict_config=None), "schema")
                 st["status"] = "done"
                 _prog("schema", "骨架抽取完成")
+                profile_stage_end("schema", status="done",
+                                  detail=st.get("detail") or "完成")
 
             # ── 阶段 3：实例抽取 ──
             _cancel_check()
             st = _stage(stages, "instances")
+            profile_stage_begin("instances", "实例抽取")
             st["status"] = "running"
             _prog("instances", "AI 抽取实例中…", 0.0)
             _check_stage_result(_run_stage_task(
@@ -530,10 +624,13 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 model_config_id=model_config_id), "instances")
             st["status"] = "done"
             _prog("instances", "实例抽取完成")
+            profile_stage_end("instances", status="done",
+                              detail=st.get("detail") or "完成")
 
             # ── 阶段 4：实体消解 ──
             _cancel_check()
             st = _stage(stages, "resolution")
+            profile_stage_begin("resolution", "实体消解")
             st["status"] = "running"
             _prog("resolution", "实体消解中…", 0.0)
             _check_stage_result(_run_stage_task(
@@ -541,10 +638,13 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 project_id=project_id), "resolution")
             st["status"] = "done"
             _prog("resolution", "实体消解完成")
+            profile_stage_end("resolution", status="done",
+                              detail=st.get("detail") or "完成")
 
             # ── 阶段 5：冲突检测 ──
             _cancel_check()
             st = _stage(stages, "conflicts")
+            profile_stage_begin("conflicts", "冲突检测")
             st["status"] = "running"
             _prog("conflicts", "冲突检测中…", 0.0)
             _check_stage_result(_run_stage_task(
@@ -552,9 +652,12 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 project_id=project_id), "conflicts")
             st["status"] = "done"
             _prog("conflicts", "冲突检测完成")
+            profile_stage_end("conflicts", status="done",
+                              detail=st.get("detail") or "完成")
 
             # ── 阶段 6：自检修复环（准出标准：机检无硬伤；LLM 定向修复，最小动作）──
             st = _stage(stages, "selfcheck")
+            profile_stage_begin("selfcheck", "结构自检")
             st["status"] = "running"
             _prog("selfcheck", "本体质量自检中…", 0.0)
             _cancel_check()
@@ -576,20 +679,24 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 # 需人工的数量由完成消息统一交代
                 st["detail"] = "完成修复"
                 _prog("selfcheck", st["detail"])
+                profile_stage_end("selfcheck", status="done", detail=st["detail"])
             except _PipelineCancelled:
                 raise
             except Exception as e:  # noqa: BLE001 —— 自检失败不阻断后续（机检结论照常出）
                 st["status"] = "failed"
                 st["detail"] = f"自检修复失败（不影响其余结果）: {str(e)[:120]}"
                 _prog("selfcheck", st["detail"])
+                profile_stage_end("selfcheck", status="failed", detail=st["detail"])
 
             # ── 阶段 7：AI 公理扫描（深度=fast 跳过；失败/跳过不阻断收尾）──
             _cancel_check()
             st = _stage(stages, "axioms")
+            profile_stage_begin("axioms", "AI 公理扫描")
             if not profile["include_axioms"]:
                 st["status"] = "skipped"
                 st["detail"] = "快速档跳过公理扫描"
                 _prog("axioms", st["detail"])
+                profile_stage_end("axioms", status="skipped", detail=st["detail"])
             else:
                 st["status"] = "running"
                 _prog("axioms", "AI 公理扫描中…", 0.0)
@@ -625,7 +732,10 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 #    失败静默，不影响公理阶段主产物。
                 try:
                     _fresh_read()
+                    _br_t0 = time.perf_counter()
                     rules_res = _mine_business_rules(db, project_id)
+                    profile_metric("business_rules_seconds",
+                                   round(time.perf_counter() - _br_t0, 6))
                     summary["business_rules"] = rules_res
                     n_rules = int(rules_res.get("rules_added") or 0)
                     if n_rules:
@@ -633,11 +743,13 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                         _prog("axioms", st["detail"])
                 except Exception as e:  # noqa: BLE001
                     summary["business_rules"] = {"rules_added": 0, "skipped": str(e)[:120]}
+                profile_stage_end("axioms", status=st["status"], detail=st["detail"])
 
             # ── 阶段 8：AI 自动裁决（含公理自动申报 + 一致性复验撤回）──
             _cancel_check()
             _fresh_read()
             st = _stage(stages, "adjudicate")
+            profile_stage_begin("adjudicate", "AI 结果审查")
             st["status"] = "running"
             _prog("adjudicate", "结果确认中…", 0.0)
             from app.services.auto_adjudication import run_auto_adjudication
@@ -651,8 +763,10 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             st["detail"] = (f"自动确认 {adj['auto_approved']} 项"
                             + (f"，撤回 {adj['rolled_back']} 条引发矛盾的公理"
                                if adj.get("rolled_back") else ""))
+            profile_stage_end("adjudicate", status="done", detail=st["detail"])
 
             # 收尾统计：剩余需人裁决的数量
+            profile_stage_begin("finalize_stats", "收尾统计", tracked=False)
             from sqlalchemy import func as sa_func
 
             from app.infrastructure.database import ReviewItem
@@ -663,11 +777,14 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                             .group_by(ReviewItem.priority).all())
             by_priority = {p: int(c) for p, c in pending_rows}
             need_human = by_priority.get("critical", 0) + by_priority.get("high", 0)
+            profile_stage_end("finalize_stats", status="done",
+                              detail=f"待人工 {need_human} 项")
 
             # ── 能力问题评测（外部方法论对照：CQ 在真实产物上验证）：
             #    先补 SPARQL 模板（骨架就绪后才能生成），再双口径评测——
             #    有模板且图可查 = SPARQL 真执行出答案行；否则回落检索式。
             #    任一环节失败都不影响构建终态 ──
+            profile_stage_begin("cq_eval", "能力问题评测", tracked=False)
             cq_note = ""
             try:
                 from app.services.cq_service import (
@@ -675,13 +792,26 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 )
 
                 if list_cqs(db, project_id, enabled_only=True):
+                    _cq_steps: dict = {}
+                    _t = time.perf_counter()
                     _fresh_read()
+                    _cq_steps["fresh_read_seconds"] = round(time.perf_counter() - _t, 6)
+                    _t = time.perf_counter()
                     attach_sparql(db, project_id)
+                    _cq_steps["attach_sparql_seconds"] = round(time.perf_counter() - _t, 6)
                     # rebuild=True：构建刚改完全部图谱数据，评测必须用新图
+                    _t = time.perf_counter()
                     graph_state = ensure_rdf_graphs(project_id, rebuild=True)
+                    _cq_steps["ensure_rdf_graphs_seconds"] = round(
+                        time.perf_counter() - _t, 6)
+                    _t = time.perf_counter()
                     _fresh_read()
+                    _cq_steps["fresh_read2_seconds"] = round(time.perf_counter() - _t, 6)
+                    _t = time.perf_counter()
                     ev = evaluate_cqs(db, project_id, trigger="auto_post_extract")
+                    _cq_steps["evaluate_cqs_seconds"] = round(time.perf_counter() - _t, 6)
                     db.commit()  # CQ 模板/评测结果落库（attach_sparql 无自带提交）
+                    profile_metric("cq_eval_steps", _cq_steps)
                     if ev is not None:
                         summary["cq_evaluation_id"] = ev.id
                         summary["cq_graph_state"] = graph_state
@@ -693,8 +823,10 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 from app.core.logging import logger
 
                 logger.warning(f"[pipeline] CQ 评测失败 project={project_id}: {e}")
+            profile_stage_end("cq_eval", status="done", detail=cq_note or "完成")
 
             # ── 构建报告（外部方法论交付物对照：人话版，零 LLM）──
+            profile_stage_begin("build_report", "构建报告", tracked=False)
             try:
                 from app.services.build_report import generate_build_report
 
@@ -714,18 +846,26 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                                             "rules", "doc_rules") if k in report_res}
             except Exception as e:  # noqa: BLE001 —— 报告失败不影响构建终态
                 summary["build_report"] = {"skipped": str(e)[:120]}
+            profile_stage_end("build_report", status="done",
+                              detail=("跳过"
+                                      if (summary.get("build_report") or {}).get("skipped")
+                                      else "完成"))
 
+            profile_stage_begin("finalize", "落终态", tracked=False)
             sc = summary.get("selfcheck") or {}
             remaining = int(sc.get("remaining") or 0)
             sc_note = ("结构自检通过" if remaining == 0
                        else f"结构自检后剩 {remaining} 处需人工确认") if sc else ""
+            if _prof is not None:
+                _prof.status = "completed"
             finish_task_progress(
                 task_id, "completed",
                 f"一键构建完成（{profile['label']}档{'，' + sc_note if sc_note else ''}）："
                 f"还剩 {need_human} 个高优先级结果等你确认{cq_note}",
                 stats={"project_id": project_id, "pipeline": True, "stages": stages,
                        "depth": depth, "pending_by_priority": by_priority,
-                       "need_human": need_human, **summary})
+                       "need_human": need_human, **_prof_extra(), **summary})
+            profile_stage_end("finalize", status="done", detail="完成")
             return {"status": "completed", "need_human": need_human,
                     "pending_by_priority": by_priority, "adjudication": adj}
         finally:
@@ -739,8 +879,11 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
         for st in stages:
             if st["status"] == "running":
                 st["status"] = "cancelled"
+        if _prof is not None:
+            _prof.status = "cancelled"
         finish_task_progress(task_id, "cancelled", "已取消：重新构建将从被中断的阶段继续",
-                             stats={"project_id": project_id, "stages": stages})
+                             stats={"project_id": project_id, "stages": stages,
+                                    **_prof_extra()})
         return {"status": "cancelled"}
     except Exception as e:  # noqa: BLE001
         # 取消优先：子任务可能因 LLM 调用硬超时抛异常返回，但用户已点停止——
@@ -749,17 +892,52 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             for st in stages:
                 if st["status"] == "running":
                     st["status"] = "cancelled"
+            if _prof is not None:
+                _prof.status = "cancelled"
             finish_task_progress(task_id, "cancelled", "已停止（用户取消）",
-                                 stats={"project_id": project_id, "stages": stages})
+                                 stats={"project_id": project_id, "stages": stages,
+                                        **_prof_extra()})
             return {"status": "cancelled"}
         reason = _friendly_error(e)
         for st in stages:
             if st["status"] == "running":
                 st["status"] = "failed"
                 st["detail"] = reason  # 红格子上直接写人话原因，不用点开猜
+        if _prof is not None:
+            _prof.status = "failed"
+            _prof.error = reason
         finish_task_progress(task_id, "failed", reason,
-                             stats={"project_id": project_id, "stages": stages})
+                             stats={"project_id": project_id, "stages": stages,
+                                    **_prof_extra()})
         return {"status": "failed", "reason": reason}
+    finally:
+        # 剖析收尾：无论成功/失败/取消都落一个完整的本地 JSON（含未闭合阶段）
+        try:
+            # 兜底：BaseException（KeyboardInterrupt/SystemExit 等）或异常退出没走
+            # 到状态设置时，不能把文件写成 "running"——按 failed 收口并注明
+            _final_status = _prof.status if _prof is not None else "failed"
+            if _prof is not None and _final_status == "running":
+                _final_status = "failed"
+                _prof.error = _prof.error or "pipeline_ended_without_terminal_status"
+            _path = finish_pipeline_profile(
+                _prof,
+                status=_final_status,
+                error=(_prof.error if _prof is not None else None),
+                extra={
+                    "summary": summary,
+                    "stage_statuses": {s["key"]: s["status"] for s in stages},
+                })
+            if _path:
+                from app.core.logging import logger as _plog
+
+                _plog.info(f"[pipeline] 耗时剖析已写入 {_path}")
+        except Exception as _pe:  # noqa: BLE001 —— 剖析绝不影响任务终态
+            try:
+                from app.core.logging import logger as _plog
+
+                _plog.warning(f"[pipeline] 耗时剖析收尾失败: {_pe}")
+            except Exception:
+                pass
 
 
 def _redis():
@@ -849,6 +1027,10 @@ def dispatch_pipeline_run(project_id: int, trigger_user_id: Optional[int] = None
                        "stages": _stages_reset()},
                       queue="extract")
 
+    # 登记入队时刻：run_pipeline 一开始据此算「排队/派发等待」（只用于剖析，
+    # 不参与幂等/定时判定；下划线键不对外暴露）
+    options = dict(options)
+    options["_enqueued_at"] = time.time()
     kwargs = {"project_id": project_id, "trigger_user_id": trigger_user_id,
               "options": options}
     if _worker_alive():

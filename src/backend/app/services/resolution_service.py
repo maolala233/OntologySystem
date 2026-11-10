@@ -61,8 +61,25 @@ def _embeddings_fn(project_id: Optional[int] = None):
                         timeout=60)
 
         def _embed(texts: list[str]) -> list[list[float]]:
-            resp = client.embeddings.create(input=texts, model=resolved.model_name)
-            return [d.embedding for d in resp.data]
+            # 耗时剖析：嵌入模型调用也计入 resolution 阶段（token 用量由端点返回）
+            from app.services.pipeline_profiler import (
+                begin_llm_call,
+                finish_llm_call,
+                note_llm_attempt,
+                note_llm_response,
+            )
+
+            _scope = begin_llm_call(
+                model=resolved.model_name, stream=False,
+                system_prompt="", user_prompt="\n".join(texts),
+                caller="resolution_service.embed")
+            try:
+                note_llm_attempt()
+                resp = client.embeddings.create(input=texts, model=resolved.model_name)
+                note_llm_response(resp)
+                return [d.embedding for d in resp.data]
+            finally:
+                finish_llm_call(_scope)
 
         return _embed
     except Exception as e:  # noqa: BLE001 —— 向量层不可用不阻断消解

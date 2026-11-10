@@ -87,6 +87,12 @@ class Settings(BaseSettings):
     COREF_ENABLED: bool = True            # B10 指代消解 L0（每 chunk 一次 LLM 指代链）
     PATTERN_LAYER_ENABLED: bool = True    # B11 pattern 层（结构化属性直抽补全+校准）
 
+    # ===== 一键构建管线耗时剖析（2026-11）=====
+    # 每次 /pipeline/run 生成一个本地 JSON：阶段耗时/总耗时对账 + 每次 LLM 调用
+    # 耗时与 token。目录相对路径按 src/backend 解析；logs/ 已在 .gitignore。
+    PIPELINE_PROFILE_ENABLED: bool = True
+    PIPELINE_PROFILE_DIR: str = "logs/pipeline_profiles"
+
     @property
     def cors_origins_list(self) -> list:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]

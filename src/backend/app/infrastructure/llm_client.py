@@ -10,6 +10,88 @@ from openai import OpenAI, AsyncOpenAI
 from app.core.config import settings
 from app.core.logging import logger
 from app.infrastructure.task_manager import TaskCancelledError
+from app.services.pipeline_profiler import (
+    note_llm_attempt,
+    note_llm_chunk,
+    note_llm_response,
+    note_llm_retry_wait,
+)
+
+
+_PROFILE_SIG_CACHE: Dict[Any, Any] = {}
+
+
+def _profile_llm_call(func):
+    """给 LLMClient 的公开调用方法套上耗时/token 采集（无管线剖析时零开销）。
+
+    用装饰器而非在每个函数体内缩进 try/finally：这四个方法都有多处 return/raise，
+    装饰器能保证无论成功、失败还是取消都恰好落一条 LLM 调用记录。
+    采集器本身吞掉所有异常，绝不影响真实调用。
+    """
+    import functools
+    import inspect
+
+    call_name = func.__name__
+
+    def _begin(self, args, kwargs):
+        from app.services.pipeline_profiler import begin_llm_call, current_profile
+
+        if current_profile() is None:  # 非管线场景：直接跳过签名解析
+            return None
+        try:
+            sig = _PROFILE_SIG_CACHE.get(func)
+            if sig is None:
+                sig = inspect.signature(func)
+                _PROFILE_SIG_CACHE[func] = sig
+            bound = sig.bind(self, *args, **kwargs)
+            bound.apply_defaults()
+            a = bound.arguments
+            stream = a.get("stream")
+            if stream is None:
+                stream = bool(getattr(self, "_default_stream", None) or False)
+            return begin_llm_call(
+                model=getattr(self, "model", "unknown"),
+                stream=bool(stream),
+                system_prompt=a.get("system_prompt") or "",
+                user_prompt=a.get("user_prompt") or "",
+                task_id=a.get("task_id"),
+                caller=f"LLMClient.{call_name}",
+            )
+        except Exception:  # noqa: BLE001 —— 采集失败不影响调用
+            return None
+
+    if inspect.iscoroutinefunction(func):
+        @functools.wraps(func)
+        async def async_wrapper(self, *args, **kwargs):
+            from app.services.pipeline_profiler import finish_llm_call
+
+            scope = _begin(self, args, kwargs)
+            try:
+                result = await func(self, *args, **kwargs)
+            except BaseException as e:
+                finish_llm_call(scope, e)
+                raise
+            else:
+                finish_llm_call(scope)
+                return result
+
+        return async_wrapper
+
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        from app.services.pipeline_profiler import finish_llm_call
+
+        scope = _begin(self, args, kwargs)
+        try:
+            result = func(self, *args, **kwargs)
+        except BaseException as e:
+            finish_llm_call(scope, e)
+            raise
+        else:
+            finish_llm_call(scope)
+            return result
+
+    return wrapper
 
 
 class LLMEndpointUnreachableError(Exception):
@@ -350,6 +432,7 @@ class LLMClient:
             raise box["e"]
         raise TimeoutError(f"LLM 调用硬超时（{hard:.0f}s 无任何响应）")
 
+    @_profile_llm_call
     def call_llm(self, system_prompt: str, user_prompt: str, max_retries: Optional[int] = None,
                  stream: Optional[bool] = None, timeout: Optional[float] = None,
                  task_id: Optional[str] = None,
@@ -374,11 +457,14 @@ class LLMClient:
             logger.info(f"[LLM] 任务 ID: {task_id}，将在流式响应中检查取消状态")
 
         for attempt in range(max_retries):
+            note_llm_attempt()
             self._breaker_check()
             response = None
             try:
                 api_kwargs = self._build_api_kwargs(system_prompt, user_prompt, stream, timeout, json_schema)
                 response = self._create_with_hard_gate(api_kwargs, timeout)
+                if not stream:
+                    note_llm_response(response)
 
                 if stream:
                     logger.info(f"[LLM] 开始接收流式响应...")
@@ -398,6 +484,7 @@ class LLMClient:
                                         pass
                                 raise TaskCancelledError(f"Task {task_id} was cancelled during streaming")
 
+                            note_llm_chunk(chunk)
                             elapsed_time = time.time() - stream_start
                             if elapsed_time > stream_timeout:
                                 logger.error(f"LLM 调用超时（timeout={stream_timeout}s），中断流式响应")
@@ -523,15 +610,18 @@ class LLMClient:
                 if "429" in err_msg or "rate limit" in err_msg:
                     wait_time = (attempt + 1) * 10
                     logger.warning(f"触发 API 限流，正在进行第 {attempt+1} 次重试，等待 {wait_time} 秒...")
+                    note_llm_retry_wait(wait_time)
                     time.sleep(wait_time)
                 elif attempt < max_retries - 1:
                     logger.warning(f"LLM 调用失败：{e}，正在重试... (尝试 {attempt+1}/{max_retries}, 已耗时={time.time()-call_start_time:.2f}s)")
+                    note_llm_retry_wait(2)
                     time.sleep(2)
                 else:
                     total_time = time.time() - call_start_time
                     logger.error(f"LLM 调用在 {max_retries} 次尝试后仍然失败，总耗时={total_time:.2f}s: {str(e)}")
                     raise Exception(f"LLM 调用在 {max_retries} 次尝试后仍然失败，总耗时={total_time:.2f}s: {str(e)}")
 
+    @_profile_llm_call
     async def async_call_llm(self, system_prompt: str, user_prompt: str, max_retries: int = 3,
                              stream: Optional[bool] = None, timeout: Optional[float] = None,
                              task_id: Optional[str] = None,
@@ -554,11 +644,14 @@ class LLMClient:
             )
 
         for attempt in range(max_retries):
+            note_llm_attempt()
             self._breaker_check()
             response = None
             try:
                 api_kwargs = self._build_api_kwargs(system_prompt, user_prompt, stream, timeout, json_schema)
                 response = await self.async_client.chat.completions.create(**api_kwargs)
+                if not stream:
+                    note_llm_response(response)
 
                 if stream:
                     logger.info(f"[AsyncLLM] 开始接收流式响应...")
@@ -578,6 +671,7 @@ class LLMClient:
                                         pass
                                 raise TaskCancelledError(f"Task {task_id} was cancelled during streaming")
 
+                            note_llm_chunk(chunk)
                             elapsed_time = time.time() - stream_start
                             if elapsed_time > stream_timeout:
                                 logger.error(f"[AsyncLLM] 调用超时（timeout={stream_timeout}s），中断流式响应")
@@ -697,9 +791,11 @@ class LLMClient:
                 if "429" in err_msg or "rate limit" in err_msg:
                     wait_time = (attempt + 1) * 10
                     logger.warning(f"[AsyncLLM] 触发 API 限流，正在进行第 {attempt+1} 次重试，等待 {wait_time} 秒...")
+                    note_llm_retry_wait(wait_time)
                     await asyncio.sleep(wait_time)
                 elif attempt < max_retries - 1:
                     logger.warning(f"[AsyncLLM] 调用失败：{e}，正在重试... (尝试 {attempt+1}/{max_retries}, 已耗时={time.time()-call_start_time:.2f}s)")
+                    note_llm_retry_wait(2)
                     await asyncio.sleep(2)
                 else:
                     total_time = time.time() - call_start_time
@@ -924,6 +1020,7 @@ class LLMClient:
 
         try:
             response = self.client.chat.completions.create(**api_kwargs)
+            note_llm_response(response)
 
             if response and response.choices and len(response.choices) > 0:
                 continued_content = response.choices[0].message.content or ""
@@ -1010,6 +1107,7 @@ class LLMClient:
                 return result
 
             response = await self.async_client.chat.completions.create(**api_kwargs)
+            note_llm_response(response)
 
             if response and response.choices and len(response.choices) > 0:
                 continued_content = response.choices[0].message.content or ""
@@ -1147,22 +1245,33 @@ class LLMClient:
             api_kwargs["timeout"] = timeout
 
         logger.info(f"[LLM] 流式生成开始：model={api_kwargs['model']}，user_prompt={len(user_prompt)} 字符")
-        response = self.client.chat.completions.create(**api_kwargs)
-        chunk_count = 0
-        try:
-            for chunk in response:
-                if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
-                    chunk_count += 1
-                    yield chunk.choices[0].delta.content
-        except GeneratorExit:
-            if hasattr(response, 'close'):
-                try:
-                    response.close()
-                except Exception:
-                    pass
-            raise
-        logger.info(f"[LLM] 流式生成完成：{chunk_count} 个 chunk")
+        from app.services.pipeline_profiler import begin_llm_call, finish_llm_call
 
+        _scope = begin_llm_call(
+            model=api_kwargs["model"], stream=True,
+            system_prompt=system_prompt, user_prompt=user_prompt,
+            caller="LLMClient.call_llm_stream")
+        try:
+            response = self.client.chat.completions.create(**api_kwargs)
+            chunk_count = 0
+            try:
+                for chunk in response:
+                    note_llm_chunk(chunk)
+                    if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
+                        chunk_count += 1
+                        yield chunk.choices[0].delta.content
+            except GeneratorExit:
+                if hasattr(response, 'close'):
+                    try:
+                        response.close()
+                    except Exception:
+                        pass
+                raise
+            logger.info(f"[LLM] 流式生成完成：{chunk_count} 个 chunk")
+        finally:
+            finish_llm_call(_scope)
+
+    @_profile_llm_call
     def call_llm_text(self, system_prompt: str, user_prompt: str, max_retries: int = 3, stream: bool = False,
                       timeout: Optional[float] = None, task_id: Optional[str] = None,
                       temperature: Optional[float] = None) -> Dict[str, Any]:
@@ -1176,6 +1285,7 @@ class LLMClient:
             logger.info(f"[LLM] 任务 ID: {task_id}，将在流式响应中检查取消状态")
 
         for attempt in range(max_retries):
+            note_llm_attempt()
             response = None
             try:
                 api_kwargs = {
@@ -1196,6 +1306,8 @@ class LLMClient:
                 # 硬闸与 call_llm 同款：自定义 http_client 下 SDK 超时不可靠，
                 # 文本通道裸调曾实测挂 13 分钟（结果确认阶段慢的元凶之一）
                 response = self._create_with_hard_gate(api_kwargs, timeout)
+                if not stream:
+                    note_llm_response(response)
 
                 if stream:
                     logger.info(f"[LLM] 开始接收流式响应...")
@@ -1214,6 +1326,7 @@ class LLMClient:
                                         pass
                                 raise TaskCancelledError(f"Task {task_id} was cancelled during streaming")
 
+                            note_llm_chunk(chunk)
                             elapsed_time = time.time() - stream_start
                             if elapsed_time > stream_timeout:
                                 logger.error(f"LLM 调用超时（timeout={stream_timeout}s），中断流式响应")
@@ -1305,15 +1418,18 @@ class LLMClient:
                 if "429" in err_msg or "rate limit" in err_msg:
                     wait_time = (attempt + 1) * 10
                     logger.warning(f"触发 API 限流，正在进行第 {attempt+1} 次重试，等待 {wait_time} 秒...")
+                    note_llm_retry_wait(wait_time)
                     time.sleep(wait_time)
                 elif attempt < max_retries - 1:
                     logger.warning(f"LLM 调用失败：{e}，正在重试... (尝试 {attempt+1}/{max_retries}, 已耗时={time.time()-call_start_time:.2f}s)")
+                    note_llm_retry_wait(2)
                     time.sleep(2)
                 else:
                     total_time = time.time() - call_start_time
                     logger.error(f"LLM 调用在 {max_retries} 次尝试后仍然失败，总耗时={total_time:.2f}s: {str(e)}")
                     raise Exception(f"LLM 调用在 {max_retries} 次尝试后仍然失败，总耗时={total_time:.2f}s: {str(e)}")
 
+    @_profile_llm_call
     async def async_call_llm_text(self, system_prompt: str, user_prompt: str, max_retries: int = 3,
                                   stream: bool = False, timeout: Optional[float] = None,
                                   task_id: Optional[str] = None) -> Dict[str, Any]:
@@ -1329,6 +1445,7 @@ class LLMClient:
             )
 
         for attempt in range(max_retries):
+            note_llm_attempt()
             response = None
             try:
                 api_kwargs = {
@@ -1347,6 +1464,8 @@ class LLMClient:
                     api_kwargs["timeout"] = timeout
 
                 response = await self.async_client.chat.completions.create(**api_kwargs)
+                if not stream:
+                    note_llm_response(response)
 
                 if stream:
                     stream_start = time.time()
@@ -1362,6 +1481,7 @@ class LLMClient:
                                     pass
                             raise TaskCancelledError(f"Task {task_id} was cancelled during streaming")
 
+                        note_llm_chunk(chunk)
                         elapsed_time = time.time() - stream_start
                         if elapsed_time > stream_timeout:
                             if hasattr(response, 'aclose'):
@@ -1439,9 +1559,11 @@ class LLMClient:
                 if "429" in err_msg or "rate limit" in err_msg:
                     wait_time = (attempt + 1) * 10
                     logger.warning(f"[AsyncLLM] 触发 API 限流，等待 {wait_time} 秒...")
+                    note_llm_retry_wait(wait_time)
                     await asyncio.sleep(wait_time)
                 elif attempt < max_retries - 1:
                     logger.warning(f"[AsyncLLM] 调用失败：{e}，正在重试... (尝试 {attempt+1}/{max_retries})")
+                    note_llm_retry_wait(2)
                     await asyncio.sleep(2)
                 else:
                     total_time = time.time() - call_start_time
