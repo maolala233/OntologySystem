@@ -70,7 +70,14 @@ def is_cancelled(task_id: str) -> bool:
     import redis
 
     r = redis.Redis.from_url(_redis_url(), socket_connect_timeout=2)
-    return bool(r.get(_CANCEL_KEY.format(task_id=task_id)))
+    if r.get(_CANCEL_KEY.format(task_id=task_id)):
+        return True
+    # 子任务（{主任务id}:{阶段/子键}）兜底认主任务的取消键：cancel 端点给子
+    # 任务写键依赖进度快照里的 stages[].task_id，快照可能停留在子任务入场前
+    # （task_id=null），漏写子键时子任务必须能从主键感知取消——否则停止只改
+    # 了记账，抽取线程继续跑（2026-11-10 项目 272 inline 实测）。
+    head = task_id.split(":", 1)[0]
+    return bool(head != task_id and r.get(_CANCEL_KEY.format(task_id=head)))
 
 
 # ---- 派发入口：优先投 Celery extract 队列；无 worker（或 broker 不可达）时进程内后台线程执行 ----
