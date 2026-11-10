@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { message } from '../../shared/feedback';
 import { Layout, Menu, Avatar, Dropdown, Button, Modal, Input, Tag, Spin, Table } from 'antd';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import {
@@ -23,7 +24,7 @@ import {
     RobotOutlined,
     SafetyOutlined,
 } from '@ant-design/icons';
-import { Form, message, Switch } from 'antd';
+import { Form, Switch } from 'antd';
 import { authAPI } from '../../api/auth';
 import apiClient from '../../api/client';
 import { CONNECTIVITY_FIELDS, describeConnectivityError } from '../../utils/connectivity';

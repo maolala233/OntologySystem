@@ -4,7 +4,8 @@
  * 边：谓词、两端实体、置信度、溯源证据。
  */
 import React, { useEffect, useRef, useState } from 'react';
-import { Button, Descriptions, Drawer, Empty, Modal, Space, Spin, Table, Tag, Tooltip, Typography, message } from 'antd';
+import { message } from '../../shared/feedback';
+import { Button, Descriptions, Drawer, Empty, Modal, Space, Spin, Table, Tag, Tooltip, Typography } from 'antd';
 import { FileTextOutlined, LinkOutlined, ReloadOutlined, SendOutlined, ExpandOutlined } from '@ant-design/icons';
 
 import { EdgeDetail, NodeDetail, graphApi } from '../../api/graphview';

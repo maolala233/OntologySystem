@@ -3,7 +3,8 @@
 // + 置信度/推理路径展示 + 问答历史。项目选择器内置（默认取 URL 中的项目）。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PROJECT_STATUS, PUBLISHED_TAG } from '../../shared/projectStatus';
-import { Button, Drawer, Empty, Input, Popover, Spin, Tag, Tooltip, message } from 'antd';
+import { message } from '../../shared/feedback';
+import { Button, Drawer, Empty, Input, Popover, Spin, Tag, Tooltip } from 'antd';
 import {
     BookOutlined,
     CaretRightOutlined,
@@ -428,7 +429,7 @@ export default function QaDrawer({ open, onClose, projectId: initialProjectId }:
             width={560}
             open={open}
             onClose={onClose}
-            destroyOnClose={false}
+            destroyOnHidden={false}
             styles={{ body: { padding: 0, display: 'flex', flexDirection: 'column' } }}
         >
             {body}

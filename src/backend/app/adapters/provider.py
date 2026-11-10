@@ -199,6 +199,7 @@ def build_legacy_llm_config(db: Session, project_id: Optional[int] = None) -> di
         "chunk_overlap": params.get("chunk_overlap", 15),
         "request_interval": params.get("request_interval", 2),
         "llm_timeout": params.get("llm_timeout", 300),
+        "max_retries": params.get("max_retries", 2),
         "disable_think": params.get("disable_think", False),
         "streaming_enabled": params.get("streaming_enabled", False),
     }
@@ -212,6 +213,7 @@ def build_legacy_vl_config(db: Session, project_id: Optional[int] = None) -> dic
         "base_url": vl.base_url,
         "model": vl.model_name,
         "disable_think": (vl.params or {}).get("disable_think", False),
+        "llm_timeout": (vl.params or {}).get("llm_timeout", 300),
     }
 
 

@@ -5,10 +5,9 @@
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-    AutoComplete, Button, Dropdown, Form, Input, Modal, Popconfirm, Radio, Select, Space, Tag, Tooltip, Tree, message,
-} from 'antd';
+import { AutoComplete, Button, Dropdown, Form, Input, Modal, Popconfirm, Radio, Select, Space, Tag, Tooltip, Tree } from 'antd';
 import type { MenuProps, TreeProps } from 'antd';
+import { message } from '../../../shared/feedback';
 import {
     ApartmentOutlined, CheckCircleOutlined, CloudServerOutlined, ClusterOutlined, DeleteOutlined,
     EditOutlined, ExperimentOutlined, ExportOutlined, EyeOutlined, ExpandOutlined, LeftOutlined, MoreOutlined,
@@ -569,19 +568,6 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
     const handleTogglePublish = async () => {
         try {
             const p = await projectsApi.getProject(projectId);
-            if (!p.is_published && !p.domain_id && !p.domain) {
-                Modal.warning({
-                    title: '发布失败',
-                    content: (
-                        <div>
-                            <p>请先在「骨架编辑」页配置知识域，然后再发布到资产中心。</p>
-                            <p className="mt-2 text-gray-600">知识域用于对本体项目进行分类管理，是发布的必要条件。</p>
-                        </div>
-                    ),
-                    okText: '知道了',
-                });
-                return;
-            }
             if (p.is_published) {
                 confirmImpact({
                     title: '确认取消发布',
@@ -1021,7 +1007,7 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                 confirmLoading={savingEdit}
                 onCancel={() => setInstModal(null)}
                 okButtonProps={instModal?.mode === 'add' ? {} : { danger: false }}
-                destroyOnClose
+                destroyOnHidden
             >
                 <Form form={instForm} layout="vertical" className="mt-2">
                     <Form.Item name="label" label="实例名称" rules={[{ required: true, message: '请输入实例名称' }]}>
@@ -1073,7 +1059,7 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                 okText="保存"
                 confirmLoading={savingEdit}
                 onCancel={() => setRelModal(null)}
-                destroyOnClose
+                destroyOnHidden
             >
                 {relModal && (() => {
                     const anchor = graphNodes.find((n) => String(n.id) === relModal.anchorId);

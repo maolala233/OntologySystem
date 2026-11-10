@@ -6,12 +6,10 @@
  * 默认项目作用域、仅展示自己拥有的项目，全局行只读展示。
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import {
-    Button, Card, Drawer, Form, Input, InputNumber, message, Modal,
-    Select, Space, Switch, Tag, Typography, Empty, Tooltip,
-} from 'antd';
+import { Button, Card, Drawer, Form, Input, InputNumber, Select, Space, Switch, Tag, Typography, Empty, Tooltip } from 'antd';
 import { ApiOutlined, PlusOutlined, ReloadOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
 import { modelConfigsApi, ModelConfigRow, ProviderMeta } from '../../api/model-configs';
+import { message, confirmModal } from '../../shared/feedback';
 import { useAuthStore } from '../../shared/auth/authStore';
 import { projectsApi } from '../../api/projects';
 import { ProjectData } from '../../types/ontology';
@@ -107,8 +105,15 @@ const ModelConfigsPage: React.FC = () => {
     const openEdit = (row: ModelConfigRow) => {
         setEditing(row);
         form.resetFields();
+        // params 回填（2026-11-08）：…row 只带嵌套的 params 对象，表单字段
+        // （chunk_size 等）取不到值 → 落到硬编码 initialValue，用户打开编辑
+        // 再保存就会把库里调好的参数悄悄覆盖成默认值
+        const p = (row.params || {}) as Record<string, any>;
         form.setFieldsValue({
             ...row, api_key: '', scope: row.scope,
+            chunk_size: p.chunk_size, chunk_overlap: p.chunk_overlap,
+            request_interval: p.request_interval, llm_timeout: p.llm_timeout,
+            disable_think: !!p.disable_think, streaming_enabled: !!p.streaming_enabled,
         });
         setProviderSel(row.provider);
         setDrawerOpen(true);
@@ -174,6 +179,9 @@ const ModelConfigsPage: React.FC = () => {
                     purpose: values.purpose, provider: values.provider, base_url: values.base_url,
                     model_name: values.model_name, api_key: values.api_key || undefined,
                     dims: values.purpose === 'embedding' ? values.dims : null,
+                    // 编辑模式带 config_id：key 留空（=保持不变）时后端用已存的密钥测试，
+                    // 否则空 key 直接发出去 401（2026-11-08 用户实测）
+                    config_id: editing?.id,
                 });
                 if (result.ok) {
                     message.success(`连通成功（${result.latency_ms}ms）：${result.message}`);
@@ -200,7 +208,7 @@ const ModelConfigsPage: React.FC = () => {
     };
 
     const handleDelete = (row: ModelConfigRow) => {
-        Modal.confirm({
+        confirmModal({
             title: `删除配置「${row.name}」？`,
             content: '默认配置不可删除；删除后使用该配置的流程将回落到环境变量。',
             okText: '删除', okType: 'danger',
@@ -309,7 +317,7 @@ const ModelConfigsPage: React.FC = () => {
                 width={520}
                 open={drawerOpen}
                 onClose={() => setDrawerOpen(false)}
-                destroyOnClose
+                destroyOnHidden
                 footer={
                     <Space style={{ display: 'flex', justifyContent: 'space-between' }}>
                         <Button icon={<ApiOutlined />} loading={testingId === 'form'} onClick={() => handleTest()}>
@@ -389,10 +397,12 @@ const ModelConfigsPage: React.FC = () => {
                                 <Form.Item name="llm_timeout" label="超时(s)" initialValue={300}>
                                     <InputNumber min={30} max={1800} />
                                 </Form.Item>
-                                <Form.Item name="disable_think" label="关闭思考" valuePropName="checked">
+                                <Form.Item name="disable_think" label="关闭思考" valuePropName="checked"
+                                           tooltip="开启后抽取/QA 调用该模型时禁用思考模式（方舟 GLM 等模型关思考可显著提速、避免空回复）">
                                     <Switch />
                                 </Form.Item>
-                                <Form.Item name="streaming_enabled" label="流式" valuePropName="checked">
+                                <Form.Item name="streaming_enabled" label="流式" valuePropName="checked"
+                                           tooltip="预留开关：抽取输出为 JSON 契约固定非流式；问答是否流式由问答页开关控制，此开关当前不改变行为">
                                     <Switch />
                                 </Form.Item>
                             </Space>

@@ -18,7 +18,8 @@ import ReactFlow, {
     ConnectionMode
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { Drawer, Form, Input, Button, Select, message, Space, Switch, Typography, Divider, Spin } from 'antd';
+import { message } from '../../shared/feedback';
+import { Drawer, Form, Input, Button, Select, Space, Switch, Typography, Divider, Spin } from 'antd';
 import {
     DownloadOutlined,
     SaveOutlined,

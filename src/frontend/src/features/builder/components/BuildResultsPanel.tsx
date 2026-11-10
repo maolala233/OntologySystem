@@ -6,7 +6,8 @@
  */
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button, Card, Col, Row, Space, Statistic, Tag, message } from 'antd';
+import { message } from '../../../shared/feedback';
+import { Button, Card, Col, Row, Space, Statistic, Tag } from 'antd';
 import {
   AppstoreOutlined, CloudUploadOutlined, NodeIndexOutlined,
   PartitionOutlined, SafetyCertificateOutlined, ClusterOutlined,
@@ -14,6 +15,7 @@ import {
 
 import { BuildSummary } from '../../../api/pipeline';
 import { publishApi } from '../../../api/governance';
+import { publishWithDomain } from './publishFlow';
 
 interface Props {
   projectId: number;
@@ -34,9 +36,12 @@ const BuildResultsPanel: React.FC<Props> = ({ projectId, summary, checks, publis
   const doPublish = async () => {
     setPublishing(true);
     try {
-      const r = await publishApi.publish(projectId, {});
-      message.success(`发布完成：v${r.version_no} 已进入资产中心`);
-      onPublishedChange?.();
+      // 无知识域时弹选择器带域发布（2026-11-07：选域从构建期移到发布期）
+      const r = await publishWithDomain(projectId);
+      if (r) {
+        message.success(`发布完成：v${r.version_no} 已进入资产中心`);
+        onPublishedChange?.();
+      }
     } catch (e: any) {
       const err = e.response?.data?.error || e.response?.data;
       message.error(err?.message || '发布失败，请稍后重试');
@@ -68,7 +73,7 @@ const BuildResultsPanel: React.FC<Props> = ({ projectId, summary, checks, publis
           title={<span className="text-base">本体构建结果</span>}
           extra={(
             <Space wrap>
-              {published && <Tag color="purple">已发布 v{publishedVersionNo}</Tag>}
+              {published && <Tag color="purple">已发布</Tag>}
               <Button size="small" type="primary" ghost icon={<NodeIndexOutlined />}
                       onClick={() => navigate(`/projects/${projectId}/result?tab=graph`)}>
                 查看图谱

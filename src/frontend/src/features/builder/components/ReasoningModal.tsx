@@ -4,8 +4,8 @@
  * 每条带来源标签（OWL-RL 蕴含 / RDFS 蕴含 / 规则·名称），并支持含推理分节的 TTL 导出。
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import {
-    Button, Empty, Input, InputNumber, Modal, Popconfirm, Radio, Select, Spin, Switch, Tag, message, Pagination, Dropdown } from 'antd';
+import { Button, Empty, Input, InputNumber, Modal, Popconfirm, Radio, Select, Spin, Switch, Tag, Pagination, Dropdown } from 'antd';
+import { message } from '../../../shared/feedback';
 import {
     DeleteOutlined, DownloadOutlined, ExperimentOutlined, PlusOutlined, ReloadOutlined, SettingOutlined,
 } from '@ant-design/icons';

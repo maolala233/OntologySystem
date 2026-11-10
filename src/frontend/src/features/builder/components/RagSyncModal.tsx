@@ -3,7 +3,8 @@
  * 保存注入配置 → 获取知识库列表 → 将当前本体图谱注入 RAGFlow。
  */
 import React, { useState } from 'react';
-import { Button, Form, Input, Modal, Select, message } from 'antd';
+import { message } from '../../../shared/feedback';
+import { Button, Form, Input, Modal, Select } from 'antd';
 import { InfoCircleOutlined } from '@ant-design/icons';
 
 import { projectsApi } from '../../../api/projects';

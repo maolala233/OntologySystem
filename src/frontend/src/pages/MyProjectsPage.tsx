@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Checkbox, Empty, Form, Input, message, Modal, Radio, Popconfirm, Select, Space, Spin, Statistic, Table, Tag, Tooltip, Upload, DatePicker } from 'antd';
+import { message } from '../shared/feedback';
+import { Badge, Button, Checkbox, Empty, Form, Input, Modal, Radio, Popconfirm, Select, Space, Spin, Statistic, Table, Tag, Tooltip, Upload, DatePicker } from 'antd';
 import {
-    PlusOutlined,
+     PlusOutlined,
     EditOutlined,
     DeleteOutlined,
     EyeOutlined,
@@ -12,20 +13,21 @@ import {
     ReloadOutlined,
     SearchOutlined,
     SortAscendingOutlined,
+ InfoCircleOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import { Segmented } from 'antd';
 import { useAuthStore } from '../shared/auth/authStore';
-import { PROJECT_STATUS, PUBLISHED_TAG } from '../shared/projectStatus';
+import { PROJECT_STATUS, PUBLISHED_TAG, STALE_PUBLISHED_TAG } from '../shared/projectStatus';
+import { UPLOAD_ACCEPT, UPLOAD_EXTS } from '../features/builder/documents/uploadFormats';
 import Navbar from '../components/Layout/Navbar';
 import TechHero, { TECH_COLORS, GraphMotif } from '../components/TechHero';
 import { documentsApi } from '../api/documents';
 import { pipelineApi } from '../api/pipeline';
 import { projectsApi } from '../api/projects';
 import { ProjectData } from '../types/ontology';
-import KnowledgeDomainSelector from '../components/KnowledgeDomainSelector';
 import confirmImpact from '../utils/impactConfirm';
 
 const TC = TECH_COLORS;
@@ -38,11 +40,14 @@ type ViewMode = 'list' | 'cards';
 const statusOf = (p: ProjectData): string =>
     p.status || (p.is_published ? 'published' : 'draft');
 
+// 状态说明（与 projectStatus.PROJECT_STATUS.desc 同源文案）
+// 状态说明（与 projectStatus.PROJECT_STATUS.desc 同源文案）
 const STATUS_OPTIONS = [
-    { value: 'draft', label: '草稿' },
-    { value: 'building', label: '构建中' },
-    { value: 'ready', label: '已构建' },
-    { value: 'published', label: '已发布' },
+    { value: 'draft', label: '草稿（已创建未构建）' },
+    { value: 'scheduled', label: '待构建（定时构建已登记）' },
+    { value: 'building', label: '构建中（大模型后台构建）' },
+    { value: 'ready', label: '已构建（完成未发布）' },
+    { value: 'published', label: '已发布（已入资产中心）' },
 ];
 
 const fmtDate = (v?: string | null) =>
@@ -58,8 +63,6 @@ const MyProjectsPage: React.FC = () => {
     const [editingProject, setEditingProject] = useState<ProjectData | null>(null);
     const [form] = Form.useForm();
     const [editForm] = Form.useForm();
-    const [selectedDomainId, setSelectedDomainId] = useState<number | undefined>(undefined);
-    const [selectedDomainName, setSelectedDomainName] = useState<string | undefined>(undefined);
     const scrollPositionRef = useRef<number>(0);
 
     // 2026-11 列表视图改版：默认列表展示，可切卡片；按状态筛选
@@ -102,17 +105,13 @@ const MyProjectsPage: React.FC = () => {
     const [creating, setCreating] = useState(false);
 
     const handleCreateProject = async (values: any) => {
-        if (!selectedDomainId) {
-            message.warning('请选择知识域');
-            return;
-        }
         setCreating(true);
         try {
+            // 知识域 2026-11-08 起不在创建时选择：发布时才选（publishWithDomain
+            // 弹选择器带域发布）；新建项目 domain 为空即可
             const newProject = await projectsApi.createProject({
                 name: values.name,
                 description: values.description,
-                domain_id: selectedDomainId,
-                domain_name: selectedDomainName,
             });
             const pid = newProject.id;
             let docNote = '';
@@ -144,8 +143,6 @@ const MyProjectsPage: React.FC = () => {
             setIsModalOpen(false);
             form.resetFields();
             setPendingFiles([]);
-            setSelectedDomainId(undefined);
-            setSelectedDomainName(undefined);
 
             navigate(`/projects/${pid}`);
         } catch (error: any) {
@@ -219,12 +216,15 @@ const MyProjectsPage: React.FC = () => {
     };
 
     const statusCounts = useMemo(() => {
-        const c = { total: projects.length, published: 0, ready: 0, building: 0 };
+        const c = { total: projects.length, draft: 0, published: 0, ready: 0,
+                    building: 0, scheduled: 0 };
         projects.forEach((p) => {
             const s = statusOf(p);
             if (s === 'published') c.published++;
             else if (s === 'ready') c.ready++;
             else if (s === 'building') c.building++;
+            else if (s === 'scheduled') c.scheduled++;
+            else if (s === 'draft') c.draft++;
         });
         return c;
     }, [projects]);
@@ -298,9 +298,22 @@ const MyProjectsPage: React.FC = () => {
         </div>
     );
 
-    const statusTag = (project: ProjectData) => {
+    const statusTag = (project: ProjectData, stale?: boolean) => {
         const meta = PROJECT_STATUS[statusOf(project)] || PROJECT_STATUS.draft;
-        return <Tag color={meta.color}>{meta.text}</Tag>;
+        // 「有新版本」用角标圆点表达（双 Tag 并排会换行挤占 类/实例 列）
+        const tag = <Tag color={meta.color} style={{ marginInlineEnd: 0 }}>{meta.text}</Tag>;
+        return (
+            <span className="inline-flex items-center">
+                <Tooltip title={meta.desc} className="cursor-help">
+                    {stale ? (
+                        <Badge dot color={STALE_PUBLISHED_TAG.color}
+                               title="重新构建过：资产中心还是旧版本，可重新发布">
+                            {tag}
+                        </Badge>
+                    ) : tag}
+                </Tooltip>
+            </span>
+        );
     };
 
     const listColumns: ColumnsType<ProjectData> = [
@@ -322,12 +335,12 @@ const MyProjectsPage: React.FC = () => {
         {
             title: '状态', key: 'status', width: 100, filters: STATUS_OPTIONS.map(s => ({ text: s.label, value: s.value })),
             onFilter: (v, p) => statusOf(p) === v,
-            render: (_, project) => statusTag(project),
+            render: (_, project) => statusTag(project, project.stale_published),
         },
         {
-            title: '类 / 实例', key: 'stats', width: 120,
+            title: '类 / 实例', key: 'stats', width: 130,
             render: (_, project) => (
-                <span className="tk-mono text-xs text-gray-500">
+                <span className="tk-mono text-xs text-gray-500 whitespace-nowrap">
                     <span style={{ color: TC.blue }}>{project.classes_total ?? project.graph_data?.nodes?.length ?? 0}</span> 类
                     {' · '}
                     <span style={{ color: TC.purple }}>{project.instances_total ?? 0}</span> 实例
@@ -381,23 +394,32 @@ const MyProjectsPage: React.FC = () => {
                     ) : undefined}
                 />
 
-                {/* 状态统计（2026-11 列表视图改版） */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                {/* 状态统计（2026-11 列表视图改版；说明内嵌卡片 2026-11-09） */}
+                <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-4">
                     <div className="bg-white border border-gray-100 rounded-xl px-4 py-3">
                         <Statistic title="项目总数" value={statusCounts.total} />
                     </div>
-                    <div className="bg-white border border-gray-100 rounded-xl px-4 py-3">
-                        <Statistic title="已发布" value={statusCounts.published}
-                                   valueStyle={{ color: '#722ed1' }} />
-                    </div>
-                    <div className="bg-white border border-gray-100 rounded-xl px-4 py-3">
-                        <Statistic title="已构建" value={statusCounts.ready}
-                                   valueStyle={{ color: '#52c41a' }} />
-                    </div>
-                    <div className="bg-white border border-gray-100 rounded-xl px-4 py-3">
-                        <Statistic title="处理中" value={statusCounts.building}
-                                   valueStyle={{ color: '#5B8DEF' }} />
-                    </div>
+                    {(Object.keys(PROJECT_STATUS) as Array<keyof typeof PROJECT_STATUS>).map((k) => {
+                        const meta = PROJECT_STATUS[k];
+                        const countKey = k as 'draft' | 'published' | 'ready' | 'building' | 'scheduled';
+                        const colorOf: Record<string, string> = {
+                            draft: '#8c8c8c', published: '#722ed1', ready: '#52c41a',
+                            building: '#5B8DEF', scheduled: '#faad14',
+                        };
+                        return (
+                            <div key={k} className="bg-white border border-gray-100 rounded-xl px-4 py-3">
+                                <Tooltip title={meta.desc} className="cursor-help">
+                                    <div>
+                                        <Statistic
+                                            title={<span className="cursor-help">{meta.text}
+                                                <InfoCircleOutlined className="ml-1 text-gray-300 text-xs" /></span>}
+                                            value={statusCounts[countKey]}
+                                            valueStyle={{ color: colorOf[k] }} />
+                                    </div>
+                                </Tooltip>
+                            </div>
+                        );
+                    })}
                 </div>
 
                 {projects.length > 0 && (
@@ -576,7 +598,7 @@ const MyProjectsPage: React.FC = () => {
                                                 >
                                                     {project.name}
                                                 </span>
-                                                {statusTag(project)}
+                                                {statusTag(project, project.stale_published)}
                                             </div>
                                             <div className="text-gray-500 text-sm truncate mb-2">
                                                 {project.description || '暂无描述'}
@@ -622,33 +644,31 @@ const MyProjectsPage: React.FC = () => {
                         />
                     </Form.Item>
 
-                    <Form.Item
-                        label="知识域"
-                        rules={[{ required: true, message: '请选择知识域' }]}
-                        tooltip="选择或创建本项目所属的知识领域"
-                    >
-                        <KnowledgeDomainSelector
-                            value={selectedDomainId}
-                            onChange={setSelectedDomainId}
-                            domainName={selectedDomainName}
-                            onDomainNameChange={setSelectedDomainName}
-                            placeholder="选择知识域"
-                        />
-                    </Form.Item>
 
                     <Form.Item label="上传文档（可选，可稍后补充）">
                         <Upload.Dragger
                             multiple
                             showUploadList={{ showRemoveIcon: true }}
-                            beforeUpload={() => false}
+                            beforeUpload={(f) => {
+                                const ext = String(f.name).split('.').pop()?.toLowerCase() || '';
+                                if (!UPLOAD_EXTS.includes(ext)) {
+                                    message.warning(`不支持 .${ext} 格式：仅支持 ${UPLOAD_EXTS.join(' / ')}`);
+                                    return Upload.LIST_IGNORE;
+                                }
+                                if (f.size > 200 * 1024 * 1024) {
+                                    message.warning(`「${f.name}」超过 200MB 上限`);
+                                    return Upload.LIST_IGNORE;
+                                }
+                                return false;  // 阻止自动上传（随表单一起提交）
+                            }}
                             onChange={({ fileList }) => {
                                 setPendingFiles(fileList.map((f) => f.originFileObj).filter(Boolean) as File[]);
                             }}
-                            accept=".txt,.md,.pdf,.doc,.docx,.xls,.xlsx,.csv,.ppt,.pptx,.html,.json"
+                            accept={UPLOAD_ACCEPT}
                         >
                             <p className="ant-upload-drag-icon"><InboxOutlined /></p>
                             <p className="ant-upload-hint">
-                                上传后系统自动完成：解析 → AI 本体构建（含质量自检修复）→ 完成后你来确认结果
+                                支持 {UPLOAD_EXTS.join(' / ')}，单文件 ≤200MB，可多选
                             </p>
                         </Upload.Dragger>
                     </Form.Item>
@@ -683,7 +703,7 @@ const MyProjectsPage: React.FC = () => {
                             <Button onClick={() => setIsModalOpen(false)}>取消</Button>
                             <Button type="primary" htmlType="submit" loading={creating}
                                     icon={<ThunderboltOutlined />}>
-                                {pendingFiles.length > 0 ? '创建并开始构建' : '创建'}
+                                {pendingFiles.length > 0 ? '创建项目并开始构建' : '创建项目'}
                             </Button>
                         </Space>
                     </Form.Item>

@@ -1,7 +1,8 @@
 // src/components/Copilot/SuggestionCard.tsx - 首轮诊断建议卡（O5-B27/F14，docs/design/14 §5）
 // 诊断来源徽标 + LLM 理由 + 证据展开 + 转审核项/忽略；applied/rejected 后展示终态。
 import { useState } from 'react';
-import { Button, Tag, Tooltip, message } from 'antd';
+import { message } from '../../shared/feedback';
+import { Button, Tag, Tooltip } from 'antd';
 import {
     AuditOutlined,
     BulbOutlined,

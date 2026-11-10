@@ -48,7 +48,8 @@ def analyze(project_id: int, body: dict | None = None,
     try:  # 未配置模型时退化为确定性聚合（llm=None 路径），分析不因模型缺失而不可用
         cfg = build_legacy_llm_config(db, project_id)
         llm = LLMClient(api_key=cfg.get("api_key"), base_url=cfg.get("base_url"),
-                        model=cfg.get("model"))
+                        model=cfg.get("model"),
+                        think_mode="disabled" if cfg.get("disable_think") else None)
     except Exception:  # noqa: BLE001
         llm = None
     result = evolution_service.analyze_qa_failures(

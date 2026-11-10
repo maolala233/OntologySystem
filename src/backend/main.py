@@ -80,6 +80,30 @@ finally:
 
 start_periodic_cleanup(interval_seconds=600)
 
+
+def _start_schedule_poller():
+    """定时构建轮询兜底（2026-11-09 测试4 根修）：check_scheduled_pipelines 原本只挂
+    celery beat（beat_schedule 每 30s），本地 inline 模式（无 beat 进程）定时构建
+    永远不触发。后端自起守护线程同款轮询——触发逻辑先删登记键再抢锁派发，天然
+    幂等，beat（docker 部署）与本线程并存也不会重复构建。"""
+    import threading as _threading
+
+    def _worker():
+        while True:
+            try:
+                from app.tasks.pipeline_tasks import check_scheduled_pipelines
+
+                check_scheduled_pipelines()
+            except Exception:  # noqa: BLE001 —— 轮询失败下轮再试
+                pass
+            time.sleep(30)
+
+    t = _threading.Thread(target=_worker, daemon=True, name="pipeline-schedule-poller")
+    t.start()
+
+
+_start_schedule_poller()
+
 app = FastAPI(title="AI 本体构建系统 API", version="1.0.0")
 
 
@@ -163,6 +187,10 @@ if __name__ == '__main__':
         workers=int(os.environ.get("UVICORN_WORKERS", "1")),  # 多 worker 由环境变量控制，默认单进程
         limit_concurrency=100,
         timeout_keep_alive=30,
+        # SSE 长连接（pipeline/events 30min 流）会拖住优雅关闭——uvicorn 默认无限等
+        # "Waiting for connections to close"，--reload 每次改码都卡 9 分钟（2026-11-08 实测）。
+        # 15s 后强制掐断剩余连接；容器重启/热重载不再被流挂死。
+        timeout_graceful_shutdown=15,
         log_level="info",
         log_config=None,  # 日志统一走 app/core/logging.py（终端+按天文件），uvicorn 不再自带配置
     )

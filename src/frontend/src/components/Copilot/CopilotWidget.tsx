@@ -4,7 +4,8 @@
 // 消息渲染复用问答页 MarkdownAnswer；SSE 契约同问答（stage/token/done/error）。
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
-import { Button, Popover, Select, Tooltip, message } from 'antd';
+import { message } from '../../shared/feedback';
+import { Button, Popover, Select, Tooltip } from 'antd';
 import {
     CaretUpOutlined,
     ClearOutlined,

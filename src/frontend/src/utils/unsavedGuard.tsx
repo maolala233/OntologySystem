@@ -4,7 +4,8 @@
  * 前统一弹窗确认。离开确认后不自动保存——未保存即维持上次落库的版本。
  */
 import React from 'react';
-import { Modal } from 'antd';
+import { confirmModal } from '../shared/feedback';
+
 import { ExclamationCircleFilled } from '@ant-design/icons';
 
 const registry = new Set<string>();
@@ -22,7 +23,7 @@ export const confirmLeaveUnsaved = (onOk: () => void) => {
         onOk();
         return;
     }
-    Modal.confirm({
+    confirmModal({
         title: '有未保存的修改',
         icon: React.createElement(ExclamationCircleFilled),
         content: '当前画布有未保存的修改，离开后将丢失（数据库仍保持上次保存的版本）。确定要离开吗？',

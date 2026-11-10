@@ -30,6 +30,7 @@ __all__ = [
     "RULE_PLURAL_SIBLINGS",
     "RULE_SIBLING_LEVEL",
     "RULE_UNSATISFIABLE",
+    "RULE_ISOLATED_CLASS",
 ]
 
 RULE_CYCLE = "class_hierarchy_cycle"
@@ -41,6 +42,7 @@ RULE_NAMING_STYLE = "sibling_naming_style"
 RULE_PLURAL_SIBLINGS = "sibling_plural_inconsistency"
 RULE_SIBLING_LEVEL = "sibling_generalization_level"
 RULE_UNSATISFIABLE = "unsatisfiable_class"
+RULE_ISOLATED_CLASS = "isolated_class"
 
 # 超过该数量的直接子类建议增设中间层（101 §4.2 的"15±"经验值取整）
 MAX_DIRECT_CHILDREN = 12
@@ -264,6 +266,41 @@ def _check_sibling_levels(nodes: list[_ClassNode], index: dict[str, _ClassNode],
                            f"兄弟应在同一泛化层级，请调整「{a}」的位置", [a, b])
 
 
+def _check_isolated(nodes: list[_ClassNode], index: dict[str, _ClassNode],
+                    schema: dict, report: SchemaCheckReport) -> None:
+    """⑦孤岛类（warning）：无父类、无子类、也不出现在任何对象属性两端的类。
+
+    孤岛类不参与任何推理路径，QA 检索/图谱展开都会绕开它们——骨架"看着类很多、
+    实际全是散点"的直接信号（项目 265 实测 79 类中 9 类零连接）。"""
+    children: set[int] = set()
+    for n in nodes:
+        for _p in _resolve_parents(n, index):
+            children.add(id(n))
+    op_keys: set[str] = set()
+    for op in schema.get("object_properties") or []:
+        if not isinstance(op, dict):
+            continue
+        for side in ("domain", "range"):
+            key = _norm(op.get(side))
+            if key:
+                op_keys.add(key)
+    isolated = []
+    for n in nodes:
+        if id(n) in children or _resolve_parents(n, index):
+            continue
+        name = n.label or n.id
+        if name in op_keys or (n.id and n.id in op_keys):
+            continue
+        isolated.append(name)
+    if isolated:
+        sample = "、".join(isolated[:8]) + ("…" if len(isolated) > 8 else "")
+        report.add(
+            RULE_ISOLATED_CLASS, "warning",
+            f"{len(isolated)} 个类是孤岛（无父类、无子类、也没有任何关系连接）：{sample}。"
+            f"孤岛类无法参与推理与检索，请补挂父类/补关系，或并入更通用的类",
+            isolated)
+
+
 def run_schema_checks(schema: dict | None) -> SchemaCheckReport:
     """TBox 机检主入口（O1-B2）。输入 graph_data["schema"]，返回检查报告。
 
@@ -287,6 +324,7 @@ def run_schema_checks(schema: dict | None) -> SchemaCheckReport:
     _check_naming(children, report)
     _check_sibling_levels(nodes, index, report)
     _check_unsatisfiable(nodes, index, schema, report)
+    _check_isolated(nodes, index, schema, report)
     return report
 
 

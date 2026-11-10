@@ -17,7 +17,7 @@ from app.api.auth import get_current_user
 from app.core.config import ensure_dirs, settings
 from app.core.deps import is_super_admin, require_module
 from app.core.logging import logger
-from app.infrastructure.database import KnowledgeDomain, Project, ProjectMember, ReviewItem, UploadedDocument, User, get_db
+from app.infrastructure.database import KnowledgeDomain, OntologyVersion, Project, ProjectMember, Publication, ReviewItem, UploadedDocument, User, get_db
 from app.infrastructure.neo4j_client import neo4j_client
 from app.schemas.extraction import (
     SaveGraphRequest,
@@ -66,17 +66,31 @@ def get_my_projects(scope: str = "mine", current_user: User = Depends(get_curren
             .group_by(Entity.project_id).all())
 
     out: list[ProjectListItem] = []
+    # 比发布版本新的构建版本存在 → 「已发布但内容已更新」（重新构建过、可重新发布）
+    pub_ver = dict(db.query(Publication.project_id, sa_func.max(Publication.version_id))
+                   .filter(Publication.project_id.in_([p.id for p in rows]),
+                           Publication.status == "published")
+                   .group_by(Publication.project_id).all()) if rows else {}
+    latest_ver = dict(db.query(OntologyVersion.project_id, sa_func.max(OntologyVersion.id))
+                      .filter(OntologyVersion.project_id.in_([p.id for p in rows]))
+                      .group_by(OntologyVersion.project_id).all()) if rows else {}
     for p in rows:
         gd = p.graph_data if isinstance(p.graph_data, dict) else {}
         schema = gd.get("schema") if isinstance(gd.get("schema"), dict) else {}
         classes_total = len([c for c in (schema.get("classes") or [])
                              if isinstance(c, dict) and c.get("label")])
         item = ProjectListItem.model_validate(p)
-        if p.is_published:
-            item.status = "published"
-        elif (p.id is not None
-              and (pipeline_running_task_id(p.id) or pipeline_scheduled_at(p.id))):
+        # 判定顺序（2026-11-09 测试4）：构建中/待构建 > 已发布 > 已构建 > 草稿——
+        # 发布后重新构建必须显示「构建中」，不能被 is_published 吞掉
+        if (p.id is not None and pipeline_running_task_id(p.id)):
             item.status = "building"
+        elif (p.id is not None and pipeline_scheduled_at(p.id)):
+            item.status = "scheduled"
+        elif p.is_published:
+            item.status = "published"
+            item.stale_published = bool(
+                latest_ver.get(p.id) and pub_ver.get(p.id)
+                and latest_ver[p.id] > pub_ver[p.id])
         elif classes_total > 0:
             item.status = "ready"
         else:
@@ -116,16 +130,26 @@ def get_project(project_id: int, current_user: User = Depends(get_current_user),
     schema = gd.get("schema") if isinstance(gd.get("schema"), dict) else {}
     classes_total = len([c for c in (schema.get("classes") or [])
                          if isinstance(c, dict) and c.get("label")])
-    if project.is_published:
+    from sqlalchemy import func as sa_func
+
+    from app.tasks.pipeline_tasks import pipeline_running_task_id, pipeline_scheduled_at
+    # 判定顺序与 /my 同口径（2026-11-09）：构建中/待构建 > 已发布 > 已构建 > 草稿
+    if project.id is not None and pipeline_running_task_id(project.id):
+        item.status = "building"
+    elif project.id is not None and pipeline_scheduled_at(project.id):
+        item.status = "scheduled"
+    elif project.is_published:
         item.status = "published"
+        pub_vid = (db.query(sa_func.max(Publication.version_id))
+                   .filter(Publication.project_id == project.id,
+                           Publication.status == "published").scalar())
+        latest_vid = (db.query(sa_func.max(OntologyVersion.id))
+                      .filter(OntologyVersion.project_id == project.id).scalar())
+        item.stale_published = bool(pub_vid and latest_vid and latest_vid > pub_vid)
+    elif classes_total > 0:
+        item.status = "ready"
     else:
-        from app.tasks.pipeline_tasks import pipeline_running_task_id, pipeline_scheduled_at
-        if project.id is not None and (pipeline_running_task_id(project.id) or pipeline_scheduled_at(project.id)):
-            item.status = "building"
-        elif classes_total > 0:
-            item.status = "ready"
-        else:
-            item.status = "draft"
+        item.status = "draft"
     item.classes_total = classes_total
     return item
 

@@ -26,7 +26,7 @@ from typing import Any, Optional
 from sqlalchemy.orm import Session
 
 AUTO_LEVEL_ENV = "AUTO_ADJUDICATION_LEVEL"
-LEVELS = ("off", "conservative", "llm")
+LEVELS = ("off", "conservative", "llm", "fast")
 DEFAULT_LEVEL = "llm"
 
 # entity_merge 自动合并阈值：对齐消解自动合并闸 AUTO_MERGE_THRESHOLD（0.85）。
@@ -202,7 +202,8 @@ def _axiom_undo_plan(db: Session, proj, payload: dict) -> tuple[Callable[[], Non
                     if kind == "cardinality" and card_len_before is not None else None))
 
 
-def _adjudicate_axioms(db: Session, items: list, level: str) -> dict:
+def _adjudicate_axioms(db: Session, items: list, level: str,
+                     budget_left_fn=None) -> dict:
     """公理建议逐条申报 + 双重复验：TBox 新不可满足类 / 数据反证矛盾 → 撤回并物化 critical 审核项。
 
     baseline 先取申报前的不可满足类名集合与数据矛盾键集合——项目本来就有
@@ -233,6 +234,8 @@ def _adjudicate_axioms(db: Session, items: list, level: str) -> dict:
     base_contra_keys = {c["key"] for c in find_data_contradictions(_schema(), *_ents_rels())}
     approved = rolled_back = 0
     for item in items:
+        if budget_left_fn is not None and budget_left_fn() <= 0:
+            break  # 阶段预算耗尽：剩余公理项留待下次（已申报的照常收尾）
         payload = item.payload or {}
         rule = _rule_axiom_suggestion(item)
         if rule is None:
@@ -295,7 +298,8 @@ def _decide_item_fn():
 # ── LLM 裁决器（level=llm 默认档）：剩余待审项由 LLM 判断并直接落盘 ──
 
 ADJUDICATOR_MAX_ITEMS = 40       # 单次 LLM 裁决条数上限（超出下轮/下次再裁）
-ADJUDICATOR_TIMEOUT = 600.0      # 单次调用上限（对齐 axiom 通道）
+ADJUDICATOR_TIMEOUT = 180.0      # 单次调用上限：复核 prompt 小（1-8k 字符），正常 5-60s 应回；600s×串行十几次会让"结果确认"小时级（2026-11-09 实测）
+ADJUDICATE_WALL_BUDGET = 600.0   # 整阶段墙钟预算：超时停止复核，剩余项留待下次构建
 
 _ADJUDICATOR_JSON_SCHEMA = {
     "type": "object",
@@ -342,8 +346,10 @@ def _llm_for_adjudication(db: Session, project_id: int):
         from app.infrastructure.llm_client import LLMClient
 
         cfg = build_legacy_llm_config(db, project_id)
+        # 与公理扫描同源接线 disable_think（glm-5 思考吞输出预算，长 prompt 空响应）
         return LLMClient(api_key=cfg.get("api_key"), base_url=cfg.get("base_url"),
-                         model=cfg.get("model"))
+                         model=cfg.get("model"),
+                         think_mode="disabled" if cfg.get("disable_think") else None)
     except Exception:  # noqa: BLE001
         return None
 
@@ -375,7 +381,8 @@ def _slim_item(item, reason_cap: int = 160) -> dict:
     return slim
 
 
-def _llm_adjudicate(db: Session, project_id: int, items: list) -> dict:
+def _llm_adjudicate(db: Session, project_id: int, items: list,
+                    budget_left_fn=None) -> dict:
     """LLM 逐条裁决并直接落盘（decide_item 同一执行入口，留痕可撤销）。"""
     from app.infrastructure.database import Project
 
@@ -396,6 +403,8 @@ def _llm_adjudicate(db: Session, project_id: int, items: list) -> dict:
     by_type: dict[str, int] = {}
     item_by_id = {i.id: i for i in items}
     for batch_start in range(0, len(items), ADJUDICATOR_MAX_ITEMS):
+        if budget_left_fn is not None and budget_left_fn() <= 0:
+            break  # 阶段墙钟预算耗尽：剩余项留待下次构建复核
         batch = items[batch_start:batch_start + ADJUDICATOR_MAX_ITEMS]
         user_prompt = ("【本体类清单】" + "、".join(classes[:150]) +
                        "\n【关系清单】" + "、".join(props[:150]) +
@@ -474,6 +483,13 @@ def run_auto_adjudication(project_id: int, db: Optional[Session] = None,
 
         db = SessionLocal()
     try:
+        import time as _time
+
+        _t0 = _time.monotonic()
+
+        def _budget_left() -> float:
+            return ADJUDICATE_WALL_BUDGET - (_time.monotonic() - _t0)
+
         lvl = resolve_level(level)
         if lvl == "off":
             return {"level": lvl, "scanned": 0, "auto_approved": 0, "rolled_back": 0,
@@ -488,7 +504,8 @@ def run_auto_adjudication(project_id: int, db: Optional[Session] = None,
 
         # 公理项走申报+复验专用通道；其余按规则表
         axiom_items = [it for it in pending if it.item_type == "axiom_suggestion"]
-        axiom_res = _adjudicate_axioms(db, axiom_items, lvl)
+        axiom_res = _adjudicate_axioms(db, axiom_items, lvl,
+                                       budget_left_fn=_budget_left)
 
         by_type: dict[str, int] = {"axiom_suggestion": axiom_res["approved"]}
         auto_approved = axiom_res["approved"]
@@ -517,6 +534,40 @@ def run_auto_adjudication(project_id: int, db: Optional[Session] = None,
             db.commit()
             by_type[item.item_type] = by_type.get(item.item_type, 0) + 1
             auto_approved += 1
+        # fast 档（2026-11-09 用户决策）：模型抽取产物不做 LLM 复核，剩余待审项
+        # 直接默认通过——"结果确认"阶段从分钟级缩到秒级。唯一例外：低相似度
+        # entity_merge 不默认并（拼音层误并 60 实例事故口径，AUTO_MERGE_MIN_-
+        # SIMILARITY 之下的聚类留 pending）。
+        fast_approved = 0
+        if lvl == "fast":
+            decide2 = _decide_item_fn()
+            for item in pending:
+                if item.status != "pending":
+                    continue
+                if item.item_type == "entity_merge":
+                    payload = item.payload or {}
+                    cluster = payload.get("cluster") or {}
+                    sim = float(payload.get("similarity") or cluster.get("similarity") or 0)
+                    layer = str(payload.get("layer") or cluster.get("layer") or "")
+                    if sim < AUTO_MERGE_MIN_SIMILARITY or layer == "pinyin":
+                        continue  # 证据不足的合并不默认执行
+                try:
+                    decide2(item, SYSTEM_ACTOR, "approve",
+                            note="模型抽取结果默认通过（fast 档，可撤销）", db=db)
+                    _mark_auto(item, f"{item.item_type}:fast")
+                    db.commit()
+                    fast_approved += 1
+                    by_type[item.item_type] = by_type.get(item.item_type, 0) + 1
+                except Exception:  # noqa: BLE001 —— 单项失败不阻断
+                    db.rollback()
+            auto_approved += fast_approved
+            out = {"level": lvl, "scanned": len(pending),
+                   "auto_approved": auto_approved,
+                   "rolled_back": rolled_back, "by_type": by_type,
+                   "fast_approved": fast_approved}
+            if _budget_left() < 0:
+                out["budget_exceeded"] = True
+            return out
         # llm 档：规则裁决后剩余的待审项（new_class/new_predicate/conflict_type/
         # 悬置合并簇/公理违例等）由 LLM 逐条判断并直接落盘——用户不再需要懂审核
         llm_res: dict = {}
@@ -527,7 +578,8 @@ def run_auto_adjudication(project_id: int, db: Optional[Session] = None,
                          .filter(_RI.project_id == project_id,
                                  _RI.status == "pending")
                          .all())
-            llm_res = _llm_adjudicate(db, project_id, remaining)
+            llm_res = _llm_adjudicate(db, project_id, remaining,
+                                      budget_left_fn=_budget_left)
             by_type.update(llm_res.pop("by_type", {}) or {})
         out = {"level": lvl, "scanned": len(pending), "auto_approved": auto_approved,
                "rolled_back": rolled_back, "by_type": by_type}

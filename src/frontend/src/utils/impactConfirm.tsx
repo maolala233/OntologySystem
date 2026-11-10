@@ -4,7 +4,8 @@
  * 用法：confirmImpact({ title, impact: ['…', '…'], onOk });
  */
 import React from 'react';
-import { Modal } from 'antd';
+import { confirmModal } from '../shared/feedback';
+
 
 export interface ImpactConfirmOptions {
     title: string;
@@ -21,7 +22,7 @@ export interface ImpactConfirmOptions {
 const confirmImpact = ({
     title, impact, okText = '确定', danger = true, extra, onOk, onCancel,
 }: ImpactConfirmOptions) => {
-    Modal.confirm({
+    confirmModal({
         title,
         width: 460,
         content: (

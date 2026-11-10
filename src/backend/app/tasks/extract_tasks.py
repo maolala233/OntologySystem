@@ -215,10 +215,12 @@ def _auto_version(db, project_id: int, kind: str, label: str) -> Optional[int]:
 
 
 @celery_app.task(name="app.tasks.extract_tasks.run_schema_extraction",
-                 bind=True, max_retries=0, acks_late=True)
+                 bind=True, max_retries=0, acks_late=True,
+                 soft_time_limit=6 * 3600, time_limit=6 * 3600 + 300)
 def run_schema_extraction(self, project_id: int,
                           document_ids: Optional[list[int]] = None,
                           parallelism: int = 4,
+                          request_interval: float = 0.0,
                           chunk_limit: int = 200,
                           guidance: Optional[str] = None,
                           model_config_id: Optional[int] = None,
@@ -259,7 +261,10 @@ def run_schema_extraction(self, project_id: int,
                 finish_task_progress(task_id, "failed", "项目没有可用的已解析切片",
                                      stats={"project_id": project_id})
                 return {"status": "failed", "reason": "no_chunks"}
-            chunks = [{"index": i, "text": r.text, "doc": fname}
+            # meta 必须随行（表格感知切片的 table_header 在 meta 里）：丢失后
+            # 表头语义进不了抽取 prompt、结构展开也无签名可用（2026-11-08 实测）
+            chunks = [{"index": i, "text": r.text, "doc": fname,
+                       "meta": (r.meta or {}) if isinstance(r.meta, dict) else {}}
                       for i, (r, fname) in enumerate(rows)]
             plan = _batch_plan(len(chunks), chunk_limit)
             t0 = time.monotonic()
@@ -299,6 +304,7 @@ def run_schema_extraction(self, project_id: int,
 
             result = extract_schema(chunks, base_uri=f"urn:onto:{project_id}",
                                     parallelism=parallelism,
+                                    request_interval=request_interval,
                                     progress_cb=_progress, cancel_cb=_cancel_check,
                                     guidance=guidance,
                                     strict_config=strict_config,
@@ -321,7 +327,7 @@ def run_schema_extraction(self, project_id: int,
             set_task_progress(task_id, "writing", 92, "写入画布与行表",
                               {"project_id": project_id}, queue="extract")
             nodes, id_by_class = _build_nodes(result.classes, chunks, [r[0] for r in rows])
-            edges = _build_edges(result.object_properties, id_by_class)
+            edges = _build_edges(result.object_properties, id_by_class, result.classes)
             proj = db.query(Project).filter(Project.id == project_id).first()
             if proj is None:
                 raise RuntimeError(f"项目不存在: {project_id}")
@@ -332,6 +338,10 @@ def run_schema_extraction(self, project_id: int,
                 "classes": result.classes,
                 "object_properties": result.object_properties,
                 "datatype_properties": result.datatype_properties,
+                # 语义采集表·规则层（29 句话方法论：规则/约束/流程的文档证据清单）
+                "business_rules": result.business_rules,
+                # 结构映射（表格/条款 → 行主体 + 列→关系/属性；实例阶段确定性展开用）
+                "structure_maps": result.structure_maps,
                 "task_id": task_id,
                 "extracted_at": int(time.time()),
             }
@@ -350,19 +360,38 @@ def run_schema_extraction(self, project_id: int,
                      "chunks_processed": result.chunks_processed,
                      "cache_hits": result.cache_hits,
                      "stitched_relations": result.stitched_relations,
+                     "stitch_segments": result.stitch_segments,
+                     "consumed_parents": result.consumed_parents,
+                     "pruned_classes": result.pruned_classes,
+                     "assembled_parents": result.assembled_parents,
+                     "business_rules": len(result.business_rules),
+                     "structure_maps": len(result.structure_maps),
+                     "structure_map_calls": result.structure_map_calls,
                      "strict_filtered": result.strict_filtered,
                      "version_no": version_no,
                      "schema_checks": checks.summary(),
                      "warnings": result.warnings[:10]}
-            stitch_note = (f"（含跨切片缝合 {result.stitched_relations} 条）"
+            stitch_note = (f"（含跨切片缝合 {result.stitched_relations} 条/{result.stitch_segments} 段）"
                            if result.stitched_relations else "")
+            assemble_bits = []
+            if result.consumed_parents or result.assembled_parents:
+                assemble_bits.append(
+                    f"层次组装 {result.consumed_parents + result.assembled_parents} 条")
+            if result.pruned_classes:
+                assemble_bits.append(f"清理伪类 {result.pruned_classes} 个")
+            if result.business_rules:
+                assemble_bits.append(f"采集业务规则 {len(result.business_rules)} 条")
+            if result.structure_maps:
+                assemble_bits.append(f"结构映射 {len(result.structure_maps)} 套")
+            assemble_note = (f"（{'，'.join(assemble_bits)}）" if assemble_bits else "")
             check_note = ""
             if checks.error_count or checks.warning_count:
                 check_note = (f"；机检 {checks.error_count} 硬伤 / "
                               f"{checks.warning_count} 提醒")
             finish_task_progress(task_id, "completed",
                                  f"骨架抽取完成：{len(result.classes)} 类 / "
-                                 f"{len(result.object_properties)} 关系{stitch_note}{check_note}",
+                                 f"{len(result.object_properties)} 关系{stitch_note}"
+                                 f"{assemble_note}{check_note}",
                                  stats=stats)
             # QA 类锚定索引：骨架更新即重建（失败不阻塞抽取结果）
             try:
@@ -439,11 +468,18 @@ def _tbox_from_graph(gd: dict) -> dict:
         if not label:
             continue
         classes[label] = list((c or {}).get("aliases") or [])
-        props = [{"name": str((p or {}).get("name") or "").strip(),
-                  "data_type": str((p or {}).get("data_type") or "string"),
-                  "description": str((p or {}).get("description") or "")}
-                 for p in (c or {}).get("properties") or []
-                 if str((p or {}).get("name") or "").strip()]
+        props = []
+        for p in (c or {}).get("properties") or []:
+            if not str((p or {}).get("name") or "").strip():
+                continue
+            entry = {"name": str((p or {}).get("name") or "").strip(),
+                     "data_type": str((p or {}).get("data_type") or "string"),
+                     "description": str((p or {}).get("description") or "")}
+            # 约束字段透传（实例 prompt 显示枚举/必填/数量）
+            for k in ("enum_values", "required", "min_occurs", "max_occurs"):
+                if (p or {}).get(k) not in (None, [], {}):
+                    entry[k] = p[k]
+            props.append(entry)
         props += dtype_by_cls_id.get(str((c or {}).get("id") or ""), [])
         # 按 name 去重（类内 properties 与 schema 级可能重复声明）
         seen_names: set[str] = set()
@@ -470,12 +506,14 @@ def _tbox_from_graph(gd: dict) -> dict:
 
 
 @celery_app.task(name="app.tasks.extract_tasks.run_instance_extraction",
-                 bind=True, max_retries=0, acks_late=True)
+                 bind=True, max_retries=0, acks_late=True,
+                 soft_time_limit=6 * 3600, time_limit=6 * 3600 + 300)
 def run_instance_extraction(self, project_id: int,
                             document_ids: Optional[list[int]] = None,
                             strict_gate: bool = True,
                             promote_policy: str = "review",
                             parallelism: int = 4,
+                            request_interval: float = 0.0,
                             chunk_limit: int = 200,
                             schema_version_no: Optional[int] = None,
                             model_config_id: Optional[int] = None) -> dict:
@@ -503,7 +541,8 @@ def run_instance_extraction(self, project_id: int,
                 finish_task_progress(task_id, "failed", "项目没有可用的已解析切片",
                                      stats={"project_id": project_id})
                 return {"status": "failed", "reason": "no_chunks"}
-            chunks = [{"index": i, "text": r.text, "doc": fname}
+            chunks = [{"index": i, "text": r.text, "doc": fname,
+                       "meta": (r.meta or {}) if isinstance(r.meta, dict) else {}}
                       for i, (r, fname) in enumerate(rows)]
 
             proj = db.query(Project).filter(Project.id == project_id).first()
@@ -571,15 +610,72 @@ def run_instance_extraction(self, project_id: int,
             result = extract_instances(
                 chunks, tbox, base_uri=f"urn:onto:{project_id}",
                 strict_gate=strict_gate, promote_policy=promote_policy,
-                parallelism=parallelism, progress_cb=_progress, cancel_cb=_cancel_check,
+                parallelism=parallelism, request_interval=request_interval,
+                progress_cb=_progress, cancel_cb=_cancel_check,
                 model_config_id=model_config_id,
                 coref_enabled=bool(app_settings.COREF_ENABLED),
                 pattern_enabled=bool(app_settings.PATTERN_LAYER_ENABLED))
 
-            # O2-B7 反向属性自动补全：声明了 inverse_of 的谓词对，写入一边补另一边
-            inverse_added = 0
+            # 结构化切片确定性展开（外部 get_* 登记表模式）：表格/条款按结构映射
+            # 逐行实例化 + 登记表去重 + 引用列→关系边。零 LLM：模型故障时结构化
+            # 数据仍可产出；与 LLM 结果按（规范名,类）合并，LLM 版本优先。
+            expansion_stats: dict | None = None
             source_schema = (source_gd or {}).get("schema") if isinstance(source_gd, dict) \
                 else None
+            _maps = (source_schema or {}).get("structure_maps") \
+                if isinstance(source_schema, dict) else None
+            if _maps:
+                try:
+                    from app.adapters.extraction import normalize_label as _nl
+                    from app.adapters.structure_expand import (
+                        expand_all, registry_entities, registry_relations,
+                    )
+
+                    registry, exp_stats = expand_all(chunks, _maps)
+                    # 键 → 规范标签：LLM 已抽到的键以 LLM 版本为准，展开边端点改写其标签
+                    canon: dict[tuple[str, str], str] = {}
+                    for e in result.entities:
+                        canon[(_nl(e.label), _nl(e.class_label))] = e.label
+                    llm_keys = set(canon)
+                    added_e = added_r = 0
+                    for ent in registry_entities(registry):
+                        k = (_nl(ent["label"]), _nl(ent["class_label"]))
+                        if k in llm_keys:
+                            continue
+                        if _nl(ent["label"]) == _nl(ent["class_label"]):
+                            continue  # 伪个体防御（与闸门同口径）
+                        result.entities.append(ExtractedEntity(
+                            label=ent["label"], class_label=ent["class_label"],
+                            props=ent["props"], confidence=ent["confidence"],
+                            evidence=ent["evidence"],
+                            chunk_index=int(ent.get("chunk_index") or 0)))
+                        canon[k] = ent["label"]
+                        llm_keys.add(k)
+                        added_e += 1
+                    rel_seen = {(_nl(r.subject_label), _nl(r.predicate),
+                                 _nl(r.object_label)) for r in result.relations}
+                    for rel in registry_relations(registry):
+                        sk = (_nl(rel["subject_label"]), _nl(rel["class_label"] or ""))                             if False else None
+                        s_lbl = canon.get((_nl(rel["subject_label"]), ""), rel["subject_label"])
+                        o_lbl = canon.get((_nl(rel["object_label"]), ""), rel["object_label"])
+                        key = (_nl(rel["subject_label"]), _nl(rel["predicate"]), _nl(rel["object_label"]))
+                        if key in rel_seen:
+                            continue
+                        rel_seen.add(key)
+                        result.relations.append(ExtractedRelation(
+                            subject_label=s_lbl, predicate=rel["predicate"],
+                            object_label=o_lbl, confidence=rel["confidence"],
+                            evidence=rel["evidence"],
+                            chunk_index=int(rel.get("chunk_index") or 0)))
+                        added_r += 1
+                    expansion_stats = {**exp_stats, "entities_added": added_e,
+                                       "relations_added": added_r,
+                                       "maps": len(_maps)}
+                except Exception as e:  # noqa: BLE001 —— 展开失败不影响 LLM 通道
+                    expansion_stats = {"error": str(e)[:200]}
+
+            # O2-B7 反向属性自动补全：声明了 inverse_of 的谓词对，写入一边补另一边
+            inverse_added = 0
             if source_schema:
                 from app.adapters.inverse_props import expand_inverse_relations
 
@@ -707,15 +803,23 @@ def run_instance_extraction(self, project_id: int,
                      "schema_version_no": schema_version_no,
                      "inverse_relations_added": inverse_added,
                      "coref": result.coref_stats,
+                     "expansion": expansion_stats,
                      "pattern_filled": result.pattern_filled_count,
                      "pattern_calibrated": result.pattern_calibrated_count,
                      "repair": repair_stats,
                      "drift_reviews_created": drift_count,
                      "cq_evaluation_id": cq_eval_id,
                      "warnings": result.warnings[:10]}
+            exp_note = ""
+            if expansion_stats and expansion_stats.get("entities_added"):
+                exp_note = (f"，结构展开 {expansion_stats['entities_added']} 实体 / "
+                            f"{expansion_stats.get('relations_added', 0)} 关系"
+                            f"（{expansion_stats.get('rows', 0)} 行/"
+                            f"{expansion_stats.get('clauses', 0)} 条款）")
             finish_task_progress(task_id, "completed",
-                                 f"实例抽取完成（{schema_source}）：{len(result.entities)} 实体 / "
+                                 f"实例抽取完成：{len(result.entities)} 实体 / "
                                  f"{len(result.relations)} 关系"
+                                 + exp_note
                                  + (f"（含反向补全 {inverse_added} 条）" if inverse_added else ""),
                                  stats=stats)
             # QA 类锚定索引：实例抽取可能伴随骨架演进，一并重建（失败不阻塞）
@@ -1142,8 +1246,13 @@ def _build_nodes(classes: list[dict], chunks: Optional[list] = None,
     return nodes, id_by_class
 
 
-def _build_edges(object_properties: list[dict], id_by_class: dict[str, str]) -> list[dict]:
-    """对象属性 → 画布边（data.relation 供 graph_rows._edge_relation 读取）。"""
+def _build_edges(object_properties: list[dict], id_by_class: dict[str, str],
+                 classes: Optional[list[dict]] = None) -> list[dict]:
+    """对象属性 → 画布边（data.relation 供 graph_rows._edge_relation 读取）。
+
+    classes 的 parent_classes → subClassOf 层次边（与公理申报的 e_sub 边同形；
+    oxigraph_sink 按 predicate=subclass_of 落 rdfs:subClassOf，导出/SPARQL 可见）。
+    """
     edges = []
     for i, op in enumerate(object_properties or []):
         s = id_by_class.get(str(op.get("domain") or ""))
@@ -1162,6 +1271,22 @@ def _build_edges(object_properties: list[dict], id_by_class: dict[str, str]) -> 
         edges.append({"id": f"edge_{i}", "source": s, "target": t,
                       "type": "smoothstep", "label": op.get("label"),
                       "data": data})
+    seen_sub: set[tuple[str, str]] = set()
+    for c in classes or []:
+        child = str(c.get("label") or "").strip()
+        s = id_by_class.get(child)
+        if not s:
+            continue
+        for parent in c.get("parent_classes") or []:
+            t = id_by_class.get(str(parent).strip())
+            if not t or t == s or (s, t) in seen_sub:
+                continue
+            seen_sub.add((s, t))
+            edges.append({"id": f"esub_{len(edges)}", "source": s, "target": t,
+                          "type": "smoothstep", "label": "subClassOf",
+                          "data": {"label": "subClassOf", "relation": "subclass_of",
+                                   "type": "Hierarchy",
+                                   "domain": child, "range": str(parent)}})
     return edges
 
 
@@ -1182,9 +1307,10 @@ def run_resolution_task(self, project_id: int, scope: str = "all",
         stats = run_resolution(project_id, scope=scope, thresholds=thresholds,
                                blocking=blocking)
         stats["project_id"] = project_id
+        # "待审"字样已去掉（2026-11-08 用户反馈）：简单模式低风险项随后由 AI 自动初审，
+        # 中途报"X 待审"只会让用户以为要自己一条条处理；需人工的数量由完成消息统一说
         finish_task_progress(task_id, "completed",
-                             f"消解完成：{stats['auto_merged']} 自动合并 / "
-                             f"{stats['review_created']} 待审", stats=stats)
+                             f"消解完成：自动合并 {stats['auto_merged']} 处", stats=stats)
         return {"status": "completed", **stats}
     except Exception as e:  # noqa: BLE001
         # 取消优先：LLM 调用刚超时/失败返回时可能已收到取消键——此时按取消收场，
@@ -1210,9 +1336,11 @@ def run_conflict_detection_task(self, project_id: int,
 
         stats = run_conflict_detection(project_id, types=types)
         stats["project_id"] = project_id
+        # 措辞（2026-11-08 用户反馈）：冲突是"结果之间的不一致"，去处是审核确认，
+        # 不是"检出问题等着修"——和下一阶段"结构自检：通过，无需修复"区分开
         finish_task_progress(task_id, "completed",
-                             f"冲突检测完成：{stats['detected']} 检出 / "
-                             f"{stats['review_created']} 新建待审", stats=stats)
+                             f"冲突检测完成：发现 {stats['detected']} 处结果冲突，已转审核确认",
+                             stats=stats)
         return {"status": "completed", **stats}
     except Exception as e:  # noqa: BLE001
         # 取消优先：LLM 调用刚超时/失败返回时可能已收到取消键——此时按取消收场，
@@ -1259,7 +1387,7 @@ def run_axiom_suggestion_task(self, project_id: int, channel: str = "all") -> di
                                  stats={"project_id": project_id})
             return {"status": "cancelled", **stats}
         finish_task_progress(task_id, "completed",
-                             f"公理扫描完成：新增建议 {stats.get('review_created', 0)} 条"
+                             f"公理扫描完成：新增公理建议 {stats.get('review_created', 0)} 条"
                              + (f"，合并双佐证 {stats['merged_both']} 条"
                                 if stats.get("merged_both") else ""),
                              stats=stats)

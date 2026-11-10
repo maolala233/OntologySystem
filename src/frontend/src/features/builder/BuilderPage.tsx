@@ -144,7 +144,7 @@ const BuilderPage: React.FC = () => {
                         </span>
                     ) }}
                     className="flex-1 px-4 pb-2 overflow-auto builder-tabs"
-                    destroyInactiveTabPane={false}
+                    destroyOnHidden={false}
                 />
             </Suspense>
         </div>

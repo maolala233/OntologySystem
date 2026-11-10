@@ -79,7 +79,12 @@ def start_schema_extraction(
 
     body = body or {}
     document_ids = body.get("document_ids") or None
-    parallelism = body.get("parallelism", 4)
+    # 未显式传时回读 extract 行 params.parallelism（2026-11-08：此前直接端点
+    # 永远用 4，模型配置里的并行度只对一键管线生效）
+    parallelism = body.get("parallelism")
+    if parallelism is None:
+        from app.tasks.pipeline_tasks import _extract_parallelism
+        parallelism = _extract_parallelism(db, project_id)
     guidance = body.get("guidance")
     if not isinstance(parallelism, int) or not 1 <= parallelism <= 8:
         raise APIError("parallelism 取值 1-8", code="INVALID_PARALLELISM", http_status=400)
@@ -159,7 +164,11 @@ def start_instance_extraction(
 
     body = body or {}
     document_ids = body.get("document_ids") or None
-    parallelism = body.get("parallelism", 4)
+    # 同骨架端点：缺省回读 params.parallelism
+    parallelism = body.get("parallelism")
+    if parallelism is None:
+        from app.tasks.pipeline_tasks import _extract_parallelism
+        parallelism = _extract_parallelism(db, project_id)
     if not isinstance(parallelism, int) or not 1 <= parallelism <= 8:
         raise APIError("parallelism 取值 1-8", code="INVALID_PARALLELISM", http_status=400)
     strict_gate = bool(body.get("strict_gate", True))

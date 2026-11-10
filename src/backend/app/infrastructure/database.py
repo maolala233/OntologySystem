@@ -931,7 +931,8 @@ class ReasoningResult(Base):
 class CompetencyQuestion(Base):
     """Competency Question 资产（O3-B12）：项目级能力问题列表。
 
-    source: manual=人工录入；evolution=B16 失败问答进化建议批准生成。
+    source: manual=人工录入；evolution=B16 失败问答进化建议批准生成；
+    auto=管线自动生成（骨架就绪后的能力问题设计，R23）。
     answer_criteria 为可空 GT 答案要点（配对门控 GT 绝对评分用）。
     """
     __tablename__ = "competency_questions"
@@ -940,8 +941,10 @@ class CompetencyQuestion(Base):
     project_id = Column(Integer, nullable=False, index=True)
     question = Column(Text, nullable=False)
     answer_criteria = Column(Text, nullable=True)
-    source = Column(Enum("manual", "evolution", name="cq_source"),
+    source = Column(Enum("manual", "evolution", "auto", name="cq_source"),
                     nullable=False, server_default="manual")
+    # SPARQL 模板（SELECT/ASK，平台 URI 约定，R24）：CQ 真执行评测用，可空
+    sparql = Column(Text, nullable=True)
     sort_order = Column(Integer, nullable=False, server_default="0")
     enabled = Column(Boolean, nullable=False, server_default="1")
     created_by = Column(Integer, nullable=True)
@@ -961,7 +964,8 @@ class CqEvaluation(Base):
     project_id = Column(Integer, nullable=False, index=True)
     trigger = Column(Enum("manual", "auto_post_extract", "publish_gate", name="cq_eval_trigger"),
                      nullable=False, server_default="manual")
-    mode = Column(Enum("retrieval", "llm_judge", "gt", name="cq_eval_mode"),
+    mode = Column(Enum("retrieval", "llm_judge", "gt", "sparql", "sparql+retrieval",
+                       name="cq_eval_mode"),
                   nullable=False, server_default="retrieval")
     baseline_version_id = Column(Integer, nullable=True)
     candidate_version_id = Column(Integer, nullable=True)

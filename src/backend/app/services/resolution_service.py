@@ -70,6 +70,41 @@ def _embeddings_fn(project_id: Optional[int] = None):
         return None
 
 
+def _prop_key_merge(db: Session, project_id: int, ents: list) -> tuple[int, int]:
+    """自然键合并层（外部 get_* 登记表思想的晚绑定版，2026-11-09 测试6）。
+
+    同类实体共享同一唯一编码属性值（产品编码/接口编码/编号…）→ 确定性合并。
+    跨文档场景：文档A按名称、文档B按编码提及同一对象（实测 P001 与 稳盈固收
+    理财 props 全同却成两例）——相似度层（名称文本）对"名称↔编码"天然无能为力，
+    编码属性是两文档共同背书的强证据。返回 (合并组数, 迁移关系数)。
+    """
+    import re as _re
+
+    key_re = _re.compile(r"(编码|代码|编号)$")
+    groups: dict[tuple[str, str], list] = {}
+    for e in ents:
+        props = e.props if isinstance(e.props, dict) else {}
+        for k, v in props.items():
+            if k and key_re.search(str(k)) and isinstance(v, (str, int, float)) \
+                    and str(v).strip() and len(str(v).strip()) >= 2:
+                groups.setdefault((e.class_label or "", f"{k}={str(v).strip()}"), []).append(e)
+                break
+    merged = migrated = 0
+    for _key, members in groups.items():
+        if len(members) < 2:
+            continue
+        # 规范实体：属性最丰富者优先（结构化文档产出的实体通常属性最全）
+        members.sort(key=lambda e: (-len(e.props or {}), e.id))
+        canon = members[0]
+        rest = [m for m in members if m.id != canon.id]
+        if not rest:
+            continue
+        res = merge_entities(canon.id, [m.id for m in rest], db=db)
+        merged += 1
+        migrated += res.relations_migrated
+    return merged, migrated
+
+
 def run_resolution(project_id: int, scope: str = "all",
                    thresholds: Optional[dict] = None,
                    blocking: str = "pinyin",
@@ -87,9 +122,17 @@ def run_resolution(project_id: int, scope: str = "all",
         auto_th = float((thresholds or {}).get("auto", AUTO_MERGE_THRESHOLD))
         review_th = float((thresholds or {}).get("manual", MANUAL_REVIEW_THRESHOLD))
         ents = load_active_entities(db, project_id, scope)
+        prop_key_merged, prop_key_migrated = (0, 0)
+        if len(ents) >= 2:
+            prop_key_merged, prop_key_migrated = _prop_key_merge(db, project_id, ents)
+            if prop_key_merged:
+                db.commit()
+                ents = load_active_entities(db, project_id, scope)
         if len(ents) < 2:
             return {"clusters_total": 0, "auto_merged": 0, "review_created": 0,
-                    "relations_migrated": 0, "entities_scanned": len(ents)}
+                    "prop_key_merged": prop_key_merged,
+                    "relations_migrated": prop_key_migrated,
+                    "entities_scanned": len(ents)}
         clusters = detect_duplicates(
             ents, blocking=blocking, embeddings_fn=_embeddings_fn(project_id),
             auto_threshold=auto_th, review_threshold=review_th)
@@ -124,7 +167,8 @@ def run_resolution(project_id: int, scope: str = "all",
         db.commit()
         return {"clusters_total": len(clusters), "auto_merged": auto_merged,
                 "review_created": review_created,
-                "relations_migrated": relations_migrated,
+                "prop_key_merged": prop_key_merged,
+                "relations_migrated": relations_migrated + prop_key_migrated,
                 "entities_scanned": len(ents)}
     except Exception:
         if own:

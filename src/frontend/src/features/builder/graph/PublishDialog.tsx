@@ -5,9 +5,8 @@
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-    Alert, Button, Modal, Spin, Tag, message,
-} from 'antd';
+import { Alert, Button, Modal, Spin, Tag } from 'antd';
+import { message } from '../../../shared/feedback';
 import {
     MinusCircleOutlined,
 } from '@ant-design/icons';
@@ -66,7 +65,7 @@ const PublishDialog: React.FC<Props> = ({ projectId, open, onClose, onPublished 
                 const blockers = err?.detail?.blockers || [];
                 if (blockers.length > 0) {
                     setPublishError(
-                        `还有 ${blockers.length} 个高优先级结果等你确认后才能发布（低风险项已由 AI 自动处理）。`);
+                        `还有 ${blockers.length} 个高优先级结果等你确认后才能发布（低风险项已由 AI 结果审查）。`);
                     setBlockedByReviews(true);
                 } else {
                     setPublishError(err?.message || '发布失败，请检查发布条件（知识域、高优先级审核项、本体结构机检、证据闭合）');

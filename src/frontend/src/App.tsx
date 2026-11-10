@@ -1,7 +1,8 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom';
-import { ConfigProvider } from 'antd';
+import { ConfigProvider, App as AntdApp } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
+import { FeedbackBridge } from './shared/feedback';
 
 // 布局组件
 import AppLayout from './components/Layout/AppLayout';
@@ -37,7 +38,10 @@ const RedirectBuilder: React.FC = () => {
 function App() {
     return (
         <ConfigProvider locale={zhCN} theme={{ token: { colorPrimary: '#5B8DEF' } }}>
-            <BrowserRouter>
+            {/* AntdApp + FeedbackBridge：让 message/Modal 静态调用消费主题上下文（消 console 告警） */}
+            <AntdApp>
+                <FeedbackBridge />
+            <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
                 <Routes>
                     {/* 公开路由 */}
                     <Route path="/login" element={<LoginPage />} />
@@ -90,6 +94,7 @@ function App() {
                     <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
             </BrowserRouter>
+            </AntdApp>
         </ConfigProvider>
     );
 }

@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from typing import Any, Optional
 
@@ -25,6 +26,10 @@ from app.tasks.progress import finish_task_progress, get_task_progress, set_task
 
 _RUNNING_KEY = "pipeline:running:{project_id}"
 _RUNNING_TTL = 6 * 3600
+# 最近一次构建登记（dispatch 时写；锁释放后 status 端点回落查它——
+# 否则失败/完成后一刷新页面就只剩前端 localStorage 猜测，跨设备/清缓存即丢）
+_LAST_KEY = "pipeline:last:{project_id}"
+_LAST_TTL = 7 * 24 * 3600
 _SCHEDULE_KEY = "pipeline:schedule:{project_id}"   # 定时构建登记（未开跑）
 _SCHEDULE_TTL = 7 * 24 * 3600
 
@@ -34,9 +39,13 @@ STAGE_DEFS: list[tuple[str, str]] = [
     ("instances", "实例抽取"),
     ("resolution", "实体消解"),
     ("conflicts", "冲突检测"),
-    ("selfcheck", "自检修复"),
+    # 更名（2026-11-08 用户反馈）："自检修复"与"冲突检测"并列时像是同一件事的
+    # 重复——本阶段只查建模结构（层次环/悬空引用等），改名"结构自检"划清边界
+    ("selfcheck", "结构自检"),
     ("axioms", "AI 公理扫描"),
-    ("adjudicate", "AI 自动处理"),
+    # 2026-11-08 两轮更名：原「AI 自动处理」易被误解成"整个构建都是 AI 自动弄的"——
+    # 实际只做一件事：低风险审核项由 AI 初审自动确认，高风险项仍等人拍板
+    ("adjudicate", "AI 结果审查"),
 ]
 
 # 构建深度档位（用户新建项目时可选）：自检修复轮数 + 是否跑公理扫描
@@ -93,17 +102,109 @@ def _extract_parallelism(db, project_id: int, model_config_id: Optional[int] = N
         return 4
 
 
+def _extract_request_interval(db, project_id: int, model_config_id: Optional[int] = None) -> float:
+    """批间隔秒：extract 行 params.request_interval（远程限速配置；2026-11-08
+    前是死字段——组装后全仓无消费者）。异常回落 0（不限速）。"""
+    try:
+        from app.adapters.provider import ModelPurpose, resolve_provider
+
+        resolved = resolve_provider(ModelPurpose.EXTRACT, project_id=project_id,
+                                    db=db, config_id=model_config_id)
+        return max(0.0, float((resolved.params or {}).get("request_interval") or 0))
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
+def _friendly_error(e: BaseException | str) -> str:
+    """构建失败原因 → 小白能看懂能行动的话（2026-11-08 用户反馈 #2）。
+
+    原样透传的 "LLM 调用硬超时（330s 无任何响应）"/"Connection refused" 是黑话；
+    超时/断连/限流/鉴权四类占构建失败绝大多数，逐类翻译成人话+下一步动作。
+    """
+    msg = str(e)
+    low = msg.lower()
+    if "硬超时" in msg or "timeout" in low or "timed out" in low:
+        return ("模型请求超时：模型服务长时间没有响应，已自动重试仍未成功。"
+                "请稍后重新构建，或在「系统配置 → 模型配置」里换更快的模型 / 调大超时时间。")
+    if any(k in low for k in ("connection", "connect", "refused", "unreachable",
+                              "getaddrinfo failed", "连接异常", "连接失败", "不可达",
+                              "熔断", "all_chunks_failed")):
+        return ("无法连接模型服务：请检查本机网络，并到「系统配置 → 模型配置」"
+                "确认服务地址是否可达，然后重新构建。")
+    if "429" in msg or "rate limit" in low or "限流" in msg:
+        return ("模型限流（429）：请求过于频繁或账号配额暂时超限。"
+                "请等一两分钟再重新构建，或换一个模型。")
+    if "401" in msg or "unauthorized" in low or "forbidden" in low or "鉴权" in msg or "api key" in low:
+        return "模型鉴权失败：请到「系统配置 → 模型配置」检查该模型的 API Key 是否有效。"
+    return msg[:300]
+
+
 def _run_stage_task(task, stage_key: str, stages: list[dict], task_id: str,
                     **kwargs) -> dict:
-    """经 task.apply 就地执行子任务；失败转异常（子任务体已写 failed 进度）。"""
+    """经 task.apply 就地执行子任务；失败转异常（子任务体已写 failed 进度）。
+    成功后把子任务进度键的最终 message 存进阶段 detail——那是各阶段的产出摘要
+    （"15 检出/15 新建待审"、"91 实体/5 关系"），前端结果摘要行渲染它，
+    否则冲突检测/自检修复"一闪而过"用户根本不知道它们干了什么。"""
     sub_id = f"{task_id}:{stage_key}"
     _stage(stages, stage_key)["task_id"] = sub_id
     res = task.apply(kwargs=kwargs, task_id=sub_id)
     if res.failed():
         err = res.result
         msg = str(getattr(err, "message", None) or err)[:300]
-        raise RuntimeError(f"{stage_key} 阶段失败: {msg}")
+        raise RuntimeError(f"{stage_key} 阶段失败: {_friendly_error(msg)}")
+    try:
+        sub_prog = get_task_progress(sub_id)
+        if sub_prog and sub_prog.get("message"):
+            # 摘要行自带"{阶段名}："前缀，剥掉子消息里的"XX完成："头，
+            # 否则渲染成"骨架抽取：骨架抽取完成：12 类…"（2026-11-08 实测）
+            detail = re.sub(r"^(骨架抽取|实例抽取|冲突检测|消解|公理扫描|结构自检|裁决)完成：",
+                            "", str(sub_prog["message"]))
+            _stage(stages, stage_key)["detail"] = detail[:80]
+    except Exception:  # noqa: BLE001 —— 摘要拿不到不影响主流程
+        pass
     return res.result if isinstance(res.result, dict) else {}
+
+
+def _mine_business_rules(db, project_id: int) -> dict:
+    """业务规则挖掘（对标外部 SWRL 规则层）：LLM 通道候选 → 落推理规则表。
+
+    rule_llm 的存在性门禁保证 IF 侧逐字命中骨架白名单（引用素材外的名字弃单），
+    THEN 侧是推导性新关系——规则只在推理引擎里派生新边，不写回事实，错误可停用。
+    与既有采纳门禁（POST /reasoning/rules）差异：管线内自动采纳（全 AI 裁决模式）。
+    """
+    from app.infrastructure.database import OntologyRule, Project
+    from app.services.reasoning_service import llm_rule_suggestions
+
+    proj = db.query(Project).filter(Project.id == project_id).first()
+    if proj is None:
+        return {"rules_added": 0, "skipped": "project_not_found"}
+    # 语义采集表·规则层（骨架阶段逐片采集的文档级规则）作先验素材：
+    # IF 侧存在性门禁照常兜底，文档证据只引导不放行
+    gd = proj.graph_data if isinstance(proj.graph_data, dict) else {}
+    schema = gd.get("schema") if isinstance(gd.get("schema"), dict) else {}
+    doc_rules = [r for r in (schema.get("business_rules") or [])
+                 if isinstance(r, dict) and str(r.get("statement") or "").strip()]
+    candidates, stats = llm_rule_suggestions(db, proj, doc_rules=doc_rules)
+    existing_n = (db.query(OntologyRule)
+                  .filter(OntologyRule.project_id == project_id).count())
+    added = 0
+    for i, cand in enumerate(candidates or []):
+        try:
+            db.add(OntologyRule(
+                project_id=project_id,
+                name=str(cand.get("name") or f"自动规则{existing_n + i + 1}")[:128],
+                if_subject_class=str(cand["if_subject_class"])[:128],
+                if_predicate=str(cand["if_predicate"])[:128],
+                if_object_class=str(cand["if_object_class"])[:128],
+                then_predicate=str(cand["then_predicate"])[:128],
+                enabled=True))
+            added += 1
+        except (KeyError, TypeError):  # noqa: PERF203 —— 单条形状异常跳过
+            continue
+    if added:
+        db.commit()
+    return {"rules_added": added, "mined": len(candidates or []),
+            "doc_rules": len(doc_rules), "skipped": stats.get("skipped")}
 
 
 def _default_guidance(proj) -> Optional[str]:
@@ -120,8 +221,17 @@ def _default_guidance(proj) -> Optional[str]:
     return " ".join(parts)
 
 
+# 管线任务 6h 时限（2026-11-09）：全局 1h 上限对大文档（500+ 切片 × 两轮抽取）
+# 不够——单任务串联下整条管线被强杀。仅管线本体放宽（软 6h / 硬 6h5m），
+# 其余任务保持全局 1h 不变。
+PIPELINE_SOFT_TIME_LIMIT = 6 * 3600
+PIPELINE_TIME_LIMIT = 6 * 3600 + 300
+
+
 @celery_app.task(name="app.tasks.pipeline_tasks.run_pipeline",
-                 bind=True, max_retries=0, acks_late=True)
+                 bind=True, max_retries=0, acks_late=True,
+                 soft_time_limit=PIPELINE_SOFT_TIME_LIMIT,
+                 time_limit=PIPELINE_TIME_LIMIT)
 def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                  options: Optional[dict] = None) -> dict:
     """一键构建管线（阶段同步串联；进度/失败语义见模块头注释）。"""
@@ -172,7 +282,15 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             st["detail"] = "已取消（重新构建将重跑本阶段）"
             raise _PipelineCancelled()
         if res.get("status") == "failed":
-            reason = str(res.get("reason") or "未知原因")
+            # 子任务进度键的最终 message 信息量最大（"全部 31 个切片抽取失败…
+            # 首因：chunk #0 …Connection error"）——res.reason 只有裸的
+            # all_chunks_failed，翻译不出人话；优先取前者再分类
+            try:
+                sub = get_task_progress(f"{task_id}:{stage_key}")
+            except Exception:  # noqa: BLE001
+                sub = None
+            raw = str((sub or {}).get("message") or res.get("reason") or "未知原因")
+            reason = _friendly_error(raw)
             st = _stage(stages, stage_key)
             st["status"] = "failed"
             st["detail"] = reason
@@ -260,6 +378,12 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 for _ in range(180):
                     _cancel_check()
                     _time.sleep(10)
+                    # commit 刷新 REPEATABLE READ 快照——只 expire_all 看不到子任务
+                    # 已提交的 parsed（快照仍固定在事务起点，白等 30 分钟）
+                    try:
+                        db.commit()
+                    except Exception:  # noqa: BLE001
+                        db.rollback()
                     db.expire_all()
                     still = (db.query(UploadedDocument)
                              .filter(UploadedDocument.id.in_(parsing_ids))
@@ -352,6 +476,29 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             else:
                 st["status"] = "running"
                 _prog("schema", "AI 抽取骨架中…", 0.0)
+                # CQ 前置（外部方法论「能力问题法」）：解析完成后、建模前先圈定
+                # "本体要能回答什么"，经 guidance 注入骨架抽取（抽取受它约束）
+                try:
+                    from app.services.cq_service import generate_cqs
+
+                    from app.infrastructure.database import DocumentChunk
+
+                    doc_heads = [str(t) for (t,) in db.query(DocumentChunk.text)
+                                 .join(UploadedDocument,
+                                       DocumentChunk.document_id == UploadedDocument.id)
+                                 .filter(UploadedDocument.project_id == project_id,
+                                         UploadedDocument.deleted_at.is_(None))
+                                 .order_by(UploadedDocument.id,
+                                           DocumentChunk.chunk_index).limit(30).all()]
+                    cq_res = generate_cqs(db, project_id, created_by=trigger_user_id,
+                                          doc_texts=doc_heads)
+                    summary["cq_generation"] = cq_res
+                    n_cq = int(cq_res.get("generated") or 0)
+                    if n_cq:
+                        st["detail"] = f"已设计能力问题 {n_cq} 条"
+                        _prog("schema", st["detail"], 0.02)
+                except Exception as e:  # noqa: BLE001 —— CQ 生成失败不阻断构建
+                    summary["cq_generation"] = {"generated": 0, "skipped": str(e)[:120]}
                 guidance = _default_guidance(proj)
                 try:
                     from app.services.cq_service import guidance_from_cqs
@@ -363,6 +510,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                     tasks["schema"], "schema", stages, task_id,
                     project_id=project_id, document_ids=None,
                     parallelism=_extract_parallelism(db, project_id, model_config_id),
+                    request_interval=_extract_request_interval(db, project_id, model_config_id),
                     guidance=guidance,
                     model_config_id=model_config_id, strict_config=None), "schema")
                 st["status"] = "done"
@@ -378,6 +526,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 project_id=project_id, document_ids=None,
                 strict_gate=True, promote_policy="review",
                 parallelism=_extract_parallelism(db, project_id, model_config_id),
+                request_interval=_extract_request_interval(db, project_id, model_config_id),
                 model_config_id=model_config_id), "instances")
             st["status"] = "done"
             _prog("instances", "实例抽取完成")
@@ -423,9 +572,9 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                                           cancel_fn=lambda: is_cancelled(task_id))
                 summary["selfcheck"] = sc
                 st["status"] = "done"
-                st["detail"] = (f"自检 {sc['rounds']} 轮：修复 {sc['fixed']} 处"
-                                + (f"，剩余 {sc['remaining']} 处硬伤"
-                                   if sc["remaining"] else "，无硬伤"))
+                # 摘要行只说完成（2026-11-08 用户反馈）：修了几处、术语统计都不要——
+                # 需人工的数量由完成消息统一交代
+                st["detail"] = "完成修复"
                 _prog("selfcheck", st["detail"])
             except _PipelineCancelled:
                 raise
@@ -453,7 +602,15 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                         st["detail"] = "模型不可用，已跳过公理扫描"
                     else:
                         st["status"] = "done"
-                        st["detail"] = f"新增建议 {axiom_res.get('review_created', 0)} 条"
+                        llm_ch = axiom_res.get("llm") or {}
+                        if axiom_res.get("review_created", 0) > 0:
+                            st["detail"] = "完成扫描"
+                        elif llm_ch.get("skipped"):
+                            st["detail"] = f"未产出公理（{str(llm_ch['skipped'])[:50]}）"
+                        else:
+                            # "完成扫描"掩盖空手而归（2026-11-08 项目 265 实测：
+                            # 方舟限流时段空响应，parsed=0 用户以为扫描没用）
+                            st["detail"] = "完成扫描，未产出公理（模型响应为空，稍后重新构建可重试）"
                     _prog("axioms", "公理扫描结束")
                 except _PipelineCancelled:
                     raise  # 取消传导：不得当作阶段失败吞掉
@@ -462,20 +619,36 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                     st["detail"] = f"公理扫描失败（不影响其余结果）: {str(e)[:120]}"
                     _prog("axioms", st["detail"])
 
+                # ── 业务规则挖掘（外部方法论对照：SWRL 控制规则层）：
+                #    IF-THEN 产生式候选（IF 侧逐字命中白名单的存在性门禁在
+                #    rule_llm 内做）→ 直接落推理规则表（错误规则可停用，风险低）。
+                #    失败静默，不影响公理阶段主产物。
+                try:
+                    _fresh_read()
+                    rules_res = _mine_business_rules(db, project_id)
+                    summary["business_rules"] = rules_res
+                    n_rules = int(rules_res.get("rules_added") or 0)
+                    if n_rules:
+                        st["detail"] += f"，业务规则 {n_rules} 条"
+                        _prog("axioms", st["detail"])
+                except Exception as e:  # noqa: BLE001
+                    summary["business_rules"] = {"rules_added": 0, "skipped": str(e)[:120]}
+
             # ── 阶段 8：AI 自动裁决（含公理自动申报 + 一致性复验撤回）──
             _cancel_check()
             _fresh_read()
             st = _stage(stages, "adjudicate")
             st["status"] = "running"
-            _prog("adjudicate", "AI 自动处理低风险项中…", 0.0)
+            _prog("adjudicate", "结果确认中…", 0.0)
             from app.services.auto_adjudication import run_auto_adjudication
 
-            adj = run_auto_adjudication(project_id, db=db)
+            # fast 档（2026-11-09 用户决策）：模型抽取结果不再 LLM 复核，默认通过；
+            # 保留零成本的确定性安全检查（矛盾公理撤回/低相似度合并不执行），
+            # "结果确认"阶段从分钟级缩到 10-30s
+            adj = run_auto_adjudication(project_id, db=db, level="fast")
             summary["adjudication"] = adj
             st["status"] = "done"
-            llm_n = (adj.get("llm") or {}).get("llm_adjudicated", 0)
-            st["detail"] = (f"自动处理 {adj['auto_approved']} 项"
-                            + (f"，LLM 裁决 {llm_n} 项" if llm_n else "")
+            st["detail"] = (f"自动确认 {adj['auto_approved']} 项"
                             + (f"，撤回 {adj['rolled_back']} 条引发矛盾的公理"
                                if adj.get("rolled_back") else ""))
 
@@ -490,15 +663,66 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                             .group_by(ReviewItem.priority).all())
             by_priority = {p: int(c) for p, c in pending_rows}
             need_human = by_priority.get("critical", 0) + by_priority.get("high", 0)
+
+            # ── 能力问题评测（外部方法论对照：CQ 在真实产物上验证）：
+            #    先补 SPARQL 模板（骨架就绪后才能生成），再双口径评测——
+            #    有模板且图可查 = SPARQL 真执行出答案行；否则回落检索式。
+            #    任一环节失败都不影响构建终态 ──
+            cq_note = ""
+            try:
+                from app.services.cq_service import (
+                    attach_sparql, ensure_rdf_graphs, evaluate_cqs, list_cqs,
+                )
+
+                if list_cqs(db, project_id, enabled_only=True):
+                    _fresh_read()
+                    attach_sparql(db, project_id)
+                    # rebuild=True：构建刚改完全部图谱数据，评测必须用新图
+                    graph_state = ensure_rdf_graphs(project_id, rebuild=True)
+                    _fresh_read()
+                    ev = evaluate_cqs(db, project_id, trigger="auto_post_extract")
+                    db.commit()  # CQ 模板/评测结果落库（attach_sparql 无自带提交）
+                    if ev is not None:
+                        summary["cq_evaluation_id"] = ev.id
+                        summary["cq_graph_state"] = graph_state
+                        ok = ev.answerable_count == ev.total_cq
+                        mode_note = "（SPARQL 实查）" if ev.mode == "sparql+retrieval" else ""
+                        cq_note = (f"，能力问题验证通过 {ev.answerable_count}/{ev.total_cq}{mode_note}"
+                                   + ("" if ok else "（部分问题暂无证据，可补充文档后重新构建）"))
+            except Exception as e:  # noqa: BLE001
+                from app.core.logging import logger
+
+                logger.warning(f"[pipeline] CQ 评测失败 project={project_id}: {e}")
+
+            # ── 构建报告（外部方法论交付物对照：人话版，零 LLM）──
+            try:
+                from app.services.build_report import generate_build_report
+
+                model_name = ""
+                try:
+                    from app.adapters.provider import ModelPurpose, resolve_provider
+
+                    model_name = resolve_provider(
+                        ModelPurpose.EXTRACT, project_id, db=db).model_name
+                except Exception:  # noqa: BLE001
+                    pass
+                report_res = generate_build_report(db, project_id,
+                                                   depth_label=profile["label"],
+                                                   model_name=model_name)
+                summary["build_report"] = {k: report_res[k] for k in
+                                           ("sections", "chars", "pending",
+                                            "rules", "doc_rules") if k in report_res}
+            except Exception as e:  # noqa: BLE001 —— 报告失败不影响构建终态
+                summary["build_report"] = {"skipped": str(e)[:120]}
+
             sc = summary.get("selfcheck") or {}
             remaining = int(sc.get("remaining") or 0)
-            sc_note = (f"自检 {sc.get('rounds', 0)} 轮："
-                       + ("无硬伤" if remaining == 0
-                          else f"剩余 {remaining} 处硬伤待人工处理")) if sc else ""
+            sc_note = ("结构自检通过" if remaining == 0
+                       else f"结构自检后剩 {remaining} 处需人工确认") if sc else ""
             finish_task_progress(
                 task_id, "completed",
                 f"一键构建完成（{profile['label']}档{'，' + sc_note if sc_note else ''}）："
-                f"还剩 {need_human} 个高优先级结果等你确认",
+                f"还剩 {need_human} 个高优先级结果等你确认{cq_note}",
                 stats={"project_id": project_id, "pipeline": True, "stages": stages,
                        "depth": depth, "pending_by_priority": by_priority,
                        "need_human": need_human, **summary})
@@ -528,12 +752,14 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             finish_task_progress(task_id, "cancelled", "已停止（用户取消）",
                                  stats={"project_id": project_id, "stages": stages})
             return {"status": "cancelled"}
+        reason = _friendly_error(e)
         for st in stages:
             if st["status"] == "running":
                 st["status"] = "failed"
-        finish_task_progress(task_id, "failed", str(e)[:300],
+                st["detail"] = reason  # 红格子上直接写人话原因，不用点开猜
+        finish_task_progress(task_id, "failed", reason,
                              stats={"project_id": project_id, "stages": stages})
-        return {"status": "failed", "reason": str(e)[:300]}
+        return {"status": "failed", "reason": reason}
 
 
 def _redis():
@@ -611,6 +837,11 @@ def dispatch_pipeline_run(project_id: int, trigger_user_id: Optional[int] = None
     if not locked:
         winner = r.get(key) or ""
         return {"mode": "existing", "task_id": winner, "already_running": True}
+    # 手动立即构建取代已登记的定时：清登记，防 beat 到点把项目重复拉起
+    # （beat 触发=删键+dispatch 抢锁；运行中能幂等挡住，跑完后到点照样二跑）
+    r.delete(sched_key)
+    # 登记最近一次构建（status 端点在锁释放后回落查它，失败态刷新页面不丢）
+    r.set(_LAST_KEY.format(project_id=project_id), task_id, ex=_LAST_TTL)
 
     # 预写「已入队」进度：锁存在即进度可查，幂等判定不依赖 worker 已开工
     set_task_progress(task_id, "queued", 0, "管线已入队",
@@ -750,6 +981,14 @@ def pipeline_running_task_id(project_id: int) -> Optional[str]:
     """当前（或最近 6h 内）管线的 task_id；锁过期/不存在返回 None。"""
     try:
         return _redis().get(_RUNNING_KEY.format(project_id=project_id))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def pipeline_last_task_id(project_id: int) -> Optional[str]:
+    """最近一次发起的管线 task_id（7d）；无登记返回 None。"""
+    try:
+        return _redis().get(_LAST_KEY.format(project_id=project_id))
     except Exception:  # noqa: BLE001
         return None
 

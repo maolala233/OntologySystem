@@ -6,9 +6,8 @@
  * Tab3 角色配置：角色 = 模块授权预设（roles 表），应用角色即全量覆盖该用户 grants。
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-    Button, Checkbox, Empty, Input, Modal, Popconfirm, Space, Tabs, Tag, Tooltip, Typography, message,
-} from 'antd';
+import { Button, Checkbox, Empty, Input, Modal, Popconfirm, Space, Tabs, Tag, Tooltip, Typography } from 'antd';
+import { message } from '../../shared/feedback';
 import {
     AppstoreOutlined, CheckOutlined, CloseOutlined, DeleteOutlined, EditOutlined, MinusOutlined,
     PlusOutlined, ReloadOutlined, SaveOutlined, TeamOutlined, ToolOutlined, UserSwitchOutlined,
@@ -420,7 +419,7 @@ const ModuleGrantsPage: React.FC = () => {
             <Modal
                 title={editingRole ? `编辑角色 · ${editingRole.name}` : '新建角色'}
                 open={roleModalOpen} onOk={saveRole} onCancel={() => setRoleModalOpen(false)}
-                okText="保存" destroyOnClose
+                okText="保存" destroyOnHidden
             >
                 <div className="space-y-3 py-1">
                     <div>

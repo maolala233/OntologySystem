@@ -4,10 +4,8 @@
  * 挂载点：骨架编辑 Tab 悬浮工具条「评测问题」→ 抽屉（CQ 同时约束抽取与发布门控）。
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-    Alert, Button, Empty, Form, Input, Modal, Popconfirm, Select, Space, Spin,
-    Switch, Table, Tag, Tooltip, Typography, message,
-} from 'antd';
+import { Alert, Button, Empty, Form, Input, Modal, Popconfirm, Select, Space, Spin, Switch, Table, Tag, Tooltip, Typography } from 'antd';
+import { message } from '../../../shared/feedback';
 import {
     ArrowDownOutlined, ArrowUpOutlined, CheckCircleOutlined, CloseCircleOutlined,
     PlusOutlined, QuestionCircleOutlined, ReloadOutlined, ThunderboltOutlined,
@@ -357,7 +355,7 @@ const CqPanel: React.FC<Props> = ({ projectId, open }) => {
                 onOk={submitEdit}
                 okText={editing ? '保存' : '创建'}
                 cancelText="取消"
-                destroyOnClose
+                destroyOnHidden
             >
                 {!editing && (
                     <div className="mb-3">

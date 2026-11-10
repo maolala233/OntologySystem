@@ -156,7 +156,7 @@ export const versionsApi = {
 // ── 发布/公共区 ──
 
 export const publishApi = {
-    publish: async (projectId: number, body?: { note?: string; label?: string; unacceptable_regressions?: boolean }) => {
+    publish: async (projectId: number, body?: { note?: string; label?: string; unacceptable_regressions?: boolean; domain_id?: number; domain_name?: string }) => {
         const response = await apiClient.post(`/api/projects/${projectId}/publish`, body || {});
         return response.data as {
             publication_id: number; version_no: number; status: string; warnings: string[];

@@ -67,8 +67,10 @@ export interface ProjectData {
   domain?: KnowledgeDomain;
   created_at?: string;
   updated_at?: string;
-  /** 生命周期状态（/api/projects/my 下发）：draft/building/ready/published */
+  /** 生命周期状态（/api/projects/my 下发）：building/scheduled/published/ready/draft */
   status?: string;
+  /** 已发布后重新构建过（内容比发布版本新）：前端显示「有新版本」标记 */
+  stale_published?: boolean;
   classes_total?: number;
   instances_total?: number;
 }

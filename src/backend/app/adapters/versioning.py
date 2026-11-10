@@ -129,10 +129,13 @@ def create_version(db: Session, project, kind: str, created_by: int,
         {"project_id": project.id, "version_no": version_no, "kind": kind,
          "created_at": datetime.utcnow().isoformat(), "graph_data": gd})
     row = OntologyVersion(
-        project_id=project.id, version_no=version_no, label=label, kind=kind,
+        project_id=project.id, version_no=version_no, kind=kind,
+        # label/description 列是 varchar(64)/varchar(500)：门禁报告等长文本超长
+        # 直接 DataError 500（2026-11-09 发布实测）——入口统一截断
+        label=(label[:64] if label else None),
+        description=(description[:500] if description else None),
         full_snapshot_key=key, stats=graph_stats(gd), checksum=checksum,
-        parent_version_id=parent_version_id, created_by=created_by,
-        description=description)
+        parent_version_id=parent_version_id, created_by=created_by)
     db.add(row)
     db.flush()
     db.add(GraphSnapshot(project_id=project.id, version_id=row.id, purpose="version",

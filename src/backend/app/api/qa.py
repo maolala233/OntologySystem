@@ -76,14 +76,19 @@ def _build_llm(db: Session, project_id: int,
         from app.core.security import decrypt_str
         api_key = decrypt_str(bytes(row.api_key_encrypted)) if row.api_key_encrypted else ""
         # 行内 params 的 disable_think 接线到客户端（抽取行已实测：方舟必须用
-        # thinking 结构体方言关思考，否则长 prompt 稳撞 330s 硬闸/吐空壳响应）
+        # thinking 结构体方言关思考，否则长 prompt 缝合调用稳超 330s 硬闸/吐空壳响应）；
+        # llm_timeout/max_retries 作客户端级缺省——QA/诊断等未显式传的调用统一受配置管
         params = row.params or {}
         return LLMClient(api_key=api_key, base_url=row.base_url, model=row.model_name,
-                         think_mode="disabled" if params.get("disable_think") else None)
+                         think_mode="disabled" if params.get("disable_think") else None,
+                         default_timeout=params.get("llm_timeout"),
+                         default_max_retries=params.get("max_retries"))
     cfg = build_legacy_llm_config(db, project_id)
     return LLMClient(api_key=cfg.get("api_key"), base_url=cfg.get("base_url"),
                      model=cfg.get("model"),
-                     think_mode="disabled" if cfg.get("disable_think") else None)
+                     think_mode="disabled" if cfg.get("disable_think") else None,
+                     default_timeout=cfg.get("llm_timeout"),
+                     default_max_retries=cfg.get("max_retries"))
 
 
 def _sources_out(result: QAResult) -> list[dict]:
@@ -249,6 +254,92 @@ def _sse_stream(db: Session, project_id: int, user: User, question: str,
         _save_failed_history(db, project_id, user.id, question, str(e),
                              conversation_id=conversation_id)
         yield _sse("error", {"message": f"问答服务异常：{e}"})
+
+
+class RetrievalRequest(BaseModel):
+    """对外标准检索请求（2026-11-09）：mode 区分问答/非问答两种输出结构。"""
+    question: str
+    mode: str = Field(default="retrieve", pattern="^(qa|retrieve)$")
+    top_k: int = Field(default=12, ge=1, le=30)
+    use_graph: bool = True
+    use_inferred: bool = True
+    knowledge_domain: str | None = None
+    system_prompt: str | None = Field(default=None, max_length=8000,
+                                      description="问答模式自定义提示词；retrieve 模式忽略")
+    temperature: float | None = Field(default=None, ge=0, le=2)
+
+
+def _resolve_retrieval_auth(request: Request, project_id: int, db: Session) -> User:
+    """双鉴权：JWT（平台用户）或 MCP 令牌（Authorization: Bearer sk-mcp-*，绑定项目）。"""
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer sk-mcp-"):
+        from app.api.mcp_gateway import _auth_token
+
+        ctx = _auth_token(request, db)
+        if ctx.project.id != project_id:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=403, detail="MCP 令牌绑定的是其他项目")
+        return ctx.user
+    from app.core.deps import _load_user_or_raise  # 延迟导入避免循环
+
+    # get_current_user 的 token 来自 oauth2_scheme（Depends 注入），手动鉴权时
+    # 直接复用其核心 _load_user_or_raise（JWT 提取自 Authorization 头）
+    auth = request.headers.get("authorization", "")
+    token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    return _load_user_or_raise(token, db)
+
+
+@router.post("/{project_id}/retrieval")
+def standard_retrieval(project_id: int, body: RetrievalRequest, request: Request,
+                       db: Session = Depends(get_db)):
+    """对外标准检索能力（MCP/REST 双通道同执行体）。
+
+    mode=retrieve（非问答，默认）：零 LLM 确定性结构化输出——
+        {mode, results: [{rank, ref_type, quote, doc_file, source_document_id,
+        char_start, char_end, score}], total, query, latency_ms}
+    mode=qa（问答）：检索 + LLM 接地答案（可自定义 system_prompt/temperature）——
+        {mode, answer, confidence, sources[], reasoning_path, latency_ms}
+    鉴权：平台 JWT 或 MCP 令牌（Bearer sk-mcp-*，项目级绑定）。
+    """
+    user = _resolve_retrieval_auth(request, project_id, db)
+    from app.core.deps import ensure_module, require_project_role
+
+    ensure_module(user, db, "qa")  # 模块守卫手动做（MCP 令牌调用者无 JWT 上下文）
+    require_project_role(project_id, "viewer", user, db)
+    question = body.question.strip()
+    if not question:
+        raise APIError("question 不能为空", code="EMPTY_QUESTION", http_status=400)
+    query = RetrievalQuery(
+        project_id=project_id, question=question, top_k=body.top_k,
+        use_graph=body.use_graph, use_inferred=body.use_inferred,
+        knowledge_domain=(body.knowledge_domain or None),
+    )
+    if body.mode == "retrieve":
+        from app.adapters.retrieval import retrieve_structured
+
+        payload = retrieve_structured(query, db=db)
+        payload["mode"] = "retrieve"
+        return payload
+    # qa 模式
+    cfg = build_legacy_llm_config(db, project_id)
+    llm = None
+    if cfg.get("api_key") and cfg.get("base_url"):
+        from app.infrastructure.llm_client import LLMClient
+
+        llm = LLMClient(api_key=cfg["api_key"], base_url=cfg["base_url"],
+                        model=cfg.get("model"),
+                        think_mode="disabled" if cfg.get("disable_think") else None)
+    from app.adapters.retrieval import query_with_reasoning
+
+    result = query_with_reasoning(query, db=db, llm=llm,
+                                  system_prompt=(body.system_prompt or None),
+                                  temperature=body.temperature)
+    return {"mode": "qa", "answer": result.answer,
+            "confidence": result.confidence,
+            "sources": [s.model_dump() for s in result.sources],
+            "reasoning_path": result.reasoning_path,
+            "latency_ms": result.latency_ms}
 
 
 @router.get("/{project_id}/qa/history")

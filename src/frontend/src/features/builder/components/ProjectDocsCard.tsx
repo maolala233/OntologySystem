@@ -4,13 +4,15 @@
  * 数据源 documentsApi；构建进行中删除仍允许（管线按当时快照跑，删除不影响当轮）。
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Card, Empty, Popconfirm, Space, Spin, Table, Tag, Upload, message } from 'antd';
+import { message } from '../../../shared/feedback';
+import { Button, Card, Empty, Popconfirm, Space, Spin, Table, Tag, Upload } from 'antd';
 import {
     CloudDownloadOutlined, DeleteOutlined, UploadOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 
 import { documentsApi, DocumentRow } from '../../../api/documents';
+import { UPLOAD_ACCEPT, UPLOAD_EXTS } from '../documents/uploadFormats';
 
 const PARSE_TAG: Record<string, { color: string; text: string }> = {
     uploaded: { color: 'default', text: '待解析' },
@@ -53,24 +55,23 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged }) => {
 
     useEffect(() => { load(); }, [load]);
 
-    // 轮询解析状态：有文档在解析中时每 2.5s 刷新，全部稳定后停（90s 上限）
-    const pollParse = useCallback(async () => {
-        let rounds = 0;
-        const timer = setInterval(async () => {
-            rounds += 1;
+    // 解析状态轮询（挂载即生效，不限场景）：有文档待解析/解析中时每 2.5s 刷新，
+    // 全部落定后停并通知父级。旧版只在"本次上传后"轮询且 90s 封顶——页面在
+    // 解析期间被刷新（或管线代为解析）就永远停在「解析中」；大文档解析超 90s
+    // 也会被掐断（2026-11-08 实测）
+    useEffect(() => {
+        const busy = docs.some((d) => d.parse_status === 'parsing' || d.parse_status === 'uploaded');
+        if (!busy) return;
+        const t = setInterval(async () => {
             try {
                 const rows = await fetchList();
-                const busy = rows.some(
+                const stillBusy = rows.some(
                     (d) => d.parse_status === 'parsing' || d.parse_status === 'uploaded');
-                if (!busy || rounds > 36) {
-                    clearInterval(timer);
-                    onChanged?.();
-                }
-            } catch {
-                clearInterval(timer);
-            }
+                if (!stillBusy) onChanged?.(); // 全部落定才通知父级刷新统计（避免每帧打 DB）
+            } catch { /* 下一轮再试 */ }
         }, 2500);
-    }, [projectId, load, onChanged]);
+        return () => clearInterval(t);
+    }, [docs, fetchList, onChanged]);
 
     // 上传文档（可多选）：上传即同步解析（auto_parse=true）
     // antd 的 onChange 每选一个文件触发一次且携带累积 fileList——必须按 uid 去重，
@@ -91,7 +92,6 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged }) => {
             message.success(`已上传 ${files.length} 个文档，解析中…；抽取本体请点上方「一键构建」`);
             await load();
             onChanged?.();
-            pollParse();
         } catch (e: any) {
             const err = e?.response?.data;
             message.error(err?.error?.message || err?.message || '上传失败，请稍后重试');
@@ -143,9 +143,20 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged }) => {
                   <Upload
                       multiple
                       showUploadList={false}
-                      beforeUpload={() => false}
+                      beforeUpload={(f) => {
+                          const ext = String(f.name).split('.').pop()?.toLowerCase() || '';
+                          if (!UPLOAD_EXTS.includes(ext)) {
+                              message.warning(`不支持 .${ext} 格式：仅支持 ${UPLOAD_EXTS.join(' / ')}`);
+                              return Upload.LIST_IGNORE;
+                          }
+                          if (f.size > 200 * 1024 * 1024) {
+                              message.warning(`「${f.name}」超过 200MB 上限`);
+                              return Upload.LIST_IGNORE;
+                          }
+                          return false;
+                      }}
                       onChange={handleUpload}
-                      accept=".txt,.md,.pdf,.doc,.docx,.xls,.xlsx,.csv,.ppt,.pptx,.html,.json"
+                      accept={UPLOAD_ACCEPT}
                       disabled={uploading}>
                       <Button size="small" icon={<UploadOutlined />} loading={uploading}>
                           上传文档
@@ -162,7 +173,7 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged }) => {
                        pagination={docs.length > 8 ? { pageSize: 8, showSizeChanger: false } : false} />
             )}
             <div className="text-xs text-gray-400 mt-2 flex items-center gap-1">
-                <UploadOutlined /> 可随时增删文档；上传即自动解析，抽取本体请点上方「一键构建」
+                <UploadOutlined /> 支持 {UPLOAD_EXTS.join(' / ')}。
             </div>
         </Card>
     );

@@ -65,7 +65,9 @@ def _build_llm(db: Session, project_id: int, model_config_id: Optional[int] = No
 
         cfg = build_legacy_llm_config(db, project_id)
         return LLMClient(api_key=cfg.get("api_key"), base_url=cfg.get("base_url"),
-                         model=cfg.get("model"))
+                         model=cfg.get("model"),
+                         think_mode="disabled" if cfg.get("disable_think") else None,
+                         streaming_enabled=cfg.get("streaming_enabled"))
     except Exception:  # noqa: BLE001
         return None
 

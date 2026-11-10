@@ -242,7 +242,7 @@ def _llm_candidates(db: Session, project_id: int, schema: dict | None,
     try:
         resp = llm.call_llm(system_prompt=system_prompt, user_prompt=user_prompt,
                             json_schema=AXIOM_OUTPUT_JSON_SCHEMA,
-                            timeout=AXIOM_LLM_TIMEOUT)
+                            timeout=AXIOM_LLM_TIMEOUT, max_retries=2)
     except Exception as e:  # noqa: BLE001 - LLM 失败不阻断统计通道
         return [], {"skipped": f"llm_call_failed (timeout={AXIOM_LLM_TIMEOUT}s): {e}"}
 
@@ -294,8 +294,12 @@ def _build_llm(db: Session, project_id: int):
         from app.infrastructure.llm_client import LLMClient
 
         cfg = build_legacy_llm_config(db, project_id)
+        # disable_think 与抽取主链路同源接线：glm-5 默认思考，长 prompt 下
+        # 思考吞掉全部输出预算（311s 全程 0 字节正文，finish_reason=length 截断，
+        # 项目 265 公理恒空实测）——必须显式按行参数关思考。
         return LLMClient(api_key=cfg.get("api_key"), base_url=cfg.get("base_url"),
-                         model=cfg.get("model"))
+                         model=cfg.get("model"),
+                         think_mode="disabled" if cfg.get("disable_think") else None)
     except Exception:  # noqa: BLE001
         pass
     try:
@@ -316,7 +320,9 @@ def _build_llm(db: Session, project_id: int):
             return None
         api_key = decrypt_str(bytes(row.api_key_encrypted)) if row.api_key_encrypted else ""
         return LLMClient(api_key=api_key, base_url=row.base_url,
-                         model=row.model_name)
+                         model=row.model_name,
+                         think_mode="disabled"
+                         if (row.params or {}).get("disable_think") else None)
     except Exception:  # noqa: BLE001
         return None
 

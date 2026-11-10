@@ -16,6 +16,7 @@ from app.core.deps import get_current_user, get_db, require_module, require_proj
 from app.core.exceptions import APIError, NotFoundError
 from app.infrastructure.database import (
     GraphSnapshot,
+    KnowledgeDomain,
     OntologyVersion,
     Project,
     Publication,
@@ -58,7 +59,25 @@ def publish(project_id: int, body: dict | None = None,
     proj = _project_or_404(project_id, db)
     body = body or {}
 
-    # 门禁 1：知识域必填
+    # 门禁 1：知识域必填。2026-11-07 起知识域从构建期移到发布期选择：
+    # 请求体可携带 domain_id/domain_name 直接落到项目（find-or-create 与
+    # create_project 同口径），发布弹窗里选域+发布一步完成
+    body_domain_id = body.get("domain_id")
+    body_domain_name = str(body.get("domain_name") or "").strip()
+    if body_domain_id or body_domain_name:
+        if body_domain_id:
+            dom = db.query(KnowledgeDomain).filter(
+                KnowledgeDomain.id == body_domain_id).first()
+            if dom is None:
+                raise APIError("知识域不存在", code="DOMAIN_NOT_FOUND", http_status=400)
+        else:
+            dom = db.query(KnowledgeDomain).filter(
+                KnowledgeDomain.name == body_domain_name).first()
+            if not dom:
+                dom = KnowledgeDomain(name=body_domain_name)
+                db.add(dom)
+                db.flush()
+        proj.domain_id = dom.id
     if not (proj.domain_id or (proj.domains or "").strip()):
         raise APIError("发布前必须设置知识域", code="DOMAIN_REQUIRED", http_status=400)
     # 门禁 2：TBox 机检硬伤（类层次环/悬空父类引用/自父）阻断发布（O1-B2）
@@ -85,9 +104,12 @@ def publish(project_id: int, body: dict | None = None,
             detail={"dangling": closure["dangling"][:20]})
 
     # 落版本 + publication 快照 + 记录 + 状态机
+    # 门禁警告全文可能极长（124 类无锚点+孤岛清单…实测 800+ 字符），description 列
+    # 只有 varchar(500)——超长 DataError 让发布 500（2026-11-09 实测）；截到 450 留余量
+    _gate_desc = "；".join(health["warnings"]) or "发布快照"
     ver = create_version(db, proj, "publication", current_user.id,
                          label=body.get("label"),
-                         description="；".join(health["warnings"]) or "发布快照")
+                         description=_gate_desc[:450])
     if not ver.label:
         ver.label = f"发布 v{ver.version_no}"
     snap = (db.query(GraphSnapshot)

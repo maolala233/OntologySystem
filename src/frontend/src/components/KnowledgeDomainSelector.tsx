@@ -3,7 +3,8 @@
  * 支持下拉选择已有知识域，也支持输入新名称及描述并创建
  */
 import React, { useState, useEffect } from 'react';
-import { Select, Input, Button, Space, Modal, Form, message, Tag } from 'antd';
+import { message } from '../shared/feedback';
+import { Select, Input, Button, Space, Modal, Form, Tag } from 'antd';
 import { PlusOutlined, EditOutlined, DatabaseOutlined } from '@ant-design/icons';
 import { getDomains, createDomain, KnowledgeDomain } from '../api/domains';
 
@@ -34,6 +35,8 @@ const KnowledgeDomainSelector: React.FC<KnowledgeDomainSelectorProps> = ({
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [createDomainForm] = Form.useForm();
     const [searchValue, setSearchValue] = useState('');
+    // 受控下拉开合：选中/新建后自动收起——用户"选了即填入"，不必再点其他区域
+    const [open, setOpen] = useState(false);
 
     // 加载知识域列表
     useEffect(() => {
@@ -68,7 +71,8 @@ const KnowledgeDomainSelector: React.FC<KnowledgeDomainSelectorProps> = ({
             // 选中新创建的知识域
             onChange?.(newDomain.id);
             onDomainNameChange?.(newDomain.name);
-            
+            setOpen(false);
+
             // 关闭弹窗
             setIsCreateModalOpen(false);
             createDomainForm.resetFields();
@@ -93,6 +97,7 @@ const KnowledgeDomainSelector: React.FC<KnowledgeDomainSelectorProps> = ({
         onChange?.(undefined);
         onDomainNameChange?.(undefined);
         setSearchValue('');
+        setOpen(false);
     };
 
     // 过滤选项
@@ -119,6 +124,8 @@ const KnowledgeDomainSelector: React.FC<KnowledgeDomainSelectorProps> = ({
                         showSearch
                         filterOption={false}
                         onSearch={setSearchValue}
+                        open={open}
+                        onDropdownVisibleChange={setOpen}
                         labelRender={() => selectedDomain?.name || placeholder}
                         dropdownRender={(menu) => (
                             <>
@@ -127,7 +134,14 @@ const KnowledgeDomainSelector: React.FC<KnowledgeDomainSelectorProps> = ({
                                         <div
                                             key={domain.id}
                                             className={`px-3 py-2 cursor-pointer hover:bg-gray-100 ${domain.id === value ? 'bg-blue-50' : ''}`}
-                                            onClick={() => handleSelectChange(domain.id)}
+                                            // mousedown preventDefault：不拦则 mousedown 先让
+                                            // Select 失焦收起下拉，click 永远完不成——
+                                            // 选项"点了没反应"的根因（2026-11-08 实测）
+                                            onMouseDown={(e) => e.preventDefault()}
+                                            onClick={() => {
+                                                handleSelectChange(domain.id);
+                                                setOpen(false); // 选中即收起，输入框即时回填
+                                            }}
                                         >
                                             <div className="flex items-center justify-between">
                                                 <span className="font-medium text-gray-900">{domain.name}</span>

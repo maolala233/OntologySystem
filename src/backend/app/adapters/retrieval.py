@@ -678,8 +678,14 @@ def _confidence(sources: list[RetrievedSource]) -> float:
 
 
 def query_with_reasoning(query: RetrievalQuery, db: Session | None = None,
-                         llm: LLMClient | None = None) -> QAResult:
-    """检索 + LLM 接地答案（AgentContext.query_with_reasoning 语义，非流式聚合）。"""
+                         llm: LLMClient | None = None,
+                         system_prompt: str | None = None,
+                         temperature: float | None = None) -> QAResult:
+    """检索 + LLM 接地答案（AgentContext.query_with_reasoning 语义，非流式聚合）。
+
+    system_prompt：调用方自定义提示词（对外 MCP/REST 检索能力，2026-11-09）——
+    替换内置 _QA_SYSTEM_PROMPT；None 用内置。temperature 同理（缺省 0.1）。
+    """
     t0 = time.time()
     sources = retrieve(query, db=db)
     reasoning: list[str] = [
@@ -690,10 +696,11 @@ def query_with_reasoning(query: RetrievalQuery, db: Session | None = None,
     if sources and llm is not None:
         try:
             resp = llm.call_llm_text(
-                system_prompt=_QA_SYSTEM_PROMPT,
+                system_prompt=system_prompt or _QA_SYSTEM_PROMPT,
                 user_prompt=_build_user_prompt(query.question, sources),
                 stream=False,
                 timeout=300.0,
+                temperature=temperature,
             )
             answer = (resp.get("content", "") if isinstance(resp, dict) else str(resp)).strip()
             model_name = getattr(llm, "model", None)
@@ -712,6 +719,35 @@ def query_with_reasoning(query: RetrievalQuery, db: Session | None = None,
         model=model_name,
         latency_ms=int((time.time() - t0) * 1000),
     )
+
+
+def retrieve_structured(query: RetrievalQuery, db: Session | None = None) -> dict:
+    """结构化检索（非问答场景，零 LLM）：向量召回 + 图扩展 + 推理引用 → 结构化 JSON。
+
+    对外 MCP retrieve 工具 / REST /retrieval?mode=retrieve 的执行体：
+    输出 {results: [{rank, ref_type, quote, doc_file, source_document_id,
+    char_start, char_end, score, knowledge_domain}], total, query{...}}——
+    与问答模式的差异：无 answer/reasoning_path，纯来源数据，适合 Agent 二次加工。
+    """
+    t0 = time.time()
+    sources = retrieve(query, db=db)
+    results = [{
+        "rank": i + 1,
+        "ref_type": src.ref_type,
+        "quote": src.quote,
+        "doc_file": src.doc_file,
+        "source_document_id": src.source_document_id,
+        "char_start": src.char_start,
+        "char_end": src.char_end,
+        "score": round(float(src.score or 0), 4),
+    } for i, src in enumerate(sources)]
+    return {"results": results, "total": len(results),
+            "mode": "retrieve",
+            "query": {"question": query.question, "top_k": query.top_k,
+                      "use_graph": query.use_graph,
+                      "use_inferred": query.use_inferred,
+                      "knowledge_domain": query.knowledge_domain},
+            "latency_ms": int((time.time() - t0) * 1000)}
 
 
 def query_with_repair(query: RetrievalQuery, db: Session | None = None,
@@ -846,5 +882,5 @@ def iter_answer(query: RetrievalQuery, db: Session | None = None,
     ))
 
 
-__all__ = ["RetrievedSource", "QAResult", "RetrievalQuery", "retrieve", "query_with_reasoning",
+__all__ = ["RetrievedSource", "QAResult", "RetrievalQuery", "retrieve", "retrieve_structured", "query_with_reasoning",
            "query_with_repair", "iter_answer", "_milvus_expr"]

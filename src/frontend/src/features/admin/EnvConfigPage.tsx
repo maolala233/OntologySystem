@@ -5,7 +5,8 @@
  * MySQL 为平台自身元数据库，不开放修改。
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Card, Input, message, Spin, Switch, Tag, Typography } from 'antd';
+import { message } from '../../shared/feedback';
+import { Alert, Button, Card, Input, Spin, Switch, Tag, Typography } from 'antd';
 import {
     ApiOutlined,
     CloudServerOutlined,

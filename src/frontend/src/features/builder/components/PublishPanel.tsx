@@ -5,13 +5,15 @@
  * 发布时系统自动执行质量门控（结构机检 + 审核清零），未通过则旧版本继续生效。
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, Button, Card, Space, Spin, Table, Tag, Typography, message } from 'antd';
+import { message } from '../../../shared/feedback';
+import { Alert, Button, Card, Space, Spin, Table, Tag, Typography } from 'antd';
 import { CloudUploadOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 
 import { ImpactSummary, impactApi } from '../../../api/cqs';
 import { publishApi, VersionRow, versionsApi } from '../../../api/governance';
 import { EXPORT_FORMAT_EXT, ExportFormatId, projectsApi } from '../../../api/projects';
 import { pipelineApi } from '../../../api/pipeline';
+import { publishWithDomain } from './publishFlow';
 
 const { Text } = Typography;
 
@@ -67,7 +69,9 @@ const PublishPanel: React.FC<Props> = ({ projectId, onBackToResults }) => {
         setPublishing(true);
         setPublishError(null);
         try {
-            const r = await publishApi.publish(projectId, {});
+            // 无知识域时弹选择器带域发布（2026-11-07：选域从构建期移到发布期）
+            const r = await publishWithDomain(projectId);
+            if (!r) return;
             const warn = (r as any).warnings?.length ? `（${(r as any).warnings.length} 条警告）` : '';
             message.success(`发布成功：v${r.version_no}${warn}`);
             await load();

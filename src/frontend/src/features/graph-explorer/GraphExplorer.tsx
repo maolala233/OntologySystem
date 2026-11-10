@@ -3,7 +3,8 @@
  * 语义着色 + 图例/过滤/搜索 + ★节点/边详情抽屉。构建器实例探索 Tab 与资产详情复用。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Empty, Input, Select, Space, Spin, Tag, Tooltip, message } from 'antd';
+import { message } from '../../shared/feedback';
+import { Button, Empty, Input, Select, Space, Spin, Tag, Tooltip } from 'antd';
 import { AimOutlined, BgColorsOutlined, ExpandAltOutlined, ReloadOutlined } from '@ant-design/icons';
 import Graph from 'graphology';
 import Sigma from 'sigma';

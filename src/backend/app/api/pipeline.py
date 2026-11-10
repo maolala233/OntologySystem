@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import time
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user, get_db, require_project_role
@@ -17,6 +18,7 @@ from app.infrastructure.database import Project, ReviewItem, User
 from app.tasks.pipeline_tasks import (
     cancel_scheduled_pipeline,
     dispatch_pipeline_run,
+    pipeline_last_task_id,
     pipeline_running_task_id,
     pipeline_scheduled_at,
     release_pipeline_lock,
@@ -135,6 +137,17 @@ def pipeline_status_endpoint(
         tid = None
         prog = None
     summary = _reviews_summary(db, project_id)
+    if prog is None and not task_id:
+        # 锁不在（未构建/已释放）→ 回落最近一次构建登记（dispatch 时写，7d）：
+        # 失败/完成态在页面刷新后仍可见，不再依赖前端 localStorage 猜测。
+        # 心跳死亡的 running 帧不回落（视同无任务，让用户能重新发起）。
+        last_tid = pipeline_last_task_id(project_id)
+        last_prog = get_task_progress(last_tid) if last_tid else None
+        if last_prog and int((last_prog.get("stats") or {}).get("project_id") or -1) == project_id:
+            stale_running = last_prog.get("status") in ("running", "queued") \
+                and int(time.time()) - int(last_prog.get("updated_at") or 0) > 900
+            if not stale_running:
+                tid, prog = last_tid, last_prog
     if prog is None:
         sched = pipeline_scheduled_at(project_id)
         if sched:
@@ -147,6 +160,88 @@ def pipeline_status_endpoint(
             "stage": prog.get("stage"), "percent": prog.get("percent"),
             "message": prog.get("message"), "stages": (prog.get("stats") or {}).get("stages") or [],
             "stats": prog.get("stats") or {}, "reviews": summary}
+
+
+@router.get("/events")
+async def pipeline_events(
+    project_id: int,
+    ticket: str = Query(...),
+    last_task: str | None = Query(None),
+    request: Request = None,
+    db: Session = Depends(get_db),
+):
+    """SSE 订阅管线进度：运行锁为唯一事实源，idle→running 的跃迁也推送。
+
+    复用 M1 一次性 ticket 鉴权（EventSource 无法携带 Authorization 头）。
+    每秒读 Redis 进度键、diff 才推（帧率=变化率，不是轮询风暴）；终态推完
+    流保持打开继续等下一次构建（用户坐在页面上点「一键构建」同样免轮询）；
+    15s 心跳防代理断流；30min 上限后发 timeout 收流，前端重连换新 ticket。
+
+    async 生成器 + 每秒 is_disconnected 检查（2026-11-08 事故）：客户端关页/
+    断连后流必须退出，否则 uvicorn --reload 优雅关闭会被长连接拖住
+    "Waiting for connections to close" 卡 9 分钟（旧 sync 生成器收不到取消）。
+    """
+    import asyncio
+    import json as _json
+
+    import redis as _redis
+
+    from app.core.deps import require_project_role
+    from app.services.env_config_service import redis_url
+    from app.tasks.progress import get_task_progress
+
+    client = _redis.Redis.from_url(redis_url(), socket_connect_timeout=2)
+    raw = client.get(f"sse:ticket:{ticket}")
+    if not raw:
+        raise APIError("SSE ticket 无效或已过期", code="TICKET_INVALID", http_status=401)
+    client.delete(f"sse:ticket:{ticket}")  # 一次性
+    payload = _json.loads(raw)
+    user = db.query(User).filter(User.id == payload.get("user_id")).first()
+    if user is None or not user.is_active:
+        raise APIError("SSE ticket 用户无效", code="TICKET_INVALID", http_status=401)
+    require_project_role(project_id, "viewer", user, db)
+
+    async def _stream():
+        started = time.time()
+        last_sent = ""
+        heartbeat_at = time.time()
+        while time.time() - started < 1800:
+            if await request.is_disconnected():
+                return
+            tid = pipeline_running_task_id(project_id) or last_task
+            prog = get_task_progress(tid) if tid else None
+            # 跨项目防泄露：last_task 属于别的项目时按无任务处理
+            if prog is not None and int((prog.get("stats") or {}).get("project_id") or -1) != project_id:
+                prog = None
+            if prog is None:
+                idle_line = _json.dumps({"status": "idle", "task_id": None,
+                                         "project_id": project_id}, ensure_ascii=False)
+                if idle_line != last_sent:
+                    last_sent = idle_line
+                    yield f"data: {idle_line}\n\n"
+            else:
+                # 注入子阶段帧（2026-11-08）：当前阶段的子任务进度键里有切片级
+                # 进度（chunks_done/total、百分比、ETA）——骨架/实例抽几十个切片
+                # 时主键消息不变，没有这帧用户看到的就像卡死
+                stage = prog.get("stage")
+                sub = get_task_progress(f"{tid}:{stage}") if tid and stage else None
+                if sub is not None:
+                    prog = {**prog, "sub": {"stage": stage,
+                                            "percent": sub.get("percent"),
+                                            "message": sub.get("message"),
+                                            "stats": sub.get("stats") or {}}}
+                line = _json.dumps(prog, ensure_ascii=False)
+                if line != last_sent:
+                    last_sent = line
+                    yield f"data: {line}\n\n"
+            if time.time() - heartbeat_at > 15:
+                heartbeat_at = time.time()
+                yield ": heartbeat\n\n"
+            await asyncio.sleep(1.0)
+        yield "event: timeout\ndata: {}\n\n"
+
+    return StreamingResponse(_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @router.post("/cancel")
@@ -198,6 +293,24 @@ def cancel_pipeline_endpoint(
                          stats=prog_stats)
     release_pipeline_lock(project_id)
     return {"task_id": tid, "cancelled": True}
+
+
+@router.get("/report")
+def get_build_report(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """构建报告（人话版 markdown）：最近一次一键构建的类树/统计/CQ 验证/
+    业务规则/采集表规则层/待确认项。纯模板渲染，构建收尾自动更新。"""
+    require_project_role(project_id, "viewer", current_user, db)
+    proj = db.query(Project).filter(Project.id == project_id).first()
+    if proj is None:
+        raise NotFoundError(f"项目不存在: {project_id}")
+    gd = proj.graph_data if isinstance(proj.graph_data, dict) else {}
+    report = gd.get("build_report") if isinstance(gd.get("build_report"), dict) else None
+    return {"markdown": (report or {}).get("markdown"),
+            "generated_at": (report or {}).get("generated_at")}
 
 
 @router.get("/build/summary")

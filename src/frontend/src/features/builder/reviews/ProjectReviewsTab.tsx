@@ -7,10 +7,8 @@
  * 详情能力与审核工作台对齐（FriendlyPayload、conflict_type 选类、编辑后通过）。
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import {
-    Button, Drawer, Empty, Input, Modal, Popconfirm, Segmented, Select, Space, Table, Tag,
-    Tooltip, Typography, message,
-} from 'antd';
+import { Button, Drawer, Empty, Input, Modal, Popconfirm, Segmented, Select, Space, Table, Tag, Tooltip, Typography } from 'antd';
+import { message, confirmModal } from '../../../shared/feedback';
 import {
     CheckOutlined, CloseOutlined, EditOutlined, ReloadOutlined, UndoOutlined,
 } from '@ant-design/icons';
@@ -162,7 +160,7 @@ const ProjectReviewsTab: React.FC<Props> = ({ projectId }) => {
 
     const batch = (action: 'approve' | 'reject') => {
         if (selectedIds.length === 0) return;
-        Modal.confirm({
+        confirmModal({
             title: `批量${action === 'approve' ? '通过' : '驳回'} ${selectedIds.length} 项`,
             content: '将按类型分组提交；entity_merge 批量仅通过且 similarity≥0.75。',
             onOk: async () => {
@@ -403,7 +401,7 @@ const ProjectReviewsTab: React.FC<Props> = ({ projectId }) => {
                             <Tag color={PRIORITY_TAG[detail.priority]?.color}>{detail.priority}</Tag>
                             <Tag>{TYPE_LABEL[detail.item_type] || detail.item_type}</Tag>
                             <Tag color={STATUS_TAG[detail.status]?.color}>{STATUS_TAG[detail.status]?.text || detail.status}</Tag>
-                            {isAutoItem(detail) && <Tag color="geekblue">AI 自动处理</Tag>}
+                            {isAutoItem(detail) && <Tag color="geekblue">AI 结果审查</Tag>}
                             {detail.decided_at && <Text type="secondary" className="text-xs">裁决于 {detail.decided_at.slice(0, 19)}</Text>}
                         </Space>
                         {detail.reason && <div className="text-gray-700 text-sm">{detail.reason}</div>}

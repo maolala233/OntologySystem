@@ -3,6 +3,7 @@
  * 公理撤销复用 reasoningApi.removeAxiom（api/reasoning.ts）。
  */
 import apiClient from './client';
+import { authAPI } from './auth';
 
 export type PipelineStageKey = 'parse' | 'schema' | 'instances' | 'resolution'
     | 'conflicts' | 'axioms' | 'adjudicate';
@@ -25,9 +26,9 @@ export interface PipelineReviews {
 export type BuildDepth = 'fast' | 'standard' | 'deep';
 
 export const DEPTH_OPTIONS = [
-    { value: 'fast', label: '快速（自检 1 轮，跳过公理扫描）' },
-    { value: 'standard', label: '标准（自检 2 轮，含公理扫描）' },
-    { value: 'deep', label: '深度（自检 3 轮，含公理扫描，最慢）' },
+    { value: 'fast', label: '快速（结构自检 1 轮，跳过公理扫描）' },
+    { value: 'standard', label: '标准（结构自检 2 轮，含公理扫描）' },
+    { value: 'deep', label: '深度（结构自检 3 轮，含公理扫描，最慢）' },
 ] as const;
 
 export interface PipelineStatus {
@@ -40,6 +41,8 @@ export interface PipelineStatus {
     reviews: PipelineReviews;
     scheduled_at?: string;
     stats?: Record<string, any>;
+    /** SSE 注入的当前阶段子任务帧：切片级进度（chunks_done/total、ETA），防多切片慢抽像卡死 */
+    sub?: { stage?: string; percent?: number; message?: string; stats?: Record<string, any> };
 }
 
 export interface ClassSummary {
@@ -137,6 +140,16 @@ export const pipelineApi = {
             params: taskId ? { task_id: taskId } : {},
         });
         return response.data;
+    },
+
+    /** SSE 事件流 URL（一次性 ticket 鉴权，EventSource 不支持 header）。
+     *  lastTask：运行锁过期后兜底展示历史终态；服务端以运行锁为准，新构建免重连。 */
+    eventsUrl: async (projectId: number, lastTask?: string): Promise<string> => {
+        const { ticket } = await authAPI.getSseTicket(`pipeline:${projectId}`);
+        const base = apiClient.defaults.baseURL || '';
+        const q = new URLSearchParams({ ticket });
+        if (lastTask) q.set('last_task', lastTask);
+        return `${base}/api/projects/${projectId}/pipeline/events?${q.toString()}`;
     },
 
     cancel: async (projectId: number): Promise<{ cancelled: boolean; kind?: string }> => {

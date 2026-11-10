@@ -4,10 +4,9 @@
  * vis-timeline 渲染归 M4，本 Tab 用 antd 结构化呈现。
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-    Alert, Button, Card, Collapse, Descriptions, Empty, Input, Modal, Segmented, Select, Space, Spin, Table, Tag, Timeline as AntTimeline, Tooltip, message,
-} from 'antd';
+import { Alert, Button, Card, Collapse, Descriptions, Empty, Input, Segmented, Select, Space, Spin, Table, Tag, Timeline as AntTimeline, Tooltip } from 'antd';
 import { RollbackOutlined, SearchOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { message, confirmModal } from '../../../shared/feedback';
 
 import { GateEvaluationRow, ImpactSummary, gateApi, impactApi } from '../../../api/cqs';
 import {
@@ -280,7 +279,7 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
     };
 
     const handleRestore = (v: VersionRow) => {
-        Modal.confirm({
+        confirmModal({
             title: `回滚到 v${v.version_no}`,
             content: (
                 <div>

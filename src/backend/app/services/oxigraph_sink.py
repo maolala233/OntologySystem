@@ -68,6 +68,18 @@ def build_project_quads(db, project_id: int) -> dict[str, list[tuple]]:
             class_uris[e.label] = e.uri
             tbox.append((e.uri, RDF, OWL_CLASS))
             tbox.append((e.uri, RDFS_LABEL, e.label))
+        else:
+            # 实例属性值落图（CQ SPARQL 实答的前提：属性值问题如"失败次数是多
+            # 少"此前永远查不到——值只存在行表 JSON，图里只有类型/标签/关系边）
+            n_prop = 0
+            for pk, pv in (e.props or {}).items():
+                if not str(pk).strip() or n_prop >= 30:
+                    continue
+                if isinstance(pv, (dict, list)):
+                    continue  # 结构值不落图（口径：标量属性值）
+                abox.append((e.uri, f"urn:onto:{project_id}:prop/{str(pk).strip()[:80]}",
+                             str(pv)[:500]))  # 写入循环按前缀自动判 IRI/字面量
+                n_prop += 1
 
     for r in db.query(Relation).filter(Relation.project_id == project_id).all():
         s, o = by_id.get(r.subject_id), by_id.get(r.object_id)

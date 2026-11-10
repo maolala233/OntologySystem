@@ -1,7 +1,8 @@
 // src/components/Copilot/VerifyReportCard.tsx - 验证报告卡（O5-B28/F15，docs/design/14 §5）
 // 三段折叠（CQ 评测 / 一致性 / 抽样溯源）+ 样例展开 + 与上一版对比 + 存档到版本。
 import { useState } from 'react';
-import { Button, Collapse, Tag, Tooltip, message } from 'antd';
+import { message } from '../../shared/feedback';
+import { Button, Collapse, Tag, Tooltip } from 'antd';
 import {
     SaveOutlined,
     CheckCircleOutlined,

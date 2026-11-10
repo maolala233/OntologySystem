@@ -329,12 +329,43 @@ def _tool_specs(ctx: McpContext) -> list[dict]:
         },
         {
             "name": "ask",
-            "description": "基于本体的 GraphRAG 问答（向量 + 图扩展 + 溯源引用，非流式聚合）",
+            "description": "基于本体的 GraphRAG 问答（问答场景）：向量 + 图扩展 + 溯源引用，"
+                           "生成带 [n] 标注的自然语言答案。输出结构 = {answer, confidence, "
+                           "sources[], reasoning_path, latency_ms}。支持自定义提示词与检索参数",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "question": {"type": "string"},
                     "top_k": {"type": "integer", "minimum": 1, "maximum": 30, "default": 12},
+                    "use_graph": {"type": "boolean", "default": True,
+                                  "description": "是否做图谱扩展召回"},
+                    "use_inferred": {"type": "boolean", "default": True,
+                                     "description": "是否注入语义推理引用（独立标注不与事实混排）"},
+                    "system_prompt": {"type": "string",
+                                      "description": "自定义提示词（替换内置问答提示词；引用标注"
+                                                     "[n] 的要求写明才保证输出带引用）"},
+                    "temperature": {"type": "number", "minimum": 0, "maximum": 2,
+                                    "default": 0.1},
+                },
+                "required": ["question"],
+            },
+        },
+        {
+            "name": "retrieve",
+            "description": "结构化检索（非问答场景，零 LLM）：与 ask 相同的召回链"
+                           "（向量 + 图扩展 + 推理引用）但不生成答案，返回结构化来源列表。"
+                           "输出结构 = {results: [{rank, ref_type, quote, doc_file, "
+                           "source_document_id, char_start, char_end, score}], total, "
+                           "query, latency_ms}。适合 Agent 二次加工 / 喂给自有模型",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string", "description": "检索问题/关键词"},
+                    "top_k": {"type": "integer", "minimum": 1, "maximum": 30, "default": 12},
+                    "use_graph": {"type": "boolean", "default": True},
+                    "use_inferred": {"type": "boolean", "default": True},
+                    "knowledge_domain": {"type": "string",
+                                         "description": "知识域过滤（可空）"},
                 },
                 "required": ["question"],
             },
@@ -614,14 +645,43 @@ def _t_ask(ctx: McpContext, db: Session, args: dict) -> dict:
     query = RetrievalQuery(
         project_id=ctx.project.id, question=question,
         top_k=max(1, min(int(args.get("top_k") or 12), 30)),
+        use_graph=bool(args.get("use_graph", True)),
+        use_inferred=bool(args.get("use_inferred", True)),
     )
-    result = query_with_reasoning(query, db=db, llm=llm)
+    system_prompt = str(args.get("system_prompt") or "").strip() or None
+    if system_prompt and len(system_prompt) > 8000:
+        raise _rpc_error(ERR_INVALID_PARAMS, "system_prompt 超长（≤8000 字符）")
+    temperature = args.get("temperature")
+    result = query_with_reasoning(query, db=db, llm=llm,
+                                  system_prompt=system_prompt,
+                                  temperature=(float(temperature)
+                                               if temperature is not None else None))
     _audit(ctx, db, "mcp.read", "ask", args)
     return _text_content({
         "answer": result.answer, "confidence": result.confidence,
         "sources": [s.model_dump() for s in result.sources],
         "reasoning_path": result.reasoning_path, "latency_ms": result.latency_ms,
     })
+
+
+def _t_retrieve(ctx: McpContext, db: Session, args: dict) -> dict:
+    """结构化检索（非问答场景）：与 ask 同召回链但不生成答案（零 LLM）。"""
+    question = str(args.get("question", "")).strip()
+    if not question:
+        raise _rpc_error(ERR_INVALID_PARAMS, "question 不能为空")
+    query = RetrievalQuery(
+        project_id=ctx.project.id, question=question,
+        top_k=max(1, min(int(args.get("top_k") or 12), 30)),
+        use_graph=bool(args.get("use_graph", True)),
+        use_inferred=bool(args.get("use_inferred", True)),
+        knowledge_domain=(str(args.get("knowledge_domain")).strip()
+                          if args.get("knowledge_domain") else None),
+    )
+    from app.adapters.retrieval import retrieve_structured
+
+    payload = retrieve_structured(query, db=db)
+    _audit(ctx, db, "mcp.read", "retrieve", args)
+    return _text_content(payload)
 
 
 def _t_export_graph(ctx: McpContext, db: Session, args: dict) -> dict:
@@ -751,6 +811,7 @@ _TOOL_TABLE = {
     "query_sparql": _t_query_sparql,
     "get_ontology_schema": _t_get_ontology_schema,
     "ask": _t_ask,
+    "retrieve": _t_retrieve,
     "export_graph": _t_export_graph,
     "list_versions": _t_list_versions,
     "add_entity": _t_add_entity,

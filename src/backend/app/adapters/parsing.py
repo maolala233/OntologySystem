@@ -112,6 +112,9 @@ def parse_document(content: bytes, filename: str,
     # docx / doc / html 及其他：docling 首选 → native 兜底
     doc = _parse_docling(content, filename)
     if doc is not None:
+        # docx 图文增强：图占位符 → 图内文字（OCR/VL；仅 docx 有图片提取器）
+        if ext in ("docx",) and doc.full_text_md:
+            doc.full_text_md = _enrich_docx_image_text(doc.full_text_md, content)
         return _finalize(doc, filename)
     return _finalize(_parse_native(content, filename, ext), filename)
 
@@ -201,6 +204,81 @@ def _docling_convert(content: bytes, filename: str, ocr: bool):
             os.remove(tmp.name)
         except OSError:
             pass
+
+
+def _extract_docx_images(content: bytes) -> list:
+    """docx 内嵌图片字节列表（文档顺序；inline 优先，缺失时回退包内图片部件）。
+
+    python-docx 读不出内容时返回空列表（调用方保持原 markdown 不动）。"""
+    import io as _io
+
+    try:
+        from docx import Document as _Doc
+
+        doc = _Doc(_io.BytesIO(content))
+        blobs = []
+        seen_rids: set[str] = set()
+        for shape in doc.inline_shapes:  # 文档顺序
+            try:
+                rid = shape._inline.graphic.graphicData.pic.blipFill.blip.embed
+            except Exception:  # noqa: BLE001 —— 结构异常的形状跳过
+                continue
+            if rid in seen_rids:
+                continue
+            seen_rids.add(rid)
+            try:
+                blobs.append(doc.part.related_parts[rid].blob)
+            except (KeyError, AttributeError):
+                continue
+        if blobs:
+            return blobs
+        # 浮动图/老格式兜底：包内全部图片部件（顺序近似文档序）
+        from docx.opc.constants import RELATIONSHIP_TYPE as _RT
+
+        for rel in doc.part.rels.values():
+            if rel.reltype == _RT.IMAGE and not rel.is_external:
+                try:
+                    blobs.append(rel.target_part.blob)
+                except Exception:  # noqa: BLE001
+                    continue
+        return blobs
+    except Exception as e:  # noqa: BLE001 —— 图片提取失败不影响文本解析
+        from app.core.logging import logger
+
+        logger.warning(f"[parsing] docx 图片提取失败（跳过图片文字）: {e}")
+        return []
+
+
+def _enrich_docx_image_text(full_text_md: str, content: bytes) -> str:
+    """docling 的 `<!-- image -->` 占位符按文档顺序替换为图内文字（OCR 优先，
+    识别不出字回退 VL 语义描述）——图文混排 docx 的关键内容（图上的规则/参数）
+    此前整体丢失（测试2 实测：门禁规则图 4 条规则全部丢失）。"""
+    if "<!-- image -->" not in (full_text_md or ""):
+        return full_text_md
+    blobs = _extract_docx_images(content)
+    if not blobs:
+        return full_text_md
+    texts: list[str] = []
+    for b in blobs:
+        t = _ocr_image_bytes(b)
+        if not t:
+            t = _vl_describe_image_blobs([b])
+        texts.append(t or "")
+    out = full_text_md
+    idx = 0
+
+    def _repl(_m):
+        nonlocal idx
+        t = texts[idx] if idx < len(texts) else ""
+        idx += 1
+        if not t.strip():
+            return _m.group(0)  # 无内容的图（装饰图）保留占位
+        return "\n\n[图片文字]:\n" + t + "\n"
+
+    import re as _re
+
+    out = _re.sub(r"<!--\s*image\s*-->", _repl, out)
+    return out
 
 
 def _parse_docling(content: bytes, filename: str, ocr: bool = False) -> Optional[ParsedDocument]:

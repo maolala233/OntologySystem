@@ -410,12 +410,15 @@ def mine_rule_suggestions(db: Session, project: Project,
 
 def llm_rule_suggestions(db: Session, project: Project,
                          llm: Optional[Any] = None,
-                         max_rules: int = 10) -> tuple[list[dict], dict]:
+                         max_rules: int = 10,
+                         doc_rules: Optional[list[dict]] = None) -> tuple[list[dict], dict]:
     """LLM 规则抽取通道（S9 追加，规则版 O4 双通道）：素材组装 → call_llm → 解析+存在性门禁。
 
     IF 侧（主语类/谓词/宾语类）必须逐字命中画布 schema / 实例关系谓词白名单；
     THEN 侧为推导新关系。与既有 OntologyRule 同键的候选弃单。llm 注入供测试；
     无抽取模型配置或调用失败时优雅跳过（stats.skipped 说明原因，不抛异常）。
+    doc_rules：语义采集表的文档级业务规则行（schema.business_rules，带原文证据）——
+    把「文档明确写了的规则」作为先验素材喂给候选生成，模型不再只从结构反推。
     """
     from app.adapters.axiom_llm import build_materials
     from app.adapters.rule_llm import RULE_OUTPUT_JSON_SCHEMA, build_rule_prompt, parse_rule_suggestions
@@ -447,12 +450,21 @@ def llm_rule_suggestions(db: Session, project: Project,
     from app.adapters.conflicts import _as_ent
 
     materials = build_materials(schema, [_as_ent(e) for e in ents], rel_dicts)
+    if doc_rules:
+        # 素材预算控制：文档级规则最多带 30 条（每条已 ≤300 字符）
+        # 上限 15 条：素材越大模型生成越慢（万字符 prompt 实测 10 分钟级），且
+        # 规则候选本就 ≤10 条/轮，先验素材按代表性截断即可
+        materials["doc_rules"] = [
+            {"statement": str(r.get("statement") or "")[:300],
+             "evidence": str(r.get("evidence") or "")[:200]}
+            for r in doc_rules[:15] if isinstance(r, dict) and r.get("statement")
+        ]
     system_prompt, user_prompt = build_rule_prompt(materials)
     from app.services.axiom_suggestion_service import AXIOM_LLM_TIMEOUT
     try:
         resp = llm.call_llm(system_prompt=system_prompt, user_prompt=user_prompt,
                             json_schema=RULE_OUTPUT_JSON_SCHEMA,
-                            timeout=AXIOM_LLM_TIMEOUT)
+                            timeout=AXIOM_LLM_TIMEOUT, max_retries=2)
     except Exception as e:  # noqa: BLE001 - LLM 失败不阻断统计通道
         return [], {"skipped": f"llm_call_failed (timeout={AXIOM_LLM_TIMEOUT}s): {e}"}
 

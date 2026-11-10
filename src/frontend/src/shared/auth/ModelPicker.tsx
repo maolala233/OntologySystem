@@ -9,7 +9,8 @@
  * 管理入口跳转 /admin/model-configs（普通用户可管理自己的项目级配置）。
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { Button, Dropdown, Tag, message } from 'antd';
+import { message } from '../../shared/feedback';
+import { Button, Dropdown, Tag } from 'antd';
 import { ApiOutlined, RollbackOutlined, SettingOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { modelConfigsApi, ModelConfigRow, ModelPickState } from '../../api/model-configs';

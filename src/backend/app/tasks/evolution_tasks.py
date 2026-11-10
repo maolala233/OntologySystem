@@ -28,7 +28,9 @@ def daily_evolution_scan() -> dict:
                 try:
                     cfg = build_legacy_llm_config(db, pid)
                     llm = LLMClient(api_key=cfg.get("api_key"),
-                                    base_url=cfg.get("base_url"), model=cfg.get("model"))
+                                    base_url=cfg.get("base_url"), model=cfg.get("model"),
+                                    think_mode="disabled"
+                                    if cfg.get("disable_think") else None)
                 except Exception:  # noqa: BLE001 —— 无模型配置退化确定性聚合（llm=None 路径）
                     llm = None
                 out = analyze_qa_failures(db, pid, user=None, llm=llm)

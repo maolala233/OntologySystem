@@ -9,7 +9,6 @@ import { Modal, Progress, Button, Space, Typography, Alert } from 'antd';
 import { AuditOutlined, StopOutlined } from '@ant-design/icons';
 
 import { extractionApi } from '../../../api/extraction';
-import { humanizeEta } from '../../../shared/format';
 import { reviewsApi } from '../../../api/governance';
 
 const { Text } = Typography;
@@ -143,7 +142,7 @@ const TaskProgressModal: React.FC<Props> = ({
                     <Text type="secondary" style={{ fontSize: 12 }}>
                         分片 {stats.chunks_done ?? 0}/{stats.chunks_total}
                         {stats.batches_total ? ` · 批次 ${stats.batch_no ?? '-'}/${stats.batches_total}` : ''}
-                        {humanizeEta(stats.eta_seconds) ? ` · 预计剩余 ${humanizeEta(stats.eta_seconds)}` : ''}
+                        
                     </Text>
                 </div>
             )}

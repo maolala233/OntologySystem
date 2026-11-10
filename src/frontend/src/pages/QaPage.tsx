@@ -2,7 +2,8 @@
 // 左侧：新建对话 + 历史对话列表（按会话分组）；右侧：项目/模型选择 + 流式对话 + 引用溯源。
 // 与 QaDrawer 共用 MarkdownAnswer（[n] 角标点击定位）与 SourceCard。
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Input, Popconfirm, Popover, Select, Spin, Tag, Tooltip, message } from 'antd';
+import { message } from '../shared/feedback';
+import { Button, Input, Popconfirm, Popover, Select, Spin, Tag, Tooltip } from 'antd';
 import { QA_LAST_PROJECT_ID_KEY } from '../shared/keys';
 import { PROJECT_STATUS, PUBLISHED_TAG } from '../shared/projectStatus';
 import {

@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Modal, Radio, Space, Typography, message } from 'antd';
+import { message } from '../../../shared/feedback';
+import { Modal, Radio, Space, Typography } from 'antd';
 import { ExportOutlined } from '@ant-design/icons';
 import { projectsApi, EXPORT_FORMAT_EXT, type ExportFormatId } from '../../../api/projects';
 
@@ -93,7 +94,7 @@ export default function ExportDialog({ open, onClose, projectId, title = '导出
             confirmLoading={downloading}
             okButtonProps={{ disabled: downloading }}
             width={480}
-            destroyOnClose
+            destroyOnHidden
         >
             <div className="pt-1">
                 {renderGroup('RDF 格式（semantica 序列化，可被 Protégé / rdflib 等标准工具读取）', RDF_FORMATS)}

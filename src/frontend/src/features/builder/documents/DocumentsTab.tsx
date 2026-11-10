@@ -5,9 +5,9 @@
  * 专家路径保留：列表逐文档「解析」抽屉可指定解析后端与 chunk 参数。
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import {
-    Button, Card, Collapse, Drawer, Modal, Popconfirm, Radio, Select, Space, Table, Tag, Tooltip, Upload, Input, message,
-} from 'antd';
+import { Button, Card, Collapse, Drawer, Modal, Popconfirm, Radio, Select, Space, Table, Tag, Tooltip, Upload, Input } from 'antd';
+import { UPLOAD_ACCEPT, UPLOAD_EXTS } from './uploadFormats';
+import { message, infoModal } from '../../../shared/feedback';
 import {
     CloudUploadOutlined, DeleteOutlined, DownloadOutlined, FileTextOutlined,
     InboxOutlined, ReloadOutlined, ScissorOutlined, ThunderboltOutlined,
@@ -105,7 +105,7 @@ const DocumentsTab: React.FC<Props> = ({ projectId, onChanged }) => {
         } catch (e: any) {
             const code = e.response?.data?.error?.code;
             if (code === 'DUPLICATE_UPLOAD') {
-                Modal.info({
+                infoModal({
                     title: '秒传命中',
                     content: '相同内容的文档已存在于本项目，已直接复用，无需重复上传。',
                 });
@@ -279,20 +279,31 @@ const DocumentsTab: React.FC<Props> = ({ projectId, onChanged }) => {
                     <Upload.Dragger
                         multiple
                         showUploadList={{ showRemoveIcon: true }}
-                        beforeUpload={() => false}
                         onChange={({ fileList }) => {
                             if (uploadingRef.current) return;
                             setPendingFiles(fileList.map((f) => f.originFileObj).filter(Boolean) as File[]);
                         }}
-                        accept=".txt,.md,.pdf,.doc,.docx,.xls,.xlsx,.csv,.ppt,.pptx,.html,.json"
+                        accept={UPLOAD_ACCEPT}
+                        beforeUpload={(f) => {
+                            const ext = String(f.name).split('.').pop()?.toLowerCase() || '';
+                            if (!UPLOAD_EXTS.includes(ext)) {
+                                message.warning(`不支持 .${ext} 格式：仅支持 ${UPLOAD_EXTS.join(' / ')}`);
+                                return Upload.LIST_IGNORE;   // 不进列表
+                            }
+                            if (f.size > 200 * 1024 * 1024) {
+                                message.warning(`「${f.name}」超过 200MB 上限`);
+                                return Upload.LIST_IGNORE;
+                            }
+                            return false;  // 阻止自动上传（统一手动提交）
+                        }}
                     >
                         <p className="ant-upload-drag-icon"><InboxOutlined /></p>
                         <p className="ant-upload-text">点击或拖拽文件到此处</p>
-                        <p className="ant-upload-hint">支持 txt/pdf/docx/md/xlsx/csv/pptx 等，单文件 ≤200MB，可多选</p>
+                        <p className="ant-upload-hint">支持 {UPLOAD_EXTS.join(' / ')}，单文件 ≤200MB，可多选</p>
                     </Upload.Dragger>
                     <div className="text-xs text-gray-500">
                         上传后自动：解析（按文档内容自动选择解析方法，扫描件走 OCR）→ AI 抽取骨架与实例
-                        → AI 自动处理低风险结果。完成后只需在「审核」Tab 确认高优先级项。
+                        → 低风险结果由 AI 结果审查。完成后只需在「审核」区确认高优先级项。
                     </div>
                     <Collapse
                         ghost

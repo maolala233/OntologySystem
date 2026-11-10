@@ -4,7 +4,8 @@ import { select } from 'd3-selection';
 import { drag as d3Drag } from 'd3-drag';
 import { zoom as d3Zoom, zoomIdentity } from 'd3-zoom';
 import { transition } from 'd3-transition';
-import { message } from 'antd';
+import { message } from '../../shared/feedback';
+
 import { OntologyNode, OntologyEdge } from '../../types/ontology';
 
 const NODE_TYPES = {

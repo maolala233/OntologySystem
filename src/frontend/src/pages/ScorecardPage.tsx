@@ -7,9 +7,8 @@
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import {
-    Alert, Button, Card, Empty, Popover, Spin, Tag, Tooltip, Typography, message,
-} from 'antd';
+import { Alert, Button, Card, Empty, Popover, Spin, Tag, Tooltip, Typography } from 'antd';
+import { message } from '../shared/feedback';
 import {
     ArrowLeftOutlined, CheckCircleOutlined, CloseCircleOutlined, QuestionCircleOutlined, ReloadOutlined,
 } from '@ant-design/icons';

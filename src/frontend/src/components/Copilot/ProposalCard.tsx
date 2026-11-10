@@ -2,7 +2,8 @@
 // 渲染服务端确定性 diff（红删/绿增/蓝改）、影响面数字、高风险黄标；
 // 按钮：应用（高风险二次确认）/ 忽略 / 反问调整。应用成功广播画布刷新（manual 版本可回滚）。
 import { useState } from 'react';
-import { Button, Popconfirm, Tag, message } from 'antd';
+import { message } from '../../shared/feedback';
+import { Button, Popconfirm, Tag } from 'antd';
 import {
     CheckOutlined,
     CloseOutlined,

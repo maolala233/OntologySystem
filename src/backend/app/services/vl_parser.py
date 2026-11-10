@@ -91,7 +91,10 @@ def _call_vl_model(image_paths: list[str], prompt: str, vl_config: dict) -> str:
         headers["Authorization"] = f"Bearer {api_key}"
         headers["apikey"] = api_key
     client = OpenAI(base_url=vl_config["base_url"], api_key=api_key or "EMPTY",
-                    default_headers=headers)
+                    default_headers=headers,
+                    # 此前 create 完全没传超时（openai 库默认 600s 挂死）——接 vl 行
+                    # params.llm_timeout（缺省 300），与文本模型行为对齐（2026-11-08）
+                    timeout=float(vl_config.get("llm_timeout") or 300))
     content = [{"type": "text", "text": prompt}]
     for img_path in image_paths:
         b64 = _encode_image_to_base64(img_path)

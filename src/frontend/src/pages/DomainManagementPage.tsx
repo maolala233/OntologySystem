@@ -1,9 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { PROJECT_STATUS, PUBLISHED_TAG } from '../shared/projectStatus';
-import { 
-    Card, Button, Empty, Spin, Modal, Form, Input, message, 
-    Tag, Space, Table, Select, Typography, Drawer
-} from 'antd';
+import { Card, Button, Empty, Spin, Modal, Form, Input, Tag, Space, Table, Select, Typography, Drawer } from 'antd';
+import { message } from '../shared/feedback';
 import {
     PlusOutlined,
     EditOutlined,

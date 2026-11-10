@@ -1,33 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
-import {
-    Drawer,
-    Form,
-    Input,
-    Button,
-    message,
-    Space,
-    Modal,
-    Spin,
-    Tabs,
-    Tooltip,
-    Select,
-    AutoComplete,
-    Tag,
-    Divider,
-    Switch,
-    Segmented,
-    InputNumber,
-    Tree,
-    Input as AntInput,
-    Dropdown,
-    Menu,
-    Badge,
-    Empty,
-    Upload,
-} from 'antd';
+import { Drawer, Form, Input, Button, Space, Modal, Spin, Tabs, Tooltip, Select, AutoComplete, Tag, Divider, Switch, Segmented, InputNumber, Tree, Input as AntInput, Dropdown, Menu, Badge, Empty, Upload } from 'antd';
 import type { TreeProps } from 'antd';
+import { message, confirmModal } from '../../../shared/feedback';
 import {
     SaveOutlined,
     CloudUploadOutlined,
@@ -74,13 +50,11 @@ import apiClient from '../../../api/client';
 import { extractionApi } from '../../../api/extraction';
 import { reviewsApi, versionsApi } from '../../../api/governance';
 import D3ForceGraph from '../../../components/OntologyGraph/D3ForceGraph';
-import KnowledgeDomainSelector from '../../../components/KnowledgeDomainSelector';
 import ExportDialog from '../components/ExportDialog';
 import { NodeDetailContent } from '../../graph-explorer/DetailDrawer';
 import { graphApi } from '../../../api/graphview';
 import { setUnsavedGuard } from '../../../utils/unsavedGuard';
 import { setCopilotSelection, pickSelection, COPILOT_CANVAS_REFRESH } from '../../../shared/copilotBus';
-import { humanizeEta } from '../../../shared/format';
 import CqPanel from './CqPanel';
 import { QuestionCircleOutlined } from '@ant-design/icons';
 import SuggestionCard from '../../../components/Copilot/SuggestionCard';
@@ -179,9 +153,6 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
     const [lastSavedEdges, setLastSavedEdges] = useState<any[]>([]);
     const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
     const [isAddRelationModalOpen, setIsAddRelationModalOpen] = useState(false);
-    const [selectedDomainId, setSelectedDomainId] = useState<number | undefined>(undefined);
-    const [selectedDomainName, setSelectedDomainName] = useState<string | undefined>(undefined);
-    const [currentProjectDomain, setCurrentProjectDomain] = useState<any | null>(null);
     const [relationForm] = Form.useForm();
     const [form] = Form.useForm();
     const [ruleForm] = Form.useForm();
@@ -330,7 +301,6 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
     const [highlightNodeId, setHighlightNodeId] = useState<string | null>(null);
     // 固定邻域高亮（"在画布中聚焦"）：持续版悬停效果；点击画布其他节点/空白即恢复
     const [neighborhoodPinId, setNeighborhoodPinId] = useState<string | null>(null);
-    const [isDomainModalOpen, setIsDomainModalOpen] = useState(false);
 
     // 评测问题（CQ）管理抽屉（O3-F8）：CQ 约束抽取 + 发布门控
     const [isCqDrawerOpen, setIsCqDrawerOpen] = useState(false);
@@ -587,9 +557,6 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
         try {
             const project = await projectsApi.getProject(Number(projectId));
             setProjectName(project.name);
-            setCurrentProjectDomain(project.domain || null);
-            setSelectedDomainId(project.domain_id || undefined);
-            setSelectedDomainName(project.domain?.name || undefined);
 
             if (!project.graph_data || !project.graph_data.nodes || project.graph_data.nodes.length === 0) {
                 setNodes([]);
@@ -935,7 +902,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
             return;
         }
 
-        Modal.confirm({
+        confirmModal({
             title: '确认删除',
             content: '确定要删除选中的元素吗？',
             okText: '确定',
@@ -989,33 +956,6 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
         }
     };
 
-    // 打开知识域配置 Modal
-    const handleOpenDomainModal = () => {
-        setIsDomainModalOpen(true);
-    };
-
-    // 保存知识域配置
-    const handleSaveDomain = async (domainId: number | undefined, domainName: string | undefined) => {
-        if (!projectId) return;
-        
-        setLoading(true);
-        try {
-            await projectsApi.updateProject(Number(projectId), {
-                domain_id: domainId,
-                domain_name: domainName,
-            });
-            setCurrentProjectDomain(domainId ? { id: domainId, name: domainName } : null);
-            setSelectedDomainId(domainId);
-            setSelectedDomainName(domainName);
-            message.success('知识域已更新');
-            setIsDomainModalOpen(false);
-        } catch (error: any) {
-            message.error(error.response?.data?.detail || '更新知识域失败');
-        } finally {
-            setLoading(false);
-        }
-    };
-
     const handleSchemaButtonClick = () => {
         // 文档上传统一在「文档解析」Tab；本页只基于已上传文档抽取框架
         (async () => {
@@ -1028,7 +968,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
             }
             // 如果画布已有骨架（类节点），提示重新提取将覆盖（M3-7：TBox 以项目 graph_data 为准）
             if (nodes.some((n) => isClassType(n.data?.type))) {
-                Modal.confirm({
+                confirmModal({
                     title: '重新提取骨架',
                     content: '当前项目已有提取的骨架，重新提取将覆盖现有骨架。确定继续吗？',
                     okText: '确定',
@@ -1081,7 +1021,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
                 message.success(response.data.message || '骨架解析成功！');
                 
                 // 提示用户需要上传文档进行实例提取，提供上传按钮
-                Modal.confirm({
+                confirmModal({
                     title: '骨架解析成功',
                     content: (
                         <div>
@@ -1353,7 +1293,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
     const handleDeleteDocument = useCallback(async (docId: number, docName: string) => {
         if (!projectId) return;
         
-        Modal.confirm({
+        confirmModal({
             title: '确认删除',
             content: `确定要删除文档"${docName}"吗？`,
             okText: '确定',
@@ -1376,7 +1316,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
     const handleClearAllDocuments = useCallback(async () => {
         if (!projectId) return;
         
-        Modal.confirm({
+        confirmModal({
             title: '确认清空',
             content: '确定要清空该项目下所有文档吗？此操作不可恢复！',
             okText: '确定',
@@ -1696,7 +1636,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
     const handleCancelTask = useCallback(async () => {
         if (!projectId || !currentTaskId) return;
         
-        Modal.confirm({
+        confirmModal({
             title: '确认取消',
             content: '确定要取消当前任务吗？',
             okText: '确定',
@@ -1767,7 +1707,6 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
             children: [
                 { key: 'reextract-schema', icon: <CloudUploadOutlined />, label: '重新抽取框架' },
                 { key: 'save-version', icon: <CloudUploadOutlined />, label: '存为版本快照（框架复用）' },
-                { key: 'domain', icon: <DatabaseOutlined />, label: `知识域：${currentProjectDomain?.name || '未设置'}` },
                 { key: 'scorecard', icon: <DashboardOutlined />, label: '本体健康记分卡' },
                 { key: 'clear', icon: <ClearOutlined />, label: '清空画布', danger: true },
             ],
@@ -1781,7 +1720,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
                 break;
             case 'save-version': {
                 // 框架复用：先落盘当前画布，再打 schema 版本快照（实例抽取可选用该版本）
-                Modal.confirm({
+                confirmModal({
                     title: '存为版本快照',
                     content: '将保存当前画布框架并创建一个版本快照，后续实例抽取时可选择基于该版本进行。',
                     okText: '保存快照',
@@ -1816,14 +1755,11 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
             case 'export':
                 setExportOpen(true);
                 break;
-            case 'domain':
-                handleOpenDomainModal();
-                break;
             case 'scorecard':
                 navigate(`/projects/${projectId}/scorecard`);
                 break;
             case 'clear':
-                Modal.confirm({
+                confirmModal({
                     title: '确认清空',
                     content: '确定要清空所有节点和关系吗？清空后需点击"保存"按钮才能同步到数据库。',
                     okText: '确定清空',
@@ -2290,7 +2226,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
                             }}
                             open={isDrawerOpen}
                             width={selectedElement && isNodeElement(selectedElement) && drawerTab === 'detail' ? 560 : 420}
-                            destroyOnClose={true}
+                            destroyOnHidden={true}
                             className="property-drawer"
                             extra={selectedElement && isNodeElement(selectedElement) && drawerTab === 'detail' ? (
                                 <Space size={4}>
@@ -2885,7 +2821,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
                                     <div className="text-xs text-gray-500">
                                         分片 {taskStats.chunks_done ?? 0}/{taskStats.chunks_total}
                                         {taskStats.batches_total ? ` · 批次 ${taskStats.batch_no ?? '-'}/${taskStats.batches_total}` : ''}
-                                        {humanizeEta(taskStats.eta_seconds) ? ` · 预计剩余 ${humanizeEta(taskStats.eta_seconds)}` : ''}
+                                        
                                     </div>
                                 )}
                                 
@@ -3064,46 +3000,6 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
                             )}
                         </Modal>
 
-                        {/* 知识域配置 Modal */}
-                        <Modal
-                            title={
-                                <div className="flex items-center gap-2">
-                                    <DatabaseOutlined className="text-indigo-600" />
-                                    <span>配置知识域</span>
-                                </div>
-                            }
-                            open={isDomainModalOpen}
-                            onCancel={() => setIsDomainModalOpen(false)}
-                            footer={null}
-                            width={500}
-                        >
-                            <div className="py-4">
-                                <p className="text-gray-600 mb-4">
-                                    选择或创建本项目所属的知识领域。知识域用于对本体项目进行分类管理。
-                                </p>
-                                <Form layout="vertical">
-                                    <Form.Item label="知识域" tooltip="选择已有知识域或创建新的知识域">
-                                        <KnowledgeDomainSelector
-                                            value={selectedDomainId}
-                                            onChange={setSelectedDomainId}
-                                            domainName={selectedDomainName}
-                                            onDomainNameChange={setSelectedDomainName}
-                                            placeholder="选择知识域"
-                                        />
-                                    </Form.Item>
-                                </Form>
-                                <div className="flex justify-end gap-2 mt-6 pt-4 border-t border-gray-100">
-                                    <Button onClick={() => setIsDomainModalOpen(false)}>取消</Button>
-                                    <Button 
-                                        type="primary" 
-                                        onClick={() => handleSaveDomain(selectedDomainId, selectedDomainName)}
-                                    >
-                                        保存
-                                    </Button>
-                                </div>
-                            </div>
-                        </Modal>
-
                         {/* 从其他项目导入框架 Modal（跨项目框架复用） */}
                         <Modal
                             title="从其他项目导入框架"
@@ -3155,7 +3051,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
                             width={720}
                             open={isCqDrawerOpen}
                             onClose={() => setIsCqDrawerOpen(false)}
-                            destroyOnClose
+                            destroyOnHidden
                         >
                             <CqPanel projectId={Number(projectId)} open={isCqDrawerOpen} />
                         </Drawer>
@@ -3166,7 +3062,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
                             width={480}
                             open={sugOpen}
                             onClose={() => setSugOpen(false)}
-                            destroyOnClose
+                            destroyOnHidden
                         >
                             {sugItems.length === 0 && !sugLoading ? (
                                 <Empty

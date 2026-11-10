@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { PROJECT_STATUS, PUBLISHED_TAG } from '../shared/projectStatus';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Button, Spin, message, Descriptions, Tag, Card, Modal, Input, Tooltip, Tree } from 'antd';
+import { message } from '../shared/feedback';
+import { Button, Spin, Descriptions, Tag, Card, Modal, Input, Tooltip, Tree } from 'antd';
 import type { TreeProps } from 'antd';
 import {
     ArrowLeftOutlined, UserOutlined, InfoCircleOutlined, DatabaseOutlined,

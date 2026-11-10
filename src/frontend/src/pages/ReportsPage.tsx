@@ -2,10 +2,8 @@
 // 围绕分析主题从图谱检索证据（相关实体/关系）→ LLM 生成面向业务读者的报告（md/docx）/ PPT。
 // 主题必填；主题建议由 LLM 生成；PPT 支持上传自定义模板（占位符协议自动填写）。
 import { useCallback, useEffect, useState } from 'react';
-import {
-    Button, Checkbox, Input, InputNumber, Popconfirm, Select, Spin, Tag,
-    Tooltip, Upload, message,
-} from 'antd';
+import { Button, Checkbox, Input, InputNumber, Popconfirm, Select, Spin, Tag, Tooltip, Upload } from 'antd';
+import { message } from '../shared/feedback';
 import {
     DownloadOutlined, FileTextOutlined, PlayCircleOutlined, QuestionCircleOutlined,
     UploadOutlined,

@@ -6,7 +6,8 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Button, Input, Modal, Space, Spin, Tag, Tooltip, Tree, message } from 'antd';
+import { message } from '../shared/feedback';
+import { Button, Input, Modal, Space, Spin, Tag, Tooltip, Tree } from 'antd';
 import type { TreeProps } from 'antd/es/tree';
 import {
     ArrowLeftOutlined, CloudUploadOutlined, EditOutlined, ExpandOutlined,

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Literal, Optional
@@ -18,6 +19,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 
 from app.adapters.resolution import normalize_label
+from app.infrastructure.llm_client import LLMEndpointUnreachableError
 
 # prompt-hash 缓存 TTL（04 §3.1）
 # 单次 LLM 调用硬上限：本地小模型慢推理/云端拥堵时防无限等待；
@@ -47,6 +49,14 @@ SCHEMA_PROMPT_JSON_SCHEMA = {
                                 "data_type": {"type": "string",
                                               "enum": ["string", "number", "boolean", "date", "datetime", "array", "object"]},
                                 "description": {"type": "string"},
+                                "enum_values": {"type": "array",
+                                                "description": "文中明确列出的枚举取值（原值逐字），无则省略"},
+                                "required": {"type": "boolean",
+                                             "description": "文中明确写明必填才为 true"},
+                                "min_occurs": {"type": "integer",
+                                               "description": "文中明确写明的最少数量（如'至少提交1张影像'），无则省略"},
+                                "max_occurs": {"type": "integer",
+                                               "description": "文中明确写明的最多数量（如'最多30条'），无则省略"},
                             },
                             "required": ["name", "data_type"],
                         },
@@ -81,21 +91,55 @@ SCHEMA_PROMPT_JSON_SCHEMA = {
                 "required": ["name", "data_type"],
             },
         },
+        "business_rules": {
+            "type": "array",
+            "description": "切片中的业务规则/约束/流程要求（阈值、枚举取值、必填、"
+                           "校验条件、操作先后顺序、权限划分），每条必须给原文出处；"
+                           "没有则留空数组",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "statement": {"type": "string",
+                                  "description": "规则内容，一句话中文"},
+                    "kind": {"type": "string",
+                             "enum": ["约束", "校验", "流程", "权限"]},
+                    "evidence": {"type": "string",
+                                 "description": "原文逐字摘录"},
+                },
+                "required": ["statement", "evidence"],
+            },
+        },
     },
     "required": ["classes"],
 }
 
 SYSTEM_PROMPT = (
-    "你是资深知识图谱本体建模专家。从给定的文档切片中抽取本体骨架（TBox）："
+    "你是资深知识图谱本体建模专家，方法论遵循「事实-事理-行动」一体化模型："
+    "类覆盖事实层（业务对象/概念），关系覆盖事理层（依据、约束、归属）与行动层"
+    "（触发、流转、执行）。从给定的文档切片中抽取本体骨架（TBox）："
     "领域类、类的数据属性、类与类之间的关系。\n"
     "规则：\n"
     "1. 全部使用中文命名；类名为名词短语（2-6 字），关系名为动词短语（2-4 字）。\n"
-    "2. 只抽取切片文本中有依据的概念，不要臆造；同一概念沿用【已发现类清单】中的既有命名，不要造同义新类。\n"
-    "3. 每个类给出简明中文定义；数据属性 data_type 从枚举中选择。\n"
-    "4. 类间关系必须写入 object_properties 数组，每个关系含 label（关系名）、domain（源类名）、"
+    "2. 类必须是【业务事物的分类】（名词概念，如「贷款合同」「保证金账户」）。"
+    "动作/操作（经办、查询、审核、制单）、界面控件（页面、菜单、按钮、列表）、"
+    "状态与属性值不是类——动作体现为关系，控件与属性值体现为数据属性或实例属性，"
+    "一律不要建类。注意：系统、接口、协议、业务规则、业务字段、单据等业务对象"
+    "是合法的类（它们是文档数据行/配置行的主体），不要把「接口/系统/规则」"
+    "误解为界面元素而漏抽。\n"
+    "3. 层次优先：只要切片文本支持上下位关系（如「流动资金贷款合同」⊑「贷款合同」⊑「合同」），"
+    "必须给 parent；更具体的类永远挂到更通用的类下，不要让类孤立。\n"
+    "4. 只抽取切片文本中有依据的概念，不要臆造；同一概念沿用【已发现类清单】中的既有命名，不要造同义新类。\n"
+    "5. 每个类给出简明中文定义；数据属性 data_type 从枚举中选择。"
+    "属性在文中明确写了枚举取值（如产品类型 0/1）、必填、数量上限（如'最多30条'）时，"
+    "逐字写入 enum_values/required/min_occurs/max_occurs——约束只登记文中确实写了的，"
+    "不要脑补。\n"
+    "6. 类间关系必须写入 object_properties 数组，每个关系含 label（关系名）、domain（源类名）、"
     "range（目标类名）、confidence（0-1 自报置信度，依据充分约 0.9，仅措辞推断约 0.6-0.7，不要全给 1.0），"
     "不要使用 relations 等其他键名。\n"
-    "5. 只输出一个 JSON 对象，结构严格遵循给定的 JSON Schema，不要输出任何其他文字。"
+    "7. 同步盘点切片中的业务规则与约束（业务阈值、枚举取值、必填/校验、操作流程"
+    "顺序、权限划分），逐条写入 business_rules 数组，evidence 必须逐字摘录原文，"
+    "不确定的口径不要臆造数值——只登记「文中确实写了」的规则。\n"
+    "8. 只输出一个 JSON 对象，结构严格遵循给定的 JSON Schema，不要输出任何其他文字。"
 )
 
 
@@ -152,6 +196,15 @@ class SchemaExtractionResult(BaseModel):
     strict_filtered: dict = Field(default_factory=dict)  # 严格白名单过滤计数 {classes, relations, properties}
     normalized_concepts: int = 0  # 语义归一化并入别名的类数（相似概念聚成概念，确定性零 LLM）
     table_inferred_relations: int = 0  # 边清单型表格推断出的关系数（确定性零 LLM）
+    consumed_parents: int = 0     # 自报 parent 落成 parent_classes 的类数（确定性零 LLM）
+    pruned_classes: int = 0       # 骨架组装剔除/并掉的伪类数（动作/页面词等）
+    assembled_parents: int = 0    # 骨架组装为孤岛/缺层类补挂的父类数
+    business_rules: list[dict] = Field(default_factory=list)
+    # 语义采集表·规则层：[{statement, kind?, evidence, _source_chunk_index}]（文档证据锚定）
+    stitch_segments: int = 0      # 缝合实际执行的段数（大文档覆盖可见性）
+    structure_maps: list[dict] = Field(default_factory=list)
+    # 结构映射（表格/条款 → 行主体类 + 列→关系/属性），实例阶段确定性展开用
+    structure_map_calls: int = 0  # 实际发起 LLM 决策的签名数（缓存命中不计）
 
 
 # ── 缺陷 #9：LLM 输出缓存（model, prompt_hash）→ Redis 8h ──
@@ -204,7 +257,8 @@ def _default_llm_call(model_override: Optional[dict],
     client = LLMClient(api_key=resolved.api_key, base_url=resolved.base_url,
                        model=resolved.model_name,
                        think_mode="disabled"
-                       if (resolved.params or {}).get("disable_think") else None)
+                       if (resolved.params or {}).get("disable_think") else None,
+                       streaming_enabled=(resolved.params or {}).get("streaming_enabled"))
     # 远程服务提速/降载：单次调用超时与重试次数可由 extract 行 params 覆盖，
     # 不配置时保持原行为（LLM_CALL_TIMEOUT_SECONDS / max_retries=2）；硬闸 =
     # timeout+30s，总预算≈(timeout+30)×retries，注意别顶穿 celery 软超时。
@@ -212,8 +266,9 @@ def _default_llm_call(model_override: Optional[dict],
     max_retries = int((resolved.params or {}).get("max_retries") or 2)
 
     def call(system_prompt: str, user_prompt: str, json_schema: Optional[dict]):
+        # stream 不传：跟随模型行 streaming_enabled 配置（客户端级缺省）
         out = client.call_llm(system_prompt, user_prompt, max_retries=max_retries,
-                              stream=False, json_schema=json_schema,
+                              json_schema=json_schema,
                               timeout=llm_timeout)
         if isinstance(out, dict) and isinstance(out.get("content"), str):
             # call_llm 返回 {"content": ...} 形态时解析内嵌 JSON
@@ -277,7 +332,14 @@ def _normalize_payload(payload: dict) -> dict:
             c["properties"] = [
                 {"name": str(q.get("name") or q.get("label") or "").strip(),
                  "data_type": str(q.get("data_type") or "string"),
-                 "description": str(q.get("description") or "")}
+                 "description": str(q.get("description") or ""),
+                 **({"enum_values": [str(v).strip() for v in q["enum_values"] if str(v).strip()]}
+                    if isinstance(q.get("enum_values"), list) and q["enum_values"] else {}),
+                 **({"required": bool(q["required"])} if q.get("required") is not None else {}),
+                 **({"min_occurs": int(q["min_occurs"])}
+                    if isinstance(q.get("min_occurs"), (int, float)) else {}),
+                 **({"max_occurs": int(q["max_occurs"])}
+                    if isinstance(q.get("max_occurs"), (int, float)) else {})}
                 for q in props if isinstance(q, dict)]
     return payload
 
@@ -403,8 +465,13 @@ STITCH_SYSTEM_PROMPT = (
 
 _STITCH_MAX_CHARS_TOTAL = 60000    # 缝合用文档摘录总预算（字符）
 _STITCH_MAX_CHARS_PER_SEG = 8000   # 单次缝合调用的摘录上限（小段多次：单段 prompt≈类清单+8k，降低超时概率）
-_STITCH_MAX_CALLS = 8              # 缝合调用次数上限
+_STITCH_MAX_CALLS = 8              # 缝合调用次数基础上限（小文档）
 _STITCH_CLASS_DEF_CHARS = 60
+# 大文档缝合覆盖（2026-11-09 根修：原固定 8 段只覆盖前 6 万字符，长文档后半的关系永远缝不上）
+_STITCH_CALLS_PER_CHUNKS = 25      # 每 25 个切片增加一次缝合调用
+_STITCH_MAX_CALLS_CAP = 24         # 缝合调用总上限（并行执行，墙钟成本可控）
+_STITCH_TARGET_CHARS = 2500        # 缺口定向段：单切片摘录长度
+_STITCH_PARALLELISM = 4            # 缝合并行度（与抽取并行共用线程预算，独立小池）
 
 
 def _stitch_user_prompt(class_list_text: str, doc_text: str, error_feedback: str = "") -> str:
@@ -443,9 +510,55 @@ def _stitch_class_list(classes: list[dict]) -> str:
         if len(d) > _STITCH_CLASS_DEF_CHARS:
             d = d[:_STITCH_CLASS_DEF_CHARS] + "…"
         aliases = "、".join(str(a) for a in (c.get("aliases") or []))
-        alias_note = f"（别名：{aliases}）" if aliases else ""
-        lines.append(f"- {c.get('label')}{alias_note}" + (f"：{d}" if d else ""))
+        parents = "、".join(str(p) for p in (c.get("parent_classes") or []))
+        notes = (f"（别名：{aliases}）" if aliases else "") \
+            + (f"（父类：{parents}）" if parents else "")
+        lines.append(f"- {c.get('label')}{notes}" + (f"：{d}" if d else ""))
     return "\n".join(lines)
+
+
+def _stitch_segments(prepared: list[tuple[int, str, str, str]],
+                     merged: dict[str, dict],
+                     obj_props: dict[str, dict],
+                     max_calls: int) -> list[str]:
+    """缝合素材分段（缺口驱动 + 顺序兜底）。
+
+    原实现只做顺序摘录（文档头部起 8 段）——大文档后半部分的关系永远缝不上。
+    现在：①计算类连接度，把零连接/低连接（度≤1）类的首现切片摘录做成【定向段】
+    （缺失关系最可能藏在那里）；②剩余预算给顺序段兜底全局。
+    返回段列表（顺序确定性），调用方逐段（并行）缝合。
+    """
+    segs: list[str] = []
+    # ── ① 定向段：低连接类的首现切片 ──
+    deg: dict[str, int] = {}
+    for op in obj_props.values():
+        for side in ("domain", "range"):
+            k = normalize_label(str(op.get(side) or ""))
+            if k:
+                deg[k] = deg.get(k, 0) + 1
+    low_keys = {k for k, v in merged.items() if deg.get(k, 0) <= 1}
+    target_chunks = sorted({v.get("_source_chunk_index") for k, v in merged.items()
+                            if k in low_keys and isinstance(v.get("_source_chunk_index"), int)})
+    text_by_idx = {idx: text for idx, text, _d, _h in prepared}
+    buf = ""
+    for idx in target_chunks:
+        piece = f"[切片 {idx}] " + str(text_by_idx.get(idx, ""))[:_STITCH_TARGET_CHARS]
+        if len(buf) + len(piece) > _STITCH_MAX_CHARS_PER_SEG and buf:
+            segs.append(buf)
+            buf = ""
+            if len(segs) >= max_calls:
+                return segs
+        buf = (buf + "\n\n" + piece) if buf else piece
+    if buf and len(segs) < max_calls:
+        segs.append(buf)
+    # ── ② 顺序段兜底（剩余预算）──
+    remain = max_calls - len(segs)
+    if remain > 0:
+        doc_text = _stitch_doc_text(prepared)
+        seq = [doc_text[i:i + _STITCH_MAX_CHARS_PER_SEG]
+               for i in range(0, len(doc_text), _STITCH_MAX_CHARS_PER_SEG)][:remain]
+        segs.extend(seq)
+    return segs
 
 
 def _stitch_doc_text(prepared: list[tuple[int, str]]) -> str:
@@ -559,6 +672,7 @@ def apply_strict_filter(merged: dict[str, dict], obj_props: dict[str, dict],
 
 def extract_schema(chunks: list, base_uri: str,
                    parallelism: int = 4,
+                   request_interval: float = 0.0,
                    model_override: Optional[dict] = None,
                    model_config_id: Optional[int] = None,
                    known_classes: Optional[list[str]] = None,
@@ -619,6 +733,8 @@ def extract_schema(chunks: list, base_uri: str,
                                             guidance=guidance_text, strict=wl is not None,
                                             table_header=table_header),
                                SCHEMA_PROMPT_JSON_SCHEMA)
+            except LLMEndpointUnreachableError:
+                raise  # 端点不可达（熔断）：中止整段抽取，快速失败给人话报错
             except Exception as e:  # noqa: BLE001  LLM 连接/超时：单切片失败不入全局
                 last_err = f"LLM调用异常: {e}"
                 feedback = last_err
@@ -634,6 +750,7 @@ def extract_schema(chunks: list, base_uri: str,
     merged: dict[str, dict] = {}       # norm(label) → class dict
     obj_props: dict[str, dict] = {}    # norm(label) → {label, domain, range}
     dt_props: dict[str, dict] = {}     # norm(name) → {name, data_type}
+    biz_rules: dict[str, dict] = {}    # norm(statement) → 采集表规则行
     done = 0
     cache_hits = 0
 
@@ -652,6 +769,10 @@ def extract_schema(chunks: list, base_uri: str,
                 cancel_cb()  # 批间取消检查：不再提交新批次
             batch = remaining[:max(1, parallelism)]
             del remaining[:max(1, parallelism)]
+            # params.request_interval 接线（2026-11-08）：批间隔秒——远程服务限速
+            # 配置，此前是死字段；仅还有后续批次时等待
+            if remaining and request_interval > 0:
+                time.sleep(request_interval)
             futures = {pool.submit(one, idx, text, hdr): idx
                        for idx, text, _doc, hdr in batch}
             for fut in as_completed(futures):
@@ -696,6 +817,19 @@ def extract_schema(chunks: list, base_uri: str,
                         "name": name,
                         "data_type": str(dp.get("data_type") or "string"),
                     })
+            # 语义采集表·规则层归并：按规范语句去重（同规则多片出现只留一条）
+            for br in payload.get("business_rules") or []:
+                if not isinstance(br, dict):
+                    continue
+                stmt = str(br.get("statement") or "").strip()[:300]
+                if not stmt:
+                    continue
+                biz_rules.setdefault(normalize_label(stmt), {
+                    "statement": stmt,
+                    "kind": str(br.get("kind") or "约束"),
+                    "evidence": str(br.get("evidence") or "")[:500],
+                    "_source_chunk_index": idx,
+                })
 
     # ★ 确定性关键②：类清单按（出现切片数降序, 规范名）排序——下游 prompt
     #   （缝合/实例抽取/公理扫描）与产物顺序稳定，LLM 缓存键才可复现
@@ -714,6 +848,50 @@ def extract_schema(chunks: list, base_uri: str,
     classes = sorted(merged.values(),
                      key=lambda v: (-v.get("_count", 1), normalize_label(v["label"])))
 
+    # ── 骨架组装（孤岛根修）：自报 parent 落成层次 + LLM 裁决伪类/孤岛类 ──
+    # 顺序刻意放在缝合之前：伪类剔除后缝合面对的类清单更干净，不会白连已删类；
+    # 严格白名单模式跳过组装（白名单即唯一范围，不许删也不许挂）
+    result.consumed_parents = _consume_parents(merged)
+    if wl is None:
+        try:
+            result.pruned_classes, result.assembled_parents = _assemble_taxonomy(
+                merged, obj_props, llm_call, model_name,
+                use_cache=use_cache, cancel_cb=cancel_cb, prepared=prepared)
+        except Exception as e:  # noqa: BLE001 —— 组装是增强不是闸门，失败退回原形态
+            result.warnings.append(f"骨架组装跳过: {e}")
+    classes = sorted(merged.values(),
+                     key=lambda v: (-v.get("_count", 1), normalize_label(v["label"])))
+
+    # ── 结构映射（外部 get_* 登记表模式的前置决策）：表格表头/条款编号 →
+    #    行主体类 + 列→关系/属性。建模期定一次，实例阶段逐行确定性应用（零 LLM）。
+    #    映射新声明的谓词正式进 TBox（关系契约先行）。失败/无结构信号静默跳过。
+    from app.adapters.structure_expand import generate_structure_maps
+
+    try:
+        maps, map_calls = generate_structure_maps(
+            prepared, [c["label"] for c in classes], obj_props, llm_call,
+            model_name, use_cache=use_cache, cancel_cb=cancel_cb)
+        result.structure_maps = maps
+        result.structure_map_calls = map_calls
+        # 映射新增的关系声明 → TBox（列即关系的正式入约）
+        for m_ in maps:
+            for col in m_.get("columns") or []:
+                if col.get("kind") != "relation":
+                    continue
+                pred, dom, rng = col.get("predicate"), m_["subject_class"], col.get("target_class")
+                if not (pred and dom and rng):
+                    continue
+                rk = f"{normalize_label(pred)}|{normalize_label(dom)}|{normalize_label(rng)}"
+                if rk not in obj_props and normalize_label(pred) not in {
+                        normalize_label(str(o.get("label") or "")) for o in obj_props.values()}:
+                    obj_props[rk] = {"label": pred, "domain": dom, "range": rng,
+                                     "confidence": 0.9,
+                                     "evidence": "结构映射：列「" + col.get("column") + "」为引用列"}
+    except Exception as e:  # noqa: BLE001 —— 映射是增强，失败退回纯 LLM 形态
+        result.warnings.append(f"结构映射跳过: {e}")
+    classes = sorted(merged.values(),
+                     key=lambda v: (-v.get("_count", 1), normalize_label(v["label"])))
+
     # ── 跨切片关系缝合：切片独立抽取只连得到同片共现的关系，这里归并后统一补一轮 ──
     # 依据 = 文档内容摘录（evidence 逐字摘录），只连类清单里已有的类，不造新类。
     stitched = 0
@@ -725,14 +903,14 @@ def extract_schema(chunks: list, base_uri: str,
                 norm2label.setdefault(normalize_label(_a), _v["label"])
         existing_rk = {(normalize_label(v["label"]), normalize_label(v["domain"]),
                         normalize_label(v["range"])) for v in obj_props.values()}
-        doc_text = _stitch_doc_text(prepared)
-        segs = [doc_text[i:i + _STITCH_MAX_CHARS_PER_SEG]
-                for i in range(0, len(doc_text), _STITCH_MAX_CHARS_PER_SEG)][:_STITCH_MAX_CALLS]
-        for si, seg in enumerate(segs):
-            if cancel_cb is not None:
-                cancel_cb()
-            if stitch_progress_cb is not None:
-                stitch_progress_cb(si + 1, len(segs))  # 缝合进度实时上报（否则 UI 在 90% 静默卡住）
+        # 调用上限随切片数扩展（基础 8 + 每 25 切片加一，封顶 24）；
+        # 素材分段缺口驱动（低连接类首现切片优先）+ 顺序兜底
+        max_calls = min(_STITCH_MAX_CALLS_CAP,
+                        _STITCH_MAX_CALLS + len(prepared) // _STITCH_CALLS_PER_CHUNKS)
+        segs = _stitch_segments(prepared, merged, obj_props, max_calls)
+
+        def _stitch_one(si: int, seg: str):
+            """单段缝合（线程内执行）：缓存查询 + 重试一次。返回 (si, rels|None, err)。"""
             skey = _cache_key(model_name, STITCH_SYSTEM_PROMPT,
                               _stitch_user_prompt(class_list_text, seg))
             rels = _cache_get(skey) if use_cache else None
@@ -741,17 +919,43 @@ def extract_schema(chunks: list, base_uri: str,
                 for _attempt in range(2):  # 首次 + 带错误反馈重试 1 次
                     if cancel_cb is not None:
                         cancel_cb()  # 取消后不再发起新的缝合调用（在途那次返回后中断）
-                    raw = llm_call(STITCH_SYSTEM_PROMPT,
-                                   _stitch_user_prompt(class_list_text, seg, feedback),
-                                   STITCH_JSON_SCHEMA)
+                    try:
+                        raw = llm_call(STITCH_SYSTEM_PROMPT,
+                                       _stitch_user_prompt(class_list_text, seg, feedback),
+                                       STITCH_JSON_SCHEMA)
+                    except LLMEndpointUnreachableError:
+                        raise  # 端点不可达：中止整段缝合（快速失败）
+                    except Exception as _e:  # noqa: BLE001
+                        rels, feedback = None, f"LLM调用异常: {_e}"
+                        continue
                     rels, feedback = _validate_stitch_payload(raw)
                     if rels is not None:
                         break
                 if rels is None:
-                    result.warnings.append(f"关系缝合段 #{si} 失败（已重试）: {feedback}")
-                    continue
+                    return si, None, feedback
                 if use_cache:
                     _cache_put(skey, rels)
+            return si, rels, ""
+
+        # 并行执行（段间独立），结果按段序应用——并发只加速 IO，不破坏确定性
+        seg_results: dict[int, tuple] = {}
+        done_si = 0
+        with ThreadPoolExecutor(max_workers=_STITCH_PARALLELISM) as spool:
+            futures = {spool.submit(_stitch_one, si, seg): si
+                       for si, seg in enumerate(segs)}
+            for fut in as_completed(futures):
+                if cancel_cb is not None:
+                    cancel_cb()
+                si, rels, err = fut.result()
+                seg_results[si] = (si, rels, err)
+                done_si += 1
+                if stitch_progress_cb is not None:
+                    stitch_progress_cb(done_si, len(segs))
+        for si in sorted(seg_results):
+            si, rels, err = seg_results[si]
+            if rels is None:
+                result.warnings.append(f"关系缝合段 #{si} 失败（已重试）: {err}")
+                continue
             for r in rels:
                 label = str(r.get("label") or "").strip()
                 d = normalize_label(str(r.get("domain") or "").strip())
@@ -771,6 +975,7 @@ def extract_schema(chunks: list, base_uri: str,
                     "evidence": str(r.get("evidence") or "")[:1024]}
                 stitched += 1
     result.stitched_relations = stitched
+    result.stitch_segments = len(segs) if len(classes) >= 2 and len(prepared) >= 2 else 0
 
     # 悬空引用 → 占位类标记 pending（04 §3.1 SchemaGate 归一）
     class_norms = set(merged.keys())
@@ -785,6 +990,8 @@ def extract_schema(chunks: list, base_uri: str,
                 classes.append(merged[normalize_label(ref)])
 
     result.classes = classes
+    # 采集表·规则层：按语句排序（确定性），上限 200 条
+    result.business_rules = [biz_rules[k] for k in sorted(biz_rules)][:200]
     # 终产物同样规范化排序（写进 schema/graph_data 的顺序稳定 → QA 检索/导出/比对全链确定）
     result.object_properties = sorted(obj_props.values(),
                                       key=lambda v: normalize_label(v["label"]))
@@ -895,6 +1102,10 @@ def _semantic_normalize(merged: dict[str, dict], obj_props: dict[str, dict]) -> 
     return merged_n
 
 
+def _has_cjk(s: str) -> bool:
+    return any("\u4e00" <= ch <= "\u9fff" for ch in s)
+
+
 def _infer_table_edge_relations(prepared: list, obj_props: dict[str, dict]) -> int:
     """边清单型表格 → 关系推断（semantica 数据驱动思路，确定性零 LLM）。
 
@@ -954,6 +1165,11 @@ def _infer_table_edge_relations(prepared: list, obj_props: dict[str, dict]) -> i
     for name in col_order:
         if name in subject_cols:
             continue  # 行主体列不是关系
+        # 列名本身是纯编码（产品号"0103"、接口号"201A"等）→ 它是数据列不是关系：
+        # 产品矩阵表的"表头"其实是数据行，列名全变成编码谓词污染关系清单
+        # （项目 265 实测：16 条 "0103"→"0129" 编码谓词进了 schema）
+        if not _has_cjk(name):
+            continue
         values = col_values.get(name) or set()
         if len(values) < 2:
             continue
@@ -993,15 +1209,36 @@ def _merge_class(merged: dict[str, dict], c: dict) -> None:
         name = str((p or {}).get("name") or "").strip()
         if name and normalize_label(name) not in seen:
             seen.add(normalize_label(name))
-            props.append({"name": name,
-                          "data_type": str((p or {}).get("data_type") or "string"),
-                          "description": str((p or {}).get("description") or "")})
+            entry = {"name": name,
+                     "data_type": str((p or {}).get("data_type") or "string"),
+                     "description": str((p or {}).get("description") or "")}
+            # 约束字段（方案三约束通道）：原文写明的枚举/必填/基数随属性透传
+            for k in ("enum_values", "required", "min_occurs", "max_occurs"):
+                if (p or {}).get(k) not in (None, [], {}):
+                    entry[k] = p[k]
+            props.append(entry)
     if key in merged:
         tgt = merged[key]
         tgt["_count"] = tgt.get("_count", 1) + 1  # 出现切片数（语义归一化的规范名选取依据）
         for p in props:
-            if normalize_label(p["name"]) not in {normalize_label(q["name"]) for q in tgt["properties"]}:
+            hit = next((q for q in tgt["properties"]
+                        if normalize_label(q["name"]) == normalize_label(p["name"])), None)
+            if hit is None:
                 tgt["properties"].append(p)
+                continue
+            # 约束并集：枚举取值合并去重、必填取或、基数取宽（min 取小 max 取大）
+            if p.get("enum_values"):
+                merged_enum = list(hit.get("enum_values") or [])
+                for v in p["enum_values"]:
+                    if v not in merged_enum:
+                        merged_enum.append(v)
+                hit["enum_values"] = merged_enum
+            if p.get("required"):
+                hit["required"] = True
+            if isinstance(p.get("min_occurs"), int):
+                hit["min_occurs"] = min(hit.get("min_occurs", p["min_occurs"]), p["min_occurs"])
+            if isinstance(p.get("max_occurs"), int):
+                hit["max_occurs"] = max(hit.get("max_occurs", p["max_occurs"]), p["max_occurs"])
         if not tgt.get("definition") and c.get("definition"):
             tgt["definition"] = str(c["definition"])
         return
@@ -1016,6 +1253,340 @@ def _merge_class(merged: dict[str, dict], c: dict) -> None:
         "_source_chunk_index": c.get("_source_chunk_index"),
         "_source_doc": str(c.get("_source_doc") or ""),
     }
+
+
+# ── 骨架组装（孤岛根修，2026-11-08）：自报 parent 落层次 + LLM 裁决伪类/孤岛 ──
+# 背景：切片 prompt 一直要求每个类自报 parent，但归并后无人消费——层次声明全部
+# 蒸发，骨架只剩孤立标签（项目 265 实测：79 类仅 12 条 subclass_of 且全部来自
+# 公理扫描事后补，9 类零连接）。外部方法论（29 句话 skill）对照：单根层次深度 3、
+# 全图单连通分量。修复分两层：
+#   ① _consume_parents：契约字段落成 parent_classes，确定性零 LLM；
+#   ② _assemble_taxonomy：一次预算内 LLM 调用裁决伪类（动作/页面/菜单词被误抽成
+#      类）与孤岛类（挂父类或并入通用类），对齐 pipeline_selfcheck 的最小动作口径。
+
+ASSEMBLE_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "actions": {
+            "type": "array",
+            "description": "骨架组装动作集",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string",
+                               "enum": ["set_parent", "merge_alias", "remove_class"]},
+                    "label": {"type": "string",
+                              "description": "目标类名，必须逐字取自【类清单】"},
+                    "into": {"type": "string",
+                             "description": "merge_alias：并入的已有类名"},
+                    "parent": {"type": "string",
+                               "description": "set_parent：父类名，必须逐字取自【类清单】"},
+                    "reason": {"type": "string", "description": "一句话依据"},
+                },
+                "required": ["action", "label"],
+            },
+        },
+    },
+    "required": ["actions"],
+}
+
+ASSEMBLE_SYSTEM_PROMPT = (
+    "你是资深本体建模专家。下面是一份由业务文档切片独立抽取后归并的类清单"
+    "（含定义、当前父类、关系连接数），以及文档摘录（表格列名与内容抽样）。"
+    "常见三类问题需要你裁决：\n"
+    "1. 伪类：动词/操作/界面控件词被误抽成类（如「经办」「查询」「审核」「二级菜单」"
+    "「页面」「进度查询」）——它们是对事物的动作或界面元素，不是业务事物的分类；\n"
+    "2. 孤岛类：连接数为 0 且无父类的类，需要挂到有业务依据的父类下，"
+    "或并入更通用的已有类；\n"
+    "3. 层次缺失：明显存在上下位关系的类没挂上（如「流动资金贷款合同」⊑「贷款合同」）。\n"
+    "规则：\n"
+    "1. 动作只限 set_parent（给类指定父类）、merge_alias（把类并入更通用的已有类作别名）、"
+    "remove_class（删除完全无业务意义的伪类）；禁止发明新类；\n"
+    "2. 【数据行主体类必须保留】若文档摘录显示某个表格列/清单的取值是具体个体"
+    "（系统名、接口编码、规则条目、产品编号、字段名），对应该列语义的类（如交互系统、"
+    "接口、业务规则、业务字段、产品）是数据行的主体，必须保留——它们是文档事实层的"
+    "锚点，删掉会导致整份文档抽不出实例；只有取值全是属性值/状态词的列名才可删；\n"
+    "3. label/parent/into 必须逐字取自类清单；\n"
+    "4. 每条动作给出业务依据（reason），拿不准就不要动——宁少勿多；\n"
+    "5. 顶层若缺领域根类概念，可把相互孤立的类归到清单中已有的最通用类下，不要造新根。\n"
+    "只输出一个 JSON 对象，结构严格遵循给定的 JSON Schema。"
+)
+
+_ASSEMBLY_MAX_CLASSES = 150
+_ASSEMBLY_MAX_CHARS = 12000   # 类清单部分预算（对齐 pipeline_selfcheck 素材预算口径）
+_ASSEMBLY_EXCERPT_CHARS = 8000  # 文档摘录部分预算（列名+内容抽样）
+_ASSEMBLY_MAX_ACTIONS = 60
+_ASSEMBLY_DEF_CHARS = 40
+
+
+def _consume_parents(merged: dict[str, dict]) -> int:
+    """把每类自报的 parent 契约字段落成 parent_classes（确定性零 LLM）。
+
+    父类能对上（含别名解析）→ parent_classes；对不上 → 建 pending 占位类
+    （与关系悬空引用同口径，schema_checks 的 dangling_parent_ref 才不会报错）；
+    自父 → 丢弃。同步保留 parent 键（versioning 快照 diff 读它）。
+    """
+    if not merged:
+        return 0
+    norm2label: dict[str, str] = {}
+    for v in merged.values():
+        norm2label.setdefault(normalize_label(v["label"]), v["label"])
+        for a in v.get("aliases") or []:
+            norm2label.setdefault(normalize_label(a), v["label"])
+    linked = 0
+    for key in sorted(merged.keys()):
+        c = merged[key]
+        parent_raw = str(c.get("parent") or "").strip()
+        c.pop("parent", None)
+        if not parent_raw:
+            continue
+        pnorm = normalize_label(parent_raw)
+        target = norm2label.get(pnorm)
+        if target is not None and target == c["label"]:
+            continue  # 自父（或经别名解析回自己）：丢弃
+        if target is None:
+            # 父类引用悬空 → 占位类 pending，后续缝合/实例阶段仍可给它连关系
+            merged[pnorm] = {"label": parent_raw, "definition": "", "properties": [],
+                             "aliases": [], "pending": True}
+            norm2label[pnorm] = parent_raw
+            target = parent_raw
+        pc = c.setdefault("parent_classes", [])
+        if target not in pc:
+            pc.append(target)
+        c["parent"] = target  # 与 parent_classes 同源（versioning diff 兼容）
+        linked += 1
+    return linked
+
+
+def _class_degree(label: str, obj_props: dict[str, dict]) -> int:
+    nl = normalize_label(label)
+    deg = 0
+    for op in obj_props.values():
+        if normalize_label(str(op.get("domain") or "")) == nl \
+                or normalize_label(str(op.get("range") or "")) == nl:
+            deg += 1
+    return deg
+
+
+def _assemble_doc_excerpt(prepared: Optional[list]) -> str:
+    """组装用文档摘录：全部表格列名 + 每片头部抽样（总预算内）。
+
+    组装 LLM 必须能看到"列的取值是什么"才能区分两类列：取值是具体个体的
+    （交互系统列=COFP/NCRM… → 该列语义是类，必须保留）vs 取值是属性值的
+    （二级菜单列=贷款申请/合同签订 → 列名只是属性维度，可降级）。
+    没有这段上下文，组装会把数据行主体类当伪类清掉（2026-11-08 项目 265
+    实测：BP接口/交互系统/前端业务规则被删，实例抽取 31 切片全空）。
+    """
+    if not prepared:
+        return ""
+    headers: list[str] = []
+    seen_h: set[str] = set()
+    total = 0
+    for _idx, _text, _doc, hdr in prepared:
+        h = str(hdr or "").strip()
+        if h and h not in seen_h:
+            seen_h.add(h)
+            headers.append(h)
+            total += len(h)
+    parts = []
+    per = max(200, _ASSEMBLY_EXCERPT_CHARS // max(len(prepared), 1))
+    for idx, text, _doc, _hdr in prepared:
+        if total >= _ASSEMBLY_EXCERPT_CHARS:
+            break
+        piece = text.strip()[:per]
+        parts.append(f"[切片 {idx}] {piece}")
+        total += len(piece)
+    out = ""
+    if headers:
+        out += "【表格列名】\n" + "\n".join(f"- {h}" for h in headers[:40]) + "\n\n"
+    out += "【文档内容抽样】\n" + "\n".join(parts)
+    return out
+
+
+def _assemble_material(merged: dict[str, dict], obj_props: dict[str, dict],
+                       prepared: Optional[list] = None) -> str:
+    """组装素材：类清单（定义/父类/连接数）+ 文档摘录，预算内截断（确定性）。"""
+    rows = []
+    chars = 0
+    for key in sorted(merged.keys(), key=lambda k: normalize_label(merged[k]["label"])):
+        c = merged[key]
+        label = c["label"]
+        d = str(c.get("definition") or "").strip()
+        if len(d) > _ASSEMBLY_DEF_CHARS:
+            d = d[:_ASSEMBLY_DEF_CHARS] + "…"
+        parents = "、".join(c.get("parent_classes") or [])
+        entry = {"label": label}
+        if d:
+            entry["定义"] = d
+        if parents:
+            entry["父类"] = parents
+        entry["连接数"] = _class_degree(label, obj_props)
+        if c.get("pending"):
+            entry["占位"] = True
+        line = str(entry)
+        if chars + len(line) > _ASSEMBLY_MAX_CHARS or len(rows) >= _ASSEMBLY_MAX_CLASSES:
+            rows.append({"note": "（素材截断）"})
+            break
+        rows.append(entry)
+        chars += len(line)
+    material = "【类清单】\n" + "\n".join(str(r) for r in rows)
+    excerpt = _assemble_doc_excerpt(prepared)
+    if excerpt:
+        material += "\n\n" + excerpt
+    return material
+
+
+def _ancestor_has(label: str, start: str, merged: dict[str, dict],
+                  depth: int = 32) -> bool:
+    """沿 parent_classes 向上走，判断 start 的祖先链是否含 label（防 set_parent 成环）。"""
+    by_label = {v["label"]: v for v in merged.values()}
+    cur = start
+    seen = {cur}
+    while depth > 0:
+        depth -= 1
+        node = by_label.get(cur)
+        if node is None:
+            return False
+        for p in node.get("parent_classes") or []:
+            if p == label:
+                return True
+            if p not in seen:
+                seen.add(p)
+                cur = p
+                break
+        else:
+            return False
+    return False
+
+
+def _apply_assembly_action(merged: dict[str, dict], obj_props: dict[str, dict],
+                           act: dict) -> Optional[str]:
+    """校验并应用单条组装动作（返回人话描述；非法返回 None）。
+
+    类定位按规范名解析（生产 merged 的 key 即 normalize_label(label)；
+    兼容 key≠label 的场景按 label 值回查）。"""
+    action = str(act.get("action") or "")
+    label = str(act.get("label") or "").strip()
+    if not label:
+        return None
+    by_label = {normalize_label(v["label"]): k for k, v in merged.items()}
+    lnorm = normalize_label(label)
+    lkey = by_label.get(lnorm)
+    if lkey is None:
+        return None
+
+    def _drop_class(key: str) -> None:
+        dead = merged.pop(key)
+        dead_label = dead["label"]
+        dnorm = normalize_label(dead_label)
+        for rk in [rk for rk, op in obj_props.items()
+                   if normalize_label(str(op.get("domain") or "")) == dnorm
+                   or normalize_label(str(op.get("range") or "")) == dnorm]:
+            obj_props.pop(rk, None)
+
+    def _remap_endpoint(op: dict, field: str, frm: str, to: str) -> None:
+        if normalize_label(str(op.get(field) or "")) == normalize_label(frm):
+            op[field] = to
+
+    if action == "remove_class":
+        _drop_class(lkey)
+        return f"删除伪类「{label}」"
+    if action == "merge_alias":
+        into = str(act.get("into") or "").strip()
+        ikey = by_label.get(normalize_label(into))
+        if not into or ikey is None or ikey == lkey:
+            return None
+        src = merged.pop(lkey)
+        tgt = merged[ikey]
+        for alias in [src["label"]] + list(src.get("aliases") or []):
+            if alias and alias != tgt["label"] and alias not in tgt["aliases"]:
+                tgt["aliases"].append(alias)
+        for prop in src.get("properties") or []:
+            nm = normalize_label(str(prop.get("name") or ""))
+            if nm and nm not in {normalize_label(str(q.get("name") or ""))
+                                 for q in tgt["properties"]}:
+                tgt["properties"].append(prop)
+        if not tgt.get("definition") and src.get("definition"):
+            tgt["definition"] = src["definition"]
+        for op in obj_props.values():
+            _remap_endpoint(op, "domain", src["label"], tgt["label"])
+            _remap_endpoint(op, "range", src["label"], tgt["label"])
+        # 端点并入后自环的关系一并清掉
+        for rk in [rk for rk, op in obj_props.items()
+                   if normalize_label(str(op.get("domain") or ""))
+                   == normalize_label(str(op.get("range") or ""))
+                   and op.get("domain")]:
+            obj_props.pop(rk, None)
+        return f"把「{label}」并入「{into}」作别名"
+    if action == "set_parent":
+        parent = str(act.get("parent") or "").strip()
+        pkey = by_label.get(normalize_label(parent))
+        if not parent or pkey is None or pkey == lkey:
+            return None
+        c = merged[lkey]
+        if parent in (c.get("parent_classes") or []):
+            return None
+        if _ancestor_has(label, parent, merged):
+            return None  # 会成环：parent 的祖先链已含 label
+        c.setdefault("parent_classes", []).append(parent)
+        c["parent"] = parent
+        return f"「{label}」挂到「{parent}」下"
+    return None
+
+
+def _assemble_taxonomy(merged: dict[str, dict], obj_props: dict[str, dict],
+                       llm_call: Callable, model_name: str,
+                       use_cache: bool = True,
+                       cancel_cb: Optional[Callable] = None,
+                       prepared: Optional[list] = None) -> tuple[int, int]:
+    """骨架组装 LLM 裁决（单次调用，素材预算内）。返回 (剔除类数, 补挂父类数)。
+
+    伪类裁并/孤岛挂接后，缝合阶段在更干净的类清单上连关系；调用失败/超预算
+    不抛错（返回 0），骨架退化回无组装形态——组装是增强，不是闸门。
+    """
+    if len(merged) < 3:
+        return 0, 0
+    material = _assemble_material(merged, obj_props, prepared=prepared)
+    key = _cache_key(model_name, ASSEMBLE_SYSTEM_PROMPT, material)
+    cached = _cache_get(key) if use_cache else None
+    actions = cached.get("actions") if isinstance(cached, dict) else cached
+    if actions is not None and not isinstance(actions, list):
+        actions = None
+    if actions is None:
+        feedback = ""
+        for _attempt in range(2):
+            if cancel_cb is not None:
+                cancel_cb()
+            try:
+                raw = llm_call(ASSEMBLE_SYSTEM_PROMPT, material
+                               + (f"\n\n【上次输出错误，必须修正】\n{feedback}"
+                                  if feedback else ""),
+                               ASSEMBLE_JSON_SCHEMA)
+            except Exception:  # noqa: BLE001
+                raw = None
+            ok = isinstance(raw, dict) and isinstance(raw.get("actions"), list)
+            if ok:
+                actions = raw["actions"]
+                break
+            feedback = "输出必须是 {\"actions\": [...]} 且 action 取值合法"
+        if actions is None:
+            return 0, 0
+        if use_cache:
+            _cache_put(key, {"actions": actions})
+    pruned = 0
+    attached = 0
+    for act in actions[:_ASSEMBLY_MAX_ACTIONS]:
+        if not isinstance(act, dict):
+            continue
+        desc = _apply_assembly_action(merged, obj_props, act)
+        if not desc:
+            continue
+        a = str(act.get("action") or "")
+        if a in ("remove_class", "merge_alias"):
+            pruned += 1
+        elif a == "set_parent":
+            attached += 1
+    return pruned, attached
 
 
 # ══ M3-5：Instance 阶段（ABox，04 §4）══
@@ -1080,6 +1651,21 @@ INSTANCE_SYSTEM_PROMPT = (
     "5. confidence 为 0-1 的自报置信度，如实评估，不要全给 1.0。\n"
     "6. 只输出一个 JSON 对象，结构严格遵循给定的 JSON Schema，不要输出任何其他文字。"
 )
+
+
+def _prop_label(p: dict) -> str:
+    """属性 prompt 标签：枚举/必填约束可见（约束通道下探到实例抽取）。"""
+    txt = f"{p.get('name')}（{p.get('data_type', 'string')}"
+    if p.get("enum_values"):
+        txt += "，枚举：" + "、".join(str(v) for v in p["enum_values"][:8])
+    if p.get("required"):
+        txt += "，必填"
+    mn, mx = p.get("min_occurs"), p.get("max_occurs")
+    if isinstance(mn, int) or isinstance(mx, int):
+        lo = mn if isinstance(mn, int) else 0
+        hi = mx if isinstance(mx, int) else "n"
+        txt += f"，数量 {lo}..{hi}"
+    return txt + "）"
 
 
 def _normalize_instance_payload(payload: dict) -> dict:
@@ -1161,8 +1747,7 @@ def _instance_user_prompt(chunk_text: str, tbox_summary: dict, known_entities: l
     if cp:
         lines = []
         for c, props in cp.items():
-            ptxt = "；".join(f"{p.get('name')}（{p.get('data_type', 'string')}）"
-                            for p in (props or []) if p.get("name"))
+            ptxt = "；".join(_prop_label(p) for p in (props or []) if p.get("name"))
             if ptxt:
                 lines.append(f"- {c}：{ptxt}")
         if lines:
@@ -1218,6 +1803,7 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
                       strict_gate: bool = True,
                       promote_policy: Literal["review", "discard", "auto"] = "review",
                       parallelism: int = 4,
+                      request_interval: float = 0.0,
                       model_override: Optional[dict] = None,
                       model_config_id: Optional[int] = None,
                       known_entities: Optional[list[str]] = None,
@@ -1272,6 +1858,8 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
                                                      feedback, chunk_no=idx,
                                                      table_header=hdr_by_idx.get(idx, "")),
                                INSTANCE_PROMPT_JSON_SCHEMA)
+            except LLMEndpointUnreachableError:
+                raise  # 端点不可达（熔断）：中止整段抽取，快速失败给人话报错
             except Exception as e:  # noqa: BLE001  LLM 连接/超时：单切片失败不入全局
                 last_err = f"LLM调用异常: {e}"
                 feedback = last_err
@@ -1297,6 +1885,8 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
                 cancel_cb()
             batch = remaining[:max(1, parallelism)]
             del remaining[:max(1, parallelism)]
+            if remaining and request_interval > 0:
+                time.sleep(request_interval)  # params.request_interval 批间隔（同骨架）
             futures = {pool.submit(one, idx, text): idx
                        for idx, text, _doc, _h in batch}
             for fut in as_completed(futures):

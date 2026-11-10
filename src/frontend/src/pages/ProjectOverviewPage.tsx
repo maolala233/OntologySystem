@@ -3,9 +3,10 @@
  * 后台构建态（进度默认收起一行）→ 完成态（结果卡：查看结果/发布/去问答）→ 资产概览。
  * 专家模式（多 Tab 工作台）需 builder_pro 模块授权，未授权不显示入口。
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Button, Col, Row, Space, Spin, Statistic, Tag, Typography, message } from 'antd';
+import { message } from '../shared/feedback';
+import { Button, Col, Row, Space, Spin, Statistic, Tag, Typography } from 'antd';
 
 const { Text } = Typography;
 import {
@@ -14,6 +15,7 @@ import {
 } from '@ant-design/icons';
 
 import { BuildSummary, pipelineApi } from '../api/pipeline';
+import type { PipelineStatus } from '../api/pipeline';
 import { EXPORT_FORMAT_EXT, ExportFormatId } from '../api/projects';
 import { projectsApi } from '../api/projects';
 import { versionsApi, VersionRow } from '../api/governance';
@@ -64,39 +66,31 @@ const ProjectOverviewPage: React.FC = () => {
             || summary?.pipeline?.status === 'queued'
             || summary?.pipeline?.status === 'scheduled'));
 
-    // 管线状态跃迁自动刷新（2026-11-05 根治版）：
-    // 旧实现用"摘要说构建中"做轮询门槛有两个漏洞——①新建项目落地时进度键尚未写入、
-    // 轮询永不启动；②页面上点「一键构建」只更新面板自身的状态、父页面摘要不重拉，
-    // 构建完成后"原来是啥就是啥"。现改为无条件 5s 轮询 + 任何状态跃迁都重拉摘要：
-    // idle→running（结果区让位进度）、*→completed/failed/cancelled（结果自动出现）。
-    useEffect(() => {
-        if (!Number.isFinite(pid) || pid <= 0) return;
-        let stopped = false;
-        let last: string | null = null; // null=页面刚打开（首查不触发刷新）
-        const timer = setInterval(async () => {
-            try {
-                const s = await pipelineApi.status(pid);
-                if (stopped || !s || s.status === last) return;
-                const prev = last;
-                last = s.status;
-                setPipeStatus(s.status); // 实时状态供 building/引导区判定
-                if (prev === null) return; // 首查只建立基线
-                if (s.status === 'completed') {
-                    load();
-                    loadProject(pid); // 项目状态（草稿/构建中/已构建/已发布徽标）随管线终态同步
-                    message.success('构建完成，结果已更新');
-                } else if (s.status === 'failed' || s.status === 'cancelled') {
-                    load();
-                    loadProject(pid);
-                    if (s.status === 'failed') message.error('构建失败：' + (s.message || '未知原因'));
-                } else {
-                    load(); // idle/running/queued/scheduled 之间跃迁也同步摘要（结果区随构建态收放）
-                    loadProject(pid);
-                }
-            } catch { /* 轮询失败下一轮再试 */ }
-        }, 5000);
-        return () => { stopped = true; clearInterval(timer); };
-    }, [pid, load]);
+    // 管线状态跃迁自动刷新（2026-11-07 SSE 版）：PipelinePanel 订阅后端事件流
+    // （运行锁为事实源），状态经 onPipeStatus 上抛——页面不再自建 5s 轮询
+    // （常驻轮询每帧两趟审核统计 SQL，是 status 请求日志不断的主力）。
+    // 跃迁语义与旧轮询版一致：idle→running（结果区让位进度）、
+    // *→completed/failed/cancelled（结果自动出现）。
+    const lastPipeStatusRef = useRef<string | null>(null);
+    const handlePipeStatus = useCallback((s: PipelineStatus | null) => {
+        if (!s || !Number.isFinite(pid) || pid <= 0) return;
+        const prev = lastPipeStatusRef.current;
+        lastPipeStatusRef.current = s.status;
+        setPipeStatus(s.status); // 实时状态供 building/引导区判定
+        if (prev === null || s.status === prev) return; // 首查只建立基线；同状态不重拉
+        if (s.status === 'completed') {
+            load();
+            loadProject(pid); // 项目状态（草稿/构建中/已构建/已发布徽标）随管线终态同步
+            message.success('构建完成，结果已更新');
+        } else if (s.status === 'failed' || s.status === 'cancelled') {
+            load();
+            loadProject(pid);
+            if (s.status === 'failed') message.error('构建失败：' + (s.message || '未知原因'));
+        } else {
+            load(); // idle/running/queued/scheduled 之间跃迁也同步摘要（结果区随构建态收放）
+            loadProject(pid);
+        }
+    }, [pid, load, loadProject]);
 
     return (
         <div className="min-h-screen bg-gray-50">
@@ -124,6 +118,7 @@ const ProjectOverviewPage: React.FC = () => {
             <div className="w-full p-4 lg:px-8 2xl:max-w-[1600px] 2xl:mx-auto">
                 {/* 构建状态卡（PipelinePanel：四步清单 + 阶段计数；构建中可收起） */}
                 <PipelinePanel projectId={pid} signal={pipelineSignal}
+                               onPipeStatus={handlePipeStatus}
                                published={summary?.is_published}
                                built={(summary?.schema.classes_total ?? 0) > 0}
                                onNavigate={(tab) => navigate(tab === 'reviews'

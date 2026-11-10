@@ -4,10 +4,9 @@
  * 项目：操作列「项目」→ Drawer 列出该用户拥有与参与的项目。
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import {
-    Button, Drawer, Empty, Modal, Form, Input, Popconfirm, Select, Space, Table, Tag, Typography, message,
-} from 'antd';
+import { Button, Drawer, Empty, Modal, Form, Input, Popconfirm, Select, Space, Table, Tag, Typography } from 'antd';
 import { DeleteOutlined, FolderOpenOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import { message } from '../../shared/feedback';
 import { adminApi, AdminUser } from '../../api/admin';
 import { useAuthStore } from '../../shared/auth/authStore';
 import { PROJECT_STATUS } from '../../shared/projectStatus';
@@ -270,7 +269,7 @@ const UserAdminPage: React.FC = () => {
                 open={createOpen}
                 onOk={handleCreate}
                 onCancel={() => setCreateOpen(false)}
-                destroyOnClose
+                destroyOnHidden
             >
                 <Form form={form} layout="vertical">
                     <Form.Item name="username" label="用户名" rules={[{ required: true, min: 2 }]}>

@@ -23,6 +23,40 @@ def estimate_tokens(text: str) -> int:
     return cjk + (len(text) - cjk) // 4
 
 
+def _default_chunk_params(project_id: int | None = None) -> ChunkParams:
+    """chunk_params 未显式给出时回读 extract 默认行 params（2026-11-08 接线）。
+
+    模型配置里的「切片大小 chunk_size / 重叠 chunk_overlap」此前是死字段——
+    provider 兼容层组装后全仓无消费者，切片一直走 chunking 内置默认（1200/0.15）。
+    chunk_overlap 在配置里是百分数（10=10%），chunking 吃比例，这里换算。
+    """
+    try:
+        from app.adapters.provider import ModelPurpose, resolve_provider
+
+        db = SessionLocal()
+        try:
+            resolved = resolve_provider(ModelPurpose.EXTRACT, project_id=project_id, db=db)
+        finally:
+            db.close()
+        p = resolved.params or {}
+        kw: dict = {}
+        try:
+            size = int(p.get("chunk_size") or 0)
+            if size > 0:
+                kw["chunk_size"] = size
+        except (TypeError, ValueError):
+            pass
+        try:
+            overlap_pct = float(p.get("chunk_overlap") or 0)
+            if overlap_pct > 0:
+                kw["overlap_ratio"] = min(max(overlap_pct / 100.0, 0.0), 0.5)
+        except (TypeError, ValueError):
+            pass
+        return ChunkParams(**kw)
+    except Exception:  # noqa: BLE001 —— 配置解析失败用内置默认，不阻断解析
+        return ChunkParams()
+
+
 def run_parse(document_id: int, backend: str = "auto",
               chunk_params: dict | None = None, task_id: str = "") -> dict:
     """解析 + 切片 + 落库全流程（自带会话，任务/请求两侧均可调）。
@@ -61,7 +95,7 @@ def run_parse(document_id: int, backend: str = "auto",
                         content_type="text/markdown")
 
         _progress("chunk", 70, "中文切片中", {"chars": len(full_text)})
-        params = ChunkParams(**chunk_params) if chunk_params else ChunkParams()
+        params = ChunkParams(**chunk_params) if chunk_params else _default_chunk_params(doc.project_id)
         chunks = chunk_text(full_text, params)
 
         _progress("save", 88, "分块落库", {"chunks": len(chunks)})

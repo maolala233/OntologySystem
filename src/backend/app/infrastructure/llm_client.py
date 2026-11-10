@@ -12,9 +12,20 @@ from app.core.logging import logger
 from app.infrastructure.task_manager import TaskCancelledError
 
 
+class LLMEndpointUnreachableError(Exception):
+    """模型服务端点级不可达（连接失败/持续超时触发熔断）。
+
+    与单次业务失败不同：这类错误重试毫无意义（服务不在/网络断），必须立即
+    中止整段抽取并把原因透传到前端，而不是让 31 个切片各磨 20 分钟重试
+    （2026-11-08 项目 265 实测：内网推理服务失联，全部调用 403s 超时×3 层重试，
+    管线空转 2 小时+）。"""
+
+
 class LLMClient:
     def __init__(self, api_key: str = None, base_url: str = None, model: str = None,
-                 think_mode: str = None):
+                 think_mode: str = None, default_timeout: float = None,
+                 default_max_retries: int = None,
+                 streaming_enabled: bool = None):
         from app.core.config import settings as _settings
 
         self.api_key = api_key if api_key is not None else _settings.LLM_API_KEY
@@ -90,7 +101,66 @@ class LLMClient:
         # think_mode 可由调用方按模型行 params 覆盖（抽取路径读 disable_think），
         # 不传则回退全局 LLM_THINK_MODE（auto=按模型名关键词自动判断）
         self.think_mode = think_mode or _settings.LLM_THINK_MODE
+        # 客户端级超时/重试缺省（模型行 params.llm_timeout / params.max_retries）：
+        # call_llm 未显式传时回读——QA/自检/copilot 等所有走本客户端的调用统一受配置管
+        self._default_timeout = float(default_timeout) if default_timeout else None
+        self._default_max_retries = int(default_max_retries) if default_max_retries else None
+        # 流式开关（模型行 params.streaming_enabled 驱动，2026-11-09 接线）：
+        # call_llm 未显式传 stream 时回读——配置流式即全链路流式，配置非流式即全链路非流式
+        self._default_stream = bool(streaming_enabled) if streaming_enabled is not None else None
         self._is_ollama = self._detect_ollama()
+        # ── 端点熔断器（2026-11-08 连不上快速失败）：连续端点级失败（连接错误/超时）
+        #    ≥阈值 → 熔断 60s，期间所有调用立即抛 LLMEndpointUnreachableError；
+        #    冷却后半开放（放行一次探测），成功即闭合。线程安全（并行切片共享客户端）。
+        self._breaker_lock = threading.Lock()
+        self._endpoint_fail_streak = 0
+        self._breaker_open_until = 0.0
+
+    _BREAKER_THRESHOLD = 2
+    _BREAKER_COOLDOWN = 60.0
+
+    @staticmethod
+    def _is_connection_error(e: BaseException) -> bool:
+        """端点连接失败类（重试无意义）：拒绝/DNS/不可达/建连超时。"""
+        if isinstance(e, (ConnectionError, httpx.ConnectError, httpx.ConnectTimeout)):
+            return True
+        import openai as _openai
+
+        if isinstance(e, _openai.APIConnectionError):
+            inner = getattr(e, "__cause__", None)
+            return LLMClient._is_connection_error(inner) if inner is not None else True
+        s = str(e).lower()
+        return any(k in s for k in ("connection refused", "connect timeout",
+                                    "connecterror", "getaddrinfo", "unreachable",
+                                    "connection reset", "failed to establish"))
+
+    @staticmethod
+    def _is_read_timeout(e: BaseException) -> bool:
+        """读超时（服务活着但太久没吐字）：单次可重试，连续出现算端点故障。"""
+        if isinstance(e, (TimeoutError, httpx.ReadTimeout, httpx.WriteTimeout,
+                          httpx.PoolTimeout)):
+            return True
+        s = str(e).lower()
+        return "timed out" in s or "request timed out" in s
+
+    def _breaker_check(self) -> None:
+        if time.time() < self._breaker_open_until:
+            raise LLMEndpointUnreachableError(
+                "模型服务当前不可达（连续多次连接失败已熔断，约 60 秒后自动恢复尝试）")
+
+    def _register_endpoint_failure(self, e: BaseException) -> bool:
+        """记录端点级失败；连续 ≥阈值 → 打开熔断。返回是否刚刚打开。"""
+        with self._breaker_lock:
+            self._endpoint_fail_streak += 1
+            if self._endpoint_fail_streak >= self._BREAKER_THRESHOLD:
+                self._breaker_open_until = time.time() + self._BREAKER_COOLDOWN
+                return True
+        return False
+
+    def _register_endpoint_success(self) -> None:
+        with self._breaker_lock:
+            self._endpoint_fail_streak = 0
+            self._breaker_open_until = 0.0
 
     def _detect_ollama(self) -> bool:
         if not self.base_url:
@@ -280,10 +350,21 @@ class LLMClient:
             raise box["e"]
         raise TimeoutError(f"LLM 调用硬超时（{hard:.0f}s 无任何响应）")
 
-    def call_llm(self, system_prompt: str, user_prompt: str, max_retries: int = 3, stream: bool = True,
-                 timeout: Optional[float] = None, task_id: Optional[str] = None,
+    def call_llm(self, system_prompt: str, user_prompt: str, max_retries: Optional[int] = None,
+                 stream: Optional[bool] = None, timeout: Optional[float] = None,
+                 task_id: Optional[str] = None,
                  json_schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        if stream is None:
+            stream = bool(getattr(self, "_default_stream", None) or False)
         from app.infrastructure.task_manager import task_manager
+        # 客户端级缺省（构造时来自模型行 params，见 qa._build_llm / 抽取路径）：
+        # 调用点未显式传 timeout/max_retries 时兜底——此前 12+ 个未传的调用点
+        # （自检/copilot/进化/门控…）一律落到 330s 硬闸+3 重试的隐式默认
+        # （2026-11-08 全局接线）
+        if timeout is None:
+            timeout = getattr(self, '_default_timeout', None)
+        if max_retries is None:
+            max_retries = getattr(self, '_default_max_retries', None) or 3
         model_name = getattr(self, 'model', 'unknown-model')
         call_start_time = time.time()
         timeout_str = f"{timeout}s" if timeout else "default"
@@ -293,6 +374,7 @@ class LLMClient:
             logger.info(f"[LLM] 任务 ID: {task_id}，将在流式响应中检查取消状态")
 
         for attempt in range(max_retries):
+            self._breaker_check()
             response = None
             try:
                 api_kwargs = self._build_api_kwargs(system_prompt, user_prompt, stream, timeout, json_schema)
@@ -338,6 +420,14 @@ class LLMClient:
                                 if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
                                     full_content += delta.reasoning_content
 
+                                if len(full_content) > 60000:
+                                    if hasattr(response, 'close'):
+                                        try:
+                                            response.close()
+                                        except Exception:
+                                            pass
+                                    raise TimeoutError(
+                                        f"LLM 流式响应超长（>{len(full_content)} 字符），疑似失控生成")
                                 if chunk_count % 50 == 0:
                                     logger.info(f"[LLM] 已接收 {chunk_count} 个 chunk, 当前内容长度={len(full_content)} 字符，耗时={time.time()-stream_start:.2f}s")
 
@@ -353,6 +443,7 @@ class LLMClient:
                             full_content += continued_content
                             logger.info(f"[LLM] 自动续写完成，追加内容长度={len(continued_content)} 字符，总长度={len(full_content)} 字符")
 
+                        self._register_endpoint_success()
                         return self._repair_truncated_json(full_content)
                     except GeneratorExit:
                         if response and hasattr(response, 'close'):
@@ -362,18 +453,15 @@ class LLMClient:
                                 pass
                         raise
                 else:
-                    if not response or not response.choices:
-                        logger.warning("LLM 响应为空或无选择项，返回默认结构")
-                        return {"classes": [], "instances": []}
-                    if len(response.choices) == 0:
-                        logger.warning("LLM 响应中 choices 为空，返回默认结构")
-                        return {"classes": [], "instances": []}
+                    if not response or not response.choices or len(response.choices) == 0:
+                        raise ValueError("模型返回空响应（无 choices），按失败处理以触发重试")
                     message_content = response.choices[0].message.content
                     finish_reason = response.choices[0].finish_reason
 
-                    if message_content is None:
-                        logger.warning("LLM 响应内容为空，返回默认结构")
-                        return {"classes": [], "instances": []}
+                    if message_content is None or not str(message_content).strip():
+                        # 空壳响应（限流/拥堵时段方舟秒回空）：抛错走重试，绝不静默
+                        # 返回空结构——那会把"模型没干活"伪装成"抽出来 0 条"
+                        raise ValueError(f"模型返回空响应（finish_reason={finish_reason}）")
 
                     logger.info(f"[LLM] 非流式响应，内容长度={len(message_content)} 字符，finish_reason={finish_reason}")
 
@@ -387,6 +475,7 @@ class LLMClient:
                         message_content += continued_content
                         logger.info(f"[LLM] 自动续写完成，追加内容长度={len(continued_content)} 字符，总长度={len(message_content)} 字符")
 
+                    self._register_endpoint_success()
                     return self._repair_truncated_json(message_content)
 
             except TaskCancelledError as e:
@@ -398,7 +487,12 @@ class LLMClient:
                         pass
                 raise
             except TimeoutError as e:
-                logger.info(f"LLM 调用超时，停止重试：{e}")
+                # 硬闸超时=服务挂起，属端点级失败：连续出现即熔断并转不可达异常，
+                # 让上层快速失败而不是把重试预算烧在一个已死的服务上
+                opened = self._register_endpoint_failure(e)
+                if opened:
+                    raise LLMEndpointUnreachableError(
+                        f"模型服务持续无响应（连续调用硬超时）：{e}") from e
                 if response and hasattr(response, 'close'):
                     try:
                         response.close()
@@ -411,6 +505,16 @@ class LLMClient:
                         response.close()
                     except Exception:
                         pass
+                # 连接类失败（拒绝/DNS/不可达）：重试毫无意义，立即转不可达异常
+                # 中止本调用；连续两次打开熔断，后续调用秒败（2026-11-08 根修）
+                if self._is_connection_error(e):
+                    opened = self._register_endpoint_failure(e)
+                    logger.error(f"模型服务连接失败（熔断{'已' if opened else '未'}打开，"
+                                 f"连续失败 {self._endpoint_fail_streak} 次）：{e}")
+                    raise LLMEndpointUnreachableError(f"模型服务连接失败：{e}") from e
+                if self._is_read_timeout(e) and self._register_endpoint_failure(e):
+                    raise LLMEndpointUnreachableError(
+                        f"模型服务持续超时（连续多次无响应）：{e}") from e
                 err_msg = str(e).lower()
                 if self._is_json_schema_unsupported(e):
                     self._json_schema_supported = False
@@ -429,9 +533,11 @@ class LLMClient:
                     raise Exception(f"LLM 调用在 {max_retries} 次尝试后仍然失败，总耗时={total_time:.2f}s: {str(e)}")
 
     async def async_call_llm(self, system_prompt: str, user_prompt: str, max_retries: int = 3,
-                             stream: bool = True, timeout: Optional[float] = None,
+                             stream: Optional[bool] = None, timeout: Optional[float] = None,
                              task_id: Optional[str] = None,
                              json_schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        if stream is None:
+            stream = bool(getattr(self, "_default_stream", None) or False)
         from app.infrastructure.task_manager import task_manager
         model_name = getattr(self, 'model', 'unknown-model')
         call_start_time = time.time()
@@ -448,6 +554,7 @@ class LLMClient:
             )
 
         for attempt in range(max_retries):
+            self._breaker_check()
             response = None
             try:
                 api_kwargs = self._build_api_kwargs(system_prompt, user_prompt, stream, timeout, json_schema)
@@ -493,6 +600,14 @@ class LLMClient:
                                 if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
                                     full_content += delta.reasoning_content
 
+                                if len(full_content) > 60000:
+                                    if hasattr(response, 'close'):
+                                        try:
+                                            response.close()
+                                        except Exception:
+                                            pass
+                                    raise TimeoutError(
+                                        f"LLM 流式响应超长（>{len(full_content)} 字符），疑似失控生成")
                                 if chunk_count % 50 == 0:
                                     logger.info(f"[AsyncLLM] 已接收 {chunk_count} 个 chunk, 当前内容长度={len(full_content)} 字符，耗时={time.time()-stream_start:.2f}s")
 
@@ -508,6 +623,7 @@ class LLMClient:
                             full_content += continued_content
                             logger.info(f"[AsyncLLM] 自动续写完成，追加内容长度={len(continued_content)} 字符，总长度={len(full_content)} 字符")
 
+                        self._register_endpoint_success()
                         return self._repair_truncated_json(full_content)
                     except GeneratorExit:
                         if response and hasattr(response, 'aclose'):
@@ -517,18 +633,13 @@ class LLMClient:
                                 pass
                         raise
                 else:
-                    if not response or not response.choices:
-                        logger.warning("[AsyncLLM] 响应为空或无选择项，返回默认结构")
-                        return {"classes": [], "instances": []}
-                    if len(response.choices) == 0:
-                        logger.warning("[AsyncLLM] 响应中 choices 为空，返回默认结构")
-                        return {"classes": [], "instances": []}
+                    if not response or not response.choices or len(response.choices) == 0:
+                        raise ValueError("模型返回空响应（无 choices），按失败处理以触发重试")
                     message_content = response.choices[0].message.content
                     finish_reason = response.choices[0].finish_reason
 
-                    if message_content is None:
-                        logger.warning("[AsyncLLM] 响应内容为空，返回默认结构")
-                        return {"classes": [], "instances": []}
+                    if message_content is None or not str(message_content).strip():
+                        raise ValueError(f"模型返回空响应（finish_reason={finish_reason}）")
 
                     logger.info(f"[AsyncLLM] 非流式响应，内容长度={len(message_content)} 字符，finish_reason={finish_reason}")
 
@@ -542,6 +653,7 @@ class LLMClient:
                         message_content += continued_content
                         logger.info(f"[AsyncLLM] 自动续写完成，追加内容长度={len(continued_content)} 字符，总长度={len(message_content)} 字符")
 
+                    self._register_endpoint_success()
                     return self._repair_truncated_json(message_content)
 
             except TaskCancelledError as e:
@@ -553,7 +665,10 @@ class LLMClient:
                         pass
                 raise
             except TimeoutError as e:
-                logger.info(f"[AsyncLLM] 调用超时，停止重试：{e}")
+                opened = self._register_endpoint_failure(e)
+                if opened:
+                    raise LLMEndpointUnreachableError(
+                        f"模型服务持续无响应（连续调用硬超时）：{e}") from e
                 if response and hasattr(response, 'aclose'):
                     try:
                         await response.aclose()
@@ -566,6 +681,14 @@ class LLMClient:
                         await response.aclose()
                     except Exception:
                         pass
+                if self._is_connection_error(e):
+                    opened = self._register_endpoint_failure(e)
+                    logger.error(f"模型服务连接失败（熔断{'已' if opened else '未'}打开，"
+                                 f"连续失败 {self._endpoint_fail_streak} 次）：{e}")
+                    raise LLMEndpointUnreachableError(f"模型服务连接失败：{e}") from e
+                if self._is_read_timeout(e) and self._register_endpoint_failure(e):
+                    raise LLMEndpointUnreachableError(
+                        f"模型服务持续超时（连续多次无响应）：{e}") from e
                 err_msg = str(e).lower()
                 if self._is_json_schema_unsupported(e):
                     self._json_schema_supported = False
@@ -1041,7 +1164,8 @@ class LLMClient:
         logger.info(f"[LLM] 流式生成完成：{chunk_count} 个 chunk")
 
     def call_llm_text(self, system_prompt: str, user_prompt: str, max_retries: int = 3, stream: bool = False,
-                      timeout: Optional[float] = None, task_id: Optional[str] = None) -> Dict[str, Any]:
+                      timeout: Optional[float] = None, task_id: Optional[str] = None,
+                      temperature: Optional[float] = None) -> Dict[str, Any]:
         from app.infrastructure.task_manager import task_manager
         model_name = getattr(self, 'model', 'unknown-model')
         call_start_time = time.time()
@@ -1060,7 +1184,7 @@ class LLMClient:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
                     ],
-                    "temperature": 0.1,
+                    "temperature": temperature if temperature is not None else 0.1,
                     "stream": stream,
                     "max_tokens": 16000,
                     "stop": ["</s>", "\n\n\n"]
@@ -1069,7 +1193,9 @@ class LLMClient:
                 if timeout is not None:
                     api_kwargs["timeout"] = timeout
 
-                response = self.client.chat.completions.create(**api_kwargs)
+                # 硬闸与 call_llm 同款：自定义 http_client 下 SDK 超时不可靠，
+                # 文本通道裸调曾实测挂 13 分钟（结果确认阶段慢的元凶之一）
+                response = self._create_with_hard_gate(api_kwargs, timeout)
 
                 if stream:
                     logger.info(f"[LLM] 开始接收流式响应...")
@@ -1101,6 +1227,14 @@ class LLMClient:
                             if chunk.choices and chunk.choices[0].delta.content:
                                 full_content += chunk.choices[0].delta.content
                                 chunk_count += 1
+                                if len(full_content) > 60000:
+                                    if hasattr(response, 'close'):
+                                        try:
+                                            response.close()
+                                        except Exception:
+                                            pass
+                                    raise TimeoutError(
+                                        f"LLM 流式响应超长（>{len(full_content)} 字符），疑似失控生成")
                                 if chunk_count % 50 == 0:
                                     logger.info(f"[LLM] 已接收 {chunk_count} 个 chunk, 当前内容长度={len(full_content)} 字符，耗时={time.time()-stream_start:.2f}s")
                         logger.info(f"[LLM] 流式响应完成，总内容长度={len(full_content)} 字符，总耗时={time.time()-stream_start:.2f}s")
@@ -1135,7 +1269,12 @@ class LLMClient:
                         pass
                 raise
             except TimeoutError as e:
-                logger.info(f"LLM 调用超时，停止重试：{e}")
+                # 硬闸超时=服务挂起，属端点级失败：连续出现即熔断并转不可达异常，
+                # 让上层快速失败而不是把重试预算烧在一个已死的服务上
+                opened = self._register_endpoint_failure(e)
+                if opened:
+                    raise LLMEndpointUnreachableError(
+                        f"模型服务持续无响应（连续调用硬超时）：{e}") from e
                 if response and hasattr(response, 'close'):
                     try:
                         response.close()
@@ -1148,6 +1287,16 @@ class LLMClient:
                         response.close()
                     except Exception:
                         pass
+                # 连接类失败（拒绝/DNS/不可达）：重试毫无意义，立即转不可达异常
+                # 中止本调用；连续两次打开熔断，后续调用秒败（2026-11-08 根修）
+                if self._is_connection_error(e):
+                    opened = self._register_endpoint_failure(e)
+                    logger.error(f"模型服务连接失败（熔断{'已' if opened else '未'}打开，"
+                                 f"连续失败 {self._endpoint_fail_streak} 次）：{e}")
+                    raise LLMEndpointUnreachableError(f"模型服务连接失败：{e}") from e
+                if self._is_read_timeout(e) and self._register_endpoint_failure(e):
+                    raise LLMEndpointUnreachableError(
+                        f"模型服务持续超时（连续多次无响应）：{e}") from e
                 err_msg = str(e).lower()
                 if self._is_json_schema_unsupported(e):
                     self._json_schema_supported = False
@@ -1225,6 +1374,14 @@ class LLMClient:
                         if chunk.choices and chunk.choices[0].delta.content:
                             full_content += chunk.choices[0].delta.content
                             chunk_count += 1
+                            if len(full_content) > 60000:
+                                if hasattr(response, 'aclose'):
+                                    try:
+                                        await response.aclose()
+                                    except Exception:
+                                        pass
+                                raise TimeoutError(
+                                    f"LLM 流式响应超长（>{len(full_content)} 字符），疑似失控生成")
                             if chunk_count % 50 == 0:
                                 logger.info(f"[AsyncLLM] 已接收 {chunk_count} 个 chunk, 当前内容长度={len(full_content)} 字符，耗时={time.time()-stream_start:.2f}s")
 
@@ -1250,7 +1407,10 @@ class LLMClient:
                         pass
                 raise
             except TimeoutError as e:
-                logger.info(f"[AsyncLLM] 调用超时，停止重试：{e}")
+                opened = self._register_endpoint_failure(e)
+                if opened:
+                    raise LLMEndpointUnreachableError(
+                        f"模型服务持续无响应（连续调用硬超时）：{e}") from e
                 if response and hasattr(response, 'aclose'):
                     try:
                         await response.aclose()
@@ -1263,6 +1423,14 @@ class LLMClient:
                         await response.aclose()
                     except Exception:
                         pass
+                if self._is_connection_error(e):
+                    opened = self._register_endpoint_failure(e)
+                    logger.error(f"模型服务连接失败（熔断{'已' if opened else '未'}打开，"
+                                 f"连续失败 {self._endpoint_fail_streak} 次）：{e}")
+                    raise LLMEndpointUnreachableError(f"模型服务连接失败：{e}") from e
+                if self._is_read_timeout(e) and self._register_endpoint_failure(e):
+                    raise LLMEndpointUnreachableError(
+                        f"模型服务持续超时（连续多次无响应）：{e}") from e
                 err_msg = str(e).lower()
                 if self._is_json_schema_unsupported(e):
                     self._json_schema_supported = False

@@ -73,7 +73,10 @@ class ProjectResponse(ProjectBase):
 
 class ProjectListItem(ProjectResponse):
     """项目列表行（2026-11 列表视图改版）：附生命周期状态与轻量统计，
-    免去前端逐项目拉构建摘要（状态机：published > building > ready > draft）。"""
-    status: str = "draft"  # draft | building | ready | published
+    免去前端逐项目拉构建摘要（状态机：building > scheduled > published > ready > draft——
+    发布后重新构建时显示构建中，不再被"已发布"吞掉，2026-11-09 测试4）。"""
+    status: str = "draft"  # draft | building | scheduled | ready | published
     classes_total: int = 0
     instances_total: int = 0
+    # 已发布后内容又更新过（重新构建过）：前端据此显示「有新版本」标记，提示可重新发布
+    stale_published: bool = False

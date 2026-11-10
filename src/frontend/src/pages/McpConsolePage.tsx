@@ -4,9 +4,8 @@
 // │ 工具详情（Schema 动态表单 + Run Tool + 彩色 JSON 树结果）
 // │ 底部编号调用历史（可展开请求/响应）+ 服务端通知占位。全部走平台 POST /mcp 网关。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-    Button, Checkbox, Input, InputNumber, Modal, Select, Tag, Tooltip, message,
-} from 'antd';
+import { Button, Checkbox, Input, InputNumber, Modal, Select, Tag, Tooltip } from 'antd';
+import { message } from '../shared/feedback';
 import {
     ApiOutlined, CaretRightOutlined, ClearOutlined, CopyOutlined, DisconnectOutlined,
     LinkOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined, RightOutlined,
