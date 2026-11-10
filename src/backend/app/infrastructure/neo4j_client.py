@@ -36,9 +36,23 @@ class Neo4jClient:
             try:
                 self.driver = GraphDatabase.driver(self.uri, auth=(self.username, self.password))
                 self.driver.verify_connectivity()
+                self._ensure_indexes()
                 logger.info("Successfully connected to Neo4j")
             except Exception as e:
                 logger.error(f"Failed to connect to Neo4j: {e}")
+
+    def _ensure_indexes(self):
+        """MERGE 键 {id, project_id} 的复合索引。无索引时逐边 MERGE 走笛卡尔积全扫
+        （MATCH (a),(b) 无标签无索引），万级边入库耗时小时级；建索引后按行索引寻址。
+        幂等，连接时执行一次。"""
+        if not self.driver:
+            return
+        try:
+            with self.driver.session() as session:
+                session.run(
+                    "CREATE INDEX IF NOT EXISTS FOR (n:ProjectNode) ON (n.id, n.project_id)")
+        except Exception as e:
+            logger.warning(f"[Neo4j] 建索引失败（不影响功能，仅影响写入/查询速度）：{e}")
 
     def reconfigure(self) -> bool:
         """环境配置保存后热重建连接（env_configs API 调用）。返回是否连上。"""
@@ -53,9 +67,14 @@ class Neo4jClient:
         if self.driver:
             self.driver.close()
 
+    # 批量写入分片：UNWIND 单语句行数上限（吞吐与单事务内存的平衡值）
+    _BATCH_SIZE = 500
+
     def sync_graph(self, project_id: int, graph_data: dict, domain: str = None):
         """
-        将本体数据同步到 Neo4j，支持溯源信息存储
+        将本体数据同步到 Neo4j，支持溯源信息存储。
+        节点按业务标签、关系按关系类型分组后 UNWIND 批量 MERGE；原逐条
+        execute_write 在万级边时每条一个事务且 MATCH 无标签走全扫，入库小时级。
         """
         if not self.driver:
             logger.error("Neo4j driver not initialized")
@@ -67,15 +86,13 @@ class Neo4jClient:
         with self.driver.session() as session:
             # 1. 清理该项目旧数据 (使用标签隔离)
             session.execute_write(self._delete_project_data, project_id)
-            
-            # 2. 创建节点 (包含溯源信息)
-            for node in nodes:
-                session.execute_write(self._create_node_with_provenance, project_id, node, domain)
-                
-            # 3. 创建关系 (包含溯源信息)
-            for edge in edges:
-                session.execute_write(self._create_relationship_with_provenance, project_id, edge, domain)
-                
+
+            # 2. 批量创建节点 (包含溯源信息)
+            session.execute_write(self._create_nodes_batch, project_id, nodes, domain)
+
+            # 3. 批量创建关系 (包含溯源信息)
+            session.execute_write(self._create_relationships_batch, project_id, edges, domain)
+
         return True
 
     def delete_project_data(self, project_id: int):
@@ -119,34 +136,34 @@ class Neo4jClient:
         return True
 
     @staticmethod
-    def _create_node_with_provenance(tx, project_id, node_data, domain: str = None):
+    def _node_label_and_props(node_data: dict, project_id: int, domain: str = None) -> Tuple[str, Dict[str, Any]]:
         """
-        创建节点，包含溯源信息
+        节点 dict → (业务标签, 属性字典)。单条与批量写入共用。
         支持从 properties 中提取 _source_file, _source_chunk_index, _source_quote, _chunk_text, _domain
         """
         node_id = node_data.get("id")
         node_label = node_data.get("data", {}).get("label", "Unknown")
         node_type = node_data.get("data", {}).get("type", "Entity")
         properties = node_data.get("data", {}).get("properties", {}) or {}
-        
+
         # 基础属性
         props = {
             "id": node_id,
             "label": node_label,
             "project_id": project_id,
         }
-        
+
         # 如果有 domain 参数，优先使用
         if domain:
             props["domain"] = domain
-        
+
         # 从 properties 中提取溯源信息 (移除 _ 前缀)
         source_file = properties.get("_source_file")
         source_chunk_index = properties.get("_source_chunk_index")
         source_quote = properties.get("_source_quote")
         chunk_text = properties.get("_chunk_text")
         node_domain = properties.get("_domain")
-        
+
         if source_file:
             props["source_file"] = source_file
         if source_chunk_index is not None:
@@ -157,12 +174,12 @@ class Neo4jClient:
             props["chunk_text"] = chunk_text
         if node_domain and not domain:  # 只有在没有传入 domain 参数时才使用节点自身的 domain
             props["domain"] = node_domain
-        
+
         # 添加业务属性 (排除 _ 开头的隐藏属性)
         for key, value in properties.items():
             if not key.startswith("_"):
                 props[key] = value
-        
+
         # 确定节点标签 (使用 node_type 或默认标签)
         # 如果是 owl:Class 或 owl:NamedIndividual，使用更具体的标签
         if node_type == "owl:Class":
@@ -171,33 +188,57 @@ class Neo4jClient:
             main_label = "NamedIndividual"
         else:
             main_label = "Entity"
-        
-        # 构建 Cypher 语句，动态设置标签
-        # 使用 MERGE 避免重复创建
+
+        return main_label, props
+
+    @staticmethod
+    def _create_node_with_provenance(tx, project_id, node_data, domain: str = None):
+        """单节点 MERGE。带 :ProjectNode 通用标签——(id, project_id) 复合索引建在该标签上。"""
+        main_label, props = Neo4jClient._node_label_and_props(node_data, project_id, domain)
         query = f"""
-        MERGE (n:`{main_label}` {{id: $props.id, project_id: $props.project_id}})
+        MERGE (n:ProjectNode:`{main_label}` {{id: $props.id, project_id: $props.project_id}})
         SET n += $props
         """
         tx.run(query, props=props)
 
     @staticmethod
-    def _create_relationship_with_provenance(tx, project_id, edge_data, domain: str = None):
+    def _create_nodes_batch(tx, project_id, nodes, domain: str = None):
+        """节点按业务标签分组、UNWIND 批量 MERGE。同批重复 id 先去重（后到覆盖先到，
+        与原逐条 SET 覆盖语义一致；UNWIND+MERGE 同语句重复键可能重复建节点）。"""
+        by_label: Dict[str, List[Dict[str, Any]]] = {}
+        for node in nodes:
+            label, props = Neo4jClient._node_label_and_props(node, project_id, domain)
+            if props.get("id") is None:
+                continue
+            by_label.setdefault(label, {})[props["id"]] = props
+        batch_size = Neo4jClient._BATCH_SIZE
+        for label, props_by_id in by_label.items():
+            rows = list(props_by_id.values())
+            for i in range(0, len(rows), batch_size):
+                tx.run(f"""
+                UNWIND $rows AS row
+                MERGE (n:ProjectNode:`{label}` {{id: row.id, project_id: row.project_id}})
+                SET n += row
+                """, rows=rows[i:i + batch_size])
+
+    @staticmethod
+    def _edge_type_and_props(edge_data: dict, project_id: int, domain: str = None) -> Tuple[str, Dict[str, Any]]:
         """
-        创建关系，包含溯源信息
+        边 dict → (关系类型, 属性字典)。单条与批量写入共用。
         支持从 data 中提取 _source_file, _source_chunk_index, _source_quote, _chunk_text, _domain
         """
         source_id = edge_data.get("source")
         target_id = edge_data.get("target")
         edge_label = edge_data.get("label", "RELATED_TO")
         edge_data_dict = edge_data.get("data", {}) or {}
-        
+
         # 关系类型 (从 relation 或 label 获取)
         rel_type = edge_data_dict.get("relation", edge_label).upper()
         # 清理关系类型，使其成为有效的 Cypher 标识符
         rel_type = rel_type.replace(" ", "_").replace(":", "_").replace("-", "_").upper()
         if not rel_type or rel_type == "NONE":
             rel_type = "RELATED_TO"
-        
+
         # 基础属性
         rel_props = {
             "source_id": source_id,
@@ -205,18 +246,18 @@ class Neo4jClient:
             "project_id": project_id,
             "label": edge_label,
         }
-        
+
         # 如果有 domain 参数，优先使用
         if domain:
             rel_props["domain"] = domain
-        
+
         # 从 edge_data 中提取溯源信息 (移除 _ 前缀)
         source_file = edge_data_dict.get("_source_file")
         source_chunk_index = edge_data_dict.get("_source_chunk_index")
         source_quote = edge_data_dict.get("_source_quote")
         chunk_text = edge_data_dict.get("_chunk_text")
         edge_domain = edge_data_dict.get("_domain")
-        
+
         if source_file:
             rel_props["source_file"] = source_file
         if source_chunk_index is not None:
@@ -227,24 +268,45 @@ class Neo4jClient:
             rel_props["chunk_text"] = chunk_text
         if edge_domain and not domain:  # 只有在没有传入 domain 参数时才使用边自身的 domain
             rel_props["domain"] = edge_domain
-        
-        # 构建 Cypher 语句创建关系
+
+        return rel_type, rel_props
+
+    @staticmethod
+    def _create_relationship_with_provenance(tx, project_id, edge_data, domain: str = None):
+        """单边 MERGE。MATCH 带 :ProjectNode 标签走 (id, project_id) 复合索引。"""
+        rel_type, props = Neo4jClient._edge_type_and_props(edge_data, project_id, domain)
         query = f"""
-        MATCH (a), (b)
-        WHERE a.id = $source_id AND a.project_id = $project_id
-        AND b.id = $target_id AND b.project_id = $project_id
+        MATCH (a:ProjectNode {{id: $props.source_id, project_id: $props.project_id}})
+        MATCH (b:ProjectNode {{id: $props.target_id, project_id: $props.project_id}})
         MERGE (a)-[r:`{rel_type}`]->(b)
-        SET r.project_id = $project_id,
-            r.source_id = $source_id,
-            r.target_id = $target_id,
-            r.label = $rel_props.label,
-            r.domain = $rel_props.domain,
-            r.source_file = $rel_props.source_file,
-            r.source_chunk_index = $rel_props.source_chunk_index,
-            r.source_quote = $rel_props.source_quote,
-            r.chunk_text = $rel_props.chunk_text
+        SET r += $props
         """
-        tx.run(query, source_id=source_id, target_id=target_id, project_id=project_id, rel_props=rel_props)
+        tx.run(query, props=props)
+
+    @staticmethod
+    def _create_relationships_batch(tx, project_id, edges, domain: str = None):
+        """关系按类型分组、UNWIND 批量 MERGE。
+        - 同批 (source,target,类型) 重复边先去重（后到覆盖先到，与原逐条 SET 一致；
+          UNWIND+MERGE 同语句重复键会重复建边）
+        - MATCH 带 :ProjectNode 标签走复合索引，端点缺失时该行静默跳过（与原语义一致）
+        """
+        by_type: Dict[str, Dict[Tuple[Any, Any], Dict[str, Any]]] = {}
+        for edge in edges:
+            rel_type, props = Neo4jClient._edge_type_and_props(edge, project_id, domain)
+            if props.get("source_id") is None or props.get("target_id") is None:
+                continue
+            by_type.setdefault(rel_type, {})[(props["source_id"], props["target_id"])] = props
+        batch_size = Neo4jClient._BATCH_SIZE
+        for rel_type, props_by_key in by_type.items():
+            rows = list(props_by_key.values())
+            for i in range(0, len(rows), batch_size):
+                tx.run(f"""
+                UNWIND $rows AS row
+                MATCH (a:ProjectNode {{id: row.source_id, project_id: row.project_id}})
+                MATCH (b:ProjectNode {{id: row.target_id, project_id: row.project_id}})
+                MERGE (a)-[r:`{rel_type}`]->(b)
+                SET r += row
+                """, rows=rows[i:i + batch_size])
 
     def query_graph(self, project_id: int, cypher: str, params: dict = None) -> List[Dict[str, Any]]:
         """
@@ -689,24 +751,20 @@ class Neo4jClient:
                     logger.warning(f"[Schema 获取] 项目 {target_project_id} 在 Neo4j 中没有数据")
                     return schema_data
                 
-                # 🌟 修复 3：简化 Labels 查询，不依赖 domain 字段
-                # 逻辑：直接使用 labels(n)[0] 获取第一个标签
+                # 🌟 修复 3：不依赖标签顺序——取第一个非元数据业务标签
+                # （节点统一带 :ProjectNode 索引标签，labels() 顺序不保证，逐标签过滤）
                 # 注意：Neo4j 中节点可能有多个标签，我们取第一个业务标签
                 labels_query = """
                 MATCH (n)
                 WHERE n.project_id = $project_id OR n.project_id = toString($project_id)
                 WITH n, labels(n) as all_labels, keys(n) as node_keys
                 WITH n, all_labels, node_keys,
-                    CASE 
-                        WHEN all_labels[0] IN ['NamedIndividual', 'Class', 'owl:NamedIndividual', 'owl:Class'] 
-                        THEN all_labels[1] 
-                        ELSE all_labels[0] 
-                    END as biz_label
-                RETURN 
-                    CASE 
+                    [l IN all_labels WHERE NOT l IN ['ProjectNode', 'NamedIndividual', 'Class', 'owl:NamedIndividual', 'owl:Class', 'Resource']][0] as biz_label
+                RETURN
+                    CASE
                         WHEN biz_label IS NULL OR biz_label IN ['NamedIndividual', 'Class', 'owl:NamedIndividual', 'owl:Class'] THEN 'Entity'
-                        ELSE biz_label 
-                    END as class_label, 
+                        ELSE biz_label
+                    END as class_label,
                     collect(DISTINCT node_keys) as all_keys
                 """
                 
@@ -749,19 +807,11 @@ class Neo4jClient:
                 WHERE (a.project_id = $project_id OR a.project_id = toString($project_id))
                   AND (b.project_id = $project_id OR b.project_id = toString($project_id))
                 WITH r, a, b, labels(a) as a_labels, labels(b) as b_labels
-                WITH r, a, b, a_labels, b_labels,
-                    CASE 
-                        WHEN a_labels[0] IN ['NamedIndividual', 'Class', 'owl:NamedIndividual', 'owl:Class'] 
-                        THEN a_labels[1] 
-                        ELSE a_labels[0] 
-                    END as start_label,
-                    CASE 
-                        WHEN b_labels[0] IN ['NamedIndividual', 'Class', 'owl:NamedIndividual', 'owl:Class'] 
-                        THEN b_labels[1] 
-                        ELSE b_labels[0] 
-                    END as end_label
-                RETURN DISTINCT 
-                    type(r) as rel_type, 
+                WITH r, a, b,
+                    [l IN a_labels WHERE NOT l IN ['ProjectNode', 'NamedIndividual', 'Class', 'owl:NamedIndividual', 'owl:Class', 'Resource']][0] as start_label,
+                    [l IN b_labels WHERE NOT l IN ['ProjectNode', 'NamedIndividual', 'Class', 'owl:NamedIndividual', 'owl:Class', 'Resource']][0] as end_label
+                RETURN DISTINCT
+                    type(r) as rel_type,
                     CASE WHEN start_label IS NULL THEN 'Entity' ELSE start_label END as start_label,
                     CASE WHEN end_label IS NULL THEN 'Entity' ELSE end_label END as end_label
                 """

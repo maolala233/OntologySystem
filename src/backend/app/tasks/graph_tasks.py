@@ -68,8 +68,9 @@ def _handle_graph_event(db, ev) -> str:
 
 @celery_app.task(name="app.tasks.graph_tasks.drain_outbox",
                  bind=True, max_retries=0, acks_late=True)
-def drain_outbox(self, limit: int = 50) -> dict:
-    """消费 outbox_events（02 §5）：worker-graph → Neo4j。beat 每 30s + 事件后即时派发。"""
+def drain_outbox(self, limit: int = 500) -> dict:
+    """消费 outbox_events（02 §5）：worker-graph → Neo4j。beat 每 30s + 事件后即时派发。
+    limit 500：大构建单次可产生数百 entity/relation 事件，50/轮会造成长尾。"""
     from app.infrastructure.database import OutboxEvent, SessionLocal
 
     db = SessionLocal()
