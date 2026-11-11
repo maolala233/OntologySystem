@@ -323,6 +323,7 @@ services:
       - --max-connections=200
       - --innodb-buffer-pool-size=256M
       - --performance-schema=OFF
+      - --skip-log-bin
     container_name: mysql-onto
     environment:
       MYSQL_DATABASE: ontology_db
@@ -342,7 +343,7 @@ services:
       options:
         max-file: "3"
         max-size: 10m
-    mem_limit: "671088640"
+    mem_limit: "1073741824"
     networks:
       default: null
     ports:
