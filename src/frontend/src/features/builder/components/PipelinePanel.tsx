@@ -51,6 +51,11 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
     // 重新发起构建时自动展开（旧版收起=整卡移除，页面再无恢复入口——2026-11-06 实测修复）
     // SSE 订阅（2026-11-07）：后端运行锁为事实源推送进度，3s 轮询降级为断流兜底
     const esRef = useRef<EventSource | null>(null);
+    // 订阅代际：换票（eventsUrl）是异步的，等待期间组件可能已卸载/已重订；
+    // 旧代际回来时若仍建 EventSource，该连接无人关闭，会永久占住浏览器对该域的
+    // 连接名额（Chrome 每域 6 条 HTTP/1.1），泄漏几条后所有新请求卡 pending
+    // （2026-11-10 实测：项目页反复进出后上传/状态接口全挂）
+    const subGenRef = useRef(0);
     const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [sseUp, setSseUp] = useState(false);
 
@@ -84,11 +89,13 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
     // SSE 订阅：服务端每秒看运行锁 diff 推帧、idle→running 跃迁也推——
     // 坐在页面上等构建全程零轮询；断流/超时才轮询兜底 + 8s 换票重订
     const subscribe = useCallback(async () => {
+        const gen = ++subGenRef.current;
         esRef.current?.close();
         esRef.current = null;
         try {
             const lastTask = localStorage.getItem(lastTaskKey(projectId)) || undefined;
             const url = await pipelineApi.eventsUrl(projectId, lastTask);
+            if (gen !== subGenRef.current) return;  // 已卸载/已重订：丢弃，避免遗留孤儿连接
             const es = new EventSource(url);
             es.onopen = () => setSseUp(true);
             es.onmessage = (event) => {
@@ -138,6 +145,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
     useEffect(() => {
         subscribe();
         return () => {
+            subGenRef.current += 1;  // 作废在途换票，防止清理后才建立的连接泄漏
             if (retryRef.current) {
                 clearTimeout(retryRef.current);
                 retryRef.current = null;
