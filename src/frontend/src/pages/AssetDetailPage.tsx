@@ -240,16 +240,27 @@ const AssetDetailPage: React.FC = () => {
         { title: project?.name || '本体详情' },
     ];
 
+    // 加载态沿用详情页外壳（深色底 + 面包屑），避免进入时先闪一屏白底再跳成深色布局
     if (loading) {
         return (
-            <div className="h-screen flex items-center justify-center">
-                <Spin size="large" />
+            <div className="h-screen flex flex-col" style={{ background: '#0F1420' }}>
+                <Navbar breadcrumbs={breadcrumbs} />
+                <div className="flex-1 flex items-center justify-center">
+                    <Spin size="large" />
+                </div>
             </div>
         );
     }
 
     if (!project) {
-        return null;
+        return (
+            <div className="h-screen flex flex-col" style={{ background: '#0F1420' }}>
+                <Navbar breadcrumbs={breadcrumbs} />
+                <div className="flex-1 flex items-center justify-center text-sm" style={{ color: '#8B94AB' }}>
+                    本体不存在或已下线
+                </div>
+            </div>
+        );
     }
 
     return (
