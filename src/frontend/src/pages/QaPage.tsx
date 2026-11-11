@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { message } from '../shared/feedback';
 import { Button, Input, Popconfirm, Popover, Select, Spin, Tag, Tooltip } from 'antd';
 import { QA_LAST_PROJECT_ID_KEY } from '../shared/keys';
+import BrandMark from '../components/BrandMark';
 import { PROJECT_STATUS, PUBLISHED_TAG } from '../shared/projectStatus';
 import {
     ClearOutlined,
@@ -12,6 +13,7 @@ import {
     LoadingOutlined,
     PlusOutlined,
     SendOutlined,
+    StopOutlined,
 } from '@ant-design/icons';
 import {
     askQuestionStream,
@@ -37,6 +39,8 @@ interface QaTurn {
     done?: QaDonePayload;
     error?: string;
     streaming: boolean;
+    /** 用户手动停止生成（保留已产出的部分内容） */
+    stopped?: boolean;
 }
 
 const CONV_ID_KEY = QA_LAST_PROJECT_ID_KEY;
@@ -62,7 +66,10 @@ export default function QaPage() {
     useEffect(() => {
         (async () => {
             try {
-                const list = await projectsApi.getSelectableProjects();
+                // 问答读取项目内的图谱/对话数据，后端按项目成员权限校验（require_project_role viewer），
+                // 公共资产只读、非成员访问会 403「无该项目访问权限」——因此这里只列自己的项目，
+                // 不再把已发布公共体混进选项（选了也进不去）。2026-11-11
+                const list = await projectsApi.getMyProjects();
                 setProjects(list);
                 // ?projectId= 直达（项目详情页「去问答」带参）> localStorage 记忆 > 第一个
                 const fromUrl = Number(new URLSearchParams(location.search).get('projectId'));
@@ -248,6 +255,19 @@ export default function QaPage() {
         }
     }, [question, projectId, activeConvId, modelId, loadConversations]);
 
+    // 停止生成：中断 SSE 请求；已产出的部分回答保留，本轮标记「已停止」
+    const stop = useCallback(() => {
+        abortRef.current?.abort();
+        abortRef.current = null;
+        setBusy(false);
+        setTurns(prev => {
+            const next = [...prev];
+            const cur = next[next.length - 1];
+            if (cur?.streaming) next[next.length - 1] = { ...cur, streaming: false, stopped: true };
+            return next;
+        });
+    }, []);
+
     const canSend = !busy && question.trim().length > 0 && projectId != null;
     const activeProject = projects.find(p => p.id === projectId);
 
@@ -344,8 +364,10 @@ export default function QaPage() {
                 <div className="flex-1 overflow-auto px-6 py-4">
                     {turns.length === 0 && (
                         <div className="h-full flex flex-col items-center justify-center text-gray-500">
-                            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-2xl mb-4"
-                              style={{ background: 'linear-gradient(135deg, #3b82f6, #9333ea)' }}>O</div>
+                            <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-4"
+                              style={{ background: 'linear-gradient(135deg, #3b82f6, #9333ea)' }}>
+                                <BrandMark size={32} strokeWidth={3.5} />
+                            </div>
                             <p className="text-gray-600">基于本体知识图谱的检索问答</p>
                             <p className="text-xs mt-1">回答带 [n] 引用角标，点击角标可定位到对应溯源引用卡</p>
                         </div>
@@ -380,6 +402,9 @@ export default function QaPage() {
                                                 </div>
                                             )}
                                         </div>
+                                    )}
+                                    {turn.stopped && (
+                                        <div className="mt-1 text-[11px] text-gray-400">已停止生成</div>
                                     )}
                                     {turn.done && (
                                         <div className="flex items-center gap-2 mt-1.5 text-[11px] text-gray-500 flex-wrap">
@@ -441,22 +466,32 @@ export default function QaPage() {
                                 }
                             }}
                         />
-                        <div className="flex items-center justify-between mt-2">
-                            <Tooltip title="清空当前对话（不删除历史）">
-                                <Button
-                                    size="small" type="text" icon={<ClearOutlined />}
-                                    onClick={newConversation} disabled={busy || turns.length === 0}
-                                />
-                            </Tooltip>
-                            <Button
-                                type="primary"
-                                icon={<SendOutlined />}
-                                onClick={send}
-                                loading={busy}
-                                disabled={!canSend}
-                            >
-                                {busy ? '生成中…' : '发送'}
-                            </Button>
+                        {/* 操作区：清空对话与发送/停止归到右侧一组，避免孤零零一个图标（2026-11-11） */}
+                        <div className="flex items-center justify-end mt-2">
+                            <div className="flex items-center gap-2">
+                                <Tooltip title="清空当前对话（不删除历史）">
+                                    <Button
+                                        size="small" type="text" icon={<ClearOutlined />}
+                                        onClick={newConversation} disabled={busy || turns.length === 0}
+                                    >
+                                        清空对话
+                                    </Button>
+                                </Tooltip>
+                                {busy ? (
+                                    <Button danger icon={<StopOutlined />} onClick={stop}>
+                                        停止生成
+                                    </Button>
+                                ) : (
+                                    <Button
+                                        type="primary"
+                                        icon={<SendOutlined />}
+                                        onClick={send}
+                                        disabled={!canSend}
+                                    >
+                                        发送
+                                    </Button>
+                                )}
+                            </div>
                         </div>
                     </div>
                 </div>

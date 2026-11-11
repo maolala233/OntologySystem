@@ -5,6 +5,7 @@ import { UserOutlined, LockOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { authAPI } from '../api/auth';
 import { useAuthStore } from '../shared/auth/authStore';
+import BrandMark from '../components/BrandMark';
 
 const LoginPage: React.FC = () => {
     const navigate = useNavigate();
@@ -67,7 +68,7 @@ const LoginPage: React.FC = () => {
                 <div className="text-center mb-8">
                     <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl mb-4"
                          style={{ background: 'linear-gradient(135deg, #3b82f6, #9333ea)' }}>
-                        <span className="text-white font-bold text-2xl">O</span>
+                        <BrandMark size={36} strokeWidth={4} />
                     </div>
                     <h1 className="text-3xl font-bold text-[#5B8DEF]">
                         本体建模

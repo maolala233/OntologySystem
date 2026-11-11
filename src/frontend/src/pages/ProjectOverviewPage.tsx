@@ -127,8 +127,10 @@ const ProjectOverviewPage: React.FC = () => {
 
                 {/* （资产概览统计行已删除：结果卡头部与文档卡标题已含同一组数字，避免重复） */}
 
-                {/* 文档管理卡：清单 + 上传 + 下载 + 删除（2026-11 构建界面改版） */}
-                <div className="mb-4">
+                {/* 文档管理卡：清单 + 上传 + 下载 + 删除（2026-11 构建界面改版）
+                    mt-4：卡片自身的 mb-* 被 index.css 的 .ant-card{margin-bottom:0} 覆盖，
+                    间距改用外层 div 控制（2026-11-11） */}
+                <div className="mt-4 mb-4">
                     <ProjectDocsCard projectId={pid} onChanged={load} />
                 </div>
 

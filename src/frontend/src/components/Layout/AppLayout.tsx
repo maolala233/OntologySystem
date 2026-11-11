@@ -32,6 +32,7 @@ import { projectsApi } from '../../api/projects';
 import { useAuthStore } from '../../shared/auth/authStore';
 import { confirmLeaveUnsaved } from '../../utils/unsavedGuard';
 import CopilotWidget from '../Copilot/CopilotWidget';
+import BrandMark from '../BrandMark';
 
 const { Sider, Content } = Layout;
 
@@ -233,19 +234,7 @@ const AppLayout: React.FC = () => {
                     <div className="flex items-center space-x-2">
                         <div className="w-8 h-8 rounded-lg flex items-center justify-center"
                              style={{ background: 'linear-gradient(135deg, #3b82f6, #9333ea)' }}>
-                            {/* 品牌标志：三节点图谱（与 public/favicon.svg 同一套图形） */}
-                            <svg viewBox="0 0 64 64" width="19" height="19" aria-hidden="true">
-                                <g stroke="#ffffff" strokeWidth="4" strokeLinecap="round" opacity="0.9">
-                                    <line x1="32" y1="19" x2="18" y2="43" />
-                                    <line x1="32" y1="19" x2="46" y2="43" />
-                                    <line x1="18" y1="43" x2="46" y2="43" />
-                                </g>
-                                <g fill="#ffffff">
-                                    <circle cx="32" cy="19" r="7" />
-                                    <circle cx="18" cy="43" r="7" />
-                                    <circle cx="46" cy="43" r="7" />
-                                </g>
-                            </svg>
+                            <BrandMark size={19} strokeWidth={4} />
                         </div>
                         {!collapsed && (
                             <span className="text-white font-semibold text-lg">本体平台</span>
