@@ -1,5 +1,8 @@
 # 构建上下文瘦身：镜像构建只需要源码与配置，数据卷/依赖缓存/工具包全部排除
 volumes/
+data/
+offline-bundle/
+offline-bundle.tar
 offline_packages/
 old_coding/
 test/
@@ -12,6 +15,17 @@ build-scripts/
 docs/
 .git/
 .gitignore
+.env
+**/.env
+src/frontend/node_modules/
+src/frontend/dist/
+src/backend/data/
+src/backend/logs/
+src/backend/uploads/
+src/backend/temp/
+src/backend/temp_uploads/
+src/backend/temp_downloads/
+src/backend/TTL/
 *.md
 docker-compose*.yml
 2025*.docx

@@ -9,12 +9,30 @@
 # 构建方式（必须在仓库根目录执行，构建上下文 = 仓库根）：
 #   docker build -f dockerfile/envbackend-slim.Dockerfile -t ontology-backend-env:0.0.4-slim .
 FROM python:3.11-slim
+ARG DEBIAN_MIRROR=mirrors.aliyun.com
 
 WORKDIR /app
 
-# 系统依赖：antiword（.doc 解析）
-RUN apt-get update && apt-get install -y --no-install-recommends antiword \
-    && rm -rf /var/lib/apt/lists/*
+# 系统依赖：antiword（.doc 解析）；apt 源切到国内镜像
+RUN set -eux; \
+    if [ -f /etc/apt/sources.list ]; then \
+      sed -i \
+        -e "s|deb.debian.org|${DEBIAN_MIRROR}|g" \
+        -e "s|security.debian.org|${DEBIAN_MIRROR}|g" \
+        -e "s|archive.debian.org|${DEBIAN_MIRROR}|g" \
+        /etc/apt/sources.list; \
+    fi; \
+    for f in /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list; do \
+      [ -e "$f" ] || continue; \
+      sed -i \
+        -e "s|deb.debian.org|${DEBIAN_MIRROR}|g" \
+        -e "s|security.debian.org|${DEBIAN_MIRROR}|g" \
+        -e "s|archive.debian.org|${DEBIAN_MIRROR}|g" \
+        "$f"; \
+    done; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends antiword; \
+    rm -rf /var/lib/apt/lists/*
 
 # 关键一步：先装 CPU 版 torch（不带 CUDA/nvidia/triton），占住 docling 的 torch 依赖位。
 # download.pytorch.org 国内直连易超时，用阿里云 pytorch-wheels 镜像（cp311 最高 2.6.0+cpu，

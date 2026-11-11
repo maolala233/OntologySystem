@@ -493,7 +493,7 @@ services:
     image: ontology-backend:latest
     container_name: ontology-backend
     ports:
-    - 3001:3001
+    - "${API_PORT:-3001}:3001"
     environment:
       TZ: Asia/Shanghai
       NEO4J_URI: bolt://neo4j:7687
@@ -519,6 +519,9 @@ services:
       MINIO_PUBLIC_PATH_PREFIX: /minio
       SEMANTICA_TRIPLET_BACKEND: oxigraph
       SEMANTICA_TRIPLET_PATH: /data/oxigraph
+      # 代码实际读取的是 OXIGRAPH_PATH（config.py / oxigraph_sink.py），
+      # 必须与 worker-rdf 指向同一个挂载目录。
+      OXIGRAPH_PATH: /data/oxigraph
       VECTOR_STORE_MILVUS_HOST: standalone
       VECTOR_STORE_MILVUS_PORT: '19530'
       VECTOR_STORE_DIMENSION: '1024'
@@ -539,7 +542,9 @@ services:
     - ${DOCKER_VOLUME_DIRECTORY:-.}/models:/opt/docling-models:ro
     - ./uploads:/app/uploads
     - ./temp:/app/temp
-    - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/oxigraph:/data/oxigraph:ro
+    # 健康检查会写 .healthcheck；只读挂载会导致 oxigraph 灯永远 down。
+    # 真正的 RocksDB 写句柄仍只由 worker-rdf 打开（单写者约束不变）。
+    - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/oxigraph:/data/oxigraph
     restart: always
   worker-parse:
     image: ontology-backend:latest
@@ -623,6 +628,7 @@ services:
       MYSQL_PASSWORD: password
       SEMANTICA_TRIPLET_BACKEND: oxigraph
       SEMANTICA_TRIPLET_PATH: /data/oxigraph
+      OXIGRAPH_PATH: /data/oxigraph
     volumes:
     - ./logs:/app/logs
     - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/oxigraph:/data/oxigraph
@@ -645,7 +651,7 @@ services:
     image: ontology-frontend:latest
     container_name: ontology-frontend
     ports:
-    - 3080:80
+    - "${FRONTEND_PORT:-3080}:80"
     restart: always
 
 networks:

@@ -717,12 +717,16 @@ def _create_initial_data(db):
             User(
                 username="admin",
                 hashed_password=bcrypt.hashpw("cbil123456".encode('utf-8'), bcrypt.gensalt()).decode('utf-8'),
-                is_active=True
+                is_active=True,
+                # 迁移里的 admin 回填在“先迁移、后建种子”的全新库上不会命中，
+                # 必须在种子阶段显式写 role，否则 admin 会拿到默认 user，看不到管理菜单。
+                role="admin",
             ),
             User(
                 username="testuser",
                 hashed_password=bcrypt.hashpw("123456".encode('utf-8'), bcrypt.gensalt()).decode('utf-8'),
-                is_active=True
+                is_active=True,
+                role="user",
             )
         ]
         

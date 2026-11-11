@@ -127,9 +127,17 @@ class LLMClient:
         raw_url = base_url if base_url is not None else _settings.LLM_BASE_URL
         self.base_url = self._clean_base_url(raw_url)
 
-        # 部分模型（如方舟 glm-5-3-flash）不支持 response_format.type=json_schema，
-        # 首次遇到该 400 后降级为 json_object 并记住，避免每次调用都空耗 3 次重试
-        self._json_schema_supported = True
+        # 部分模型（如方舟 glm-5-3-flash、DeepSeek Flash）不支持
+        # response_format.type=json_schema。DeepSeek 会直接返回 400
+        # "This response_format type is unavailable now"，这里提前降级，
+        # 避免每次调用都先空耗一次 400/重试；其他模型首次遇到 400 后也会自动降级。
+        _model_lower = (self.model or "").lower()
+        _base_lower = (self.base_url or "").lower()
+        self._json_schema_supported = not (
+            "deepseek" in _model_lower or "api.deepseek.com" in _base_lower
+        )
+        if not self._json_schema_supported:
+            logger.info("[LLM] 当前 provider 不支持 json_schema，直接使用 json_object 模式")
 
         logger.info(f"LLMClient 正在初始化：model={self.model}, base_url={self.base_url}")
 
@@ -392,6 +400,7 @@ class LLMClient:
             }
         else:
             requires_json = (
+                bool(json_schema) or
                 "json" in system_prompt.lower() or
                 "json" in user_prompt.lower() or
                 "JSON" in system_prompt or
@@ -417,7 +426,16 @@ class LLMClient:
     @staticmethod
     def _is_json_schema_unsupported(err: Exception) -> bool:
         msg = str(err).lower()
-        return "json_schema" in msg and ("not supported" in msg or "invalidparameter" in msg)
+        if "json_schema" in msg and any(
+            k in msg for k in ("not supported", "invalidparameter", "invalid parameter",
+                               "unavailable")
+        ):
+            return True
+        # DeepSeek 的实际报错不包含 json_schema 字样：
+        # "This response_format type is unavailable now"
+        return "response_format" in msg and any(
+            k in msg for k in ("unavailable", "not supported", "invalid", "unsupported")
+        )
 
     def _create_with_hard_gate(self, api_kwargs: Dict[str, Any], timeout: Optional[float]):
         """create 调用的硬超时闸（2026-11-05）：自定义 http_client 下 openai SDK 的
@@ -1027,7 +1045,7 @@ class LLMClient:
                 }
             }
         else:
-            requires_json = "json" in system_prompt.lower() or "json" in user_prompt.lower()
+            requires_json = bool(json_schema) or "json" in system_prompt.lower() or "json" in user_prompt.lower()
             if requires_json:
                 api_kwargs["response_format"] = {"type": "json_object"}
 
@@ -1106,7 +1124,7 @@ class LLMClient:
                 }
             }
         else:
-            requires_json = "json" in system_prompt.lower() or "json" in user_prompt.lower()
+            requires_json = bool(json_schema) or "json" in system_prompt.lower() or "json" in user_prompt.lower()
             if requires_json:
                 api_kwargs["response_format"] = {"type": "json_object"}
 

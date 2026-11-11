@@ -42,7 +42,11 @@ neo4j>=5.0.0
 
 # ===== M0 新增（Semantica 演进重构 · 见 docs/design/01）=====
 # 本体引擎（适配层唯一依赖，业务层禁止直接 import）
-semantica[all]==0.7.*
+# 只装平台实际用到的 extras：文档解析（docling）、RDF 存储（pyoxigraph）、
+# Neo4j / Milvus 适配。不要用 [all]：它会拉 google-adk / crewai / litellm 等
+# 大量未使用依赖，并与 FastAPI、OpenTelemetry 的版本范围互相冲突，导致 pip
+# 回溯几十分钟甚至无解。
+semantica[parse-docling,tripletstore-oxigraph,graph-neo4j,vectorstore-milvus]==0.7.*
 # 任务队列（parse/extract/graph/rdf 四队列 + beat）
 celery[redis]>=5.3
 # 业务对象存储（健康检查 / 文件链路 M3）

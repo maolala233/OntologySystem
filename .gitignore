@@ -8,6 +8,7 @@ testfile/
 src/backend/TTL/
 src/frontend/node_modules/
 log/
+logs/
 OWL2VOWL/
 WebVOWL/
 src/frontend/dist/
@@ -24,6 +25,13 @@ models/
 # files
 *.pyc
 .env
+# 中间件一键部署生成物（含密码，不入库）
+docker-compose-middleware-cloud.override.yml
+docker-compose-app-cloud.override.yml
+middleware-connection.env
+offline-bundle/
+offline-bundle.tar
+/data/
 *.ttl
 *.log
 *.log.*
@@ -65,3 +73,15 @@ report_preview*.png
 pipeline_profiling_patch.zip
 pipeline_profiler_fix.zip
 startup_visibility_patch.zip
+deploy.sh
+deploy-full.sh
+deploy-middleware.sh
+docker-compose-local.yml
+dockerfile\envbackend-deploy.Dockerfile
+dockerfile\frontend-deploy.Dockerfile
+install-offline.sh
+make-offline-bundle.sh
+update-app.sh
+envbackend-deploy.Dockerfile
+frontend-deploy.Dockerfile
+add-deepseek-models.py
