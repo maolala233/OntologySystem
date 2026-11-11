@@ -8,9 +8,10 @@ import {
     ArrowRightOutlined,
     ApartmentOutlined,
     ShareAltOutlined,
-    ThunderboltOutlined,
+    BookOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
+import { useAuthStore } from '../shared/auth/authStore';
 import Navbar from '../components/Layout/Navbar';
 import TechHero from '../components/TechHero';
 import { projectsApi } from '../api/projects';
@@ -75,19 +76,19 @@ const HomePage: React.FC = () => {
         fetchStats();
     }, []);
 
+    const { user, modules } = useAuthStore();
+    // 模块可见性：admin 全量；普通用户按授权矩阵；矩阵未加载前放行（避免首屏闪烁）
+    const canUse = (code: string) =>
+        user?.role === 'admin' ? true : modules.length > 0 ? modules.includes(code) : true;
+
+    // 三张卡各去不同页面：智能提取/可视化编辑本是同一项目内的前后两步，合并为「本体构建」，
+    // 第三张补上平台已具备、首页原先缺入口的「本体问答」（2026-11-11）
     const features = [
         {
-            icon: <ThunderboltOutlined />,
-            color: C.blue,
-            title: '智能提取',
-            description: '上传文档，AI 自动提取本体结构与实例',
-            action: () => navigate('/my-projects'),
-        },
-        {
             icon: <ApartmentOutlined />,
-            color: C.purple,
-            title: '可视化编辑',
-            description: '骨架画布 + Sigma 图谱探索，双模式编辑',
+            color: C.blue,
+            title: '本体构建',
+            description: '上传文档 AI 提取结构 · 骨架画布精修 · 实例图谱探索',
             action: () => navigate('/my-projects'),
         },
         {
@@ -97,6 +98,13 @@ const HomePage: React.FC = () => {
             description: '版本快照、审核门禁，发布到公共资产中心',
             action: () => navigate('/asset-center'),
         },
+        ...(canUse('qa') ? [{
+            icon: <BookOutlined />,
+            color: C.purple,
+            title: '本体问答',
+            description: '基于已建本体的自然语言问答，答案可溯源到图谱',
+            action: () => navigate('/qa'),
+        }] : []),
     ];
 
     const statCards = [
@@ -119,9 +127,8 @@ const HomePage: React.FC = () => {
         <div className="h-full flex flex-col bg-gray-50">
             <style>{`
                 .hp-mono { font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace; }
-                .hp-stat-card { position: relative; overflow: hidden; border-radius: 14px; border: 1px solid #EEF1F8;
-                    transition: all .25s ease; }
-                .hp-stat-card:hover { transform: translateY(-3px); box-shadow: 0 12px 28px -10px rgba(15,20,32,.18); border-color: #E2E8F8; }
+                /* 统计卡片只读、无跳转：不加 hover 抬升，避免"可点击"的误导（2026-11-11） */
+                .hp-stat-card { position: relative; overflow: hidden; border-radius: 14px; border: 1px solid #EEF1F8; }
                 .hp-stat-bar { position:absolute; top:0; left:0; right:0; height:3px; }
                 .hp-feature-card { position: relative; overflow: hidden; border-radius: 14px; border: 1px solid #EEF1F8;
                     transition: all .25s ease; cursor: pointer; }
@@ -197,7 +204,7 @@ const HomePage: React.FC = () => {
                     <h2 className="text-xl sm:text-2xl font-bold text-gray-800 mb-4 sm:mb-6">核心功能</h2>
                     <Row gutter={[16, 16]}>
                         {features.map((feature, index) => (
-                            <Col xs={24} sm={24} md={12} lg={8} key={index}>
+                            <Col xs={24} sm={24} md={12} lg={features.length === 3 ? 8 : 12} key={index}>
                                 <Card className="hp-feature-card h-full shadow-sm" styles={{ body: { padding: 24 } }} onClick={feature.action}>
                                     <div>
                                         <span
