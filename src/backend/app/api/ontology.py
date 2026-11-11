@@ -9,6 +9,7 @@ from urllib.parse import quote
 import pandas as pd
 import requests as req
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
+from pydantic import BaseModel, Field
 from rdflib import OWL, RDF, RDFS, Graph
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
@@ -405,6 +406,57 @@ def import_schema_from_project(
     db.commit()
     return {"imported_classes": len(imported_nodes), "imported_relations": len(class_edges),
             "version_no": new_version_no}
+
+
+class ProjectBatchDeleteIn(BaseModel):
+    project_ids: list[int] = Field(..., min_length=1, max_length=200)
+
+
+# 批量删除项目（单事务逐项目提交；部分失败不影响其他项目）
+@router.post("/batch-delete")
+def batch_delete_projects(
+    body: ProjectBatchDeleteIn,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """批量删除项目，权限与单项目删除一致：超管可删任意项目，普通用户仅可删自己名下。
+
+    返回逐项目结果，便于前端展示“部分成功”：
+      {"requested": 3, "deleted": [3, 4], "failed": [{"project_id": 5, "reason": "..."}]}
+    """
+    # 去重并保持请求顺序，避免同一项目被重复删除
+    project_ids = list(dict.fromkeys(body.project_ids))
+    deleted: list[int] = []
+    failed: list[dict[str, Any]] = []
+
+    for project_id in project_ids:
+        db_project = db.query(Project).filter(Project.id == project_id).first()
+        if not db_project:
+            failed.append({"project_id": project_id, "reason": "project not found"})
+            continue
+        if db_project.owner_id != current_user.id and not is_super_admin(current_user):
+            failed.append({"project_id": project_id, "reason": "no permission"})
+            continue
+
+        try:
+            # 与单项目删除保持同一清理顺序：成员行、审核项、项目主表。
+            # 每个项目独立提交，避免一个外键/约束错误回滚掉整批。
+            db.query(ProjectMember).filter(ProjectMember.project_id == project_id).delete()
+            db.query(ReviewItem).filter(ReviewItem.project_id == project_id).delete()
+            db.delete(db_project)
+            db.commit()
+            deleted.append(project_id)
+        except Exception as exc:  # noqa: BLE001
+            db.rollback()
+            logger.warning(f"[project] 批量删除失败 project_id={project_id}: {exc}")
+            failed.append({"project_id": project_id, "reason": str(exc)[:200]})
+
+    return {
+        "requested": len(project_ids),
+        "deleted": deleted,
+        "failed": failed,
+        "neo4j_sync": "async",
+    }
 
 
 # 删除项目
