@@ -6,7 +6,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Card, Collapse, Drawer, Modal, Popconfirm, Radio, Select, Space, Table, Tag, Tooltip, Upload, Input } from 'antd';
-import { UPLOAD_ACCEPT, UPLOAD_EXTS } from './uploadFormats';
+import { UPLOAD_ACCEPT, UPLOAD_EXTS, MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from './uploadFormats';
 import { message, infoModal } from '../../../shared/feedback';
 import {
     CloudUploadOutlined, DeleteOutlined, DownloadOutlined, FileTextOutlined,
@@ -260,7 +260,7 @@ const DocumentsTab: React.FC<Props> = ({ projectId, onChanged }) => {
                 columns={columns}
                 dataSource={docs}
                 pagination={{ pageSize: 10, showSizeChanger: false }}
-                locale={{ emptyText: '暂无文档；点击右上角「上传文档」开始（txt/pdf/docx/md/xlsx/csv/pptx，≤200MB）' }}
+                locale={{ emptyText: `暂无文档；点击右上角「上传文档」开始（txt/pdf/docx/md/xlsx/csv/pptx，≤${MAX_UPLOAD_LABEL}）` }}
             />
 
             {/* 上传弹窗：只选文件；解析方法自动路由、上传完自动进一键管线。
@@ -290,8 +290,8 @@ const DocumentsTab: React.FC<Props> = ({ projectId, onChanged }) => {
                                 message.warning(`不支持 .${ext} 格式：仅支持 ${UPLOAD_EXTS.join(' / ')}`);
                                 return Upload.LIST_IGNORE;   // 不进列表
                             }
-                            if (f.size > 200 * 1024 * 1024) {
-                                message.warning(`「${f.name}」超过 200MB 上限`);
+                            if (f.size > MAX_UPLOAD_BYTES) {
+                                message.warning(`「${f.name}」超过 ${MAX_UPLOAD_LABEL} 上限`);
                                 return Upload.LIST_IGNORE;
                             }
                             return false;  // 阻止自动上传（统一手动提交）
@@ -299,7 +299,7 @@ const DocumentsTab: React.FC<Props> = ({ projectId, onChanged }) => {
                     >
                         <p className="ant-upload-drag-icon"><InboxOutlined /></p>
                         <p className="ant-upload-text">点击或拖拽文件到此处</p>
-                        <p className="ant-upload-hint">支持 {UPLOAD_EXTS.join(' / ')}，单文件 ≤200MB，可多选</p>
+                        <p className="ant-upload-hint">支持 {UPLOAD_EXTS.join(' / ')}，单文件 ≤{MAX_UPLOAD_LABEL}，可多选</p>
                     </Upload.Dragger>
                     <div className="text-xs text-gray-500">
                         上传后自动：解析（按文档内容自动选择解析方法，扫描件走 OCR）→ AI 抽取骨架与实例

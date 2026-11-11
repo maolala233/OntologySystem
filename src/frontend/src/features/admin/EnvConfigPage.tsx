@@ -93,7 +93,7 @@ const EnvConfigPage: React.FC = () => {
     if (!data) return null;
 
     return (
-        <div className="p-4 sm:p-6" style={{ maxWidth: 1100, margin: '0 auto' }}>
+        <div className="p-4 sm:p-6 h-full overflow-y-auto scrollbar-stable" style={{ maxWidth: 1100, margin: '0 auto' }}>
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                 <div>
                     <h1 className="text-xl font-bold text-gray-800 m-0">环境配置</h1>

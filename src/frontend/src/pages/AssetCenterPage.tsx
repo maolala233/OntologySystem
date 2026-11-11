@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { PROJECT_STATUS, PUBLISHED_TAG } from '../shared/projectStatus';
 import { Card, Empty, Spin, message, Tag, Input, Select, Button } from 'antd';
-import { EyeOutlined, UserOutlined, NodeIndexOutlined, AppstoreOutlined, DatabaseOutlined, ArrowLeftOutlined, CheckCircleOutlined, ReloadOutlined } from '@ant-design/icons';
+import { EyeOutlined, UserOutlined, NodeIndexOutlined, AppstoreOutlined, DatabaseOutlined, ArrowLeftOutlined, CheckCircleOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Layout/Navbar';
 import TechHero, { TECH_COLORS, GraphMotif } from '../components/TechHero';
@@ -10,6 +10,14 @@ import { getDomains, KnowledgeDomain } from '../api/domains';
 import { ProjectData } from '../types/ontology';
 
 const TC = TECH_COLORS;
+
+// 模块级缓存：进入详情页再返回时，组件会重新挂载——先用上次的数据立即渲染，
+// 再后台刷新，避免"整页转圈 → 内容重现"的闪烁（2026-11-11）
+interface DomainWithCount extends KnowledgeDomain {
+    projectCount: number;
+}
+let cachedDomains: DomainWithCount[] | null = null;
+let cachedPublicProjects: ProjectData[] | null = null;
 
 /**
  * 资产中心页面 - 两层视图结构：
@@ -23,50 +31,41 @@ const AssetCenterPage: React.FC = () => {
     const [currentView, setCurrentView] = useState<'domain' | 'project'>('domain');
     
     // 知识域相关状态
-    interface DomainWithCount extends KnowledgeDomain {
-        projectCount: number;
-    }
-    
-    const [domains, setDomains] = useState<DomainWithCount[]>([]);
+    const [domains, setDomains] = useState<DomainWithCount[]>(cachedDomains ?? []);
     const [selectedDomain, setSelectedDomain] = useState<KnowledgeDomain | null>(null);
     
     // 项目相关状态
-    const [projects, setProjects] = useState<ProjectData[]>([]);
-    const [filteredProjects, setFilteredProjects] = useState<ProjectData[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [projects, setProjects] = useState<ProjectData[]>(cachedPublicProjects ?? []);
+    // 有缓存说明是"返回"场景：不显示整页 loading，直接渲染缓存再后台刷新
+    const [loading, setLoading] = useState(!cachedDomains);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [searchText, setSearchText] = useState('');
     const [sortBy, setSortBy] = useState<'latest' | 'nodes'>('latest');
 
+    // 切换层级时回到顶部：否则新视图会继承上一屏的滚动位置，看起来像"跳了一下"
+    const scrollRef = useRef<HTMLDivElement | null>(null);
     useEffect(() => {
-        if (currentView === 'domain') {
-            loadDomainsWithProjects();
-        } else {
-            loadProjectsByDomain();
-        }
+        scrollRef.current?.scrollTo({ top: 0 });
     }, [currentView, selectedDomain]);
 
-    useEffect(() => {
-        filterAndSortProjects();
-    }, [projects, searchText, sortBy]);
-
-    // 加载所有知识域及其项目数量
-    const loadDomainsWithProjects = async () => {
-        setLoading(true);
+    // 一次性拉取知识域 + 公共项目（首屏与失败重试共用）；
+    // 切换视图/选域一律本地过滤，不再整页 loading——原来每次切换都是
+    // 「内容消失 → 转圈 → 内容重现」的强闪烁（2026-11-11）
+    const loadAll = async () => {
+        if (!cachedDomains) setLoading(true);
         try {
-            // 获取所有知识域
-            const allDomains = await getDomains();
-            
-            // 获取所有公共项目
-            const allProjects = await projectsApi.getPublicProjects();
-            
-            // 统计每个知识域的项目数量
-            const domainStats: DomainWithCount[] = allDomains.map(domain => ({
+            const [allDomains, allProjects] = await Promise.all([
+                getDomains(),
+                projectsApi.getPublicProjects(),
+            ]);
+            const domainsWithCount = allDomains.map((domain) => ({
                 ...domain,
-                projectCount: allProjects.filter(p => p.domain_id === domain.id).length,
+                projectCount: allProjects.filter((p) => p.domain_id === domain.id).length,
             }));
-            
-            setDomains(domainStats);
+            cachedDomains = domainsWithCount;
+            cachedPublicProjects = allProjects;
+            setDomains(domainsWithCount);
+            setProjects(allProjects);
             setLoadError(null);
         } catch (error: any) {
             const d = error?.response?.data?.message || error?.response?.data?.detail || error?.message;
@@ -75,31 +74,23 @@ const AssetCenterPage: React.FC = () => {
             setLoading(false);
         }
     };
+    // 两个视图的错误重试按钮继续可用
+    const loadDomainsWithProjects = loadAll;
+    const loadProjectsByDomain = loadAll;
 
-    // 加载指定知识域下的项目
-    const loadProjectsByDomain = async () => {
-        setLoading(true);
-        try {
-            const allProjects = await projectsApi.getPublicProjects();
-            
-            // 如果选中了特定知识域，过滤项目
-            let filtered = allProjects;
-            if (selectedDomain && selectedDomain.id !== 0) {
-                filtered = allProjects.filter(p => p.domain_id === selectedDomain.id);
-            }
-            
-            setProjects(filtered);
-            setLoadError(null);
-        } catch (error: any) {
-            const d = error?.response?.data?.message || error?.response?.data?.detail || error?.message;
-            setLoadError(String(d || '未知错误'));
-        } finally {
-            setLoading(false);
-        }
-    };
+    useEffect(() => {
+        loadAll();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
-    const filterAndSortProjects = () => {
+    // 过滤/排序在渲染时计算：原来走 state + effect，切换视图的那一帧会先渲染上一版
+    // 列表（旧域的项目或空列表），随后 effect 再刷新 → 肉眼可见的闪烁（2026-11-11）
+    const filteredProjects = useMemo(() => {
         let filtered = projects;
+        // 视图层过滤：进入某知识域时只看该域（id=0 为「全部」）
+        if (currentView === 'project' && selectedDomain && selectedDomain.id !== 0) {
+            filtered = filtered.filter((p) => p.domain_id === selectedDomain.id);
+        }
 
         // 搜索过滤
         if (searchText) {
@@ -120,12 +111,8 @@ const AssetCenterPage: React.FC = () => {
             );
         }
 
-        setFilteredProjects(filtered);
-    };
-
-    const handleSearch = (value: string) => {
-        setSearchText(value);
-    };
+        return filtered;
+    }, [projects, currentView, selectedDomain, searchText, sortBy]);
 
     // 处理知识域选择
     const handleDomainSelect = (domain: KnowledgeDomain) => {
@@ -276,7 +263,16 @@ const AssetCenterPage: React.FC = () => {
                     </div>
                     
                     {/* 统计和排序栏 */}
-                    <div className="flex items-center gap-4 w-full sm:w-auto">
+                    <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+                        <Input
+                            allowClear
+                            value={searchText}
+                            onChange={(e) => setSearchText(e.target.value)}
+                            placeholder="搜索本体名称或描述…"
+                            prefix={<SearchOutlined className="text-gray-400" />}
+                            size="large"
+                            className="w-full sm:w-[240px]"
+                        />
                         <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 rounded-full">
                             <span className="text-[#5B8DEF] font-semibold">{filteredProjects.length}</span>
                             <span className="text-gray-600 text-sm">个本体</span>
@@ -437,7 +433,7 @@ const AssetCenterPage: React.FC = () => {
     );
 
     return (
-        <div className="min-h-screen bg-gray-50">
+        <div className="h-full flex flex-col bg-gray-50">
             <style>{`
                 .ac-cover { position: relative; overflow: hidden; }
                 .ac-cover-grid {
@@ -447,9 +443,9 @@ const AssetCenterPage: React.FC = () => {
                     background-size: 24px 24px;
                 }
             `}</style>
-            <Navbar breadcrumbs={breadcrumbs} onSearch={handleSearch} />
+            <Navbar breadcrumbs={breadcrumbs} />
 
-            <div className="p-4 sm:p-6 lg:p-8">
+            <div ref={scrollRef} className="p-4 sm:p-6 lg:p-8 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
                 <TechHero
                     compact
                     chips={

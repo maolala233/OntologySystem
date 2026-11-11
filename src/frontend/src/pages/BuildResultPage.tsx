@@ -195,8 +195,8 @@ const BuildResultPage: React.FC = () => {
     const sc = summary.pipeline?.selfcheck;
 
     return (
-        <div className="min-h-screen bg-gray-50 flex flex-col">
-            <div className="flex items-center gap-3 px-4 py-2 bg-white border-b border-gray-200">
+        <div className="h-full flex flex-col bg-gray-50">
+            <div className="shrink-0 flex items-center gap-3 px-4 py-2 bg-white border-b border-gray-200">
                 <Button icon={<ArrowLeftOutlined />} size="small"
                         onClick={() => navigate(`/projects/${pid}`)}>返回</Button>
                 <span className="font-semibold text-gray-800">本体图谱 · {projectName || `#${pid}`}</span>
@@ -236,7 +236,7 @@ const BuildResultPage: React.FC = () => {
                 </div>
             </div>
 
-            <div className="flex-1 p-3">
+            <div className="flex-1 min-h-0 p-3 overflow-y-auto scrollbar-stable">
                 <div className="bg-gray-900 rounded-lg relative flex overflow-hidden" style={{ height: 'calc(100vh - 110px)', minHeight: 480 }}>
                     {/* 左侧类/实例列表（与资产中心同款，可收起） */}
                     <div

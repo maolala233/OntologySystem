@@ -189,7 +189,7 @@ const ScorecardPage: React.FC = () => {
     ];
 
     return (
-        <div style={{ padding: 24, maxWidth: 1100, margin: '0 auto' }}>
+        <div className="h-full overflow-y-auto scrollbar-stable" style={{ padding: 24, maxWidth: 1100, margin: '0 auto' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
                 <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)}>返回</Button>
                 <Title level={4} style={{ margin: 0 }}>本体健康记分卡</Title>

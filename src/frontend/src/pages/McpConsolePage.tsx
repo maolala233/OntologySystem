@@ -217,7 +217,11 @@ export default function McpConsolePage() {
         (async () => {
             try {
                 if (isAdmin) setUsers(await adminApi.listUsers()); // 仅 admin 需要持有人下拉
-                setProjects(await projectsApi.getSelectableProjects());
+                // 自助签发要求项目成员身份（后端 _require_project_member）：非 admin 只列自己的项目，
+                // 否则选了公共资产后点签发会 403「仅项目成员可为该项目签发令牌」；admin 走管理端接口不受限
+                setProjects(isAdmin
+                    ? await projectsApi.getSelectableProjects()
+                    : await projectsApi.getMyProjects());
             } catch { /* 下拉留空 */ }
         })();
     }, [loadTokens, isAdmin]);
@@ -541,7 +545,7 @@ export default function McpConsolePage() {
             {/* ══ 右侧主区 */}
             <main className="flex-1 min-w-0 flex flex-col min-h-0">
                 {/* 顶部 Tab（工具 / 资源 / Ping） */}
-                <div className="px-4 pt-3 bg-white border-b border-gray-200">
+                <div className="sticky top-0 z-30 px-4 pt-3 bg-white border-b border-gray-200">
                     <div className="inline-flex bg-gray-100 rounded-lg p-1 gap-1">
                         {tabItems.map(t => (
                             <button key={t.key} type="button"

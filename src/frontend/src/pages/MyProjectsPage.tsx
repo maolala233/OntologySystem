@@ -16,12 +16,13 @@ import {
  InfoCircleOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
+import type { UploadFile } from 'antd/es/upload/interface';
 import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import { Segmented } from 'antd';
 import { useAuthStore } from '../shared/auth/authStore';
 import { PROJECT_STATUS, PUBLISHED_TAG, STALE_PUBLISHED_TAG } from '../shared/projectStatus';
-import { UPLOAD_ACCEPT, UPLOAD_EXTS } from '../features/builder/documents/uploadFormats';
+import { UPLOAD_ACCEPT, UPLOAD_EXTS, MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from '../features/builder/documents/uploadFormats';
 import Navbar from '../components/Layout/Navbar';
 import TechHero, { TECH_COLORS, GraphMotif } from '../components/TechHero';
 import { documentsApi } from '../api/documents';
@@ -102,7 +103,17 @@ const MyProjectsPage: React.FC = () => {
 
     // 新建项目：名称/域 + 可选上传文档 + 构建时机（一级菜单，默认标准构建）——创建即后台构建
     const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+    // Upload 受控文件列表：与 pendingFiles 同步，关闭弹窗时可一并清空（否则组件内部状态残留）
+    const [uploadList, setUploadList] = useState<UploadFile[]>([]);
     const [creating, setCreating] = useState(false);
+
+    // 关闭创建弹窗：清空全部输入（名称/描述/构建方式/已选文件），下次打开从空白开始
+    const closeCreateModal = () => {
+        setIsModalOpen(false);
+        form.resetFields();
+        setUploadList([]);
+        setPendingFiles([]);
+    };
 
     const handleCreateProject = async (values: any) => {
         setCreating(true);
@@ -140,9 +151,7 @@ const MyProjectsPage: React.FC = () => {
                     : '；上传文档后点「一键构建」即可开始';
                 message.success(`项目已创建${buildNote}`);
             }
-            setIsModalOpen(false);
-            form.resetFields();
-            setPendingFiles([]);
+            closeCreateModal();
 
             navigate(`/projects/${pid}`);
         } catch (error: any) {
@@ -215,6 +224,38 @@ const MyProjectsPage: React.FC = () => {
         });
     };
 
+    // 批量删除：逐条调用删除接口，统计成功/失败并给出结果提示（不可恢复，先确认影响范围）
+    const handleBatchDelete = () => {
+        const ids = [...selectedIds];
+        if (ids.length === 0) return;
+        confirmImpact({
+            title: `确认删除选中的 ${ids.length} 个项目`,
+            impact: [
+                '每个项目内的全部文档、AI 抽取的本体框架与实例图谱将一并删除，且无法恢复；',
+                '待处理与历史审核项、评测记录、版本快照将一并删除；',
+                '已发布到资产中心的项目，公共区的展示也会随之消失。',
+            ],
+            okText: '确认删除',
+            onOk: async () => {
+                let okCount = 0;
+                const failed: string[] = [];
+                for (const id of ids) {
+                    try {
+                        await projectsApi.deleteProject(id);
+                        okCount++;
+                    } catch {
+                        failed.push(projects.find(p => p.id === id)?.name || `#${id}`);
+                    }
+                }
+                setSelectedIds(new Set());
+                await loadProjects();
+                if (failed.length === 0) message.success(`已删除 ${okCount} 个项目`);
+                else if (okCount === 0) message.error(`删除失败：${failed.join('、')}`);
+                else message.warning(`成功删除 ${okCount} 个，失败 ${failed.length} 个：${failed.join('、')}`);
+            },
+        });
+    };
+
     const statusCounts = useMemo(() => {
         const c = { total: projects.length, draft: 0, published: 0, ready: 0,
                     building: 0, scheduled: 0 };
@@ -277,12 +318,12 @@ const MyProjectsPage: React.FC = () => {
         <Space size={0}>
             <Button type="link" size="small" icon={<EyeOutlined />}
                     onClick={() => navigate(`/projects/${project.id}`)}>
-                打开
+                详情
             </Button>
             <Tooltip title="编辑项目名称与介绍">
                 <Button type="link" size="small" icon={<EditOutlined />}
                         onClick={() => handleEditProject(project)}>
-                    项目信息
+                    编辑
                 </Button>
             </Tooltip>
             <Popconfirm
@@ -355,7 +396,7 @@ const MyProjectsPage: React.FC = () => {
     ];
 
     return (
-        <div className="min-h-screen bg-gray-50">
+        <div className="h-full flex flex-col bg-gray-50">
             <style>{`
                 .mp-cover { position: relative; overflow: hidden; }
                 .mp-cover-grid {
@@ -373,7 +414,7 @@ const MyProjectsPage: React.FC = () => {
                 onCreateProject={() => setIsModalOpen(true)}
             />
 
-            <div className="p-4 sm:p-6">
+            <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
                 <TechHero
                     compact
                     chips={['PROJECT WORKSPACE', `共 ${projects.length} 个项目`]}
@@ -461,6 +502,21 @@ const MyProjectsPage: React.FC = () => {
                                 title={sortOrder === 'asc' ? '升序' : '降序'}
                             />
                         </div>
+                        {selectedIds.size > 0 && (
+                            <div className="flex items-center gap-1 pl-3 ml-1 border-l border-gray-200">
+                                <span className="text-sm text-gray-500">
+                                    已选 <span className="text-blue-600 font-medium">{selectedIds.size}</span> 项
+                                </span>
+                                <Button type="link" size="small" danger icon={<DeleteOutlined />}
+                                        className="!px-1" onClick={handleBatchDelete}>
+                                    批量删除
+                                </Button>
+                                <Button type="link" size="small" className="!px-1"
+                                        onClick={() => setSelectedIds(new Set())}>
+                                    取消选择
+                                </Button>
+                            </div>
+                        )}
                         <div className="ml-auto">
                             <Segmented
                                 value={viewMode}
@@ -532,24 +588,6 @@ const MyProjectsPage: React.FC = () => {
                     </div>
                 ) : (
                     <>
-                        {selectedIds.size > 0 && (
-                            <div className="mb-3 flex items-center gap-3">
-                                <span className="text-sm text-blue-600 font-medium">已选 {selectedIds.size} 项</span>
-                                <Button
-                                    danger
-                                    size="small"
-                                    icon={<DeleteOutlined />}
-                                    onClick={async () => {
-                                        for (const id of selectedIds) await projectsApi.deleteProject(id).catch(() => null);
-                                        setSelectedIds(new Set());
-                                        loadProjects();
-                                    }}
-                                >
-                                    批量删除
-                                </Button>
-                                <Button size="small" onClick={() => setSelectedIds(new Set())}>取消选择</Button>
-                            </div>
-                        )}
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
                             {filteredAndSortedProjects.map((project) => {
                                 const isSelected = selectedIds.has(project.id);
@@ -621,10 +659,7 @@ const MyProjectsPage: React.FC = () => {
             <Modal
                 title="创建新项目"
                 open={isModalOpen}
-                onCancel={() => {
-                    setIsModalOpen(false);
-                    form.resetFields();
-                }}
+                onCancel={closeCreateModal}
                 footer={null}
                 width={500}
             >
@@ -655,20 +690,22 @@ const MyProjectsPage: React.FC = () => {
                                     message.warning(`不支持 .${ext} 格式：仅支持 ${UPLOAD_EXTS.join(' / ')}`);
                                     return Upload.LIST_IGNORE;
                                 }
-                                if (f.size > 200 * 1024 * 1024) {
-                                    message.warning(`「${f.name}」超过 200MB 上限`);
+                                if (f.size > MAX_UPLOAD_BYTES) {
+                                    message.warning(`「${f.name}」超过 ${MAX_UPLOAD_LABEL} 上限`);
                                     return Upload.LIST_IGNORE;
                                 }
                                 return false;  // 阻止自动上传（随表单一起提交）
                             }}
+                            fileList={uploadList}
                             onChange={({ fileList }) => {
+                                setUploadList(fileList);
                                 setPendingFiles(fileList.map((f) => f.originFileObj).filter(Boolean) as File[]);
                             }}
                             accept={UPLOAD_ACCEPT}
                         >
                             <p className="ant-upload-drag-icon"><InboxOutlined /></p>
                             <p className="ant-upload-hint">
-                                支持 {UPLOAD_EXTS.join(' / ')}，单文件 ≤200MB，可多选
+                                支持 {UPLOAD_EXTS.join(' / ')}，单文件 ≤{MAX_UPLOAD_LABEL}，可多选
                             </p>
                         </Upload.Dragger>
                     </Form.Item>
@@ -700,7 +737,7 @@ const MyProjectsPage: React.FC = () => {
 
                     <Form.Item>
                         <Space className="w-full justify-end">
-                            <Button onClick={() => setIsModalOpen(false)}>取消</Button>
+                            <Button onClick={closeCreateModal}>取消</Button>
                             <Button type="primary" htmlType="submit" loading={creating}
                                     icon={<ThunderboltOutlined />}>
                                 {pendingFiles.length > 0 ? '创建项目并开始构建' : '创建项目'}

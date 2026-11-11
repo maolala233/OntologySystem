@@ -353,6 +353,10 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
     
     // SSE 连接引用（避免 state 更新导致的闭包问题）
     const eventSourceRef = useRef<EventSource | null>(null);
+    // 订阅代际：换票是异步的，等待期间组件可能已卸载/已重连；旧代际回来时
+    // 若仍建 EventSource，该连接无人关闭，会占住浏览器对该域的连接名额
+    // （Chrome 每域 6 条 HTTP/1.1），泄漏后所有新请求卡 pending（2026-11-10 实测）
+    const streamGenRef = useRef(0);
     // SSE 断线后的轮询兜底定时器（GET tasks/{id}，终态自停）
     const progressPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -1409,6 +1413,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
     // 连接 SSE 进度流（M3-7：extraction SSE + 一次性 ticket 鉴权；事件为默认 message 流）
     const connectToProgressStream = useCallback((taskId: string) => {
         if (!projectId) return;
+        const gen = ++streamGenRef.current;
 
         // 关闭之前的连接与兜底轮询
         const existingEs = eventSourceRef.current;
@@ -1419,6 +1424,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
         stopProgressPolling();
 
         extractionApi.eventsUrl(Number(projectId), taskId).then((url) => {
+            if (gen !== streamGenRef.current) return;  // 已卸载/已重连：丢弃，避免孤儿连接
             const es = new EventSource(url);
             console.log('[SSE] 连接建立:', taskId);
 
@@ -1675,6 +1681,9 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
     // 清理 SSE 连接与兜底轮询
     useEffect(() => {
         return () => {
+            streamGenRef.current += 1;  // 作废在途换票，防止清理后才建立的连接泄漏
+            eventSourceRef.current?.close();
+            eventSourceRef.current = null;
             if (eventSource) {
                 eventSource.close();
             }

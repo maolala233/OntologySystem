@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { Breadcrumb, Input, Button } from 'antd';
 import { SearchOutlined, PlusOutlined } from '@ant-design/icons';
 
@@ -16,13 +17,13 @@ const Navbar: React.FC<NavbarProps> = ({
     showCreateButton = false,
 }) => {
     return (
-        <div className="h-16 bg-white border-b border-gray-200 px-4 sm:px-6 flex items-center justify-between shadow-sm">
+        <div className="shrink-0 h-16 bg-white border-b border-gray-200 px-4 sm:px-6 flex items-center justify-between shadow-sm">
             {/* 左侧：面包屑 */}
             <div className="flex items-center flex-1 min-w-0">
                 <Breadcrumb
                     items={breadcrumbs.map((item) => ({
-                        title: item.title,
-                        href: item.path,
+                        // 用路由 Link 做站内跳转：href 会触发整页刷新（白屏闪烁），SPA 内切换才平滑
+                        title: item.path ? <Link to={item.path}>{item.title}</Link> : item.title,
                     }))}
                 />
             </div>
