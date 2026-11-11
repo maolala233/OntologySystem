@@ -12,7 +12,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 
 import { documentsApi, DocumentRow } from '../../../api/documents';
-import { UPLOAD_ACCEPT, UPLOAD_EXTS } from '../documents/uploadFormats';
+import { UPLOAD_ACCEPT, UPLOAD_EXTS, MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from '../documents/uploadFormats';
 
 const PARSE_TAG: Record<string, { color: string; text: string }> = {
     uploaded: { color: 'default', text: '待解析' },
@@ -149,8 +149,8 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged }) => {
                               message.warning(`不支持 .${ext} 格式：仅支持 ${UPLOAD_EXTS.join(' / ')}`);
                               return Upload.LIST_IGNORE;
                           }
-                          if (f.size > 200 * 1024 * 1024) {
-                              message.warning(`「${f.name}」超过 200MB 上限`);
+                          if (f.size > MAX_UPLOAD_BYTES) {
+                              message.warning(`「${f.name}」超过 ${MAX_UPLOAD_LABEL} 上限`);
                               return Upload.LIST_IGNORE;
                           }
                           return false;
