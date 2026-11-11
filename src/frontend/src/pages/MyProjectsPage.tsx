@@ -237,21 +237,21 @@ const MyProjectsPage: React.FC = () => {
             ],
             okText: '确认删除',
             onOk: async () => {
-                let okCount = 0;
-                const failed: string[] = [];
-                for (const id of ids) {
-                    try {
-                        await projectsApi.deleteProject(id);
-                        okCount++;
-                    } catch {
-                        failed.push(projects.find(p => p.id === id)?.name || `#${id}`);
-                    }
+                try {
+                    // 走后端批量接口：单事务逐项目提交，逐项返回结果（不再前端循环 N 次）
+                    const r = await projectsApi.batchDeleteProjects(ids);
+                    const failedNames = (r.failed || []).map(
+                        (f) => projects.find(p => p.id === f.project_id)?.name || `#${f.project_id}`,
+                    );
+                    // 失败的保留选中，方便直接重试
+                    setSelectedIds(new Set((r.failed || []).map(f => f.project_id)));
+                    await loadProjects();
+                    if (failedNames.length === 0) message.success(`已删除 ${r.deleted.length} 个项目`);
+                    else if (r.deleted.length === 0) message.error(`删除失败：${failedNames.join('、')}`);
+                    else message.warning(`成功删除 ${r.deleted.length} 个，失败 ${failedNames.length} 个：${failedNames.join('、')}`);
+                } catch (e: any) {
+                    message.error(e?.response?.data?.error?.message || e?.response?.data?.detail || '批量删除失败');
                 }
-                setSelectedIds(new Set());
-                await loadProjects();
-                if (failed.length === 0) message.success(`已删除 ${okCount} 个项目`);
-                else if (okCount === 0) message.error(`删除失败：${failed.join('、')}`);
-                else message.warning(`成功删除 ${okCount} 个，失败 ${failed.length} 个：${failed.join('、')}`);
             },
         });
     };
