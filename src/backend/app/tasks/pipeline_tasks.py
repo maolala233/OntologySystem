@@ -1171,6 +1171,30 @@ def pipeline_scheduled_at(project_id: int) -> Optional[str]:
         return None
 
 
+def pipeline_active_project_ids() -> tuple[set[int], set[int]]:
+    """批量读取「构建中」与「已登记定时」的项目 ID（列表状态筛选用）。
+
+    状态存在 Redis（管线锁/定时登记），不能直接写进 SQL WHERE，所以先批量取出
+    再转成 id 集合。Redis 抖动时按「没有构建中项目」降级，不影响列表本身。
+    """
+    running: set[int] = set()
+    scheduled: set[int] = set()
+    try:
+        r = _redis()
+        for key in r.scan_iter(match="pipeline:running:*", count=500):
+            tail = str(key).rsplit(":", 1)[-1]
+            if tail.isdigit():
+                running.add(int(tail))
+        for key in r.scan_iter(match="pipeline:schedule:*", count=500):
+            # 同前缀还有 {id}:task 的携带键，只取纯数字的那一类
+            tail = str(key).rsplit(":", 1)[-1]
+            if tail.isdigit():
+                scheduled.add(int(tail))
+    except Exception as e:  # noqa: BLE001 —— 状态筛选降级，不影响列表
+        logger.warning(f"[pipeline] 批量读取构建状态失败: {e}")
+    return running, scheduled
+
+
 def pipeline_running_task_id(project_id: int) -> Optional[str]:
     """当前（或最近 6h 内）管线的 task_id；锁过期/不存在返回 None。"""
     try:
@@ -1196,4 +1220,5 @@ def release_pipeline_lock(project_id: int) -> None:
 
 __all__ = ["STAGE_DEFS", "DEPTH_PROFILES", "run_pipeline", "dispatch_pipeline_run",
            "run_scheduled_pipeline", "cancel_scheduled_pipeline",
-           "pipeline_scheduled_at", "pipeline_running_task_id", "release_pipeline_lock"]
+           "pipeline_scheduled_at", "pipeline_running_task_id", "release_pipeline_lock",
+           "pipeline_active_project_ids"]

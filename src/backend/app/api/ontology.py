@@ -3,7 +3,7 @@ import json
 import os
 import tempfile
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from urllib.parse import quote
 
 import pandas as pd
@@ -121,11 +121,54 @@ def get_my_projects(scope: str = "mine", current_user: User = Depends(get_curren
 
 
 # 获取我的项目列表（分页）
+# 排序字段白名单：只允许数据库真实列，避免把前端参数拼进 SQL
+_PROJECT_SORT_COLUMNS = {
+    "id": Project.id,
+    "name": Project.name,
+    "created_at": Project.created_at,
+    "updated_at": Project.updated_at,
+}
+
+
+def _escape_like(value: str) -> str:
+    """转义 LIKE 通配符，搜索词里的 % / _ 按字面量匹配。"""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+# 列表展示状态（与 _build_project_list_items 的判定顺序一致）
+_PROJECT_STATUS_VALUES = ("draft", "scheduled", "building", "ready", "published")
+
+
+def _project_class_count_expr(db: Session):
+    """SQL 侧类数量：schema.classes 数组长度（status=draft/ready 过滤用）。
+
+    与 _build_project_list_items 的口径基本一致；唯一差异是 SQL 不校验 label
+    是否为空，极端脏数据下 ready/draft 边界可能与展示相差一条。
+    """
+    from sqlalchemy import func
+
+    dialect = db.get_bind().dialect.name
+    if dialect == "mysql":
+        return func.coalesce(
+            func.json_length(func.json_extract(Project.graph_data, "$.schema.classes")), 0)
+    if dialect == "sqlite":
+        return func.coalesce(
+            func.json_array_length(func.json_extract(Project.graph_data, "$.schema.classes")), 0)
+    return None
+
+
 @router.get("/my/paged", response_model=ProjectPage)
 def get_my_projects_paged(
     scope: str = "mine",
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    keyword: Optional[str] = Query(None, max_length=100,
+                                   description="按项目名称/描述/知识域搜索；超级管理员 scope=all 时也匹配归属人用户名；纯数字额外按项目 ID 精确匹配"),
+    status: Optional[list[str]] = Query(
+        None, description="状态筛选，可重复传或逗号分隔：draft/scheduled/building/ready/published"),
+    sort_by: Literal["id", "name", "created_at", "updated_at"] = Query(
+        "id", description="排序字段"),
+    order: Literal["asc", "desc"] = Query("asc", description="排序方向"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -133,7 +176,12 @@ def get_my_projects_paged(
 
     page 从 1 开始；page_size 最大 100。返回 total/pages/has_next/has_prev，
     便于前端直接做分页器，不需要再额外请求总数。
+
+    keyword 只做一次 LIKE 过滤（name/description/domains，scope=all 时加
+    owner.username）；status 支持多选（重复参数或逗号分隔），取值与列表展示
+    的状态一致；分页与排序都在数据库侧完成，total 是过滤后的总数。
     """
+    from sqlalchemy import and_, false, func, or_, true
     from sqlalchemy import func as sa_func
     from sqlalchemy.orm import joinedload
 
@@ -146,9 +194,77 @@ def get_my_projects_paged(
         count_q = count_q.filter(Project.owner_id == current_user.id)
         rows_q = rows_q.filter(Project.owner_id == current_user.id)
 
+    kw = (keyword or "").strip()
+    if kw:
+        like = f"%{_escape_like(kw)}%"
+        cond = or_(
+            Project.name.ilike(like, escape="\\"),
+            Project.description.ilike(like, escape="\\"),
+            Project.domains.ilike(like, escape="\\"),
+        )
+        if kw.isdigit():
+            cond = or_(cond, Project.id == int(kw))
+        if scope == "all":
+            # outerjoin：owner 为空的老数据也要能按名称/描述命中
+            rows_q = rows_q.outerjoin(Project.owner)
+            count_q = count_q.outerjoin(Project.owner)
+            cond = or_(cond, User.username.ilike(like, escape="\\"))
+        rows_q = rows_q.filter(cond)
+        count_q = count_q.filter(cond)
+
+    # 状态筛选：building/scheduled 存在 Redis，其余可由数据库列 + graph_data 推出；
+    # 判定顺序必须与 _build_project_list_items 一致（构建中 > 待构建 > 已发布 > 已构建 > 草稿）
+    wanted = {s.strip() for item in (status or []) for s in str(item).split(",") if s.strip()}
+    unknown = sorted(wanted - set(_PROJECT_STATUS_VALUES))
+    if unknown:
+        raise HTTPException(
+            status_code=422,
+            detail=f"未知的项目状态：{', '.join(unknown)}；可选：{', '.join(_PROJECT_STATUS_VALUES)}")
+    if wanted:
+        from app.tasks.pipeline_tasks import pipeline_active_project_ids
+
+        running_ids, sched_ids = pipeline_active_project_ids()
+        running_cond = Project.id.in_(running_ids) if running_ids else false()
+        sched_cond = Project.id.in_(sched_ids) if sched_ids else false()
+        if running_ids:  # 构建中优先于待构建
+            sched_cond = and_(sched_cond, ~Project.id.in_(running_ids))
+        idle_parts = []
+        if running_ids:
+            idle_parts.append(~Project.id.in_(running_ids))
+        if sched_ids:
+            idle_parts.append(~Project.id.in_(sched_ids))
+        idle_cond = and_(*idle_parts) if idle_parts else true()
+        not_published = func.coalesce(Project.is_published, false()).is_(False)
+
+        preds = []
+        if "building" in wanted:
+            preds.append(running_cond)
+        if "scheduled" in wanted:
+            preds.append(sched_cond)
+        if "published" in wanted:
+            preds.append(and_(idle_cond, Project.is_published.is_(True)))
+        if wanted & {"draft", "ready"}:
+            cls_expr = _project_class_count_expr(db)
+            if cls_expr is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="当前数据库不支持按 draft/ready 状态筛选")
+            if "ready" in wanted:
+                preds.append(and_(idle_cond, not_published, cls_expr > 0))
+            if "draft" in wanted:
+                preds.append(and_(idle_cond, not_published, cls_expr == 0))
+        status_cond = or_(*preds)
+        rows_q = rows_q.filter(status_cond)
+        count_q = count_q.filter(status_cond)
+
+    sort_col = _PROJECT_SORT_COLUMNS[sort_by]
+    order_by = [sort_col.asc() if order == "asc" else sort_col.desc()]
+    if sort_by != "id":
+        order_by.append(Project.id.asc())  # 稳定分页：同值再按 id 兜底
+
     total = int(count_q.scalar() or 0)
     rows = (rows_q.options(joinedload(Project.owner))
-            .order_by(Project.id)
+            .order_by(*order_by)
             .offset((page - 1) * page_size)
             .limit(page_size)
             .all())
