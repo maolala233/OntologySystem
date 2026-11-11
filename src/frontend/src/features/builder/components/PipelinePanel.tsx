@@ -115,6 +115,9 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
                             ...prev, ...data,
                             stages: incomingStages || prev?.stages || [],
                             reviews: data.reviews ?? prev?.reviews ?? noReviews,
+                            // sub 帧只在当前阶段有效：后端只在本阶段有子进度键时才注入，
+                            // 帧里不带 sub 时要丢掉上一阶段残留的 100%，否则会误判新阶段已完成
+                            sub: data.sub ?? (data.stage && prev?.stage === data.stage ? prev?.sub : undefined),
                         }));
                     if (data.task_id && data.status && data.status !== 'idle') {
                         localStorage.setItem(lastTaskKey(projectId), data.task_id);
@@ -157,7 +160,28 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
     }, [subscribe]);
 
     const s = status;
-    const stages: PipelineStageState[] = s?.stages || [];
+    const rawStages: PipelineStageState[] = s?.stages || [];
+    // 子任务已跑到 100%（finish_task_progress 置 percent=100）但主阶段还没被置 done：
+    // 后端在阶段收尾（如骨架索引同步）期间会有数秒到数十秒的间隙，界面会卡在「转圈 +
+    // 完成文案」——这里按子进度 100% 提前把该阶段显示为完成，视觉上立即进入下一项
+    const subDone = typeof s?.sub?.percent === 'number' && s.sub.percent >= 100
+        && (!!s?.sub?.stage && s.sub.stage === s?.stage);
+    const stages: PipelineStageState[] = subDone
+        ? rawStages.map((st) => (st.status === 'running' ? { ...st, status: 'done' as const } : st))
+        : rawStages;
+    // 主进度条：后端主键只在阶段边界更新百分比，长阶段内（尤其骨架/实例抽取）会长时间不动。
+    // 有本阶段子进度时按「阶段序号 + 子百分比」折算，主条随切片推进平滑增长（只增不减）。
+    const runningIdx = rawStages.findIndex((st) => st.status === 'running');
+    const subSameStage = typeof s?.sub?.percent === 'number'
+        && !!s?.sub?.stage && s.sub.stage === s?.stage;
+    const subPercent = s?.sub?.percent;
+    const computedPercent = (runningIdx >= 0 && subSameStage && typeof subPercent === 'number'
+        && rawStages.length > 0)
+        ? Math.min(99, Math.round(((runningIdx + subPercent / 100) / rawStages.length) * 100))
+        : undefined;
+    const mainPercent = typeof s?.percent === 'number'
+        ? (computedPercent != null ? Math.max(s.percent, computedPercent) : s.percent)
+        : computedPercent;
     // 运行中 3s 轮询；其余状态不轮询（事件驱动：signal / 手动刷新）
     const runningNow = !!s && (s.status === 'running' || s.status === 'queued'
         || (!!stages.length && s.stages.some((x) => x.status === 'running')
@@ -168,10 +192,6 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
         const t = setInterval(refresh, 3000);
         return () => clearInterval(t);
     }, [refresh, runningNow, sseUp, s?.task_id]);
-
-    // 重新发起构建（idle→running/queued）时自动展开折叠的进度区
-    useEffect(() => {
-    }, [s?.status, s]);
 
     const start = async (restart = false) => {
         setStarting(true);
@@ -280,8 +300,8 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
             />
 
             {/* 总进度条（2026-11-08：只有"汉字+图标"感知不到进度，补百分比主条） */}
-            {runningNow && typeof s?.percent === 'number' && (
-                <Progress percent={s.percent} size="small" strokeColor="#5B8DEF"
+            {runningNow && typeof mainPercent === 'number' && (
+                <Progress percent={mainPercent} size="small" strokeColor="#5B8DEF"
                           className="mb-2" />
             )}
             {stages.length > 0 && (

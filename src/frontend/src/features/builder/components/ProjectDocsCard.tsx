@@ -25,9 +25,12 @@ interface Props {
     projectId: number;
     /** 变化回调（父级刷新统计） */
     onChanged?: () => void;
+    /** 当前管线运行阶段（来自 PipelinePanel 上抛）：解析完成后文档状态仍是「已解析」，
+     *  用它把列显示成「骨架抽取中 / 实例抽取中 …」，避免构建中看起来一直卡在已解析 */
+    pipelineStage?: { key: string; label: string; status: string; message?: string } | null;
 }
 
-const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged }) => {
+const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage }) => {
     const [docs, setDocs] = useState<DocumentRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [uploading, setUploading] = useState(false);
@@ -59,9 +62,14 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged }) => {
     // 全部落定后停并通知父级。旧版只在"本次上传后"轮询且 90s 封顶——页面在
     // 解析期间被刷新（或管线代为解析）就永远停在「解析中」；大文档解析超 90s
     // 也会被掐断（2026-11-08 实测）
+    // 管线正在「解析文档」阶段时也必须轮询：重新构建（restart）会把已解析文档重新置为解析中，
+    // 若本地缓存还停留在上一轮的「已解析」，不轮询就会一直显示已解析、看不到真实进度
+    const pipelineParsing = pipelineStage?.key === 'parse' && pipelineStage.status === 'running';
     useEffect(() => {
-        const busy = docs.some((d) => d.parse_status === 'parsing' || d.parse_status === 'uploaded');
+        const busy = pipelineParsing
+            || docs.some((d) => d.parse_status === 'parsing' || d.parse_status === 'uploaded');
         if (!busy) return;
+        if (pipelineParsing) void fetchList();  // 刚进入解析阶段先立刻拉一次，不等第一个 2.5s 周期
         const t = setInterval(async () => {
             try {
                 const rows = await fetchList();
@@ -71,7 +79,7 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged }) => {
             } catch { /* 下一轮再试 */ }
         }, 2500);
         return () => clearInterval(t);
-    }, [docs, fetchList, onChanged]);
+    }, [docs, fetchList, onChanged, pipelineParsing]);
 
     // 上传文档（可多选）：上传即同步解析（auto_parse=true）
     // antd 的 onChange 每选一个文件触发一次且携带累积 fileList——必须按 uid 去重，
@@ -102,8 +110,18 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged }) => {
 
     const columns: ColumnsType<DocumentRow> = [
         { title: '文档', dataIndex: 'filename', key: 'filename', ellipsis: true },
-        { title: '解析状态', dataIndex: 'parse_status', key: 'parse_status', width: 100,
-          render: (v: string) => {
+        // 默认展示文档自身的解析状态；只有「解析阶段正在解析这一份」时临时显示「解析中」——
+        // 后端 run_parse 结束才落 parsed，本地缓存可能还是上一轮的 parsed（进入页面瞬间/轮询间隔），
+        // 不兜这一下会出现「上面正在解析、下面已解析」（2026-11-11 实测）
+        { title: '解析状态', dataIndex: 'parse_status', key: 'parse_status', width: 110,
+          render: (v: string, d) => {
+              const parseMsg = pipelineStage?.key === 'parse' && pipelineStage.status === 'running'
+                  ? String(pipelineStage.message || '')
+                  : '';
+              if (v === 'parsed' && parseMsg.startsWith('解析中') && d?.filename
+                  && parseMsg.includes(d.filename)) {
+                  return <Tag color="processing">解析中</Tag>;
+              }
               const m = PARSE_TAG[v] || PARSE_TAG.uploaded;
               return <Tag color={m.color}>{m.text}</Tag>;
           } },
@@ -138,7 +156,21 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged }) => {
 
     return (
         <Card size="small"
-              title={`上传的文档（${docs.length}）`}
+              title={(
+                  <span className="inline-flex items-center gap-2">
+                      <span>上传的文档（{docs.length}）</span>
+                      {pipelineStage && (
+                          <Tag
+                              color={pipelineStage.status === 'running' ? 'processing' : 'default'}
+                              className="!mr-0 !text-[11px]"
+                          >
+                              {pipelineStage.status === 'running'
+                                  ? `构建中 · ${pipelineStage.label}`
+                                  : `${pipelineStage.label}待开始`}
+                          </Tag>
+                      )}
+                  </span>
+              )}
               extra={(
                   <Upload
                       multiple
