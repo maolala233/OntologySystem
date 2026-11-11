@@ -355,7 +355,7 @@ const MyProjectsPage: React.FC = () => {
     ];
 
     return (
-        <div className="min-h-screen bg-gray-50">
+        <div className="h-full flex flex-col bg-gray-50">
             <style>{`
                 .mp-cover { position: relative; overflow: hidden; }
                 .mp-cover-grid {
@@ -373,7 +373,7 @@ const MyProjectsPage: React.FC = () => {
                 onCreateProject={() => setIsModalOpen(true)}
             />
 
-            <div className="p-4 sm:p-6">
+            <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
                 <TechHero
                     compact
                     chips={['PROJECT WORKSPACE', `共 ${projects.length} 个项目`]}

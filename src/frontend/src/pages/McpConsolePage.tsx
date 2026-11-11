@@ -541,7 +541,7 @@ export default function McpConsolePage() {
             {/* ══ 右侧主区 */}
             <main className="flex-1 min-w-0 flex flex-col min-h-0">
                 {/* 顶部 Tab（工具 / 资源 / Ping） */}
-                <div className="px-4 pt-3 bg-white border-b border-gray-200">
+                <div className="sticky top-0 z-30 px-4 pt-3 bg-white border-b border-gray-200">
                     <div className="inline-flex bg-gray-100 rounded-lg p-1 gap-1">
                         {tabItems.map(t => (
                             <button key={t.key} type="button"

@@ -16,7 +16,9 @@ body,
   width: 100%;
   margin: 0;
   padding: 0;
-  overflow-x: hidden;
+  /* 页面级滚动全部交给内部滚动区，根节点永不滚动：
+     否则窗口高度变化时会出现一条贯穿顶栏的整页滚动条 */
+  overflow: hidden;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
@@ -76,8 +78,11 @@ body,
 }
 
 /* 响应式内容区域 */
+/* 注意用 clip 而不是 auto：一个轴 auto + 另一轴 visible 会被计算成 auto，
+   内容区自身变成滚动容器 → 页面里 position: sticky 的顶栏会失效
+   （sticky 只相对最近滚动容器生效，而该容器实际不滚动）。2026-11-11 */
 .ant-layout-content {
-  overflow-x: auto;
+  overflow-x: clip;
 }
 
 /* 卡片响应式布局 */
@@ -217,6 +222,30 @@ body,
 
 ::-webkit-scrollbar-thumb:hover {
   background: #555;
+}
+
+/* 内容区滚动容器：始终预留滚动条槽位，避免滚动条出现/消失导致布局抖动 */
+.scrollbar-stable {
+  scrollbar-gutter: stable;
+}
+
+/* 侧边栏菜单滚动条（深色底）：全局滚动条是浅色轨道，在 #001529 侧栏上很突兀 */
+.sidebar-scroll {
+  scrollbar-width: thin;                                /* Firefox */
+  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+}
+.sidebar-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.sidebar-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 3px;
+}
+.sidebar-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.42);
 }
 
 /* D3 力导向图样式 */

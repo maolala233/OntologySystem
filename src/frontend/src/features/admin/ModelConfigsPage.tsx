@@ -232,7 +232,7 @@ const ModelConfigsPage: React.FC = () => {
         myProjects.find((p) => p.id === pid)?.name || (pid ? `项目#${pid}` : '');
 
     return (
-        <div style={{ padding: 24 }}>
+        <div className="h-full overflow-y-auto scrollbar-stable" style={{ padding: 24 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
                 <Typography.Title level={4} style={{ margin: 0 }}>模型配置</Typography.Title>
                 <Space>

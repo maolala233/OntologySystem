@@ -116,7 +116,7 @@ const HomePage: React.FC = () => {
     const breadcrumbs = [{ title: '首页' }];
 
     return (
-        <div className="min-h-screen bg-gray-50">
+        <div className="h-full flex flex-col bg-gray-50">
             <style>{`
                 .hp-mono { font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace; }
                 .hp-stat-card { position: relative; overflow: hidden; border-radius: 14px; border: 1px solid #EEF1F8;
@@ -132,7 +132,7 @@ const HomePage: React.FC = () => {
             `}</style>
             <Navbar breadcrumbs={breadcrumbs} />
 
-            <div className="w-full max-w-[1920px] mx-auto p-4 sm:p-6 lg:p-8">
+            <div className="w-full max-w-[1920px] mx-auto p-4 sm:p-6 lg:p-8 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
                 {/* ── Hero：深色科技面板（TechHero 共享组件） ── */}
                 <TechHero
                     chips={['SEMANTIC KNOWLEDGE PLATFORM', 'ENGINE · v2.0']}

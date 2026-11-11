@@ -437,7 +437,7 @@ const AssetCenterPage: React.FC = () => {
     );
 
     return (
-        <div className="min-h-screen bg-gray-50">
+        <div className="h-full flex flex-col bg-gray-50">
             <style>{`
                 .ac-cover { position: relative; overflow: hidden; }
                 .ac-cover-grid {
@@ -449,7 +449,7 @@ const AssetCenterPage: React.FC = () => {
             `}</style>
             <Navbar breadcrumbs={breadcrumbs} onSearch={handleSearch} />
 
-            <div className="p-4 sm:p-6 lg:p-8">
+            <div className="p-4 sm:p-6 lg:p-8 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
                 <TechHero
                     compact
                     chips={

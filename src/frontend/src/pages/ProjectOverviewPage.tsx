@@ -93,9 +93,9 @@ const ProjectOverviewPage: React.FC = () => {
     }, [pid, load, loadProject]);
 
     return (
-        <div className="min-h-screen bg-gray-50">
+        <div className="h-full flex flex-col bg-gray-50">
             {/* 头部 */}
-            <div className="flex items-center gap-3 px-4 py-2 bg-white border-b border-gray-200">
+            <div className="shrink-0 flex items-center gap-3 px-4 py-2 bg-white border-b border-gray-200">
                 <Button icon={<ArrowLeftOutlined />} size="small"
                         onClick={() => navigate('/my-projects')}>返回</Button>
                 <span className="font-semibold text-gray-800">{projectName || `项目 #${pid}`}</span>
@@ -115,7 +115,7 @@ const ProjectOverviewPage: React.FC = () => {
                 </div>
             </div>
 
-            <div className="w-full p-4 lg:px-8 2xl:max-w-[1600px] 2xl:mx-auto">
+            <div className="w-full p-4 lg:px-8 2xl:max-w-[1600px] 2xl:mx-auto flex-1 min-h-0 overflow-y-auto scrollbar-stable">
                 {/* 构建状态卡（PipelinePanel：四步清单 + 阶段计数；构建中可收起） */}
                 <PipelinePanel projectId={pid} signal={pipelineSignal}
                                onPipeStatus={handlePipeStatus}

@@ -308,7 +308,7 @@ export default function QaPage() {
             {/* 右侧：对话区 */}
             <div className="flex-1 flex flex-col min-w-0 bg-gray-50">
                 {/* 顶栏：项目 + 模型 */}
-                <div className="h-14 px-4 bg-white border-b border-gray-200 flex items-center gap-3 shrink-0">
+                <div className="sticky top-0 z-30 h-14 px-4 bg-white border-b border-gray-200 flex items-center gap-3 shrink-0">
                     <Select
                         value={projectId ?? undefined}
                         onChange={v => setProjectId(v)}

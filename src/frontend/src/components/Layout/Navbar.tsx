@@ -16,7 +16,7 @@ const Navbar: React.FC<NavbarProps> = ({
     showCreateButton = false,
 }) => {
     return (
-        <div className="h-16 bg-white border-b border-gray-200 px-4 sm:px-6 flex items-center justify-between shadow-sm">
+        <div className="shrink-0 h-16 bg-white border-b border-gray-200 px-4 sm:px-6 flex items-center justify-between shadow-sm">
             {/* 左侧：面包屑 */}
             <div className="flex items-center flex-1 min-w-0">
                 <Breadcrumb

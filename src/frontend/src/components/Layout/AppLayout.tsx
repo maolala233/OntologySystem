@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { message } from '../../shared/feedback';
+import { message, confirmModal } from '../../shared/feedback';
 import { Layout, Menu, Avatar, Dropdown, Button, Modal, Input, Tag, Spin, Table } from 'antd';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import {
@@ -80,6 +80,7 @@ const AppLayout: React.FC = () => {
         username: string;
         role?: 'admin' | 'user';
         display_name?: string | null;
+        email?: string | null;
     };
 
     useEffect(() => {
@@ -93,8 +94,16 @@ const AppLayout: React.FC = () => {
         user.role === 'admin' ? true : modules.length > 0 ? modules.includes(code) : true;
 
     const handleLogout = () => {
-        clearAuth();
-        navigate('/login');
+        confirmModal({
+            title: '退出登录',
+            content: '确定要退出当前账号吗？',
+            okText: '退出登录',
+            cancelText: '取消',
+            onOk: () => {
+                clearAuth();
+                navigate('/login');
+            },
+        });
     };
 
     const [passwordModalVisible, setPasswordModalVisible] = useState(false);
@@ -190,8 +199,19 @@ const AppLayout: React.FC = () => {
     // 合并菜单项
     const allMenuItems = [...menuItems, ...toolsMenu, ...adminMenuItems];
 
+    // 菜单选中态：板块下的子页面仍归属到板块本身——
+    // 项目概览/构建/文档/图谱等 /projects/:id/* 页面继续高亮「我的项目」，
+    // 否则进入项目后左侧菜单失去高亮（2026-11-11 实测）
+    const selectedMenuKey = (() => {
+        const path = location.pathname;
+        if (path === '/my-projects' || path.startsWith('/projects/') || path.startsWith('/ontology-builder/')) {
+            return '/my-projects';
+        }
+        return path;
+    })();
+
     return (
-        <Layout className="min-h-screen">
+        <Layout className="h-screen overflow-hidden">
             {/* 深色侧边栏 */}
             <Sider
                 collapsible
@@ -211,22 +231,34 @@ const AppLayout: React.FC = () => {
                 {/* Logo 区域 */}
                 <div className="h-16 flex items-center justify-center bg-[#001529] border-b border-gray-700">
                     <div className="flex items-center space-x-2">
-                        <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center"
+                        <div className="w-8 h-8 rounded-lg flex items-center justify-center"
                              style={{ background: 'linear-gradient(135deg, #3b82f6, #9333ea)' }}>
-                            <span className="text-white font-bold text-lg">O</span>
+                            {/* 品牌标志：三节点图谱（与 public/favicon.svg 同一套图形） */}
+                            <svg viewBox="0 0 64 64" width="19" height="19" aria-hidden="true">
+                                <g stroke="#ffffff" strokeWidth="4" strokeLinecap="round" opacity="0.9">
+                                    <line x1="32" y1="19" x2="18" y2="43" />
+                                    <line x1="32" y1="19" x2="46" y2="43" />
+                                    <line x1="18" y1="43" x2="46" y2="43" />
+                                </g>
+                                <g fill="#ffffff">
+                                    <circle cx="32" cy="19" r="7" />
+                                    <circle cx="18" cy="43" r="7" />
+                                    <circle cx="46" cy="43" r="7" />
+                                </g>
+                            </svg>
                         </div>
                         {!collapsed && (
-                            <span className="text-white font-semibold text-lg">Ontology</span>
+                            <span className="text-white font-semibold text-lg">本体平台</span>
                         )}
                     </div>
                 </div>
 
                 {/* 导航菜单 */}
-                <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+                <div className="sidebar-scroll" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
                     <Menu
                         theme="dark"
                         mode="inline"
-                        selectedKeys={[location.pathname]}
+                        selectedKeys={[selectedMenuKey]}
                         openKeys={openMenus}
                         onOpenChange={keys => setOpenMenus(keys as string[])}
                         items={allMenuItems}
@@ -257,9 +289,22 @@ const AppLayout: React.FC = () => {
                                 style={{ background: 'linear-gradient(135deg, #3b82f6, #9333ea)' }}
                             />
                             {!collapsed && (
-                                <div className="flex-1">
-                                    <div className="text-white text-sm font-medium">
-                                        {user.username || '用户'}
+                                <div className="flex-1 min-w-0">
+                                    <div className="text-white text-sm font-medium truncate">
+                                        {user.display_name || user.username || '用户'}
+                                    </div>
+                                    <div className="flex items-center gap-2 mt-1 min-w-0">
+                                        <Tag
+                                            color={user.role === 'admin' ? 'gold' : 'blue'}
+                                            style={{ marginInlineEnd: 0, lineHeight: '16px', fontSize: 11, flexShrink: 0 }}
+                                        >
+                                            {user.role === 'admin' ? '管理员' : '普通用户'}
+                                        </Tag>
+                                        {user.email && (
+                                            <span className="text-gray-400 text-xs truncate" title={user.email}>
+                                                {user.email}
+                                            </span>
+                                        )}
                                     </div>
                                 </div>
                             )}
@@ -318,7 +363,7 @@ const AppLayout: React.FC = () => {
 
             {/* 主内容区 */}
             <Layout>
-                <Content className="bg-gray-50">
+                <Content className="bg-gray-50 h-screen overflow-hidden">
                     <Outlet />
                 </Content>
             </Layout>

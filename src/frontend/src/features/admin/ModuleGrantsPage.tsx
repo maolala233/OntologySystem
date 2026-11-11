@@ -369,7 +369,7 @@ const ModuleGrantsPage: React.FC = () => {
     );
 
     return (
-        <div style={{ padding: 24 }}>
+        <div className="h-full overflow-y-auto scrollbar-stable" style={{ padding: 24 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                 <Typography.Title level={4} style={{ margin: 0 }}>模块授权</Typography.Title>
                 {dirtyUsers.size > 0 && (
