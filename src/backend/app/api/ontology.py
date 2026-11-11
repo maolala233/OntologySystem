@@ -9,6 +9,7 @@ from urllib.parse import quote
 import pandas as pd
 import requests as req
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
+from pydantic import BaseModel, Field
 from rdflib import OWL, RDF, RDFS, Graph
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
@@ -32,48 +33,33 @@ EXTRACTION_SEMAPHORE = asyncio.Semaphore(3)
 #  CRUD 基础接口（保持不变）
 # ─────────────────────────────────────────────
 
-# 获取我的项目列表
-@router.get("/my", response_model=list[ProjectListItem])
-def get_my_projects(scope: str = "mine", current_user: User = Depends(get_current_user),
-                    db: Session = Depends(get_db)):
-    """我的项目列表；scope=all 仅超级管理员可用，返回全部项目（含归属人）。
-
-    每行附生命周期状态（2026-11 列表视图改版）：published > building（管线
-    运行中/排队/定时）> ready（已有骨架）> draft；附轻量统计（类/实例数），
-    免去前端逐项目拉构建摘要。
-    """
+def _build_project_list_items(db: Session, rows: list[Project]) -> list[ProjectListItem]:
+    """把 Project 行补齐为列表项（状态/类数/实例数），/my 与分页接口共用。"""
     from sqlalchemy import func as sa_func
-    from sqlalchemy.orm import joinedload
 
     from app.infrastructure.database import Entity
     from app.tasks.pipeline_tasks import pipeline_running_task_id, pipeline_scheduled_at
 
-    q = db.query(Project).options(joinedload(Project.owner))
-    if scope == "all":
-        if not is_super_admin(current_user):
-            raise HTTPException(status_code=403, detail="仅超级管理员可查看全部项目")
-        rows = q.order_by(Project.id).all()
-    else:
-        rows = q.filter(Project.owner_id == current_user.id).order_by(Project.id).all()
+    if not rows:
+        return []
 
-    inst_counts: dict = {}
-    if rows:
-        inst_counts = dict(
-            db.query(Entity.project_id, sa_func.count())
-            .filter(Entity.project_id.in_([p.id for p in rows]),
-                    Entity.is_class_node.is_(False),
-                    Entity.status != "merged")
-            .group_by(Entity.project_id).all())
+    inst_counts: dict = dict(
+        db.query(Entity.project_id, sa_func.count())
+        .filter(Entity.project_id.in_([p.id for p in rows]),
+                Entity.is_class_node.is_(False),
+                Entity.status != "merged")
+        .group_by(Entity.project_id).all())
 
-    out: list[ProjectListItem] = []
     # 比发布版本新的构建版本存在 → 「已发布但内容已更新」（重新构建过、可重新发布）
     pub_ver = dict(db.query(Publication.project_id, sa_func.max(Publication.version_id))
                    .filter(Publication.project_id.in_([p.id for p in rows]),
                            Publication.status == "published")
-                   .group_by(Publication.project_id).all()) if rows else {}
+                   .group_by(Publication.project_id).all())
     latest_ver = dict(db.query(OntologyVersion.project_id, sa_func.max(OntologyVersion.id))
                       .filter(OntologyVersion.project_id.in_([p.id for p in rows]))
-                      .group_by(OntologyVersion.project_id).all()) if rows else {}
+                      .group_by(OntologyVersion.project_id).all())
+
+    out: list[ProjectListItem] = []
     for p in rows:
         gd = p.graph_data if isinstance(p.graph_data, dict) else {}
         schema = gd.get("schema") if isinstance(gd.get("schema"), dict) else {}
@@ -99,6 +85,85 @@ def get_my_projects(scope: str = "mine", current_user: User = Depends(get_curren
         item.instances_total = int(inst_counts.get(p.id, 0))
         out.append(item)
     return out
+
+
+class ProjectPage(BaseModel):
+    """分页项目列表响应。"""
+    items: list[ProjectListItem]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+    has_next: bool
+    has_prev: bool
+
+
+# 获取我的项目列表（兼容旧接口：不分页）
+@router.get("/my", response_model=list[ProjectListItem])
+def get_my_projects(scope: str = "mine", current_user: User = Depends(get_current_user),
+                    db: Session = Depends(get_db)):
+    """我的项目列表；scope=all 仅超级管理员可用，返回全部项目（含归属人）。
+
+    每行附生命周期状态（2026-11 列表视图改版）：published > building（管线
+    运行中/排队/定时）> ready（已有骨架）> draft；附轻量统计（类/实例数），
+    免去前端逐项目拉构建摘要。
+    """
+    from sqlalchemy.orm import joinedload
+
+    q = db.query(Project).options(joinedload(Project.owner))
+    if scope == "all":
+        if not is_super_admin(current_user):
+            raise HTTPException(status_code=403, detail="仅超级管理员可查看全部项目")
+        rows = q.order_by(Project.id).all()
+    else:
+        rows = q.filter(Project.owner_id == current_user.id).order_by(Project.id).all()
+    return _build_project_list_items(db, rows)
+
+
+# 获取我的项目列表（分页）
+@router.get("/my/paged", response_model=ProjectPage)
+def get_my_projects_paged(
+    scope: str = "mine",
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """分页版 /my；scope=all 仅超级管理员可用。
+
+    page 从 1 开始；page_size 最大 100。返回 total/pages/has_next/has_prev，
+    便于前端直接做分页器，不需要再额外请求总数。
+    """
+    from sqlalchemy import func as sa_func
+    from sqlalchemy.orm import joinedload
+
+    if scope == "all" and not is_super_admin(current_user):
+        raise HTTPException(status_code=403, detail="仅超级管理员可查看全部项目")
+
+    count_q = db.query(sa_func.count(Project.id))
+    rows_q = db.query(Project)
+    if scope != "all":
+        count_q = count_q.filter(Project.owner_id == current_user.id)
+        rows_q = rows_q.filter(Project.owner_id == current_user.id)
+
+    total = int(count_q.scalar() or 0)
+    rows = (rows_q.options(joinedload(Project.owner))
+            .order_by(Project.id)
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+            .all())
+    items = _build_project_list_items(db, rows)
+    pages = (total + page_size - 1) // page_size
+    return ProjectPage(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        pages=pages,
+        has_next=page < pages,
+        has_prev=page > 1,
+    )
+
 
 # 获取公共已发布项目
 @router.get("/public", response_model=list[ProjectResponse])
@@ -405,6 +470,57 @@ def import_schema_from_project(
     db.commit()
     return {"imported_classes": len(imported_nodes), "imported_relations": len(class_edges),
             "version_no": new_version_no}
+
+
+class ProjectBatchDeleteIn(BaseModel):
+    project_ids: list[int] = Field(..., min_length=1, max_length=200)
+
+
+# 批量删除项目（单事务逐项目提交；部分失败不影响其他项目）
+@router.post("/batch-delete")
+def batch_delete_projects(
+    body: ProjectBatchDeleteIn,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """批量删除项目，权限与单项目删除一致：超管可删任意项目，普通用户仅可删自己名下。
+
+    返回逐项目结果，便于前端展示“部分成功”：
+      {"requested": 3, "deleted": [3, 4], "failed": [{"project_id": 5, "reason": "..."}]}
+    """
+    # 去重并保持请求顺序，避免同一项目被重复删除
+    project_ids = list(dict.fromkeys(body.project_ids))
+    deleted: list[int] = []
+    failed: list[dict[str, Any]] = []
+
+    for project_id in project_ids:
+        db_project = db.query(Project).filter(Project.id == project_id).first()
+        if not db_project:
+            failed.append({"project_id": project_id, "reason": "project not found"})
+            continue
+        if db_project.owner_id != current_user.id and not is_super_admin(current_user):
+            failed.append({"project_id": project_id, "reason": "no permission"})
+            continue
+
+        try:
+            # 与单项目删除保持同一清理顺序：成员行、审核项、项目主表。
+            # 每个项目独立提交，避免一个外键/约束错误回滚掉整批。
+            db.query(ProjectMember).filter(ProjectMember.project_id == project_id).delete()
+            db.query(ReviewItem).filter(ReviewItem.project_id == project_id).delete()
+            db.delete(db_project)
+            db.commit()
+            deleted.append(project_id)
+        except Exception as exc:  # noqa: BLE001
+            db.rollback()
+            logger.warning(f"[project] 批量删除失败 project_id={project_id}: {exc}")
+            failed.append({"project_id": project_id, "reason": str(exc)[:200]})
+
+    return {
+        "requested": len(project_ids),
+        "deleted": deleted,
+        "failed": failed,
+        "neo4j_sync": "async",
+    }
 
 
 # 删除项目
