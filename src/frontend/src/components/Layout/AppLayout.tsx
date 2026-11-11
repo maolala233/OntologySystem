@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { message, confirmModal } from '../../shared/feedback';
-import { Layout, Menu, Avatar, Dropdown, Button, Modal, Input, Tag, Spin, Table } from 'antd';
+import { Layout, Menu } from 'antd';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import {
     HomeOutlined,
@@ -8,7 +7,6 @@ import {
     BookOutlined,
 
     DatabaseOutlined,
-    LogoutOutlined,
     SettingOutlined,
     CloudServerOutlined,
     InfoCircleOutlined,
@@ -18,21 +16,16 @@ import {
     FileTextOutlined,
     ToolOutlined,
     QuestionCircleOutlined,
-    LockOutlined,
     TeamOutlined,
     EyeOutlined,
     RobotOutlined,
     SafetyOutlined,
 } from '@ant-design/icons';
-import { Form, Switch } from 'antd';
-import { authAPI } from '../../api/auth';
-import apiClient from '../../api/client';
-import { CONNECTIVITY_FIELDS, describeConnectivityError } from '../../utils/connectivity';
-import { projectsApi } from '../../api/projects';
 import { useAuthStore } from '../../shared/auth/authStore';
 import { confirmLeaveUnsaved } from '../../utils/unsavedGuard';
 import CopilotWidget from '../Copilot/CopilotWidget';
 import BrandMark from '../BrandMark';
+import { SiderCollapseContext } from './siderCollapse';
 
 const { Sider, Content } = Layout;
 
@@ -93,47 +86,6 @@ const AppLayout: React.FC = () => {
     // 菜单可见性：admin 全量；普通用户按授权矩阵；矩阵未加载完成前放行基础项（避免闪烁）
     const hasModule = (code: string) =>
         user.role === 'admin' ? true : modules.length > 0 ? modules.includes(code) : true;
-
-    const handleLogout = () => {
-        confirmModal({
-            title: '退出登录',
-            content: '确定要退出当前账号吗？',
-            okText: '退出登录',
-            cancelText: '取消',
-            onOk: () => {
-                clearAuth();
-                navigate('/login');
-            },
-        });
-    };
-
-    const [passwordModalVisible, setPasswordModalVisible] = useState(false);
-
-    // 测试连通性状态
-
-    const userMenuItems = [
-        {
-            key: 'change-password',
-            icon: <LockOutlined />,
-            label: '修改密码',
-            onClick: () => setPasswordModalVisible(true),
-        },
-        ...(user.role === 'admin' ? [{
-            key: 'settings',
-            icon: <SettingOutlined />,
-            label: '设置',
-            onClick: () => navigate('/admin/model-configs'),
-        }] : []),
-        {
-            type: 'divider' as const,
-        },
-        {
-            key: 'logout',
-            icon: <LogoutOutlined />,
-            label: '退出登录',
-            onClick: handleLogout,
-        },
-    ];
 
     // M1：菜单按授权矩阵过滤（模块码见 docs/design/README §4.1）
     const menuItems = [
@@ -212,12 +164,16 @@ const AppLayout: React.FC = () => {
     })();
 
     return (
+        <SiderCollapseContext.Provider value={{ collapsed, toggle: () => setCollapsed(c => !c) }}>
         <Layout className="h-screen overflow-hidden">
             {/* 深色侧边栏 */}
+            {/* 2026-11-11：关掉 Sider 底部自带的折叠箭头（trigger=null），
+                改由顶栏左侧的 SiderToggle 控制折叠 */}
             <Sider
                 collapsible
                 collapsed={collapsed}
                 onCollapse={setCollapsed}
+                trigger={null}
                 theme="dark"
                 width={240}
                 className="sticky top-0 h-screen flex flex-col"
@@ -229,16 +185,21 @@ const AppLayout: React.FC = () => {
                     zIndex: 10,
                 }}
             >
-                {/* Logo 区域 */}
-                <div className="h-16 flex items-center justify-center bg-[#001529] border-b border-gray-700">
-                    <div className="flex items-center space-x-2">
-                        <div className="w-8 h-8 rounded-lg flex items-center justify-center"
+                {/* Logo 区域：标题随侧栏宽度一起「展开/收起」（max-width 过渡），
+                    不能按 collapsed 直接显隐——展开动画途中侧栏还窄，文字会先折成两行再变一行 */}
+                <div className="h-16 flex items-center justify-center bg-[#001529] border-b border-gray-700 overflow-hidden">
+                    <div className="flex items-center min-w-0">
+                        <div className="w-8 h-8 shrink-0 rounded-lg flex items-center justify-center"
                              style={{ background: 'linear-gradient(135deg, #3b82f6, #9333ea)' }}>
                             <BrandMark size={19} strokeWidth={4} />
                         </div>
-                        {!collapsed && (
-                            <span className="text-white font-semibold text-lg">本体平台</span>
-                        )}
+                        <span
+                            className={`text-white font-semibold text-lg whitespace-nowrap overflow-hidden transition-all duration-200 ease-out ${
+                                collapsed ? 'max-w-0 opacity-0 ml-0' : 'max-w-[6rem] opacity-100 ml-2'
+                            }`}
+                        >
+                            本体平台
+                        </span>
                     </div>
                 </div>
 
@@ -259,94 +220,7 @@ const AppLayout: React.FC = () => {
                     />
                 </div>
 
-                {/* 用户信息区域 */}
-                <div
-                    className="px-4 pb-2"
-                    style={{
-                        marginTop: 'auto',
-                        zIndex: 10,
-                        position: 'relative',
-                        background: 'transparent'
-                    }}
-                >
-                    <Dropdown menu={{ items: userMenuItems }} placement="topRight">
-                        <div className="flex items-center space-x-3 p-2 rounded-lg hover:bg-gray-700 cursor-pointer transition-colors mb-1">
-                            <Avatar
-                                size={collapsed ? 32 : 40}
-                                icon={<UserOutlined />}
-                                className="bg-gradient-to-br from-blue-500 to-purple-600"
-                                style={{ background: 'linear-gradient(135deg, #3b82f6, #9333ea)' }}
-                            />
-                            {!collapsed && (
-                                <div className="flex-1 min-w-0">
-                                    <div className="text-white text-sm font-medium truncate">
-                                        {user.display_name || user.username || '用户'}
-                                    </div>
-                                    <div className="flex items-center gap-2 mt-1 min-w-0">
-                                        <Tag
-                                            color={user.role === 'admin' ? 'gold' : 'blue'}
-                                            style={{ marginInlineEnd: 0, lineHeight: '16px', fontSize: 11, flexShrink: 0 }}
-                                        >
-                                            {user.role === 'admin' ? '管理员' : '普通用户'}
-                                        </Tag>
-                                        {user.email && (
-                                            <span className="text-gray-400 text-xs truncate" title={user.email}>
-                                                {user.email}
-                                            </span>
-                                        )}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    </Dropdown>
-                </div>
             </Sider>
-
-            <Modal
-                title="修改密码"
-                open={passwordModalVisible}
-                onCancel={() => setPasswordModalVisible(false)}
-                onOk={async () => {
-                    const oldPwd = (document.getElementById('old-password') as HTMLInputElement)?.value;
-                    const newPwd = (document.getElementById('new-password') as HTMLInputElement)?.value;
-                    const confirmPwd = (document.getElementById('confirm-password') as HTMLInputElement)?.value;
-                    if (!oldPwd || !newPwd || !confirmPwd) {
-                        message.error('请填写所有字段');
-                        return;
-                    }
-                    if (newPwd !== confirmPwd) {
-                        message.error('两次输入的新密码不一致');
-                        return;
-                    }
-                    if (newPwd.length < 6) {
-                        message.error('新密码长度不能少于6位');
-                        return;
-                    }
-                    try {
-                        await authAPI.changePassword({ old_password: oldPwd, new_password: newPwd });
-                        message.success('密码修改成功');
-                        setPasswordModalVisible(false);
-                    } catch (error: any) {
-                        message.error(error?.response?.data?.detail || '密码修改失败');
-                    }
-                }}
-                okText="确认修改"
-            >
-                <div className="space-y-4 py-2">
-                    <div>
-                        <div className="mb-1 text-sm font-medium">旧密码</div>
-                        <Input.Password id="old-password" placeholder="请输入旧密码" />
-                    </div>
-                    <div>
-                        <div className="mb-1 text-sm font-medium">新密码</div>
-                        <Input.Password id="new-password" placeholder="请输入新密码（至少6位）" />
-                    </div>
-                    <div>
-                        <div className="mb-1 text-sm font-medium">确认新密码</div>
-                        <Input.Password id="confirm-password" placeholder="请再次输入新密码" />
-                    </div>
-                </div>
-            </Modal>
 
             {/* 本体问答已改为独立页面 /qa（R8）；QaDrawer 组件保留供其他入口复用 */}
 
@@ -361,6 +235,7 @@ const AppLayout: React.FC = () => {
                 可见范围（仅构建器五 Tab）由组件内部按路由门控 */}
             <CopilotWidget />
         </Layout>
+        </SiderCollapseContext.Provider>
     );
 };
 

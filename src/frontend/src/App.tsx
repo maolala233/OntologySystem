@@ -56,7 +56,7 @@ function App() {
                         }
                     >
                         <Route index element={<HomePage />} />
-                        <Route path="my-projects" element={<MyProjectsPage />} />
+                        <Route path="my-projects" element={<RequireModule module="projects"><MyProjectsPage /></RequireModule>} />
                         {/* 新版详情页（默认）：后台构建状态 + 结果入口 + 发布/去问答 */}
                         <Route path="projects/:projectId" element={<ProjectOverviewPage />} />
                         <Route path="projects/:projectId/result" element={<BuildResultPage />} />
@@ -72,8 +72,8 @@ function App() {
                         {/* 旧路由兼容重定向 */}
                         <Route path="ontology-builder" element={<Navigate to="/my-projects" replace />} />
                         <Route path="ontology-builder/:projectId" element={<RedirectBuilder />} />
-                        <Route path="asset-center" element={<AssetCenterPage />} />
-                        <Route path="asset-center/:projectId" element={<AssetDetailPage />} />
+                        <Route path="asset-center" element={<RequireModule module="asset_center"><AssetCenterPage /></RequireModule>} />
+                        <Route path="asset-center/:projectId" element={<RequireModule module="asset_center"><AssetDetailPage /></RequireModule>} />
                         {/* M5 R8 本体问答独立页面（对话分组 + 模型选择） */}
                         <Route path="qa" element={<RequireModule module="qa"><QaPage /></RequireModule>} />
                         {/* R8 工具层：报告/PPT 生成 + MCP 服务控制台 */}

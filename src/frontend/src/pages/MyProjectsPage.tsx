@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { message } from '../shared/feedback';
-import { Badge, Button, Checkbox, Empty, Form, Input, Modal, Radio, Popconfirm, Select, Space, Spin, Statistic, Table, Tag, Tooltip, Upload, DatePicker } from 'antd';
+import { Badge, Button, Checkbox, Empty, Form, Input, Modal, Pagination, Radio, Popconfirm, Select, Space, Spin, Statistic, Table, Tag, Tooltip, Upload, DatePicker } from 'antd';
 import {
      PlusOutlined,
     EditOutlined,
@@ -33,9 +33,16 @@ import confirmImpact from '../utils/impactConfirm';
 
 const TC = TECH_COLORS;
 
-type SortField = 'created_at' | 'name' | 'node_count';
+type SortField = 'created_at' | 'updated_at' | 'name';
 type SortOrder = 'asc' | 'desc';
 type ViewMode = 'list' | 'cards';
+type StatusKey = 'draft' | 'scheduled' | 'building' | 'ready' | 'published';
+
+/** 列表每页条数（列表/卡片共用，切视图不重发请求） */
+const PAGE_SIZE = 10;
+const EMPTY_COUNTS: Record<StatusKey, number> & { total: number } = {
+    total: 0, draft: 0, scheduled: 0, building: 0, ready: 0, published: 0,
+};
 
 /** 状态归一：后端 /my 直接下发 status；旧数据回退按 is_published 推导 */
 const statusOf = (p: ProjectData): string =>
@@ -56,7 +63,11 @@ const fmtDate = (v?: string | null) =>
 
 const MyProjectsPage: React.FC = () => {
     const navigate = useNavigate();
+    // 服务端分页：projects 只保存当前页，搜索/筛选/排序/翻页全部交给后端
     const [projects, setProjects] = useState<ProjectData[]>([]);
+    const [total, setTotal] = useState(0);
+    // 各状态数量（统计卡）：接口只回过滤后的 total，所以按状态各发一次 page_size=1 的 count
+    const [counts, setCounts] = useState<Record<StatusKey, number> & { total: number }>(EMPTY_COUNTS);
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -68,37 +79,96 @@ const MyProjectsPage: React.FC = () => {
 
     // 2026-11 列表视图改版：默认列表展示，可切卡片；按状态筛选
     const [viewMode, setViewMode] = useState<ViewMode>('list');
-    const [statusFilter, setStatusFilter] = useState<string[]>([]);
 
     const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+    const [page, setPage] = useState(1);
+    // 输入框即时值 + 防抖 300ms 后生效的查询词
     const [searchText, setSearchText] = useState('');
+    const [keyword, setKeyword] = useState('');
+    const [statusFilter, setStatusFilter] = useState<string[]>([]);
     const [sortField, setSortField] = useState<SortField>('created_at');
     const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
+    // 删除等场景：查询条件没变，用它触发列表重载
+    const [reloadTick, setReloadTick] = useState(0);
+    // 请求代际：连点翻页/边打字边搜索时，只有最新一次响应可写状态（防旧响应覆盖）
+    const fetchGenRef = useRef(0);
 
     // R11：超级管理员（username=admin）可查看/编辑全部用户的项目；普通管理员与普通用户只看自己相关的
     const me = useAuthStore((s) => s.user);
     const isSuperAdmin = me?.role === 'admin' && me?.username === 'admin';
     const [scope, setScope] = useState<'mine' | 'all'>('mine');
+    const apiScope = isSuperAdmin ? scope : undefined;
 
+    // 搜索防抖：停止输入 300ms 后才发请求，并回到第一页
     useEffect(() => {
-        loadProjects();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [scope]);
+        const t = setTimeout(() => {
+            setKeyword(searchText.trim());
+            setPage(1);
+        }, 300);
+        return () => clearTimeout(t);
+    }, [searchText]);
 
-    const loadProjects = () => {
+    // 列表加载：任一查询条件变化都从后端重新取当前页
+    useEffect(() => {
+        const gen = ++fetchGenRef.current;
         setLoading(true);
-        projectsApi.getMyProjects(isSuperAdmin ? scope : undefined)
-            .then((data) => {
-                setProjects(data);
+        projectsApi.getMyProjectsPaged({
+            scope: apiScope,
+            page,
+            page_size: PAGE_SIZE,
+            keyword: keyword || undefined,
+            status: statusFilter.length ? statusFilter : undefined,
+            sort_by: sortField,
+            order: sortOrder,
+        })
+            .then((r) => {
+                if (gen !== fetchGenRef.current) return;   // 过期响应（如连点翻页）丢弃
+                setProjects(r.items);
+                setTotal(r.total);
                 setLoadError(null);
+                // 删掉末页最后一条后页码越界：回退到最后一页
+                if (r.items.length === 0 && r.total > 0 && page > 1) {
+                    setPage(Math.max(1, Math.ceil(r.total / PAGE_SIZE)));
+                }
             })
             .catch((error: any) => {
+                if (gen !== fetchGenRef.current) return;
                 const detail = error?.response?.data?.message || error?.response?.data?.detail || error?.message;
                 setLoadError(String(detail || '未知错误'));
             })
             .finally(() => {
-                setLoading(false);
+                if (gen === fetchGenRef.current) setLoading(false);
             });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [apiScope, page, keyword, statusFilter, sortField, sortOrder, reloadTick]);
+
+    // 状态统计：总数 + 每状态各一次 count（只取 total，不取数据行）
+    const loadCounts = useCallback(async () => {
+        const base = { scope: apiScope, page: 1, page_size: 1 };
+        try {
+            const [all, draft, scheduled, building, ready, published] = await Promise.all([
+                projectsApi.getMyProjectsPaged(base),
+                projectsApi.getMyProjectsPaged({ ...base, status: ['draft'] }),
+                projectsApi.getMyProjectsPaged({ ...base, status: ['scheduled'] }),
+                projectsApi.getMyProjectsPaged({ ...base, status: ['building'] }),
+                projectsApi.getMyProjectsPaged({ ...base, status: ['ready'] }),
+                projectsApi.getMyProjectsPaged({ ...base, status: ['published'] }),
+            ]);
+            setCounts({
+                total: all.total, draft: draft.total, scheduled: scheduled.total,
+                building: building.total, ready: ready.total, published: published.total,
+            });
+        } catch {
+            // 统计失败不阻塞列表，保留上一次数值
+        }
+    }, [apiScope]);
+
+    useEffect(() => { void loadCounts(); }, [loadCounts]);
+
+    // 删除/新建后：列表和统计一起刷新
+    const refreshAll = () => {
+        setReloadTick((t) => t + 1);
+        void loadCounts();
     };
 
     // 新建项目：名称/域 + 可选上传文档 + 构建时机（一级菜单，默认标准构建）——创建即后台构建
@@ -216,7 +286,7 @@ const MyProjectsPage: React.FC = () => {
                         next.delete(projectId);
                         return next;
                     });
-                    loadProjects();
+                    refreshAll();
                 } catch (error) {
                     message.error('删除失败');
                 }
@@ -245,7 +315,7 @@ const MyProjectsPage: React.FC = () => {
                     );
                     // 失败的保留选中，方便直接重试
                     setSelectedIds(new Set((r.failed || []).map(f => f.project_id)));
-                    await loadProjects();
+                    refreshAll();
                     if (failedNames.length === 0) message.success(`已删除 ${r.deleted.length} 个项目`);
                     else if (r.deleted.length === 0) message.error(`删除失败：${failedNames.join('、')}`);
                     else message.warning(`成功删除 ${r.deleted.length} 个，失败 ${failedNames.length} 个：${failedNames.join('、')}`);
@@ -256,55 +326,10 @@ const MyProjectsPage: React.FC = () => {
         });
     };
 
-    const statusCounts = useMemo(() => {
-        const c = { total: projects.length, draft: 0, published: 0, ready: 0,
-                    building: 0, scheduled: 0 };
-        projects.forEach((p) => {
-            const s = statusOf(p);
-            if (s === 'published') c.published++;
-            else if (s === 'ready') c.ready++;
-            else if (s === 'building') c.building++;
-            else if (s === 'scheduled') c.scheduled++;
-            else if (s === 'draft') c.draft++;
-        });
-        return c;
-    }, [projects]);
-
-    const filteredAndSortedProjects = useMemo(() => {
-        let result = [...projects];
-
-        if (searchText.trim()) {
-            const keyword = searchText.trim().toLowerCase();
-            result = result.filter(p => p.name.toLowerCase().includes(keyword));
-        }
-        if (statusFilter.length > 0) {
-            result = result.filter(p => statusFilter.includes(statusOf(p)));
-        }
-
-        result.sort((a, b) => {
-            let cmp = 0;
-            switch (sortField) {
-                case 'name':
-                    cmp = a.name.localeCompare(b.name, 'zh-CN');
-                    break;
-                case 'node_count':
-                    cmp = (a.graph_data?.nodes?.length || 0) - (b.graph_data?.nodes?.length || 0);
-                    break;
-                case 'created_at':
-                default:
-                    cmp = new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
-                    break;
-            }
-            return sortOrder === 'asc' ? cmp : -cmp;
-        });
-
-        return result;
-    }, [projects, searchText, statusFilter, sortField, sortOrder]);
-
     const sortOptions = [
         { label: '创建时间', value: 'created_at' },
+        { label: '更新时间', value: 'updated_at' },
         { label: '项目名称', value: 'name' },
-        { label: '节点数量', value: 'node_count' },
     ];
 
     const breadcrumbs = [
@@ -408,25 +433,26 @@ const MyProjectsPage: React.FC = () => {
                 .mp-card { border-radius: 14px; border: 1px solid #EEF1F8; transition: all .25s ease; }
                 .mp-card:hover { box-shadow: 0 16px 34px -12px rgba(15,20,32,.22); transform: translateY(-3px); }
             `}</style>
-            <Navbar
-                breadcrumbs={breadcrumbs}
-                showCreateButton
-                onCreateProject={() => setIsModalOpen(true)}
-            />
+            <Navbar breadcrumbs={breadcrumbs} />
 
             <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
                 <TechHero
                     compact
-                    chips={['PROJECT WORKSPACE', `共 ${projects.length} 个项目`]}
+                    chips={['PROJECT WORKSPACE', `共 ${counts.total} 个项目`]}
                     title={isSuperAdmin && scope === 'all' ? '全部项目' : '我的项目'}
                     subtitle={isSuperAdmin && scope === 'all'
                         ? '平台全部用户的项目，可查看与编辑'
                         : '创建与管理你的本体建模项目：AI 框架提取 · 骨架画布 · 实例探索 · 版本治理'}
-                    showConstellation={projects.length > 0}
+                    showConstellation={counts.total > 0}
                     actions={isSuperAdmin ? (
                         <Segmented
                             value={scope}
-                            onChange={(v) => setScope(v as 'mine' | 'all')}
+                            onChange={(v) => {
+                                // 切换范围：回到第一页，清掉跨范围失效的勾选
+                                setScope(v as 'mine' | 'all');
+                                setPage(1);
+                                setSelectedIds(new Set());
+                            }}
                             options={[
                                 { value: 'mine', label: '我的项目' },
                                 { value: 'all', label: '全部项目' },
@@ -438,7 +464,7 @@ const MyProjectsPage: React.FC = () => {
                 {/* 状态统计（2026-11 列表视图改版；说明内嵌卡片 2026-11-09） */}
                 <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-4">
                     <div className="bg-white border border-gray-100 rounded-xl px-4 py-3">
-                        <Statistic title="项目总数" value={statusCounts.total} />
+                        <Statistic title="项目总数" value={counts.total} />
                     </div>
                     {(Object.keys(PROJECT_STATUS) as Array<keyof typeof PROJECT_STATUS>).map((k) => {
                         const meta = PROJECT_STATUS[k];
@@ -454,7 +480,7 @@ const MyProjectsPage: React.FC = () => {
                                         <Statistic
                                             title={<span className="cursor-help">{meta.text}
                                                 <InfoCircleOutlined className="ml-1 text-gray-300 text-xs" /></span>}
-                                            value={statusCounts[countKey]}
+                                            value={counts[countKey as StatusKey]}
                                             valueStyle={{ color: colorOf[k] }} />
                                     </div>
                                 </Tooltip>
@@ -463,24 +489,27 @@ const MyProjectsPage: React.FC = () => {
                     })}
                 </div>
 
-                {projects.length > 0 && (
-                    <div className="mb-4 flex flex-wrap items-center gap-3">
+                {/* 操作栏：搜索/筛选靠左，视图切换与「新建项目」靠右（新建按钮 2026-11-11 从顶栏迁入） */}
+                {(counts.total > 0 || !!loadError) && (
+                <div className="mb-4 flex flex-wrap items-center gap-2">
+                    {counts.total > 0 && (<>
                         <Input
                             prefix={<SearchOutlined className="text-gray-500" />}
-                            placeholder="搜索项目名称..."
+                            placeholder="搜索项目名称/描述..."
                             value={searchText}
                             onChange={e => setSearchText(e.target.value)}
                             allowClear
-                            style={{ width: 260 }}
+                            style={{ width: 240 }}
                         />
                         <Select
                             mode="multiple" allowClear maxTagCount="responsive"
-                            placeholder="全部状态" style={{ minWidth: 200 }}
-                            value={statusFilter} onChange={setStatusFilter}
+                            placeholder="全部状态" style={{ minWidth: 180 }}
+                            value={statusFilter}
+                            onChange={(v) => { setStatusFilter(v); setPage(1); }}
                             options={STATUS_OPTIONS}
                         />
-                        <div className="flex items-center gap-2">
-                            <span className="text-gray-500 text-sm">排序：</span>
+                        <div className="flex items-center gap-1">
+                            <span className="text-gray-500 text-sm pl-1">排序</span>
                             <Select
                                 value={sortField}
                                 onChange={(v) => {
@@ -490,6 +519,7 @@ const MyProjectsPage: React.FC = () => {
                                         setSortField(v);
                                         setSortOrder('desc');
                                     }
+                                    setPage(1);
                                 }}
                                 options={sortOptions}
                                 style={{ width: 130 }}
@@ -498,12 +528,12 @@ const MyProjectsPage: React.FC = () => {
                             <Button
                                 size="small"
                                 icon={<SortAscendingOutlined style={{ transform: sortOrder === 'desc' ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />}
-                                onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
+                                onClick={() => { setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc'); setPage(1); }}
                                 title={sortOrder === 'asc' ? '升序' : '降序'}
                             />
                         </div>
                         {selectedIds.size > 0 && (
-                            <div className="flex items-center gap-1 pl-3 ml-1 border-l border-gray-200">
+                            <div className="flex items-center gap-1 pl-2 border-l border-gray-200">
                                 <span className="text-sm text-gray-500">
                                     已选 <span className="text-blue-600 font-medium">{selectedIds.size}</span> 项
                                 </span>
@@ -527,10 +557,19 @@ const MyProjectsPage: React.FC = () => {
                                 ]}
                             />
                         </div>
-                    </div>
+                    </>)}
+                    <Button
+                        type={counts.total > 0 ? 'primary' : 'default'}
+                        icon={<PlusOutlined />}
+                        onClick={() => setIsModalOpen(true)}
+                        className={counts.total > 0 ? '' : 'ml-auto'}
+                    >
+                        新建项目
+                    </Button>
+                </div>
                 )}
 
-                {loading ? (
+                {loading && projects.length === 0 ? (
                     <div className="flex justify-center items-center h-96">
                         <Spin size="large" />
                     </div>
@@ -540,12 +579,12 @@ const MyProjectsPage: React.FC = () => {
                             description={`项目加载失败：${loadError}`}
                             image={Empty.PRESENTED_IMAGE_SIMPLE}
                         >
-                            <Button type="primary" icon={<ReloadOutlined />} onClick={loadProjects}>
+                            <Button type="primary" icon={<ReloadOutlined />} onClick={refreshAll}>
                                 重试
                             </Button>
                         </Empty>
                     </div>
-                ) : projects.length === 0 ? (
+                ) : counts.total === 0 ? (
                     <div className="flex flex-col items-center justify-center h-96 px-4">
                         <Empty
                             description="还没有项目，创建第一个项目开始吧！"
@@ -560,22 +599,34 @@ const MyProjectsPage: React.FC = () => {
                             </Button>
                         </Empty>
                     </div>
-                ) : filteredAndSortedProjects.length === 0 ? (
+                ) : total === 0 ? (
                     <div className="flex flex-col items-center justify-center h-96 px-4">
                         <Empty
                             description="没有找到匹配的项目"
                             image={Empty.PRESENTED_IMAGE_SIMPLE}
                         >
-                            <Button onClick={() => { setSearchText(''); setStatusFilter([]); }}>清除筛选</Button>
+                            <Button onClick={() => {
+                                setSearchText(''); setStatusFilter([]); setPage(1);
+                            }}>
+                                清除筛选
+                            </Button>
                         </Empty>
                     </div>
                 ) : viewMode === 'list' ? (
                     <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
                         <Table
                             rowKey="id" size="middle"
+                            loading={loading}
                             columns={listColumns}
-                            dataSource={filteredAndSortedProjects}
-                            pagination={{ pageSize: 10, showSizeChanger: false }}
+                            dataSource={projects}
+                            pagination={{
+                                current: page,
+                                pageSize: PAGE_SIZE,
+                                total,
+                                showSizeChanger: false,
+                                showTotal: (t) => `共 ${t} 个项目`,
+                                onChange: (p) => setPage(p),
+                            }}
                             rowSelection={{
                                 selectedRowKeys: [...selectedIds],
                                 onChange: (keys) => setSelectedIds(new Set(keys as number[])),
@@ -589,7 +640,7 @@ const MyProjectsPage: React.FC = () => {
                 ) : (
                     <>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
-                            {filteredAndSortedProjects.map((project) => {
+                            {projects.map((project) => {
                                 const isSelected = selectedIds.has(project.id);
                                 return (
                                     <div key={project.id} className="relative">
@@ -651,6 +702,19 @@ const MyProjectsPage: React.FC = () => {
                                 );
                             })}
                         </div>
+                        {/* 卡片视图没有表格自带分页器，单独补一个（与列表共用同一页数据） */}
+                        {total > PAGE_SIZE && (
+                            <div className="flex justify-end mt-4">
+                                <Pagination
+                                    current={page}
+                                    pageSize={PAGE_SIZE}
+                                    total={total}
+                                    showSizeChanger={false}
+                                    showTotal={(t) => `共 ${t} 个项目`}
+                                    onChange={(p) => setPage(p)}
+                                />
+                            </div>
+                        )}
                     </>
                 )}
             </div>

@@ -26,6 +26,7 @@ import ProjectDocsCard from '../features/builder/components/ProjectDocsCard';
 import QualityCheckTag from '../features/builder/components/QualityCheckTag';
 import BuildResultsPanel from '../features/builder/components/BuildResultsPanel';
 import { useBuilderStore } from '../features/builder/store';
+import SiderToggle from '../components/Layout/SiderToggle';
 
 const ProjectOverviewPage: React.FC = () => {
     const { projectId } = useParams<{ projectId: string }>();
@@ -130,6 +131,7 @@ const ProjectOverviewPage: React.FC = () => {
         <div className="h-full flex flex-col bg-gray-50">
             {/* 头部 */}
             <div className="shrink-0 flex items-center gap-3 px-4 py-2 bg-white border-b border-gray-200">
+                <SiderToggle />
                 <Button icon={<ArrowLeftOutlined />} size="small"
                         onClick={() => navigate('/my-projects')}>返回</Button>
                 <span className="font-semibold text-gray-800">{projectName || `项目 #${pid}`}</span>
