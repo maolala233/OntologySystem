@@ -59,7 +59,16 @@ const ProjectOverviewPage: React.FC = () => {
     useEffect(() => { loadProject(pid); }, [pid, loadProject]);
     useEffect(() => { load(); }, [load, pipelineSignal]);
 
-    const statusMeta = PROJECT_STATUS[projectStatus] || PROJECT_STATUS.draft;
+    // 生命周期状态只分 draft/building/ready/published，没有「中止/失败」——
+    // 构建被中止或失败后只要已产出骨架，后端仍标 ready（已构建），语义上会误导。
+    // 这里以最近一次管线终态覆盖显示：已发布优先，其次中止/失败。
+    const statusMeta = projectStatus === 'published'
+        ? PROJECT_STATUS.published
+        : pipeStatus === 'cancelled'
+            ? { color: 'warning', text: '已中止', desc: '最近一次构建被中止，已完成阶段的成果保留' }
+            : pipeStatus === 'failed'
+                ? { color: 'error', text: '构建失败', desc: '最近一次构建失败' }
+                : PROJECT_STATUS[projectStatus] || PROJECT_STATUS.draft;
     // 构建中判定以轮询到的实时状态为准（摘要里的 last_pipeline 可能滞后一拍）
     const building = ['running', 'queued', 'scheduled'].includes(pipeStatus || '')
         || (!pipeStatus && (summary?.pipeline?.status === 'running'
@@ -72,8 +81,33 @@ const ProjectOverviewPage: React.FC = () => {
     // 跃迁语义与旧轮询版一致：idle→running（结果区让位进度）、
     // *→completed/failed/cancelled（结果自动出现）。
     const lastPipeStatusRef = useRef<string | null>(null);
+    // 当前运行阶段（下传文档卡：构建中显示「骨架抽取中 / 实例抽取中…」）
+    const [pipeStage, setPipeStage] = useState<{ key: string; label: string; status: string; message?: string } | null>(null);
     const handlePipeStatus = useCallback((s: PipelineStatus | null) => {
         if (!s || !Number.isFinite(pid) || pid <= 0) return;
+        const stages = s.stages || [];
+        // 子任务已 100% 但主阶段尚未置 done（收尾间隙，如骨架索引同步）：视为已完成，
+        // 直接看下一个待执行阶段，避免文档卡卡在上一阶段
+        // 只在子进度属于当前阶段时才采信（避免沿用上一阶段残留的 100%）
+        const subDone = typeof s.sub?.percent === 'number' && s.sub.percent >= 100
+            && (!!s.sub.stage && s.sub.stage === s.stage);
+        // 只有管线仍在运行/排队时才认阶段：中止/失败/完成后，进度快照里可能还残留
+        // running 阶段，不能据此把文档状态显示成「X中」（2026-11-11 中止场景实测）
+        const pipelineActive = s.status === 'running' || s.status === 'queued';
+        const runningStage = (pipelineActive && !subDone)
+            ? stages.find((st) => st.status === 'running')
+            : undefined;
+        const pendingStage = s.status === 'running' ? stages.find((st) => st.status === 'pending') : undefined;
+        const activeStage = runningStage || pendingStage;
+        if (activeStage) {
+            setPipeStage({ key: activeStage.key, label: activeStage.label, status: activeStage.status, message: s.message });
+        } else if (s.status === 'running') {
+            // 兜底：管线在跑但拿不到具体阶段（如末阶段被跳过）→ 统一显示「构建中」，
+            // 不能让文档状态退回「已解析」
+            setPipeStage({ key: 'running', label: '构建', status: 'running', message: s.message });
+        } else {
+            setPipeStage(null);
+        }
         const prev = lastPipeStatusRef.current;
         lastPipeStatusRef.current = s.status;
         setPipeStatus(s.status); // 实时状态供 building/引导区判定
@@ -131,7 +165,7 @@ const ProjectOverviewPage: React.FC = () => {
                     mt-4：卡片自身的 mb-* 被 index.css 的 .ant-card{margin-bottom:0} 覆盖，
                     间距改用外层 div 控制（2026-11-11） */}
                 <div className="mt-4 mb-4">
-                    <ProjectDocsCard projectId={pid} onChanged={load} />
+                    <ProjectDocsCard projectId={pid} onChanged={load} pipelineStage={pipeStage} />
                 </div>
 
                 {!building && summary && summary.schema.classes_total > 0 && (

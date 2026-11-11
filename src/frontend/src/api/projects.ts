@@ -138,6 +138,36 @@ export const projectsApi = {
         await apiClient.delete(`/api/projects/${projectId}`);
     },
 
+    // 分页列表（后端 /my/paged）：返回 items + total/pages/has_next 等，免额外请求总数
+    getMyProjectsPaged: async (params: {
+        scope?: 'mine' | 'all'; page?: number; page_size?: number;
+    } = {}): Promise<{
+        items: ProjectData[]; total: number; page: number; page_size: number;
+        pages: number; has_next: boolean; has_prev: boolean;
+    }> => {
+        const response = await apiClient.get('/api/projects/my/paged', {
+            params: {
+                ...(params.scope === 'all' ? { scope: 'all' } : {}),
+                ...(params.page ? { page: params.page } : {}),
+                ...(params.page_size ? { page_size: params.page_size } : {}),
+            },
+        });
+        return response.data;
+    },
+
+    // 批量删除（后端单事务逐项目提交，返回逐项结果便于展示部分成功）
+    batchDeleteProjects: async (projectIds: number[]): Promise<{
+        requested: number;
+        deleted: number[];
+        failed: Array<{ project_id: number; reason: string }>;
+        neo4j_sync: string;
+    }> => {
+        const response = await apiClient.post('/api/projects/batch-delete', {
+            project_ids: projectIds,
+        });
+        return response.data;
+    },
+
     // 上传文档并提取本体（旧版兼容接口）
     uploadDocument: async (projectId: number, file: File, params?: { scenario?: string; entities_df?: any }): Promise<any> => {
         const formData = new FormData();
