@@ -181,13 +181,13 @@ const AppLayout: React.FC = () => {
                     position: 'sticky',
                     top: 0,
                     height: '100vh',
-                    boxShadow: '4px 0 12px rgba(0, 0, 0, 0.15)',
+                    boxShadow: '4px 0 24px -8px rgba(15, 23, 42, 0.28)',
                     zIndex: 10,
                 }}
             >
                 {/* Logo 区域：标题随侧栏宽度一起「展开/收起」（max-width 过渡），
                     不能按 collapsed 直接显隐——展开动画途中侧栏还窄，文字会先折成两行再变一行 */}
-                <div className="h-16 flex items-center justify-center bg-[#001529] border-b border-gray-700 overflow-hidden">
+                <div className="h-16 flex items-center justify-center border-b border-white/10 overflow-hidden">
                     <div className="flex items-center min-w-0">
                         <div className="w-8 h-8 shrink-0 rounded-lg flex items-center justify-center"
                              style={{ background: 'linear-gradient(135deg, #3b82f6, #9333ea)' }}>
@@ -226,7 +226,7 @@ const AppLayout: React.FC = () => {
 
             {/* 主内容区 */}
             <Layout>
-                <Content className="bg-gray-50 h-screen overflow-hidden">
+                <Content className="app-canvas h-screen overflow-hidden">
                     <Outlet />
                 </Content>
             </Layout>

@@ -205,23 +205,29 @@ body,
   overflow: hidden;
 }
 
-/* 滚动条样式 */
+/* 滚动条样式：细、圆角、低对比度——旧版深灰块在浅色画布上非常抢眼 */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #888;
-  border-radius: 4px;
+  background: rgba(100, 116, 139, 0.28);
+  border-radius: 999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #555;
+  background: rgba(71, 85, 105, 0.48);
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100, 116, 139, 0.30) transparent;
 }
 
 /* 内容区滚动容器：始终预留滚动条槽位，避免滚动条出现/消失导致布局抖动 */
@@ -458,4 +464,124 @@ button[title*="列表"]:hover {
 
 .builder-tabs .ant-tabs-nav {
   margin-bottom: 8px;
+}
+
+
+/* ===================================================================
+   视觉系统（2026-11-11）：统一画布 / 顶栏 / 面板 / 表格的层次与质感
+   只调整颜色、阴影、描边等视觉层，不改动任何尺寸与布局。
+   ==================================================================== */
+:root {
+  --app-bg: #F3F6FB;
+  --surface: #FFFFFF;
+  --border-soft: #E6EBF5;
+  --border-strong: #DCE3F0;
+  --ink-1: #0F172A;
+  --ink-2: #52607A;
+  --ink-3: #8A94AB;
+  --brand: #5B8DEF;
+  --brand-2: #8B5CF6;
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.05), 0 12px 30px -16px rgba(15, 23, 42, 0.20);
+  --shadow-card-hover: 0 2px 4px rgba(15, 23, 42, 0.05), 0 22px 44px -20px rgba(15, 23, 42, 0.26);
+}
+
+html,
+body {
+  background: var(--app-bg);
+}
+
+::selection {
+  background: rgba(91, 141, 239, 0.22);
+}
+
+/* 主内容画布：冷灰底 + 极淡的品牌色辉光。
+   替代原来成块的纯白/纯灰底色，让内容区有"空间"而不刺眼 */
+.app-canvas {
+  background-color: var(--app-bg);
+  background-image:
+    radial-gradient(1100px 560px at 90% -14%, rgba(91, 141, 239, 0.16), transparent 62%),
+    radial-gradient(900px 540px at -8% 110%, rgba(139, 92, 246, 0.11), transparent 60%),
+    linear-gradient(180deg, #F5F8FD 0%, #EDF2F9 100%);
+  background-attachment: fixed;
+}
+
+/* 全站顶栏：实白 + 极细分隔线 + 轻投影（页面含深色沉浸页，故不做半透明） */
+.app-topbar {
+  background: #FFFFFF;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.9);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 10px 28px -26px rgba(15, 23, 42, 0.5);
+}
+
+/* 页面内 sticky 头部：毛玻璃，滚动时内容从下方虚化掠过 */
+.page-header {
+  background: rgba(255, 255, 255, 0.86);
+  -webkit-backdrop-filter: saturate(180%) blur(14px);
+  backdrop-filter: saturate(180%) blur(14px);
+  border-bottom: 1px solid rgba(226, 232, 240, 0.85);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+}
+
+/* 卡片：统一柔和投影（带描边的卡片 antd 本身不投影，这里补一层环境光） */
+.ant-card {
+  box-shadow: var(--shadow-card);
+}
+
+.ant-card-hoverable {
+  transition: box-shadow 0.25s ease, border-color 0.25s ease, transform 0.25s ease;
+}
+
+.ant-card-hoverable:hover {
+  box-shadow: var(--shadow-card-hover) !important;
+}
+
+/* 表格：表头字重与数字对齐更"数据化" */
+.ant-table-wrapper .ant-table-thead > tr > th {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.ant-table,
+.ant-statistic-content,
+.ant-descriptions {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 统计数字统一使用等宽数字字形，跳动时不再左右抖 */
+.ant-statistic-content {
+  letter-spacing: -0.01em;
+}
+
+/* 下拉浮层 / 弹窗的圆角与投影 */
+.ant-dropdown .ant-dropdown-menu,
+.ant-select-dropdown,
+.ant-popover-inner,
+.ant-picker-dropdown .ant-picker-panel-container {
+  border-radius: 12px;
+  box-shadow: var(--shadow-card-hover);
+}
+
+.ant-modal .ant-modal-content {
+  box-shadow: 0 24px 64px -24px rgba(15, 23, 42, 0.35);
+}
+
+
+/* 独立表格 / 面板容器：裸表格直接铺在画布上会"散"，统一包一层浮起的面板 */
+.surface-card {
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.surface-card .ant-table {
+  background: transparent;
+}
+
+/* 后台管理页的页面标题：统一字重与色彩，和正文拉开层次 */
+.ant-typography h4.ant-typography,
+h4.ant-typography {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--ink-1);
 }

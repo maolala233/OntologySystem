@@ -128,9 +128,9 @@ const ProjectOverviewPage: React.FC = () => {
     }, [pid, load, loadProject]);
 
     return (
-        <div className="h-full flex flex-col bg-gray-50">
+        <div className="h-full flex flex-col app-canvas">
             {/* 头部 */}
-            <div className="shrink-0 flex items-center gap-3 px-4 py-2 bg-white border-b border-gray-200">
+            <div className="shrink-0 flex items-center gap-3 px-4 py-2 page-header">
                 <SiderToggle />
                 <Button icon={<ArrowLeftOutlined />} size="small"
                         onClick={() => navigate('/my-projects')}>返回</Button>

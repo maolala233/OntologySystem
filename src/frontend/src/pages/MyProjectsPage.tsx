@@ -421,7 +421,7 @@ const MyProjectsPage: React.FC = () => {
     ];
 
     return (
-        <div className="h-full flex flex-col bg-gray-50">
+        <div className="h-full flex flex-col app-canvas">
             <style>{`
                 .mp-cover { position: relative; overflow: hidden; }
                 .mp-cover-grid {
@@ -430,7 +430,7 @@ const MyProjectsPage: React.FC = () => {
                         linear-gradient(90deg, rgba(91,141,239,0.12) 1px, transparent 1px);
                     background-size: 24px 24px;
                 }
-                .mp-card { border-radius: 14px; border: 1px solid #EEF1F8; transition: all .25s ease; }
+                .mp-card { border-radius: 14px; border: 1px solid #EEF1F8; transition: all .25s ease; box-shadow: 0 1px 2px rgba(15,23,42,.05), 0 12px 30px -16px rgba(15,23,42,.20); }
                 .mp-card:hover { box-shadow: 0 16px 34px -12px rgba(15,20,32,.22); transform: translateY(-3px); }
             `}</style>
             <Navbar breadcrumbs={breadcrumbs} />
@@ -463,7 +463,7 @@ const MyProjectsPage: React.FC = () => {
 
                 {/* 状态统计（2026-11 列表视图改版；说明内嵌卡片 2026-11-09） */}
                 <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-4">
-                    <div className="bg-white border border-gray-100 rounded-xl px-4 py-3">
+                    <div className="bg-white border border-gray-100 rounded-xl shadow-sm px-4 py-3">
                         <Statistic title="项目总数" value={counts.total} />
                     </div>
                     {(Object.keys(PROJECT_STATUS) as Array<keyof typeof PROJECT_STATUS>).map((k) => {
@@ -613,7 +613,7 @@ const MyProjectsPage: React.FC = () => {
                         </Empty>
                     </div>
                 ) : viewMode === 'list' ? (
-                    <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
+                    <div className="bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
                         <Table
                             rowKey="id" size="middle"
                             loading={loading}

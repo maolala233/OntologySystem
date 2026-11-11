@@ -28,6 +28,7 @@ import ModuleGrantsPage from './features/admin/ModuleGrantsPage';
 import ModelConfigsPage from './features/admin/ModelConfigsPage';
 import EnvConfigPage from './features/admin/EnvConfigPage';
 import { RequireModule, ExpertGuard } from './shared/auth/guards';
+import { appTheme } from './theme';
 
 /** 旧路由 /ontology-builder/:projectId → 新版详情页（一键构建形态） */
 const RedirectBuilder: React.FC = () => {
@@ -37,7 +38,7 @@ const RedirectBuilder: React.FC = () => {
 
 function App() {
     return (
-        <ConfigProvider locale={zhCN} theme={{ token: { colorPrimary: '#5B8DEF' } }}>
+        <ConfigProvider locale={zhCN} theme={appTheme}>
             {/* AntdApp + FeedbackBridge：让 message/Modal 静态调用消费主题上下文（消 console 告警） */}
             <AntdApp>
                 <FeedbackBridge />

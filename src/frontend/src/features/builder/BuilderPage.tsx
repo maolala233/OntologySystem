@@ -102,9 +102,9 @@ const BuilderPage: React.FC = () => {
     const statusMeta = STATUS_TAG[projectStatus] || STATUS_TAG.draft;
 
     return (
-        <div className="h-screen flex flex-col bg-gray-50 overflow-hidden">
+        <div className="h-screen flex flex-col app-canvas overflow-hidden">
             {/* 头部：返回 + 项目信息 + 状态徽标（05 §6.4 Tab 栏 + 项目状态徽标） */}
-            <div className="flex items-center gap-3 px-4 py-2 bg-white border-b border-gray-200 flex-shrink-0">
+            <div className="flex items-center gap-3 px-4 py-2 page-header flex-shrink-0">
                 <Button
                     icon={<ArrowLeftOutlined />}
                     size="small"

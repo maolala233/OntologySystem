@@ -195,8 +195,8 @@ const BuildResultPage: React.FC = () => {
     const sc = summary.pipeline?.selfcheck;
 
     return (
-        <div className="h-full flex flex-col bg-gray-50">
-            <div className="shrink-0 flex items-center gap-3 px-4 py-2 bg-white border-b border-gray-200">
+        <div className="h-full flex flex-col app-canvas">
+            <div className="shrink-0 flex items-center gap-3 px-4 py-2 page-header">
                 <Button icon={<ArrowLeftOutlined />} size="small"
                         onClick={() => navigate(`/projects/${pid}`)}>返回</Button>
                 <span className="font-semibold text-gray-800">本体图谱 · {projectName || `#${pid}`}</span>

@@ -196,11 +196,11 @@ const ModuleGrantsPage: React.FC = () => {
 
     /** 平铺授权矩阵（用户 × 模块），用户权限/工具授权两个清单共用 */
     const MatrixTable = ({ mods }: { mods: AdminModule[] }) => (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
             <table className="w-full border-collapse" style={{ tableLayout: 'fixed' }}>
                 <thead>
-                    <tr className="bg-gray-50 border-b border-gray-200">
-                        <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 sticky left-0 bg-gray-50 z-10" style={{ width: 200 }}>用户 / 模块</th>
+                    <tr className="bg-[#F6F8FC] border-b border-gray-100">
+                        <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 sticky left-0 bg-[#F6F8FC] z-10" style={{ width: 200 }}>用户 / 模块</th>
                         {mods.map((m) => (
                             <th key={m.code} className="px-1 py-2 border-l border-gray-100 overflow-hidden">
                                 <Tooltip title={`${m.description ?? ''}（${m.code}）`}>
@@ -217,7 +217,7 @@ const ModuleGrantsPage: React.FC = () => {
                 </thead>
                 <tbody>
                     {users.map((u) => (
-                        <tr key={u.id} className="border-b border-gray-50 hover:bg-gray-50/50">
+                        <tr key={u.id} className="border-b border-gray-50 hover:bg-[#F7FAFF]">
                             <td className="px-4 py-2 sticky left-0 bg-white z-10">
                                 <Space size={6}>
                                     <span className="w-6 h-6 rounded-full bg-[#5B8DEF] text-white text-xs flex items-center justify-center shrink-0">
@@ -297,7 +297,7 @@ const ModuleGrantsPage: React.FC = () => {
             ) : (
                 <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
                     {roles.map((r) => (
-                        <div key={r.id} className="bg-white border border-gray-200 rounded-xl p-4 hover:shadow-md transition-shadow flex flex-col">
+                        <div key={r.id} className="bg-white border border-gray-100 rounded-xl p-4 shadow-sm hover:shadow-md transition-shadow flex flex-col">
                             <div className="flex items-center justify-between">
                                 <Space size={10}>
                                     <span className="w-8 h-8 rounded-lg bg-[#5B8DEF]/10 text-[#5B8DEF] inline-flex items-center justify-center text-base">

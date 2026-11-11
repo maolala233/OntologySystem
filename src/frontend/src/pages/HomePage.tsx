@@ -129,7 +129,7 @@ const HomePage: React.FC = () => {
     const breadcrumbs = [{ title: '首页' }];
 
     return (
-        <div className="h-full flex flex-col bg-gray-50">
+        <div className="h-full flex flex-col app-canvas">
             <style>{`
                 .hp-mono { font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace; }
                 /* 统计卡片只读、无跳转：不加 hover 抬升，避免"可点击"的误导（2026-11-11） */

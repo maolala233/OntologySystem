@@ -104,7 +104,7 @@ const Navbar: React.FC<NavbarProps> = ({ breadcrumbs = [] }) => {
     };
 
     return (
-        <div className="shrink-0 h-16 bg-white border-b border-gray-200 px-4 sm:px-6 flex items-center justify-between shadow-sm">
+        <div className="shrink-0 h-16 app-topbar px-4 sm:px-6 flex items-center justify-between">
             {/* 左侧：菜单折叠开关 + 面包屑 */}
             <div className="flex items-center gap-1 flex-1 min-w-0">
                 <SiderToggle />

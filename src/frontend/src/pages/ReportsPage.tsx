@@ -98,7 +98,9 @@ export default function ReportsPage() {
     useEffect(() => {
         (async () => {
             try {
-                const list = await projectsApi.getSelectableProjects();
+                // 只列「我参与的项目」：报告/PPT 生成走 _ensure_qa_access（要求项目成员），
+                // 已发布的公共本体对非成员只读，选中后生成必然 403——与本体问答页保持一致
+                const list = await projectsApi.getMyProjects();
                 setProjects(list);
                 const saved = Number(localStorage.getItem(QA_LAST_PROJECT_ID_KEY));
                 const pid = list.find(p => p.id === saved)?.id ?? list[0]?.id ?? null;
@@ -160,9 +162,9 @@ export default function ReportsPage() {
     const download = (url: string) => window.open(url, '_blank');
 
     return (
-        <div className="p-5 h-full overflow-auto bg-gray-50">
+        <div className="p-5 h-full overflow-auto app-canvas">
             <div className="max-w-4xl mx-auto">
-                <div className="bg-white rounded-xl border border-gray-200 p-4 mb-4">
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-4">
                     <div className="flex items-center gap-3 flex-wrap">
                         <FileTextOutlined className="text-blue-500 text-lg" />
                         <span className="font-semibold text-gray-800">{kind === 'ppt' ? 'PPT 演示生成' : '主题分析报告'}</span>
@@ -292,7 +294,7 @@ export default function ReportsPage() {
                 </div>
 
                 {busy && (
-                    <div className="bg-white rounded-xl border border-gray-200 p-10 text-center">
+                    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-10 text-center">
                         <Spin size="large" />
                         <div className="text-gray-500 mt-4">
                             正在围绕「{topic.trim()}」检索图谱证据并生成{kind === 'report' ? '分析报告' : '演示文稿大纲'}…
@@ -301,7 +303,7 @@ export default function ReportsPage() {
                 )}
 
                 {result && !busy && (
-                    <div className="bg-white rounded-xl border border-gray-200 p-5">
+                    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
                         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                             <div className="flex items-center gap-2">
                                 <span className="font-semibold text-gray-800">{result.title}</span>
@@ -351,7 +353,7 @@ export default function ReportsPage() {
                 )}
 
                 {!result && !busy && (
-                    <div className="bg-white rounded-xl border border-dashed border-gray-300 p-12 text-center text-gray-500">
+                    <div className="bg-white/80 rounded-2xl border border-dashed border-gray-200 p-12 text-center text-gray-500">
                         填写分析主题后点击「生成」——系统会从项目图谱中检索与主题相关的实体、属性与关系，
                         撰写面向业务读者的主题分析报告或演示大纲
                     </div>
