@@ -2,7 +2,7 @@
 # M3-4 实装 Schema 阶段（extract_schema）。中文路线：NER/RE 全走 LLM 方法（pattern/spaCy
 # 对中文无效，见 _compat.CHINESE_PATCHES）。
 # 修复缺陷：#2 结构化字段化 prompt（不塞原始 dict，已发现类清单字段化增量传入）；
-#           #5 分块并行 ThreadPoolExecutor parallelism=4；
+#           #5 分块并行 ThreadPoolExecutor parallelism=16；
 #           #9 Redis (model, prompt_hash) 8h 缓存，重跑不重复计费。
 # LLM 调用经 adapters/provider（ModelPurpose.EXTRACT）+ infrastructure/llm_client，
 # 业务侧可注入 llm_call 以便测试与复用。
@@ -676,7 +676,7 @@ def apply_strict_filter(merged: dict[str, dict], obj_props: dict[str, dict],
 
 
 def extract_schema(chunks: list, base_uri: str,
-                   parallelism: int = 4,
+                   parallelism: int = 16,
                    request_interval: float = 0.0,
                    model_override: Optional[dict] = None,
                    model_config_id: Optional[int] = None,
@@ -690,7 +690,7 @@ def extract_schema(chunks: list, base_uri: str,
                    strict_config: Optional[list[dict]] = None) -> SchemaExtractionResult:
     """分块并行抽取 TBox → 归并去重（label_normalized）→ 跨切片关系缝合 → 悬空引用建占位类标记 pending。
 
-    - 并行度 parallelism（修复缺陷 #5，默认 4）
+    - 并行度 parallelism（修复缺陷 #5，默认 16）
     - (model, prompt_hash) Redis 8h 缓存（修复缺陷 #9，use_cache=False 可关）；
       guidance 注入用户 prompt，随 prompt 哈希进缓存键（改引导自动换缓存）
     - strict_config（主体配置模板行）：严格白名单模式——prompt 头改为强约束措辞，
@@ -1822,7 +1822,7 @@ def _dedupe_entities(entities: list) -> list:
 def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
                       strict_gate: bool = True,
                       promote_policy: Literal["review", "discard", "auto"] = "review",
-                      parallelism: int = 4,
+                      parallelism: int = 16,
                       request_interval: float = 0.0,
                       model_override: Optional[dict] = None,
                       model_config_id: Optional[int] = None,

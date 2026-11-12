@@ -100,15 +100,15 @@ def _task_index() -> dict:
 
 def _extract_parallelism(db, project_id: int, model_config_id: Optional[int] = None) -> int:
     """抽取并行度：extract 行 params.parallelism 可配置（远程服务慢时调小避免并发排队），
-    缺省 4。管线各 LLM 阶段共用（骨架/实例分批并发）。"""
+    缺省 16。管线各 LLM 阶段共用（骨架/实例分批并发）。"""
     try:
         from app.adapters.provider import ModelPurpose, resolve_provider
 
         resolved = resolve_provider(ModelPurpose.EXTRACT, project_id=project_id,
                                     db=db, config_id=model_config_id)
-        return max(1, int((resolved.params or {}).get("parallelism") or 4))
+        return max(1, int((resolved.params or {}).get("parallelism") or 16))
     except Exception:  # noqa: BLE001 —— 配置异常回落到默认并发
-        return 4
+        return 16
 
 
 def _extract_request_interval(db, project_id: int, model_config_id: Optional[int] = None) -> float:
