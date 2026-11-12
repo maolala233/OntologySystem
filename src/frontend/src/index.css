@@ -54,7 +54,7 @@ body,
 
 /* 响应式布局基础 */
 :root {
-  --header-height: 64px;
+  --header-height: 56px;
   --sider-width: 240px;
   --sider-collapsed-width: 80px;
 }

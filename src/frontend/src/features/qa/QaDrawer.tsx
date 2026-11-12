@@ -2,7 +2,7 @@
 // SSE 流式对话（打字机渲染）+ 引用溯源列表（evidence 原句 + char 定位 + 文档预签名链接）
 // + 置信度/推理路径展示 + 问答历史。项目选择器内置（默认取 URL 中的项目）。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { PROJECT_STATUS, PUBLISHED_TAG } from '../../shared/projectStatus';
+import { projectStatusMeta } from '../../shared/projectStatus';
 import { message } from '../../shared/feedback';
 import { Button, Drawer, Empty, Input, Popover, Spin, Tag, Tooltip } from 'antd';
 import {
@@ -262,9 +262,7 @@ export default function QaDrawer({ open, onClose, projectId: initialProjectId }:
                             >
                                 <div className="flex items-center justify-between">
                                     <span className="text-sm font-medium text-gray-800">{p.name}</span>
-                                    <Tag color={p.is_published ? PUBLISHED_TAG.color : PROJECT_STATUS.draft.color}>
-                                        {p.is_published ? PUBLISHED_TAG.text : (p as any).status === 'published' ? PUBLISHED_TAG.text : PROJECT_STATUS.draft.text}
-                                    </Tag>
+                                    <Tag color={projectStatusMeta(p).color}>{projectStatusMeta(p).text}</Tag>
                                 </div>
                                 {p.description && (
                                     <div className="text-xs text-gray-500 mt-0.5 line-clamp-1">{p.description}</div>

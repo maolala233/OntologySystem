@@ -104,7 +104,7 @@ const Navbar: React.FC<NavbarProps> = ({ breadcrumbs = [] }) => {
     };
 
     return (
-        <div className="shrink-0 h-16 app-topbar px-4 sm:px-6 flex items-center justify-between">
+        <div className="shrink-0 h-14 app-topbar px-4 sm:px-6 flex items-center justify-between">
             {/* 左侧：菜单折叠开关 + 面包屑 */}
             <div className="flex items-center gap-1 flex-1 min-w-0">
                 <SiderToggle />
@@ -123,7 +123,7 @@ const Navbar: React.FC<NavbarProps> = ({ breadcrumbs = [] }) => {
                         <Avatar
                             size={32}
                             icon={<UserOutlined />}
-                            style={{ background: 'linear-gradient(135deg, #3b82f6, #9333ea)' }}
+                            style={{ background: 'linear-gradient(135deg, #5B8DEF, #8B5CF6)' }}
                         />
                         <div className="hidden sm:block leading-tight min-w-0">
                             <div className="flex items-center gap-2">

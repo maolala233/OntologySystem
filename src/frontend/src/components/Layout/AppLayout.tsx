@@ -187,10 +187,10 @@ const AppLayout: React.FC = () => {
             >
                 {/* Logo 区域：标题随侧栏宽度一起「展开/收起」（max-width 过渡），
                     不能按 collapsed 直接显隐——展开动画途中侧栏还窄，文字会先折成两行再变一行 */}
-                <div className="h-16 flex items-center justify-center border-b border-white/10 overflow-hidden">
+                <div className="h-14 flex items-center justify-center border-b border-white/10 overflow-hidden">
                     <div className="flex items-center min-w-0">
                         <div className="w-8 h-8 shrink-0 rounded-lg flex items-center justify-center"
-                             style={{ background: 'linear-gradient(135deg, #3b82f6, #9333ea)' }}>
+                             style={{ background: 'linear-gradient(135deg, #5B8DEF, #8B5CF6)' }}>
                             <BrandMark size={19} strokeWidth={4} />
                         </div>
                         <span
@@ -204,7 +204,7 @@ const AppLayout: React.FC = () => {
                 </div>
 
                 {/* 导航菜单 */}
-                <div className="sidebar-scroll" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+                <div className="sidebar-scroll pt-2 pb-2" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
                     <Menu
                         theme="dark"
                         mode="inline"

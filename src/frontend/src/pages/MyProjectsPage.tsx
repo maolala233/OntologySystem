@@ -26,7 +26,7 @@ import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import { Segmented } from 'antd';
 import { useAuthStore } from '../shared/auth/authStore';
-import { PROJECT_STATUS, PUBLISHED_TAG, STALE_PUBLISHED_TAG } from '../shared/projectStatus';
+import { PROJECT_STATUS, STALE_PUBLISHED_TAG, projectStatusOf as statusOf } from '../shared/projectStatus';
 import { UPLOAD_ACCEPT, UPLOAD_EXTS, MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from '../features/builder/documents/uploadFormats';
 import Navbar from '../components/Layout/Navbar';
 import TechHero, { TECH_COLORS, GraphMotif } from '../components/TechHero';
@@ -48,10 +48,6 @@ const PAGE_SIZE = 10;
 const EMPTY_COUNTS: Record<StatusKey, number> & { total: number } = {
     total: 0, draft: 0, scheduled: 0, building: 0, ready: 0, published: 0,
 };
-
-/** 状态归一：后端 /my 直接下发 status；旧数据回退按 is_published 推导 */
-const statusOf = (p: ProjectData): string =>
-    p.status || (p.is_published ? 'published' : 'draft');
 
 // 状态筛选项：文案与列表状态 Tag 一致（状态说明由 Tag / 统计卡的 tooltip 承载）
 const STATUS_OPTIONS = [

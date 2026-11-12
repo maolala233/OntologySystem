@@ -24,6 +24,17 @@ export const PROJECT_STATUS: Record<string, { color: string; text: string; desc:
     published: { color: 'purple', text: '已发布', desc: '构建完成并已发布到资产中心' },
 };
 
+/**
+ * 项目状态归一：后端 /api/projects/my 直接下发 status（draft/scheduled/building/ready/published）；
+ * 旧数据没有 status 时按 is_published 回退。所有展示状态的地方都走这里，避免「已构建」被当成「草稿」。
+ */
+export const projectStatusOf = (p: { status?: string; is_published: boolean }): string =>
+    p.status || (p.is_published ? 'published' : 'draft');
+
+/** 状态归一 + 文案/颜色映射，一步取到 Tag 需要的 meta */
+export const projectStatusMeta = (p: { status?: string; is_published: boolean }) =>
+    PROJECT_STATUS[projectStatusOf(p)] ?? PROJECT_STATUS.draft;
+
 /** 二值发布标签（仅有 is_published 布尔上下文时使用） */
 export const PUBLISHED_TAG = PROJECT_STATUS.published;
 

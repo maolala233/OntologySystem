@@ -121,7 +121,7 @@ const HomePage: React.FC = () => {
         { color: C.amber, title: '发布共享', desc: '发布到图数据库，并在资产中心公开展示' },
     ];
 
-    const breadcrumbs = [{ title: '首页' }];
+    const breadcrumbs = [{ title: '工作台' }];
 
     return (
         <div className="h-full flex flex-col app-canvas">
