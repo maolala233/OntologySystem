@@ -79,15 +79,7 @@ def start_schema_extraction(
 
     body = body or {}
     document_ids = body.get("document_ids") or None
-    # 未显式传时回读 extract 行 params.parallelism（2026-11-08：此前直接端点
-    # 永远用 4，模型配置里的并行度只对一键管线生效）
-    parallelism = body.get("parallelism")
-    if parallelism is None:
-        from app.tasks.pipeline_tasks import _extract_parallelism
-        parallelism = _extract_parallelism(db, project_id)
     guidance = body.get("guidance")
-    if not isinstance(parallelism, int) or not 1 <= parallelism <= 8:
-        raise APIError("parallelism 取值 1-8", code="INVALID_PARALLELISM", http_status=400)
     if document_ids is not None and (
             not isinstance(document_ids, list) or not all(isinstance(i, int) for i in document_ids)):
         raise APIError("document_ids 必须为整数数组", code="INVALID_DOCUMENT_IDS", http_status=400)
@@ -140,11 +132,11 @@ def start_schema_extraction(
 
     model_config_id = _resolve_extract_config_id(db, current_user, body, project_id)
     dispatched = dispatch_schema_extraction(
-        project_id, document_ids, parallelism,
+        project_id, document_ids,
         guidance=guidance, model_config_id=model_config_id,
         strict_config=strict_config)
     return {"task_id": dispatched["task_id"], "mode": dispatched["mode"],
-            "chunks_total": chunks_total, "parallelism": parallelism,
+            "chunks_total": chunks_total,
             "strict": strict_config is not None}
 
 
@@ -164,13 +156,6 @@ def start_instance_extraction(
 
     body = body or {}
     document_ids = body.get("document_ids") or None
-    # 同骨架端点：缺省回读 params.parallelism
-    parallelism = body.get("parallelism")
-    if parallelism is None:
-        from app.tasks.pipeline_tasks import _extract_parallelism
-        parallelism = _extract_parallelism(db, project_id)
-    if not isinstance(parallelism, int) or not 1 <= parallelism <= 8:
-        raise APIError("parallelism 取值 1-8", code="INVALID_PARALLELISM", http_status=400)
     strict_gate = bool(body.get("strict_gate", True))
     promote_policy = body.get("promote_policy", "review")
     if promote_policy not in ("review", "discard", "auto"):
@@ -216,10 +201,10 @@ def start_instance_extraction(
 
     model_config_id = _resolve_extract_config_id(db, current_user, body, project_id)
     dispatched = dispatch_instance_extraction(
-        project_id, document_ids, strict_gate, promote_policy, parallelism,
+        project_id, document_ids, strict_gate, promote_policy,
         schema_version_no=schema_version_no, model_config_id=model_config_id)
     return {"task_id": dispatched["task_id"], "mode": dispatched["mode"],
-            "chunks_total": chunks_total, "parallelism": parallelism,
+            "chunks_total": chunks_total,
             "strict_gate": strict_gate, "promote_policy": promote_policy,
             "schema_version_no": schema_version_no}
 

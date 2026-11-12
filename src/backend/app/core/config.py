@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     LLM_MODEL_NAME: str = "z-ai/glm-4.5-air:free"
     LLM_BASE_URL: str = "https://openrouter.ai/api/v1"
     LLM_THINK_MODE: str = "auto"
+    # 全后端 chat-completion 调用并发上限（跨进程 Redis 信号量；Redis 不可用回落进程内）。
+    # 唯一并发开关：抽取/缝合等并行阶段的线程预算也统一取该值，不再有独立并行度配置。
+    LLM_MAX_CONCURRENCY: int = 16
 
     VLLM_API_KEY: str = "EMPTY"
     VLLM_BASE_URL: str = "http://localhost:9080/v1/chat/completions"

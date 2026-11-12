@@ -3,7 +3,10 @@ import json
 import time
 import os
 import asyncio
+import contextlib
+import random
 import threading
+import uuid
 import httpx
 from typing import Dict, Any, Iterator, Optional
 from openai import OpenAI, AsyncOpenAI
@@ -20,6 +23,146 @@ from app.services.pipeline_profiler import (
 
 
 _PROFILE_SIG_CACHE: Dict[Any, Any] = {}
+
+
+# ── 全局 LLM chat-completion 并发闸 ────────────────────────────────────────
+# 目标：无论抽取、缝合、结构映射、CQ、QA、copilot 等哪里调模型，全后端同时
+# 在途的 chat 调用合计不超过 LLM_MAX_CONCURRENCY（默认 16）。
+# 跨进程：Redis ZSET 租约信号量（worker 多进程 / backend 共用一份配额）；
+# Redis 不可用：自动回落进程内 BoundedSemaphore，保证服务可用性。
+# 嵌套调用（如 finish_reason=length 的自动续写）在同一线程内不重复占槽。
+_LLM_SLOT_REDIS_KEY = "llm:concurrency:slots"
+_LLM_SLOT_LEASE_SECONDS = 1800          # 单次调用最长寿命，进程崩溃后槽位自动过期
+_LLM_SLOT_ACQUIRE_LUA = """
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local limit = tonumber(ARGV[2])
+local token = ARGV[3]
+local expires = tonumber(ARGV[4])
+redis.call('ZREMRANGEBYSCORE', key, '-inf', now)
+if redis.call('ZCARD', key) < limit then
+  redis.call('ZADD', key, expires, token)
+  redis.call('PEXPIRE', key, math.floor((expires - now) * 0.001) + 60000)
+  return 1
+end
+return 0
+"""
+
+
+class _LLMConcurrencyLimiter:
+    def __init__(self) -> None:
+        self._limit = max(1, int(getattr(settings, "LLM_MAX_CONCURRENCY", 16) or 16))
+        self._local = threading.BoundedSemaphore(self._limit)
+        self._tls = threading.local()
+        self._redis = None
+        self._redis_checked = False
+        self._redis_lock = threading.Lock()
+
+    def _client(self):
+        if self._redis_checked:
+            return self._redis
+        with self._redis_lock:
+            if self._redis_checked:
+                return self._redis
+            self._redis_checked = True
+            try:
+                import redis as _redis
+
+                url = getattr(settings, "REDIS_URL", "") or ""
+                if not url:
+                    from app.services.env_config_service import redis_url
+                    url = redis_url()
+                client = _redis.Redis.from_url(
+                    url, decode_responses=True,
+                    socket_connect_timeout=1, socket_timeout=2)
+                client.ping()
+                self._redis = client
+                logger.info(f"[LLM] 并发闸已启用：limit={self._limit}（Redis 跨进程）")
+            except Exception as e:  # noqa: BLE001 —— 可用性优先，回落进程内
+                self._redis = None
+                logger.warning(f"[LLM] Redis 并发闸不可用，回落进程内信号量：{e}")
+        return self._redis
+
+    def _acquire_redis(self, client, token: str) -> bool:
+        lease_ms = _LLM_SLOT_LEASE_SECONDS * 1000
+        last_log = 0.0
+        while True:
+            now_ms = int(time.time() * 1000)
+            try:
+                ok = client.eval(_LLM_SLOT_ACQUIRE_LUA, 1, _LLM_SLOT_REDIS_KEY,
+                                 now_ms, self._limit, token, now_ms + lease_ms)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"[LLM] Redis 并发闸异常，本次回落进程内：{e}")
+                return False
+            if int(ok) == 1:
+                return True
+            if time.monotonic() - last_log > 10:
+                logger.info(f"[LLM] 并发闸已满（limit={self._limit}），排队等待空闲槽位...")
+                last_log = time.monotonic()
+            time.sleep(0.15 + 0.15 * random.random())
+
+    @contextlib.contextmanager
+    def slot(self):
+        depth = getattr(self._tls, "depth", 0)
+        if depth:  # 同线程嵌套：续写等不再额外占槽
+            self._tls.depth = depth + 1
+            try:
+                yield
+            finally:
+                self._tls.depth = depth
+            return
+
+        started = time.monotonic()
+        client = self._client()
+        token = None
+        mode = "local"
+        if client is not None:
+            token = f"{os.getpid()}:{threading.get_ident()}:{uuid.uuid4().hex}"
+            if self._acquire_redis(client, token):
+                mode = "redis"
+            else:
+                client = None
+        if mode == "local":
+            self._local.acquire()
+
+        waited = time.monotonic() - started
+        if waited >= 2:
+            logger.info(f"[LLM] 并发闸等待 {waited:.1f}s 后获得槽位（limit={self._limit}）")
+
+        self._tls.depth = 1
+        try:
+            yield
+        finally:
+            self._tls.depth = 0
+            if mode == "redis":
+                try:
+                    client.zrem(_LLM_SLOT_REDIS_KEY, token)
+                except Exception as e:  # noqa: BLE001 —— 槽位靠租约过期兜底
+                    logger.warning(f"[LLM] 释放 Redis 并发槽失败（将按租约过期）：{e}")
+            else:
+                self._local.release()
+
+
+_LLM_LIMITER = _LLMConcurrencyLimiter()
+
+
+def _limit_llm_concurrency(func):
+    """给所有公开 LLM 调用套全局并发闸；生成器方法在完整消费期间持有槽位。"""
+    import functools
+    import inspect
+
+    if inspect.isgeneratorfunction(func):
+        @functools.wraps(func)
+        def _gen(self, *args, **kwargs):
+            with _LLM_LIMITER.slot():
+                yield from func(self, *args, **kwargs)
+        return _gen
+
+    @functools.wraps(func)
+    def _wrapper(self, *args, **kwargs):
+        with _LLM_LIMITER.slot():
+            return func(self, *args, **kwargs)
+    return _wrapper
 
 
 def _profile_llm_call(func):
@@ -461,6 +604,7 @@ class LLMClient:
             raise box["e"]
         raise TimeoutError(f"LLM 调用硬超时（{hard:.0f}s 无任何响应）")
 
+    @_limit_llm_concurrency
     @_profile_llm_call
     def call_llm(self, system_prompt: str, user_prompt: str, max_retries: Optional[int] = None,
                  stream: Optional[bool] = None, timeout: Optional[float] = None,
@@ -1255,6 +1399,7 @@ class LLMClient:
 
         return result
 
+    @_limit_llm_concurrency
     def call_llm_stream(self, system_prompt: str, user_prompt: str,
                         timeout: Optional[float] = None) -> Iterator[str]:
         """流式文本生成（M5 问答 SSE，07 §4）：逐 delta 产出 content 片段。
@@ -1302,6 +1447,7 @@ class LLMClient:
         finally:
             finish_llm_call(_scope)
 
+    @_limit_llm_concurrency
     @_profile_llm_call
     def call_llm_text(self, system_prompt: str, user_prompt: str, max_retries: int = 3, stream: bool = False,
                       timeout: Optional[float] = None, task_id: Optional[str] = None,

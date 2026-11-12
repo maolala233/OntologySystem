@@ -98,19 +98,6 @@ def _task_index() -> dict:
     }
 
 
-def _extract_parallelism(db, project_id: int, model_config_id: Optional[int] = None) -> int:
-    """抽取并行度：extract 行 params.parallelism 可配置（远程服务慢时调小避免并发排队），
-    缺省 16。管线各 LLM 阶段共用（骨架/实例分批并发）。"""
-    try:
-        from app.adapters.provider import ModelPurpose, resolve_provider
-
-        resolved = resolve_provider(ModelPurpose.EXTRACT, project_id=project_id,
-                                    db=db, config_id=model_config_id)
-        return max(1, int((resolved.params or {}).get("parallelism") or 16))
-    except Exception:  # noqa: BLE001 —— 配置异常回落到默认并发
-        return 16
-
-
 def _extract_request_interval(db, project_id: int, model_config_id: Optional[int] = None) -> float:
     """批间隔秒：extract 行 params.request_interval（远程限速配置；2026-11-08
     前是死字段——组装后全仓无消费者）。异常回落 0（不限速）。"""
@@ -549,9 +536,11 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             profile_stage_end("preflight", status="done",
                               detail="抽取模型已配置")
             try:
+                from app.core.config import settings as _settings
+
                 profile_metrics({
-                    "extract_parallelism": _extract_parallelism(
-                        db, project_id, model_config_id),
+                    "llm_max_concurrency": max(
+                        1, int(getattr(_settings, "LLM_MAX_CONCURRENCY", 16) or 16)),
                     "extract_request_interval": _extract_request_interval(
                         db, project_id, model_config_id),
                 })
@@ -612,7 +601,6 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 _check_stage_result(_run_stage_task(
                     tasks["schema"], "schema", stages, task_id,
                     project_id=project_id, document_ids=None,
-                    parallelism=_extract_parallelism(db, project_id, model_config_id),
                     request_interval=_extract_request_interval(db, project_id, model_config_id),
                     guidance=guidance,
                     model_config_id=model_config_id, strict_config=None), "schema")
@@ -631,7 +619,6 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 tasks["instances"], "instances", stages, task_id,
                 project_id=project_id, document_ids=None,
                 strict_gate=True, promote_policy="review",
-                parallelism=_extract_parallelism(db, project_id, model_config_id),
                 request_interval=_extract_request_interval(db, project_id, model_config_id),
                 model_config_id=model_config_id), "instances")
             st["status"] = "done"

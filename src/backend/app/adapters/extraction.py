@@ -2,7 +2,7 @@
 # M3-4 实装 Schema 阶段（extract_schema）。中文路线：NER/RE 全走 LLM 方法（pattern/spaCy
 # 对中文无效，见 _compat.CHINESE_PATCHES）。
 # 修复缺陷：#2 结构化字段化 prompt（不塞原始 dict，已发现类清单字段化增量传入）；
-#           #5 分块并行 ThreadPoolExecutor parallelism=16；
+#           #5 分块并行 ThreadPoolExecutor（线程预算统一由 LLM_MAX_CONCURRENCY 控制）；
 #           #9 Redis (model, prompt_hash) 8h 缓存，重跑不重复计费。
 # LLM 调用经 adapters/provider（ModelPurpose.EXTRACT）+ infrastructure/llm_client，
 # 业务侧可注入 llm_call 以便测试与复用。
@@ -19,6 +19,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 
 from app.adapters.resolution import normalize_label
+from app.core.config import settings
 from app.infrastructure.llm_client import LLMEndpointUnreachableError
 from app.services.pipeline_profiler import (
     profile_metric,
@@ -432,12 +433,17 @@ def _chunk_iter(chunks: list) -> list[tuple[int, str, str, str]]:
     return out
 
 
-def _run_sliding_window(pool, items, submit_fn, done_fn, *,
-                        parallelism: int, request_interval: float = 0.0,
-                        cancel_cb: Optional[Callable] = None) -> None:
-    """滑动窗口调度：始终保持 parallelism 个任务在途，完成一个补一个。
+def _llm_max_workers() -> int:
+    """LLM 并行阶段唯一的线程预算：与全局模型调用并发闸同源。"""
+    return max(1, int(getattr(settings, "LLM_MAX_CONCURRENCY", 16) or 16))
 
-    旧实现是“每批 parallelism 个，等整批结束再提交下一批”：批内单次调用
+
+def _run_sliding_window(pool, items, submit_fn, done_fn, *,
+                        max_workers: int, request_interval: float = 0.0,
+                        cancel_cb: Optional[Callable] = None) -> None:
+    """滑动窗口调度：始终保持 max_workers 个任务在途，完成一个补一个。
+
+    旧实现是“每批 N 个，等整批结束再提交下一批”：批内单次调用
     50–150 秒的长尾会把其它空闲线程一起拖住（实测 4 路平均只有 2.4 路在跑）。
     这里不提高并发上限，只去掉批屏障——某个切片完成立即补下一个，直到任务耗尽。
 
@@ -447,7 +453,7 @@ def _run_sliding_window(pool, items, submit_fn, done_fn, *,
 
     task_iter = iter(items)
     inflight: dict = {}
-    max_workers = max(1, parallelism)
+    max_workers = max(1, max_workers)
 
     def submit_next() -> bool:
         if cancel_cb is not None:
@@ -520,7 +526,6 @@ _STITCH_CLASS_DEF_CHARS = 60
 _STITCH_CALLS_PER_CHUNKS = 25      # 每 25 个切片增加一次缝合调用
 _STITCH_MAX_CALLS_CAP = 24         # 缝合调用总上限（并行执行，墙钟成本可控）
 _STITCH_TARGET_CHARS = 2500        # 缺口定向段：单切片摘录长度
-_STITCH_PARALLELISM = 4            # 缝合并行度（与抽取并行共用线程预算，独立小池）
 
 
 def _stitch_user_prompt(class_list_text: str, doc_text: str, error_feedback: str = "") -> str:
@@ -720,7 +725,6 @@ def apply_strict_filter(merged: dict[str, dict], obj_props: dict[str, dict],
 
 
 def extract_schema(chunks: list, base_uri: str,
-                   parallelism: int = 16,
                    request_interval: float = 0.0,
                    model_override: Optional[dict] = None,
                    model_config_id: Optional[int] = None,
@@ -734,7 +738,7 @@ def extract_schema(chunks: list, base_uri: str,
                    strict_config: Optional[list[dict]] = None) -> SchemaExtractionResult:
     """分块并行抽取 TBox → 归并去重（label_normalized）→ 跨切片关系缝合 → 悬空引用建占位类标记 pending。
 
-    - 并行度 parallelism（修复缺陷 #5，默认 16）
+    - 并行线程预算统一取 settings.LLM_MAX_CONCURRENCY（与全局模型并发闸同源）
     - (model, prompt_hash) Redis 8h 缓存（修复缺陷 #9，use_cache=False 可关）；
       guidance 注入用户 prompt，随 prompt 哈希进缓存键（改引导自动换缓存）
     - strict_config（主体配置模板行）：严格白名单模式——prompt 头改为强约束措辞，
@@ -805,13 +809,13 @@ def extract_schema(chunks: list, base_uri: str,
     cache_hits = 0
 
     _t_parallel = time.perf_counter()
-    with ThreadPoolExecutor(max_workers=max(1, parallelism)) as pool:
+    with ThreadPoolExecutor(max_workers=_llm_max_workers()) as pool:
         doc_by_idx = {idx: doc for idx, _text, doc, _h in prepared}
         # ★ 确定性关键①：先按切片序收齐全部结果，再按【固定切片顺序】归并——
         #   不用 as_completed 的完成序（线程调度随机）：完成序会打乱 merged 插入序
         #   → 类清单顺序变 → 缝合 prompt 变 → 缓存 miss + 缝合结果漂移
         #   （2026-11-05 确定性实测：缓存 8/8 命中仍出现 27→29 关系漂移的根因）
-        # 滑动窗口：始终 parallelism 个在途、完成一个补一个（2026-11-12）。
+        # 滑动窗口：始终 _llm_max_workers() 个在途、完成一个补一个（2026-11-12）。
         # 旧版“每批等最慢的”会让 4 路只有 2.4 路有效；窗口调度只去掉批屏障，
         # 不提高并发上限，取消语义不变（每完成一个都检查 cancel_cb）。
         results_by_idx: dict[int, tuple] = {}
@@ -831,7 +835,7 @@ def extract_schema(chunks: list, base_uri: str,
             pool, prepared,
             lambda item: submit_with_context(pool, one, item[0], item[1], item[3]),
             _on_chunk_done,
-            parallelism=parallelism, request_interval=request_interval,
+            max_workers=_llm_max_workers(), request_interval=request_interval,
             cancel_cb=cancel_cb)
 
         _phases["parallel_extract_seconds"] = round(
@@ -996,7 +1000,7 @@ def extract_schema(chunks: list, base_uri: str,
         # 并行执行（段间独立），结果按段序应用——并发只加速 IO，不破坏确定性
         seg_results: dict[int, tuple] = {}
         done_si = 0
-        with ThreadPoolExecutor(max_workers=_STITCH_PARALLELISM) as spool:
+        with ThreadPoolExecutor(max_workers=_llm_max_workers()) as spool:
             futures = {submit_with_context(spool, _stitch_one, si, seg): si
                        for si, seg in enumerate(segs)}
             for fut in as_completed(futures):
@@ -1862,7 +1866,6 @@ def _dedupe_entities(entities: list) -> list:
 def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
                       strict_gate: bool = True,
                       promote_policy: Literal["review", "discard", "auto"] = "review",
-                      parallelism: int = 16,
                       request_interval: float = 0.0,
                       model_override: Optional[dict] = None,
                       model_config_id: Optional[int] = None,
@@ -1938,7 +1941,7 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
     done = 0
     cache_hits = 0
     _t_parallel = time.perf_counter()
-    with ThreadPoolExecutor(max_workers=max(1, parallelism)) as pool:
+    with ThreadPoolExecutor(max_workers=_llm_max_workers()) as pool:
         # 滑动窗口调度（2026-11-12）：不再整批等待，完成一个补一个。
         def _on_chunk_done(item, payload_result):
             nonlocal done, cache_hits
@@ -1979,7 +1982,7 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
             pool, prepared,
             lambda item: submit_with_context(pool, one, item[0], item[1]),
             _on_chunk_done,
-            parallelism=parallelism, request_interval=request_interval,
+            max_workers=_llm_max_workers(), request_interval=request_interval,
             cancel_cb=cancel_cb)
     _phases["parallel_extract_seconds"] = round(
         time.perf_counter() - _t_parallel, 6)

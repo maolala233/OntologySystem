@@ -478,7 +478,6 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
         setInstStarting(true);
         try {
             const r = await extractionApi.runInstances(projectId, {
-                parallelism: 4,
                 schema_version_no: instVersion,
             });
             setProgressTitle(instVersion ? `实例抽取（基于框架 v${instVersion}）` : '实例抽取（严格闸门）');

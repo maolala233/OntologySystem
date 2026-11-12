@@ -26,10 +26,9 @@ export const extractionApi = {
      *  strict_config 严格白名单模式（上传配置模板）：只抽列出的主体/属性/关系，配置外一律过滤 */
     runSchema: async (projectId: number, options?: {
         document_ids?: number[];
-        parallelism?: number;
         guidance?: string;
         strict_config?: Array<{ class: string; properties?: string; relations?: string }>;
-    }): Promise<{ task_id: string; chunks_total: number; parallelism: number; strict?: boolean }> => {
+    }): Promise<{ task_id: string; chunks_total: number; strict?: boolean }> => {
         const response = await apiClient.post(`/api/projects/${projectId}/extraction/schema`, options || {});
         return response.data;
     },
@@ -37,11 +36,10 @@ export const extractionApi = {
     /** 发起实例抽取（严格闸门 + ABox 双写行表）；schema_version_no 指定历史框架版本，缺省用当前画布框架 */
     runInstances: async (projectId: number, options?: {
         document_ids?: number[];
-        parallelism?: number;
         promote_policy?: 'review' | 'discard' | 'auto';
         strict_gate?: boolean;
         schema_version_no?: number;
-    }): Promise<{ task_id: string; chunks_total: number; parallelism: number; schema_version_no?: number }> => {
+    }): Promise<{ task_id: string; chunks_total: number; schema_version_no?: number }> => {
         const response = await apiClient.post(`/api/projects/${projectId}/extraction/instances`, options || {});
         return response.data;
     },

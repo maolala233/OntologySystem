@@ -143,7 +143,6 @@ def _dispatch(task, args: tuple, kwargs: dict, project_id: int) -> dict:
 
 def dispatch_schema_extraction(project_id: int,
                                document_ids: Optional[list[int]] = None,
-                               parallelism: int = 16,
                                chunk_limit: int = 200,
                                guidance: Optional[str] = None,
                                model_config_id: Optional[int] = None,
@@ -151,9 +150,9 @@ def dispatch_schema_extraction(project_id: int,
     """派发骨架抽取（03 §8）：详见 _dispatch。返回 {"mode", "task_id"}。"""
     return _dispatch(
         run_schema_extraction,
-        (project_id, document_ids, parallelism, chunk_limit),
-        {"guidance": guidance, "model_config_id": model_config_id,
-         "strict_config": strict_config},
+        (project_id, document_ids),
+        {"chunk_limit": chunk_limit, "guidance": guidance,
+         "model_config_id": model_config_id, "strict_config": strict_config},
         project_id)
 
 
@@ -161,16 +160,15 @@ def dispatch_instance_extraction(project_id: int,
                                  document_ids: Optional[list[int]] = None,
                                  strict_gate: bool = True,
                                  promote_policy: str = "review",
-                                 parallelism: int = 16,
                                  chunk_limit: int = 200,
                                  schema_version_no: Optional[int] = None,
                                  model_config_id: Optional[int] = None) -> dict:
     """派发实例抽取（04 §4）：详见 _dispatch。返回 {"mode", "task_id"}。"""
     return _dispatch(
         run_instance_extraction,
-        (project_id, document_ids, strict_gate, promote_policy, parallelism,
-         chunk_limit, schema_version_no),
-        {"model_config_id": model_config_id},
+        (project_id, document_ids, strict_gate, promote_policy),
+        {"chunk_limit": chunk_limit, "schema_version_no": schema_version_no,
+         "model_config_id": model_config_id},
         project_id)
 
 
@@ -226,7 +224,6 @@ def _auto_version(db, project_id: int, kind: str, label: str) -> Optional[int]:
                  soft_time_limit=6 * 3600, time_limit=6 * 3600 + 300)
 def run_schema_extraction(self, project_id: int,
                           document_ids: Optional[list[int]] = None,
-                          parallelism: int = 16,
                           request_interval: float = 0.0,
                           chunk_limit: int = 200,
                           guidance: Optional[str] = None,
@@ -310,7 +307,6 @@ def run_schema_extraction(self, project_id: int,
                     queue="extract")
 
             result = extract_schema(chunks, base_uri=f"urn:onto:{project_id}",
-                                    parallelism=parallelism,
                                     request_interval=request_interval,
                                     progress_cb=_progress, cancel_cb=_cancel_check,
                                     guidance=guidance,
@@ -526,7 +522,6 @@ def run_instance_extraction(self, project_id: int,
                             document_ids: Optional[list[int]] = None,
                             strict_gate: bool = True,
                             promote_policy: str = "review",
-                            parallelism: int = 16,
                             request_interval: float = 0.0,
                             chunk_limit: int = 200,
                             schema_version_no: Optional[int] = None,
@@ -624,7 +619,7 @@ def run_instance_extraction(self, project_id: int,
             result = extract_instances(
                 chunks, tbox, base_uri=f"urn:onto:{project_id}",
                 strict_gate=strict_gate, promote_policy=promote_policy,
-                parallelism=parallelism, request_interval=request_interval,
+                request_interval=request_interval,
                 progress_cb=_progress, cancel_cb=_cancel_check,
                 model_config_id=model_config_id,
                 coref_enabled=bool(app_settings.COREF_ENABLED),
@@ -708,7 +703,7 @@ def run_instance_extraction(self, project_id: int,
                         _r = extract_instances(
                             [{"index": idx, "text": chunk_text, "doc": _doc}], tbox,
                             base_uri=f"urn:onto:{project_id}", strict_gate=strict_gate,
-                            promote_policy=promote_policy, parallelism=1,
+                            promote_policy=promote_policy,
                             model_config_id=model_config_id)
                         return ([e.model_dump() for e in _r.entities]
                                 + [r.model_dump() for r in _r.relations])

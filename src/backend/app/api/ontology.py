@@ -1,4 +1,3 @@
-import asyncio
 import json
 import os
 import tempfile
@@ -26,8 +25,6 @@ from app.schemas.extraction import (
 from app.schemas.ontology import ProjectCreate, ProjectListItem, ProjectResponse, ProjectUpdate
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
-
-EXTRACTION_SEMAPHORE = asyncio.Semaphore(3)
 
 # ─────────────────────────────────────────────
 #  CRUD 基础接口（保持不变）
