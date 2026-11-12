@@ -32,7 +32,9 @@ const ProjectOverviewPage: React.FC = () => {
     const { projectId } = useParams<{ projectId: string }>();
     const navigate = useNavigate();
     const pid = Number(projectId);
-    const { projectName, projectStatus, domainName, loadProject } = useBuilderStore();
+    const { projectId: storeProjectId, projectName, projectStatus, domainName, loadProject } = useBuilderStore();
+    // 元数据属于"当前 pid"才算就绪；切换项目后 fetch 回来之前，头部先显示占位而不是上一个项目的名字
+    const projectReady = storeProjectId === pid;
     const { hasModule } = useAuthStore();
     const isExpert = hasModule('builder_pro');
 
@@ -55,6 +57,16 @@ const ProjectOverviewPage: React.FC = () => {
             const pubs = (v.items || []).filter((x) => x.kind === 'publication');
             setPublishedVersion(pubs.sort((a, b) => b.version_no - a.version_no)[0] || null);
         } catch { /* 版本信息失败不阻断 */ }
+    }, [pid]);
+
+    // 路由参数直接切到别的项目（组件不重挂载）时，清掉本页保存的上一个项目的快照/结果，
+    // 否则结果卡、状态徽标会先显示旧项目的数字，等新请求回来才被覆盖
+    useEffect(() => {
+        setSummary(null);
+        setPublishedVersion(null);
+        setPipeStatus(null);
+        setPipeStage(null);
+        lastPipeStatusRef.current = null;
     }, [pid]);
 
     useEffect(() => { loadProject(pid); }, [pid, loadProject]);
@@ -134,9 +146,11 @@ const ProjectOverviewPage: React.FC = () => {
                 <SiderToggle />
                 <Button icon={<ArrowLeftOutlined />} size="small"
                         onClick={() => navigate('/my-projects')}>返回</Button>
-                <span className="font-semibold text-gray-800">{projectName || `项目 #${pid}`}</span>
-                <Tag color={statusMeta.color}>{statusMeta.text}</Tag>
-                {domainName && <Tag color="blue">{domainName}</Tag>}
+                <span className="font-semibold text-gray-800 max-w-[280px] truncate">
+                    {projectReady ? projectName : null}
+                </span>
+                {projectReady && <Tag color={statusMeta.color}>{statusMeta.text}</Tag>}
+                {projectReady && domainName && <Tag color="blue">{domainName}</Tag>}
                 <div className="ml-auto flex items-center gap-2">
                     {isExpert && (
                         <Button size="small" icon={<NodeIndexOutlined />}

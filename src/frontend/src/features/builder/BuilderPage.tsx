@@ -33,7 +33,9 @@ const BuilderPage: React.FC = () => {
     const { projectId } = useParams<{ projectId: string }>();
     const navigate = useNavigate();
     const pid = Number(projectId);
-    const { projectName, projectStatus, domainName, loading, loadError, loadProject } = useBuilderStore();
+    const { projectId: storeProjectId, projectName, projectStatus, domainName, loading, loadError, loadProject } = useBuilderStore();
+    // 元数据属于当前项目才算就绪（切项目瞬间 store 还挂着上一个项目的数据）
+    const projectReady = storeProjectId === pid;
     // 管线面板重查信号：上传完成等事件 +1（面板常驻 Tab 区上方，切页不丢进度）
     const [pipelineSignal, setPipelineSignal] = useState(0);
 
@@ -114,13 +116,17 @@ const BuilderPage: React.FC = () => {
                 </Button>
                 <Spin spinning={loading} size="small">
                     <div className="flex items-center gap-2">
-                        <span className="font-semibold text-gray-800">{projectName || `项目 #${pid}`}</span>
-                        <Tooltip title={projectStatus === 'published'
-                            ? '发布态只读：写操作需先取消发布（PUBLISHED_READONLY）'
-                            : `状态：${projectStatus}`}>
-                            <Tag color={statusMeta.color}>{statusMeta.text}</Tag>
-                        </Tooltip>
-                        {domainName && <Tag color="blue">{domainName}</Tag>}
+                        <span className="font-semibold text-gray-800 max-w-[280px] truncate">
+                            {projectReady ? projectName : null}
+                        </span>
+                        {projectReady && (
+                            <Tooltip title={projectStatus === 'published'
+                                ? '发布态只读：写操作需先取消发布（PUBLISHED_READONLY）'
+                                : `状态：${projectStatus}`}>
+                                <Tag color={statusMeta.color}>{statusMeta.text}</Tag>
+                            </Tooltip>
+                        )}
+                        {projectReady && domainName && <Tag color="blue">{domainName}</Tag>}
                     </div>
                 </Spin>
             </div>

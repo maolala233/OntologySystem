@@ -29,7 +29,20 @@ export const useBuilderStore = create<BuilderState>((set) => ({
     loading: false,
     loadError: false,
     loadProject: async (projectId: number) => {
-        set({ loading: true, loadError: false });
+        // 切到别的项目时先清掉上一个项目的元数据：否则从 A 返回、再进 B 的瞬间，
+        // 顶部标题/状态徽标/知识域会先显示 A 的内容，fetch 回来才被纠正（2026-11-12 实测）。
+        // projectId 故意不在这里更新——它最后一次被赋值即"当前数据属于哪个项目"，
+        // 消费者据 projectId === 路由 pid 判断是否已就绪，旧值恰好让判据为否
+        set((state) => ({
+            loading: true,
+            loadError: false,
+            ...(state.projectId === projectId ? {} : {
+                projectName: '',
+                projectStatus: 'draft',
+                isPublished: false,
+                domainName: undefined,
+            }),
+        }));
         try {
             const p = await projectsApi.getProject(projectId);
             set({

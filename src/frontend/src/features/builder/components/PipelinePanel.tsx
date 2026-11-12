@@ -81,6 +81,10 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
         }
     }, [projectId]);
 
+    // 项目切换（路由参数变化、组件不重挂载）时清掉上一个项目的进度快照，
+    // refresh 返回前不显示旧项目的阶段/进度
+    useEffect(() => { setStatus(null); setLoaded(false); }, [projectId]);
+
     useEffect(() => { refresh(); }, [refresh, signal]);
 
     // 状态上抛：父页面（ProjectOverviewPage）据此做跃迁刷新，免自建 5s 轮询

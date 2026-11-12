@@ -61,6 +61,43 @@ const STATUS_OPTIONS = [
 const fmtDate = (v?: string | null) =>
     v ? new Date(v).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
 
+
+/**
+ * 单行截断文本 + 自定义悬浮提示：antd 列自带 ellipsis 的 title 是浏览器原生提示
+ * （不可控样式、短文本也弹），项目名称/简介统一用它——只有真正溢出时才弹全文。
+ */
+const EllipsisTip: React.FC<{
+    text?: string | null;
+    fallback?: string;
+    className?: string;
+    placement?: 'topLeft' | 'top' | 'topRight';
+    onClick?: React.MouseEventHandler<HTMLSpanElement>;
+}> = ({ text, fallback = '—', className, placement = 'topLeft', onClick }) => {
+    const ref = useRef<HTMLSpanElement>(null);
+    const [hovered, setHovered] = useState(false);
+    const [overflow, setOverflow] = useState(false);
+    if (!text) return <span className={className}>{fallback}</span>;
+    return (
+        <Tooltip title={text} placement={placement}
+                 overlayClassName="mp-tip"
+                 open={hovered && overflow}>
+            <span
+                ref={ref}
+                className={`block truncate ${className || ''}`}
+                onClick={onClick}
+                onMouseEnter={() => {
+                    const el = ref.current;
+                    setOverflow(!!el && el.scrollWidth > el.clientWidth + 1);
+                    setHovered(true);
+                }}
+                onMouseLeave={() => setHovered(false)}
+            >
+                {text}
+            </span>
+        </Tooltip>
+    );
+};
+
 const MyProjectsPage: React.FC = () => {
     const navigate = useNavigate();
     // 服务端分页：projects 只保存当前页，搜索/筛选/排序/翻页全部交给后端
@@ -68,6 +105,8 @@ const MyProjectsPage: React.FC = () => {
     const [total, setTotal] = useState(0);
     // 各状态数量（统计卡）：接口只回过滤后的 total，所以按状态各发一次 page_size=1 的 count
     const [counts, setCounts] = useState<Record<StatusKey, number> & { total: number }>(EMPTY_COUNTS);
+    // 统计是否已出过一次结果：加载中 counts 还是全 0，不能据此把操作栏藏起来（会闪一下才出现）
+    const [countsReady, setCountsReady] = useState(false);
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -160,6 +199,8 @@ const MyProjectsPage: React.FC = () => {
             });
         } catch {
             // 统计失败不阻塞列表，保留上一次数值
+        } finally {
+            setCountsReady(true);
         }
     }, [apiScope]);
 
@@ -338,8 +379,6 @@ const MyProjectsPage: React.FC = () => {
     ];
 
     const actionsRenderer = (project: ProjectData) => (
-        // 阻断冒泡：操作列点击不得触发 onRow 的整行跳转（否则编辑弹窗被路由切换冲掉）
-        <div onClick={(e) => e.stopPropagation()}>
         <Space size={0}>
             <Button type="link" size="small" icon={<EyeOutlined />}
                     onClick={() => navigate(`/projects/${project.id}`)}>
@@ -361,7 +400,6 @@ const MyProjectsPage: React.FC = () => {
                 </Button>
             </Popconfirm>
         </Space>
-        </div>
     );
 
     const statusTag = (project: ProjectData, stale?: boolean) => {
@@ -384,27 +422,29 @@ const MyProjectsPage: React.FC = () => {
 
     const listColumns: ColumnsType<ProjectData> = [
         {
-            title: '项目名称', dataIndex: 'name', key: 'name', width: 220,
+            title: '项目名称', dataIndex: 'name', key: 'name', width: '14.5%',
+            ellipsis: { showTitle: false },
             render: (_, project) => (
-                <div className="flex items-center gap-2">
-                    <span className="font-medium text-gray-800">{project.name}</span>
+                <div className="flex items-center gap-2 min-w-0">
+                    <EllipsisTip text={project.name} className="font-medium text-gray-800 min-w-0 flex-1 cursor-default" />
                     {isSuperAdmin && scope === 'all' && (
-                        <Tag className="ml-1" color="blue">{project.owner?.username || `用户#${project.owner_id ?? '?'}`}</Tag>
+                        <Tag className="ml-1 shrink-0" color="blue">{project.owner?.username || `用户#${project.owner_id ?? '?'}`}</Tag>
                     )}
                 </div>
             ),
         },
         {
-            title: '项目简介', dataIndex: 'description', key: 'description', ellipsis: true,
-            render: (v: string) => <span className="text-gray-500">{v || '暂无描述'}</span>,
+            title: '项目简介', dataIndex: 'description', key: 'description', width: '22%',
+            ellipsis: { showTitle: false },
+            render: (v: string) => <EllipsisTip text={v} fallback="暂无描述" className="text-gray-500 cursor-default" />,
         },
         {
-            title: '状态', key: 'status', width: 100, filters: STATUS_OPTIONS.map(s => ({ text: s.label, value: s.value })),
+            title: '状态', key: 'status', width: '7.5%', filters: STATUS_OPTIONS.map(s => ({ text: s.label, value: s.value })),
             onFilter: (v, p) => statusOf(p) === v,
             render: (_, project) => statusTag(project, project.stale_published),
         },
         {
-            title: '类 / 实例', key: 'stats', width: 130,
+            title: '类 / 实例', key: 'stats', width: '10.5%',
             render: (_, project) => (
                 <span className="tk-mono text-xs text-gray-500 whitespace-nowrap">
                     <span style={{ color: TC.blue }}>{project.classes_total ?? project.graph_data?.nodes?.length ?? 0}</span> 类
@@ -413,11 +453,11 @@ const MyProjectsPage: React.FC = () => {
                 </span>
             ),
         },
-        { title: '创建日期', dataIndex: 'created_at', key: 'created_at', width: 150,
+        { title: '创建日期', dataIndex: 'created_at', key: 'created_at', width: '11.5%',
           render: (v: string) => <span className="text-gray-500 text-xs">{fmtDate(v)}</span> },
-        { title: '修改日期', dataIndex: 'updated_at', key: 'updated_at', width: 150,
+        { title: '修改日期', dataIndex: 'updated_at', key: 'updated_at', width: '11.5%',
           render: (v: string) => <span className="text-gray-500 text-xs">{fmtDate(v)}</span> },
-        { title: '操作', key: 'actions', width: 240, render: (_, project) => actionsRenderer(project) },
+        { title: '操作', key: 'actions', width: '18.5%', render: (_, project) => actionsRenderer(project) },
     ];
 
     return (
@@ -432,6 +472,25 @@ const MyProjectsPage: React.FC = () => {
                 }
                 .mp-card { border-radius: 14px; border: 1px solid #EEF1F8; transition: all .25s ease; box-shadow: 0 1px 2px rgba(15,23,42,.05), 0 12px 30px -16px rgba(15,23,42,.20); }
                 .mp-card:hover { box-shadow: 0 16px 34px -12px rgba(15,20,32,.22); transform: translateY(-3px); }
+                /* 名称/简介悬浮提示：antd 默认 250px 宽、一行挤满，长文本读着累——放大留白、支持换行 */
+                .mp-tip { max-width: 460px; }
+                .mp-tip .ant-tooltip-inner {
+                    background: rgba(15, 23, 42, 0.95);
+                    -webkit-backdrop-filter: saturate(180%) blur(10px);
+                    backdrop-filter: saturate(180%) blur(10px);
+                    border: 1px solid rgba(255, 255, 255, 0.08);
+                    border-radius: 10px;
+                    padding: 8px 12px;
+                    font-size: 12.5px;
+                    line-height: 1.7;
+                    white-space: pre-wrap;
+                    word-break: break-word;
+                    box-shadow: 0 14px 34px -14px rgba(15, 23, 42, 0.55);
+                }
+                .mp-tip .ant-tooltip-arrow::before { background: rgba(15, 23, 42, 0.95); }
+                /* 分页器默认贴死在卡片右缘，看起来太挤；整体往左收 16px 留出呼吸感
+                   （不做居中：站内其他表格都是靠右，保持一致） */
+                .mp-table .ant-table-pagination.ant-pagination { padding-right: 16px; }
             `}</style>
             <Navbar breadcrumbs={breadcrumbs} />
 
@@ -489,10 +548,11 @@ const MyProjectsPage: React.FC = () => {
                     })}
                 </div>
 
-                {/* 操作栏：搜索/筛选靠左，视图切换与「新建项目」靠右（新建按钮 2026-11-11 从顶栏迁入） */}
-                {(counts.total > 0 || !!loadError) && (
+                {/* 操作栏：搜索/筛选靠左，视图切换与「新建项目」靠右（新建按钮 2026-11-11 从顶栏迁入）。
+                    搜索/筛选/视图切换是纯前端控件，首屏直接渲染，不等统计接口——
+                    否则页面进入时会先空一段、再"补出"这一行（统计数据未回来时 counts 全 0） */}
                 <div className="mb-4 flex flex-wrap items-center gap-2">
-                    {counts.total > 0 && (<>
+                    {(!countsReady || counts.total > 0) && (<>
                         <Input
                             prefix={<SearchOutlined className="text-gray-500" />}
                             placeholder="搜索项目名称/描述..."
@@ -559,18 +619,17 @@ const MyProjectsPage: React.FC = () => {
                         </div>
                     </>)}
                     <Button
-                        type={counts.total > 0 ? 'primary' : 'default'}
+                        type={!countsReady || counts.total > 0 ? 'primary' : 'default'}
                         icon={<PlusOutlined />}
                         onClick={() => setIsModalOpen(true)}
-                        className={counts.total > 0 ? '' : 'ml-auto'}
+                        className={!countsReady || counts.total > 0 ? '' : 'ml-auto'}
                     >
                         新建项目
                     </Button>
                 </div>
-                )}
 
                 {loading && projects.length === 0 ? (
-                    <div className="flex justify-center items-center h-96">
+                    <div className="flex justify-center pt-16 pb-24">
                         <Spin size="large" />
                     </div>
                 ) : loadError ? (
@@ -613,10 +672,13 @@ const MyProjectsPage: React.FC = () => {
                         </Empty>
                     </div>
                 ) : viewMode === 'list' ? (
-                    <div className="bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
+                    <div className="mp-table bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
                         <Table
                             rowKey="id" size="middle"
                             loading={loading}
+                            /* 列宽按比例分配（宽度变化时整体等比缩放）；
+                               x 是最小宽度兜底：窄屏下改为横向滚动，避免操作列/日期被压坏 */
+                            scroll={{ x: 1120 }}
                             columns={listColumns}
                             dataSource={projects}
                             pagination={{
@@ -631,10 +693,6 @@ const MyProjectsPage: React.FC = () => {
                                 selectedRowKeys: [...selectedIds],
                                 onChange: (keys) => setSelectedIds(new Set(keys as number[])),
                             }}
-                            onRow={(record) => ({
-                                onClick: () => navigate(`/projects/${record.id}`),
-                                style: { cursor: 'pointer' },
-                            })}
                         />
                     </div>
                 ) : (
@@ -680,18 +738,21 @@ const MyProjectsPage: React.FC = () => {
                                             </div>
                                         </div>
                                         <div className="mp-card bg-white rounded-b-xl border-t-0 p-4" style={{ borderRadius: '0 0 14px 14px' }}>
-                                            <div className="flex items-center justify-between mb-1">
-                                                <span
-                                                    className="truncate font-medium text-gray-800 cursor-pointer hover:text-blue-500 transition-colors"
+                                            <div className="flex items-center justify-between gap-2 mb-1">
+                                                <EllipsisTip
+                                                    text={project.name}
+                                                    className="font-medium text-gray-800 cursor-pointer hover:text-blue-500 transition-colors min-w-0"
+                                                    placement="top"
                                                     onClick={() => navigate(`/projects/${project.id}`)}
-                                                >
-                                                    {project.name}
-                                                </span>
+                                                />
                                                 {statusTag(project, project.stale_published)}
                                             </div>
-                                            <div className="text-gray-500 text-sm truncate mb-2">
-                                                {project.description || '暂无描述'}
-                                            </div>
+                                            <EllipsisTip
+                                                text={project.description}
+                                                fallback="暂无描述"
+                                                className="text-gray-500 text-sm mb-2 cursor-default"
+                                                placement="top"
+                                            />
                                             <div className="flex items-center justify-between text-xs text-gray-400 mb-2">
                                                 <span>创建 {fmtDate(project.created_at)}</span>
                                                 <span>修改 {fmtDate(project.updated_at)}</span>

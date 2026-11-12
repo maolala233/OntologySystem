@@ -28,7 +28,7 @@ const BuildResultPage: React.FC = () => {
     const { projectId } = useParams<{ projectId: string }>();
     const navigate = useNavigate();
     const pid = Number(projectId);
-    const { projectName } = useBuilderStore();
+    const { projectId: storeProjectId, projectName } = useBuilderStore();
     const { hasModule } = useAuthStore();
     const isExpert = hasModule('builder_pro');
 
@@ -63,6 +63,15 @@ const BuildResultPage: React.FC = () => {
     }, [pid]);
 
     useEffect(() => { load(); }, [load]);
+
+    // 切到别的项目时先清掉上一个项目的摘要与图谱，避免路由参数直切时短暂显示旧数据
+    useEffect(() => {
+        setSummary(null);
+        setGraphNodes([]);
+        setGraphEdges([]);
+        setSelectedNode(null);
+        setSelectedEdge(null);
+    }, [pid]);
 
     // 与资产中心/实例探索同规则：类节点常显；实例仅在其所属类被展开后显示
     const { displayNodes, displayEdges } = useMemo(() => {
@@ -199,7 +208,15 @@ const BuildResultPage: React.FC = () => {
             <div className="shrink-0 flex items-center gap-3 px-4 py-2 page-header">
                 <Button icon={<ArrowLeftOutlined />} size="small"
                         onClick={() => navigate(`/projects/${pid}`)}>返回</Button>
-                <span className="font-semibold text-gray-800">本体图谱 · {projectName || `#${pid}`}</span>
+                <span className="font-semibold text-gray-800 flex items-baseline min-w-0">
+                    本体图谱
+                    {storeProjectId === pid && projectName && (
+                        <>
+                            <span className="mx-1 text-gray-300">·</span>
+                            <span className="inline-block max-w-[300px] truncate align-bottom">{projectName}</span>
+                        </>
+                    )}
+                </span>
                 {summary.checks && <QualityCheckTag checks={summary.checks} />}
                 {sc && (
                     <Tag color="geekblue">
