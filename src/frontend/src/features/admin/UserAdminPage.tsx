@@ -246,6 +246,7 @@ const UserAdminPage: React.FC = () => {
 
             <Table
                 rowKey="id"
+                className="surface-card"
                 loading={loading}
                 columns={columns as any}
                 dataSource={users}

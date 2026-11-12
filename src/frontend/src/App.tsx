@@ -28,6 +28,7 @@ import ModuleGrantsPage from './features/admin/ModuleGrantsPage';
 import ModelConfigsPage from './features/admin/ModelConfigsPage';
 import EnvConfigPage from './features/admin/EnvConfigPage';
 import { RequireModule, ExpertGuard } from './shared/auth/guards';
+import { appTheme } from './theme';
 
 /** 旧路由 /ontology-builder/:projectId → 新版详情页（一键构建形态） */
 const RedirectBuilder: React.FC = () => {
@@ -37,7 +38,7 @@ const RedirectBuilder: React.FC = () => {
 
 function App() {
     return (
-        <ConfigProvider locale={zhCN} theme={{ token: { colorPrimary: '#5B8DEF' } }}>
+        <ConfigProvider locale={zhCN} theme={appTheme}>
             {/* AntdApp + FeedbackBridge：让 message/Modal 静态调用消费主题上下文（消 console 告警） */}
             <AntdApp>
                 <FeedbackBridge />
@@ -56,7 +57,7 @@ function App() {
                         }
                     >
                         <Route index element={<HomePage />} />
-                        <Route path="my-projects" element={<MyProjectsPage />} />
+                        <Route path="my-projects" element={<RequireModule module="projects"><MyProjectsPage /></RequireModule>} />
                         {/* 新版详情页（默认）：后台构建状态 + 结果入口 + 发布/去问答 */}
                         <Route path="projects/:projectId" element={<ProjectOverviewPage />} />
                         <Route path="projects/:projectId/result" element={<BuildResultPage />} />
@@ -72,8 +73,8 @@ function App() {
                         {/* 旧路由兼容重定向 */}
                         <Route path="ontology-builder" element={<Navigate to="/my-projects" replace />} />
                         <Route path="ontology-builder/:projectId" element={<RedirectBuilder />} />
-                        <Route path="asset-center" element={<AssetCenterPage />} />
-                        <Route path="asset-center/:projectId" element={<AssetDetailPage />} />
+                        <Route path="asset-center" element={<RequireModule module="asset_center"><AssetCenterPage /></RequireModule>} />
+                        <Route path="asset-center/:projectId" element={<RequireModule module="asset_center"><AssetDetailPage /></RequireModule>} />
                         {/* M5 R8 本体问答独立页面（对话分组 + 模型选择） */}
                         <Route path="qa" element={<RequireModule module="qa"><QaPage /></RequireModule>} />
                         {/* R8 工具层：报告/PPT 生成 + MCP 服务控制台 */}

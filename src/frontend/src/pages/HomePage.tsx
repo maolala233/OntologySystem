@@ -83,8 +83,11 @@ const HomePage: React.FC = () => {
 
     // 三张卡各去不同页面：智能提取/可视化编辑本是同一项目内的前后两步，合并为「本体构建」，
     // 第三张补上平台已具备、首页原先缺入口的「本体问答」（2026-11-11）
+    // 2026-11-11：按模块授权过滤——入口指向的页面在左侧菜单没有对应项时不再展示，
+    // 避免点进去落到一个「没有归属菜单」的页面（路由侧另加了 RequireModule 兜底）
     const features = [
         {
+            module: 'projects',
             icon: <ApartmentOutlined />,
             color: C.blue,
             title: '本体构建',
@@ -92,20 +95,22 @@ const HomePage: React.FC = () => {
             action: () => navigate('/my-projects'),
         },
         {
+            module: 'asset_center',
             icon: <ShareAltOutlined />,
             color: C.cyan,
             title: '协作共享',
             description: '版本快照、审核门禁，发布到公共资产中心',
             action: () => navigate('/asset-center'),
         },
-        ...(canUse('qa') ? [{
+        {
+            module: 'qa',
             icon: <BookOutlined />,
             color: C.purple,
             title: '本体问答',
             description: '基于已建本体的自然语言问答，答案可溯源到图谱',
             action: () => navigate('/qa'),
-        }] : []),
-    ];
+        },
+    ].filter((f) => canUse(f.module));
 
     const statCards = [
         { label: '我的项目', value: stats.myProjects, icon: <FileTextOutlined />, color: C.blue },
@@ -124,7 +129,7 @@ const HomePage: React.FC = () => {
     const breadcrumbs = [{ title: '首页' }];
 
     return (
-        <div className="h-full flex flex-col bg-gray-50">
+        <div className="h-full flex flex-col app-canvas">
             <style>{`
                 .hp-mono { font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace; }
                 /* 统计卡片只读、无跳转：不加 hover 抬升，避免"可点击"的误导（2026-11-11） */
@@ -146,27 +151,33 @@ const HomePage: React.FC = () => {
                     title="企业级语义知识及本体治理平台"
                     subtitle="基于 AI 的本体构建 · 知识图谱 · 溯源治理一站式流水线，让知识资产沉淀为可计算的服务"
                     actions={
-                        <>
-                            <Button
-                                type="primary"
-                                size="large"
-                                icon={<RocketOutlined />}
-                                onClick={() => navigate('/my-projects')}
-                                className="h-10 sm:h-12 px-4 sm:px-8 border-0"
-                                style={{ background: `linear-gradient(95deg, ${C.blue}, ${C.purple})`, boxShadow: `0 8px 24px -8px ${C.purple}` }}
-                            >
-                                开始使用
-                            </Button>
-                            <Button
-                                size="large"
-                                icon={<ArrowRightOutlined />}
-                                onClick={() => navigate('/asset-center')}
-                                className="h-10 sm:h-12 px-4 sm:px-8 bg-transparent"
-                                style={{ color: '#C9D4FF', borderColor: '#2A3550' }}
-                            >
-                                浏览资产中心
-                            </Button>
-                        </>
+                        (canUse('projects') || canUse('asset_center')) ? (
+                            <>
+                                {canUse('projects') && (
+                                    <Button
+                                        type="primary"
+                                        size="large"
+                                        icon={<RocketOutlined />}
+                                        onClick={() => navigate('/my-projects')}
+                                        className="h-10 sm:h-12 px-4 sm:px-8 border-0"
+                                        style={{ background: `linear-gradient(95deg, ${C.blue}, ${C.purple})`, boxShadow: `0 8px 24px -8px ${C.purple}` }}
+                                    >
+                                        开始使用
+                                    </Button>
+                                )}
+                                {canUse('asset_center') && (
+                                    <Button
+                                        size="large"
+                                        icon={<ArrowRightOutlined />}
+                                        onClick={() => navigate('/asset-center')}
+                                        className="h-10 sm:h-12 px-4 sm:px-8 bg-transparent"
+                                        style={{ color: '#C9D4FF', borderColor: '#2A3550' }}
+                                    >
+                                        浏览资产中心
+                                    </Button>
+                                )}
+                            </>
+                        ) : undefined
                     }
                 />
 
@@ -203,6 +214,13 @@ const HomePage: React.FC = () => {
                 <div className="mb-6 sm:mb-8">
                     <h2 className="text-xl sm:text-2xl font-bold text-gray-800 mb-4 sm:mb-6">核心功能</h2>
                     <Row gutter={[16, 16]}>
+                        {features.length === 0 && (
+                            <Col span={24}>
+                                <div className="bg-white border border-gray-100 rounded-xl px-6 py-10 text-center text-sm text-gray-500">
+                                    当前账号暂未开通核心功能，请联系管理员在「系统配置 → 模块授权」中开通
+                                </div>
+                            </Col>
+                        )}
                         {features.map((feature, index) => (
                             <Col xs={24} sm={24} md={12} lg={features.length === 3 ? 8 : 12} key={index}>
                                 <Card className="hp-feature-card h-full shadow-sm" styles={{ body: { padding: 24 } }} onClick={feature.action}>

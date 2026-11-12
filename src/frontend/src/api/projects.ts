@@ -140,7 +140,15 @@ export const projectsApi = {
 
     // 分页列表（后端 /my/paged）：返回 items + total/pages/has_next 等，免额外请求总数
     getMyProjectsPaged: async (params: {
-        scope?: 'mine' | 'all'; page?: number; page_size?: number;
+        scope?: 'mine' | 'all';
+        page?: number;
+        page_size?: number;
+        /** 按名称/描述/知识域搜索（超管 scope=all 时也匹配归属人用户名） */
+        keyword?: string;
+        /** 状态多选：draft/scheduled/building/ready/published，逗号分隔传给后端 */
+        status?: string[];
+        sort_by?: 'id' | 'name' | 'created_at' | 'updated_at';
+        order?: 'asc' | 'desc';
     } = {}): Promise<{
         items: ProjectData[]; total: number; page: number; page_size: number;
         pages: number; has_next: boolean; has_prev: boolean;
@@ -150,6 +158,10 @@ export const projectsApi = {
                 ...(params.scope === 'all' ? { scope: 'all' } : {}),
                 ...(params.page ? { page: params.page } : {}),
                 ...(params.page_size ? { page_size: params.page_size } : {}),
+                ...(params.keyword ? { keyword: params.keyword } : {}),
+                ...(params.status?.length ? { status: params.status.join(',') } : {}),
+                ...(params.sort_by ? { sort_by: params.sort_by } : {}),
+                ...(params.order ? { order: params.order } : {}),
             },
         });
         return response.data;

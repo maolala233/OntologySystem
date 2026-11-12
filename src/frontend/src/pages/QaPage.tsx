@@ -6,6 +6,7 @@ import { message } from '../shared/feedback';
 import { Button, Input, Popconfirm, Popover, Select, Spin, Tag, Tooltip } from 'antd';
 import { QA_LAST_PROJECT_ID_KEY } from '../shared/keys';
 import BrandMark from '../components/BrandMark';
+import SiderToggle from '../components/Layout/SiderToggle';
 import { PROJECT_STATUS, PUBLISHED_TAG } from '../shared/projectStatus';
 import {
     ClearOutlined,
@@ -326,9 +327,10 @@ export default function QaPage() {
             </div>
 
             {/* 右侧：对话区 */}
-            <div className="flex-1 flex flex-col min-w-0 bg-gray-50">
+            <div className="flex-1 flex flex-col min-w-0 app-canvas">
                 {/* 顶栏：项目 + 模型 */}
-                <div className="sticky top-0 z-30 h-14 px-4 bg-white border-b border-gray-200 flex items-center gap-3 shrink-0">
+                <div className="sticky top-0 z-30 h-14 px-4 page-header flex items-center gap-3 shrink-0">
+                    <SiderToggle />
                     <Select
                         value={projectId ?? undefined}
                         onChange={v => setProjectId(v)}
@@ -376,7 +378,7 @@ export default function QaPage() {
                         {turns.map((turn, i) => (
                             <div key={i} className="mb-6">
                                 <div className="flex justify-end mb-2">
-                                    <div className="max-w-[85%] px-3 py-2 rounded-2xl bg-blue-600 text-white text-sm whitespace-pre-wrap">
+                                    <div className="max-w-[85%] px-3 py-2 rounded-2xl text-white text-sm whitespace-pre-wrap shadow-[0_10px_24px_-14px_rgba(91,141,239,0.9)]" style={{ background: 'linear-gradient(135deg, #5B8DEF, #6C7CF5)' }}>
                                         {turn.question}
                                     </div>
                                 </div>

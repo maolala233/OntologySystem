@@ -433,7 +433,7 @@ const AssetCenterPage: React.FC = () => {
     );
 
     return (
-        <div className="h-full flex flex-col bg-gray-50">
+        <div className="h-full flex flex-col app-canvas">
             <style>{`
                 .ac-cover { position: relative; overflow: hidden; }
                 .ac-cover-grid {
