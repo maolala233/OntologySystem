@@ -234,10 +234,8 @@ def generate_structure_maps(prepared: list, classes: list[str],
         f"- {v.get('domain') or '?'} -[{v.get('label')}]-> {v.get('range') or '?'}"
         for v in list(obj_props.values())[:80]) or "（无）"
 
-    maps = list(existing_maps or [])
-    generated = 0
-    for sig_i, sig in enumerate(sigs):
-        _notify(sig_i, len(sigs))
+    def _one(sig: str) -> Optional[dict]:
+        """单个签名的结构映射决策（线程内执行）；失败/不适用返回 None。"""
         if cancel_cb is not None:
             cancel_cb()
         # 采样：该签名下的取值样例与数据行
@@ -263,7 +261,7 @@ def generate_structure_maps(prepared: list, classes: list[str],
         # 长自由文本 → 列语义无法可靠映射，丢弃该签名（续行靠 meta 真表头的映射展开）
         sig_cell_list = [c.strip() for c in sig.split("|") if c.strip()]
         if sig_cell_list and sum(1 for c in sig_cell_list if len(c) >= 10) > len(sig_cell_list) / 2:
-            continue
+            return None
         material = _signature_material(sig, sample_rows, sample_values)
         user = (material + "\n\n【类清单】\n" + class_list_text
                 + "\n\n【关系清单】\n" + rel_list_text)
@@ -288,13 +286,13 @@ def generate_structure_maps(prepared: list, classes: list[str],
                     break
                 feedback = "输出必须含 subject_class 与 columns 数组"
             if payload is None:
-                continue
+                return None
             if use_cache:
                 _cache_put(key, payload)
         # 规范化 + 校验（subject_class 必须在类清单里，谓词/target 逐字收敛）
         subject = str(payload.get("subject_class") or "").strip()
         if subject not in classes:
-            continue
+            return None
         cols = []
         for c in (payload.get("columns") or []):
             if not isinstance(c, dict):
@@ -313,14 +311,44 @@ def generate_structure_maps(prepared: list, classes: list[str],
             if entry["kind"] != "ignore" and entry["column"]:
                 cols.append(entry)
         if not cols:
+            return None
+        return {"signature": sig, "subject_class": subject,
+                "key_column": str(payload.get("key_column") or "").strip(),
+                "columns": cols}
+
+    # 按签名并行：签名之间互不依赖；结果按下标归位，映射顺序保持确定性。
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from app.core.config import settings as _settings
+
+    max_workers = max(1, min(len(sigs),
+                             int(getattr(_settings, "LLM_MAX_CONCURRENCY", 16) or 16)))
+    by_idx: dict[int, Optional[dict]] = {}
+    _notify(0, len(sigs))
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_one, sig): i for i, sig in enumerate(sigs)}
+        done = 0
+        try:
+            for fut in as_completed(futures):
+                by_idx[futures[fut]] = fut.result()
+                done += 1
+                _notify(done, len(sigs))
+        except BaseException:
+            for f in futures:
+                f.cancel()
+            raise
+
+    # 按原签名顺序收口；映射总量防护仍在收口阶段生效（不因并行改变最终结果）
+    maps = list(existing_maps or [])
+    generated = 0
+    for i in range(len(sigs)):
+        m = by_idx.get(i)
+        if not m:
             continue
-        maps.append({"signature": sig, "subject_class": subject,
-                     "key_column": str(payload.get("key_column") or "").strip(),
-                     "columns": cols})
+        maps.append(m)
         generated += 1
-        if sum(len(m.get("columns") or []) for m in maps) > material_limit // 50:
+        if sum(len(x.get("columns") or []) for x in maps) > material_limit // 50:
             break  # 映射总量防护（极端多签名场景）
-    _notify(len(sigs), len(sigs))
     return maps, generated
 
 
