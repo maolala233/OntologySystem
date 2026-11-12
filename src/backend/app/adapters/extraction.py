@@ -432,6 +432,50 @@ def _chunk_iter(chunks: list) -> list[tuple[int, str, str, str]]:
     return out
 
 
+def _run_sliding_window(pool, items, submit_fn, done_fn, *,
+                        parallelism: int, request_interval: float = 0.0,
+                        cancel_cb: Optional[Callable] = None) -> None:
+    """滑动窗口调度：始终保持 parallelism 个任务在途，完成一个补一个。
+
+    旧实现是“每批 parallelism 个，等整批结束再提交下一批”：批内单次调用
+    50–150 秒的长尾会把其它空闲线程一起拖住（实测 4 路平均只有 2.4 路在跑）。
+    这里不提高并发上限，只去掉批屏障——某个切片完成立即补下一个，直到任务耗尽。
+
+    结果顺序仍由调用方按切片 idx 归并（本函数不改变确定性）。
+    """
+    from concurrent.futures import FIRST_COMPLETED, wait
+
+    task_iter = iter(items)
+    inflight: dict = {}
+    max_workers = max(1, parallelism)
+
+    def submit_next() -> bool:
+        if cancel_cb is not None:
+            cancel_cb()  # 取消后不再提交新任务
+        try:
+            item = next(task_iter)
+        except StopIteration:
+            return False
+        if inflight and request_interval > 0:
+            time.sleep(request_interval)  # params.request_interval：提交间隔限速
+        fut = submit_fn(item)
+        inflight[fut] = item
+        return True
+
+    for _ in range(max_workers):
+        if not submit_next():
+            break
+
+    while inflight:
+        done_futs, _ = wait(list(inflight.keys()), return_when=FIRST_COMPLETED)
+        for fut in done_futs:
+            if cancel_cb is not None:
+                cancel_cb()  # 取消时抛异常，终结整个抽取
+            item = inflight.pop(fut)
+            done_fn(item, fut.result())
+            submit_next()
+
+
 # ── 跨切片关系缝合（归并后处理）：切片独立抽取连不上的类间关系，归并后统一补一轮 ──
 
 STITCH_JSON_SCHEMA = {
@@ -767,32 +811,28 @@ def extract_schema(chunks: list, base_uri: str,
         #   不用 as_completed 的完成序（线程调度随机）：完成序会打乱 merged 插入序
         #   → 类清单顺序变 → 缝合 prompt 变 → 缓存 miss + 缝合结果漂移
         #   （2026-11-05 确定性实测：缓存 8/8 命中仍出现 27→29 关系漂移的根因）
-        # 分批提交（每批 parallelism 个，批间取消检查）：一次性提交全部时，取消后
-        # 队列里排队的调用仍会继续跑——点停止还要等完整个队列（2026-11-06 实测）
+        # 滑动窗口：始终 parallelism 个在途、完成一个补一个（2026-11-12）。
+        # 旧版“每批等最慢的”会让 4 路只有 2.4 路有效；窗口调度只去掉批屏障，
+        # 不提高并发上限，取消语义不变（每完成一个都检查 cancel_cb）。
         results_by_idx: dict[int, tuple] = {}
-        remaining = list(prepared)
-        while remaining:
-            if cancel_cb is not None:
-                cancel_cb()  # 批间取消检查：不再提交新批次
-            batch = remaining[:max(1, parallelism)]
-            del remaining[:max(1, parallelism)]
-            # params.request_interval 接线（2026-11-08）：批间隔秒——远程服务限速
-            # 配置，此前是死字段；仅还有后续批次时等待
-            if remaining and request_interval > 0:
-                time.sleep(request_interval)
-            futures = {submit_with_context(pool, one, idx, text, hdr): idx
-                       for idx, text, _doc, hdr in batch}
-            for fut in as_completed(futures):
-                if cancel_cb is not None:
-                    cancel_cb()  # 取消时抛异常，终结整个抽取
-                done += 1
-                idx, payload, hit, err = fut.result()
-                results_by_idx[idx] = (idx, payload, hit, err)
-                cache_hits += 1 if hit else 0
-                if payload is None:
-                    result.warnings.append(f"chunk #{idx} 骨架抽取失败（已重试）: {err}")
-                if progress_cb is not None:
-                    progress_cb(done, len(prepared), cache_hits)
+
+        def _on_chunk_done(item, payload_result):
+            nonlocal done, cache_hits
+            idx, payload, hit, err = payload_result
+            done += 1
+            results_by_idx[idx] = (idx, payload, hit, err)
+            cache_hits += 1 if hit else 0
+            if payload is None:
+                result.warnings.append(f"chunk #{idx} 骨架抽取失败（已重试）: {err}")
+            if progress_cb is not None:
+                progress_cb(done, len(prepared), cache_hits)
+
+        _run_sliding_window(
+            pool, prepared,
+            lambda item: submit_with_context(pool, one, item[0], item[1], item[3]),
+            _on_chunk_done,
+            parallelism=parallelism, request_interval=request_interval,
+            cancel_cb=cancel_cb)
 
         _phases["parallel_extract_seconds"] = round(
             time.perf_counter() - _t_parallel, 6)
@@ -1899,53 +1939,48 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
     cache_hits = 0
     _t_parallel = time.perf_counter()
     with ThreadPoolExecutor(max_workers=max(1, parallelism)) as pool:
-        # 分批提交（每批 parallelism 个，批间取消检查）：一次性提交全部时取消后
-        # 队列排队的调用仍会跑——点停止还要等完整个队列（2026-11-06 实测）
-        remaining = list(prepared)
-        while remaining:
-            if cancel_cb is not None:
-                cancel_cb()
-            batch = remaining[:max(1, parallelism)]
-            del remaining[:max(1, parallelism)]
-            if remaining and request_interval > 0:
-                time.sleep(request_interval)  # params.request_interval 批间隔（同骨架）
-            futures = {submit_with_context(pool, one, idx, text): idx
-                       for idx, text, _doc, _h in batch}
-            for fut in as_completed(futures):
-                if cancel_cb is not None:
-                    cancel_cb()
-                done += 1
-                idx, payload, hit, err = fut.result()
-                cache_hits += 1 if hit else 0
-                if payload is None:
-                    result.warnings.append(f"chunk #{idx} 实例抽取失败（已重试）: {err}")
-                else:
-                    for e in payload.get("entities") or []:
-                        try:
-                            conf = float(e.get("confidence") or 0.0)
-                        except (TypeError, ValueError):
-                            conf = 0.0
-                        raw_entities.append(ExtractedEntity(
-                            label=str(e.get("label") or "").strip(),
-                            class_label=str(e.get("class_label") or "").strip(),
-                            props=e.get("props") or {},
-                            confidence=min(max(conf, 0.0), 1.0),
-                            evidence=str(e.get("evidence") or ""),
-                            chunk_index=idx))
-                    for r in payload.get("relations") or []:
-                        try:
-                            conf = float(r.get("confidence") or 0.0)
-                        except (TypeError, ValueError):
-                            conf = 0.0
-                        raw_relations.append(ExtractedRelation(
-                            subject_label=str(r.get("subject_label") or "").strip(),
-                            predicate=str(r.get("predicate") or "").strip(),
-                            object_label=str(r.get("object_label") or "").strip(),
-                            confidence=min(max(conf, 0.0), 1.0),
-                            evidence=str(r.get("evidence") or ""),
-                            chunk_index=idx))
-                if progress_cb is not None:
-                    progress_cb(done, len(prepared), cache_hits)
+        # 滑动窗口调度（2026-11-12）：不再整批等待，完成一个补一个。
+        def _on_chunk_done(item, payload_result):
+            nonlocal done, cache_hits
+            idx, payload, hit, err = payload_result
+            done += 1
+            cache_hits += 1 if hit else 0
+            if payload is None:
+                result.warnings.append(f"chunk #{idx} 实例抽取失败（已重试）: {err}")
+            else:
+                for e in payload.get("entities") or []:
+                    try:
+                        conf = float(e.get("confidence") or 0.0)
+                    except (TypeError, ValueError):
+                        conf = 0.0
+                    raw_entities.append(ExtractedEntity(
+                        label=str(e.get("label") or "").strip(),
+                        class_label=str(e.get("class_label") or "").strip(),
+                        props=e.get("props") or {},
+                        confidence=min(max(conf, 0.0), 1.0),
+                        evidence=str(e.get("evidence") or ""),
+                        chunk_index=idx))
+                for r in payload.get("relations") or []:
+                    try:
+                        conf = float(r.get("confidence") or 0.0)
+                    except (TypeError, ValueError):
+                        conf = 0.0
+                    raw_relations.append(ExtractedRelation(
+                        subject_label=str(r.get("subject_label") or "").strip(),
+                        predicate=str(r.get("predicate") or "").strip(),
+                        object_label=str(r.get("object_label") or "").strip(),
+                        confidence=min(max(conf, 0.0), 1.0),
+                        evidence=str(r.get("evidence") or ""),
+                        chunk_index=idx))
+            if progress_cb is not None:
+                progress_cb(done, len(prepared), cache_hits)
+
+        _run_sliding_window(
+            pool, prepared,
+            lambda item: submit_with_context(pool, one, item[0], item[1]),
+            _on_chunk_done,
+            parallelism=parallelism, request_interval=request_interval,
+            cancel_cb=cancel_cb)
     _phases["parallel_extract_seconds"] = round(
         time.perf_counter() - _t_parallel, 6)
 

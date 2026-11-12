@@ -90,6 +90,7 @@ add-deepseek-models.py
 .remote/
 deploy-ollama.sh
 install-ollama-bge-cn.sh
+pull-and-update.sh
 install-ollama-offline.sh
 make-ollama-offline-bundle.sh
 add-bge-embedding.py
