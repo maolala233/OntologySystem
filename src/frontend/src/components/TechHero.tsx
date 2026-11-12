@@ -123,7 +123,7 @@ const TechHero: React.FC<TechHeroProps> = ({
                 )}
 
                 <h1
-                    className={`tk-gradient-text font-bold mb-3 sm:mb-4 leading-tight ${compact ? 'text-xl sm:text-2xl lg:text-3xl' : 'text-2xl sm:text-3xl lg:text-[40px]'}`}
+                    className={`tk-gradient-text font-bold mb-3 sm:mb-4 leading-tight ${compact ? 'text-[20px] sm:text-[24px] lg:text-[30px]' : 'text-[24px] sm:text-[30px] lg:text-[40px]'}`}
                 >
                     {title}
                 </h1>

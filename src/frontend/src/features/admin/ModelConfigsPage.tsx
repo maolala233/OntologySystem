@@ -112,7 +112,8 @@ const ModelConfigsPage: React.FC = () => {
         form.setFieldsValue({
             ...row, api_key: '', scope: row.scope,
             chunk_size: p.chunk_size, chunk_overlap: p.chunk_overlap,
-            request_interval: p.request_interval, llm_timeout: p.llm_timeout,
+            request_interval: p.request_interval, parallelism: p.parallelism ?? 16,
+            llm_timeout: p.llm_timeout,
             disable_think: !!p.disable_think, streaming_enabled: !!p.streaming_enabled,
         });
         setProviderSel(row.provider);
@@ -139,6 +140,7 @@ const ModelConfigsPage: React.FC = () => {
                 chunk_size: values.chunk_size,
                 chunk_overlap: values.chunk_overlap,
                 request_interval: values.request_interval,
+                parallelism: values.parallelism,
                 llm_timeout: values.llm_timeout,
                 disable_think: !!values.disable_think,
                 streaming_enabled: !!values.streaming_enabled,
@@ -391,7 +393,12 @@ const ModelConfigsPage: React.FC = () => {
                                 <Form.Item name="chunk_overlap" label="overlap %" initialValue={10}>
                                     <InputNumber min={0} max={50} />
                                 </Form.Item>
-                                <Form.Item name="request_interval" label="请求间隔(s)" initialValue={2}>
+                                <Form.Item name="parallelism" label="并行度" initialValue={16}
+                                           tooltip="同时在途的切片抽取任务数（默认 16）：后端按滑动窗口调度，完成一个立即补一个。远端模型服务限速严格时可调小">
+                                    <InputNumber min={1} max={64} />
+                                </Form.Item>
+                                <Form.Item name="request_interval" label="请求间隔(s)" initialValue={2}
+                                           tooltip="每次任务提交之间的间隔（秒），用于给远程模型服务限速；0 表示不限速">
                                     <InputNumber min={0} max={60} />
                                 </Form.Item>
                                 <Form.Item name="llm_timeout" label="超时(s)" initialValue={300}>

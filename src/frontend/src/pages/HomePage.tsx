@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Row, Col, Statistic, Button } from 'antd';
+import { Card, Row, Col, Button } from 'antd';
 import {
     RocketOutlined,
     FileTextOutlined,
@@ -33,7 +33,6 @@ const HomePage: React.FC = () => {
         publicAssets: 0,
         totalNodes: 0
     });
-    const [loading, setLoading] = useState(true);
 
     // 获取首页统计数据（使用新的API端点）
     useEffect(() => {
@@ -66,8 +65,6 @@ const HomePage: React.FC = () => {
                 if (error instanceof Error && error.message.includes('401')) {
                     console.warn('请先登录以获取个人项目数据');
                 }
-            } finally {
-                setLoading(false);
             }
         };
 
@@ -139,12 +136,21 @@ const HomePage: React.FC = () => {
                 .hp-feature-card::after { content:''; position:absolute; top:0; right:0; width:64px; height:64px;
                     background: radial-gradient(circle at top right, rgba(181,133,242,.12), transparent 70%); }
                 .hp-feature-card:hover .hp-feature-arrow { opacity: 1 !important; }
+                /* Hero 内的「浏览资产中心」幽灵按钮：antd 默认 hover 会刷成白底，在深色面板里很刺眼。
+                   改为轻微品牌色底 + 边框/文字提亮，幅度小于主按钮 */
+                .hp-hero-ghost.ant-btn.ant-btn-default:hover,
+                .hp-hero-ghost.ant-btn.ant-btn-default:focus-visible {
+                    background: rgba(91, 141, 239, 0.14) !important;
+                    border-color: rgba(91, 141, 239, 0.65) !important;
+                    color: #FFFFFF !important;
+                }
             `}</style>
             <Navbar breadcrumbs={breadcrumbs} />
 
-            <div className="w-full max-w-[1920px] mx-auto p-4 sm:p-6 lg:p-8 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
+            <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
                 {/* ── Hero：深色科技面板（TechHero 共享组件） ── */}
                 <TechHero
+                    className="!mb-5"
                     chips={['SEMANTIC KNOWLEDGE PLATFORM', 'ENGINE · v2.0']}
                     title="企业级语义知识及本体治理平台"
                     subtitle="基于 AI 的本体构建 · 知识图谱 · 溯源治理一站式流水线，让知识资产沉淀为可计算的服务"
@@ -168,7 +174,7 @@ const HomePage: React.FC = () => {
                                         size="large"
                                         icon={<ArrowRightOutlined />}
                                         onClick={() => navigate('/asset-center')}
-                                        className="h-10 sm:h-12 px-4 sm:px-8 bg-transparent"
+                                        className="hp-hero-ghost h-10 sm:h-12 px-4 sm:px-8 bg-transparent"
                                         style={{ color: '#C9D4FF', borderColor: '#2A3550' }}
                                     >
                                         浏览资产中心
@@ -180,22 +186,22 @@ const HomePage: React.FC = () => {
                 />
 
                 {/* ── 统计卡片 ── */}
-                <Row gutter={[16, 16]} className="mb-6 sm:mb-8">
+                <Row gutter={[16, 16]} className="mb-5">
                     {statCards.map((s) => (
                         <Col xs={24} sm={12} xl={6} key={s.label}>
-                            <Card loading={loading} className="hp-stat-card shadow-sm" styles={{ body: { padding: '20px 22px' } }}>
+                            <Card className="hp-stat-card shadow-sm" styles={{ body: { padding: '20px 22px' } }}>
                                 <div className="hp-stat-bar" style={{ background: `linear-gradient(90deg, ${s.color}, transparent)` }} />
                                 <div className="flex items-center justify-between">
-                                    <Statistic
-                                        title={<span className="text-gray-500 text-[13px]">{s.label}</span>}
-                                        value={s.value}
-                                        valueStyle={{
-                                            color: '#0F1420',
-                                            fontFamily: "'JetBrains Mono', Consolas, monospace",
-                                            fontSize: 30,
-                                            fontWeight: 700,
-                                        }}
-                                    />
+                                    <div className="min-w-0">
+                                        <div className="text-gray-500 text-[13px] leading-5 mb-1">{s.label}</div>
+                                        {/* 与「我的项目」统计卡一致：先渲染 0，接口返回后原地替换，不做加载占位 */}
+                                        <div
+                                            className="text-[30px] font-bold leading-9"
+                                            style={{ color: s.color, fontFamily: "'JetBrains Mono', Consolas, monospace" }}
+                                        >
+                                            {Number(s.value).toLocaleString('en-US')}
+                                        </div>
+                                    </div>
                                     <span
                                         className="w-11 h-11 rounded-xl flex items-center justify-center text-lg"
                                         style={{ color: s.color, background: `${s.color}1A`, boxShadow: `0 0 18px -6px ${s.color}` }}
@@ -208,45 +214,41 @@ const HomePage: React.FC = () => {
                     ))}
                 </Row>
 
-                {/* ── 核心功能 ── */}
-                <div className="mb-6 sm:mb-8">
-                    <h2 className="text-xl sm:text-2xl font-bold text-gray-800 mb-4 sm:mb-6">核心功能</h2>
-                    <Row gutter={[16, 16]}>
-                        {features.length === 0 && (
-                            <Col span={24}>
-                                <div className="bg-white border border-gray-100 rounded-xl px-6 py-10 text-center text-sm text-gray-500">
-                                    当前账号暂未开通核心功能，请联系管理员在「系统配置 → 模块授权」中开通
-                                </div>
-                            </Col>
-                        )}
-                        {features.map((feature, index) => (
-                            <Col xs={24} sm={24} md={12} lg={features.length === 3 ? 8 : 12} key={index}>
-                                <Card className="hp-feature-card h-full shadow-sm" styles={{ body: { padding: 24 } }} onClick={feature.action}>
-                                    <div>
-                                        <span
-                                            className="w-12 h-12 rounded-xl flex items-center justify-center text-xl mb-4"
-                                            style={{
-                                                color: '#fff',
-                                                background: `linear-gradient(135deg, ${feature.color}, ${feature.color}99)`,
-                                                boxShadow: `0 8px 20px -8px ${feature.color}`,
-                                            }}
-                                        >
-                                            {feature.icon}
-                                        </span>
-                                        <h3 className="text-lg font-semibold mb-2 text-gray-800">{feature.title}</h3>
-                                        <p className="text-sm text-gray-500">{feature.description}</p>
-                                        <div
-                                            className="mt-4 inline-flex items-center gap-1 text-xs font-medium opacity-0 transition-opacity duration-200 hp-feature-arrow"
-                                            style={{ color: feature.color }}
-                                        >
-                            查看详情 <ArrowRightOutlined className="text-[10px]" />
+                {/* ── 核心功能（权限过滤后少于 2 张时整块隐藏：只剩 1 张会空出半栏，
+                    0 张只剩一个空标题，都不好看，2026-11-12） ── */}
+                {features.length >= 2 && (
+                    <div className="mb-6">
+                        <h2 className="text-xl sm:text-2xl font-bold text-gray-800 mb-4">核心功能</h2>
+                        <Row gutter={[16, 16]}>
+                            {features.map((feature, index) => (
+                                <Col xs={24} sm={24} md={12} lg={features.length === 3 ? 8 : 12} key={index}>
+                                    <Card className="hp-feature-card h-full shadow-sm" styles={{ body: { padding: 24 } }} onClick={feature.action}>
+                                        <div>
+                                            <span
+                                                className="w-12 h-12 rounded-xl flex items-center justify-center text-xl mb-4"
+                                                style={{
+                                                    color: '#fff',
+                                                    background: `linear-gradient(135deg, ${feature.color}, ${feature.color}99)`,
+                                                    boxShadow: `0 8px 20px -8px ${feature.color}`,
+                                                }}
+                                            >
+                                                {feature.icon}
+                                            </span>
+                                            <h3 className="text-lg font-semibold mb-2 text-gray-800">{feature.title}</h3>
+                                            <p className="text-sm text-gray-500">{feature.description}</p>
+                                            <div
+                                                className="mt-4 inline-flex items-center gap-1 text-xs font-medium opacity-0 transition-opacity duration-200 hp-feature-arrow"
+                                                style={{ color: feature.color }}
+                                            >
+                                查看详情 <ArrowRightOutlined className="text-[10px]" />
+                                            </div>
                                         </div>
-                                    </div>
-                                </Card>
-                            </Col>
-                        ))}
-                    </Row>
-                </div>
+                                    </Card>
+                                </Col>
+                            ))}
+                        </Row>
+                    </div>
+                )}
 
                 {/* ── 快速开始指南：渐变连接线步骤条 ── */}
                 <Card className="shadow-sm" styles={{ body: { padding: '24px 28px', borderRadius: 14 } }}>

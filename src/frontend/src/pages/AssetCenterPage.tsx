@@ -168,7 +168,7 @@ const AssetCenterPage: React.FC = () => {
                         <Card
                             key={domain.id}
                             hoverable
-                            className="rounded-xl shadow-sm hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1 cursor-pointer border border-gray-100"
+                            className="rounded-xl shadow-sm hover:shadow-lg transition-shadow duration-200 cursor-pointer border border-gray-100 overflow-hidden"
                             onClick={() => handleDomainSelect(domain)}
                             cover={
                                 <div
@@ -177,14 +177,7 @@ const AssetCenterPage: React.FC = () => {
                                 >
                                     {/* 网格底纹 + 辉光 */}
                                     <div className="absolute inset-0 ac-cover-grid" />
-                                    <div
-                                        className="absolute -top-8 -right-8 w-36 h-36 rounded-full"
-                                        style={{ background: TC.blue, filter: 'blur(60px)', opacity: 0.3 }}
-                                    />
-                                    <div
-                                        className="absolute -bottom-10 -left-6 w-36 h-36 rounded-full"
-                                        style={{ background: TC.purple, filter: 'blur(60px)', opacity: 0.3 }}
-                                    />
+                                    <div className="absolute inset-0 ac-glow" />
 
                                     {/* 知识域图标 */}
                                     <div className="absolute inset-0 flex items-center justify-center">
@@ -234,60 +227,45 @@ const AssetCenterPage: React.FC = () => {
     // 渲染项目列表视图（第二层）
     const renderProjectListView = () => (
         <div>
-            {/* 顶部导航栏 - 返回按钮 + 知识域信息 + 排序 */}
-            <div className="mb-6 bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-5">
-                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                    <div className="flex items-center gap-3">
-                        <Button 
-                            icon={<ArrowLeftOutlined />} 
-                            onClick={handleBackToDomains}
-                            className="shadow-sm hover:shadow-md transition-shadow"
-                            size="large"
-                        >
-                            返回知识域
-                        </Button>
-                        
-                        {selectedDomain && selectedDomain.id !== 0 && (
-                            <div className="flex items-center gap-3 pl-3 border-l border-gray-200">
-                                <div className="flex items-center justify-center w-10 h-10 rounded-full bg-[#5B8DEF]">
-                                    <DatabaseOutlined className="text-white text-lg" />
-                                </div>
-                                <div>
-                                    <div className="font-semibold text-gray-800 text-base">{selectedDomain.name}</div>
-                                    {selectedDomain.description && (
-                                        <div className="text-gray-500 text-xs mt-0.5">{selectedDomain.description}</div>
-                                    )}
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                    
-                    {/* 统计和排序栏 */}
-                    <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
-                        <Input
-                            allowClear
-                            value={searchText}
-                            onChange={(e) => setSearchText(e.target.value)}
-                            placeholder="搜索本体名称或描述…"
-                            prefix={<SearchOutlined className="text-gray-400" />}
-                            size="large"
-                            className="w-full sm:w-[240px]"
-                        />
-                        <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 rounded-full">
-                            <span className="text-[#5B8DEF] font-semibold">{filteredProjects.length}</span>
-                            <span className="text-gray-600 text-sm">个本体</span>
-                        </div>
-                        <Select
-                            value={sortBy}
-                            onChange={setSortBy}
-                            size="large"
-                            className="min-w-[140px]"
-                            options={[
-                                { label: '📅 最新发布', value: 'latest' },
-                                { label: ' 节点数量', value: 'nodes' },
-                            ]}
-                        />
-                    </div>
+            {/* 工具条：返回 + 当前知识域 + 搜索/计数/排序。
+                Hero chips 里已经展示过知识域名，这里只保留一行轻量文字，不再用大图标块重复；
+                控件统一默认尺寸，不再套一层白卡 */}
+            <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+                <Button icon={<ArrowLeftOutlined />} onClick={handleBackToDomains}>
+                    返回知识域
+                </Button>
+                {selectedDomain && selectedDomain.id !== 0 && (
+                    <>
+                        <span className="h-4 w-px bg-gray-300" />
+                        <span className="inline-flex items-center gap-1.5 min-w-0 text-sm font-medium text-gray-700">
+                            <DatabaseOutlined className="text-[#5B8DEF]" />
+                            <span className="truncate max-w-[200px]" title={selectedDomain.description || undefined}>
+                                {selectedDomain.name}
+                            </span>
+                        </span>
+                    </>
+                )}
+                <div className="w-full sm:w-auto sm:ml-auto flex flex-wrap items-center gap-2">
+                    <Input
+                        allowClear
+                        value={searchText}
+                        onChange={(e) => setSearchText(e.target.value)}
+                        placeholder="搜索本体名称或描述…"
+                        prefix={<SearchOutlined className="text-gray-400" />}
+                        className="w-full sm:w-[220px]"
+                    />
+                    <span className="text-sm text-gray-500 whitespace-nowrap">
+                        <span className="text-[#5B8DEF] font-semibold">{filteredProjects.length}</span> 个本体
+                    </span>
+                    <Select
+                        value={sortBy}
+                        onChange={setSortBy}
+                        className="min-w-[132px]"
+                        options={[
+                            { label: '最新发布', value: 'latest' },
+                            { label: '节点数量', value: 'nodes' },
+                        ]}
+                    />
                 </div>
             </div>
 
@@ -307,28 +285,21 @@ const AssetCenterPage: React.FC = () => {
                     </Empty>
                 </div>
             ) : filteredProjects.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-96 px-4 bg-white rounded-2xl shadow-sm border border-gray-100">
-                    <div className="w-20 h-20 mb-4 rounded-full bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center">
-                        <DatabaseOutlined className="text-4xl text-gray-500" />
-                    </div>
+                /* 空态收敛成一处：antd Empty 自带的插图 + 一句说明 + 一个次要操作。
+                   原来套了白卡，额外又画了圆形图标块，再叠 Empty 自己的图标，三层重复 */
+                <div className="flex items-center justify-center h-96 px-4">
                     <Empty
-                        description={
-                            <div className="text-gray-500">
-                                {searchText ? '没有找到匹配的本体' : '该知识域下暂无公开本体'}
-                            </div>
-                        }
                         image={Empty.PRESENTED_IMAGE_SIMPLE}
-                    />
-                    {selectedDomain && selectedDomain.id !== 0 && (
-                        <Button 
-                            type="primary" 
-                            onClick={handleBackToDomains}
-                            className="mt-4"
-                            size="large"
-                        >
-                            选择其他知识域
-                        </Button>
-                    )}
+                        description={
+                            <span className="text-gray-500">
+                                {searchText ? '没有找到匹配的本体' : '该知识域下暂无公开本体'}
+                            </span>
+                        }
+                    >
+                        {selectedDomain && selectedDomain.id !== 0 && (
+                            <Button onClick={handleBackToDomains}>选择其他知识域</Button>
+                        )}
+                    </Empty>
                 </div>
             ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-5 sm:gap-6 lg:gap-7">
@@ -336,7 +307,7 @@ const AssetCenterPage: React.FC = () => {
                         <Card
                             key={project.id}
                             hoverable
-                            className="group rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden border border-gray-100 cursor-pointer"
+                            className="group rounded-2xl shadow-sm hover:shadow-lg transition-shadow duration-200 overflow-hidden border border-gray-100 cursor-pointer"
                             onClick={() => navigate(`/asset-center/${project.id}`)}
                             cover={
                                 <div
@@ -345,14 +316,7 @@ const AssetCenterPage: React.FC = () => {
                                 >
                                     {/* 网格底纹 + 双色辉光 */}
                                     <div className="absolute inset-0 ac-cover-grid" />
-                                    <div
-                                        className="absolute -top-10 -right-10 w-40 h-40 rounded-full"
-                                        style={{ background: TC.purple, filter: 'blur(60px)', opacity: 0.35 }}
-                                    />
-                                    <div
-                                        className="absolute -bottom-12 -left-8 w-40 h-40 rounded-full"
-                                        style={{ background: TC.blue, filter: 'blur(60px)', opacity: 0.35 }}
-                                    />
+                                    <div className="absolute inset-0 ac-glow" />
                                     <GraphMotif seed={project.id} className="absolute inset-0 w-full h-full opacity-80" />
 
                                     {/* 标签区域 */}
@@ -442,12 +406,23 @@ const AssetCenterPage: React.FC = () => {
                         linear-gradient(90deg, rgba(91,141,239,0.12) 1px, transparent 1px);
                     background-size: 24px 24px;
                 }
+                /* 卡片封面星点改为静态：一屏十几张卡各 6 个点的无限呼吸看不出效果却一直占合成器；
+                   TechHero 顶部的星点动画保留 */
+                .ac-cover .tk-node { animation: none; }
+                /* 辉光：径向渐变一次画好。此前每张卡两层 filter: blur(60px) 的大圆，
+                   卡片一多合成开销明显，hover 阴影过渡时尤其掉帧 */
+                .ac-glow {
+                    background:
+                        radial-gradient(150px 150px at 92% 0%, rgba(91, 141, 239, 0.42), transparent 72%),
+                        radial-gradient(160px 160px at 0% 108%, rgba(181, 133, 242, 0.38), transparent 72%);
+                }
             `}</style>
             <Navbar breadcrumbs={breadcrumbs} />
 
-            <div ref={scrollRef} className="p-4 sm:p-6 lg:p-8 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
+            <div ref={scrollRef} className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
                 <TechHero
                     compact
+                    className="!mb-4"
                     chips={
                         currentView === 'domain'
                             ? ['ASSET CENTER', 'PUBLIC ONTOLOGIES']

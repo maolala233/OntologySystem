@@ -499,6 +499,8 @@ const MyProjectsPage: React.FC = () => {
                         linear-gradient(90deg, rgba(91,141,239,0.12) 1px, transparent 1px);
                     background-size: 24px 24px;
                 }
+                /* 卡片封面星点改为静态（同资产中心）：Hero 的星点动画保留 */
+                .mp-cover .tk-node { animation: none; }
                 .mp-card { border-radius: 14px; border: 1px solid #EEF1F8; transition: all .25s ease; box-shadow: 0 1px 2px rgba(15,23,42,.05), 0 12px 30px -16px rgba(15,23,42,.20); }
                 .mp-card:hover { box-shadow: 0 16px 34px -12px rgba(15,20,32,.22); transform: translateY(-3px); }
                 /* 状态统计卡：右角状态色图标块 + 同色淡底，纯展示卡不做 hover 位移
