@@ -14,6 +14,7 @@ from collections.abc import Callable
 from typing import Any, Optional
 
 from app.adapters.resolution import normalize_label
+from app.services.pipeline_profiler import submit_with_context
 
 # 单项目结构映射上限（按切片频次取前 N 个签名）
 MAX_STRUCTURE_MAPS = 6
@@ -326,7 +327,10 @@ def generate_structure_maps(prepared: list, classes: list[str],
     by_idx: dict[int, Optional[dict]] = {}
     _notify(0, len(sigs))
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {pool.submit(_one, sig): i for i, sig in enumerate(sigs)}
+        # 用 submit_with_context 传播 profiler 的 run/stage ContextVar：
+        # 直接 pool.submit 会让结构映射的 LLM 调用从 profile 里丢失（stage=None）。
+        futures = {submit_with_context(pool, _one, sig): i
+                   for i, sig in enumerate(sigs)}
         done = 0
         try:
             for fut in as_completed(futures):
