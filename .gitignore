@@ -89,6 +89,7 @@ add-deepseek-models.py
 # 本地部署辅助（含服务器地址/密码的远程执行脚本不要入库）
 .remote/
 deploy-ollama.sh
+install-ollama-bge-cn.sh
 install-ollama-offline.sh
 make-ollama-offline-bundle.sh
 add-bge-embedding.py
@@ -96,3 +97,4 @@ dockerfile/ollama-cpu-slim.Dockerfile
 dockerfile\ollama-cpu-slim.Dockerfile
 ollama-bge-small-offline/
 ollama-bge-small-offline.tar
+docs/
