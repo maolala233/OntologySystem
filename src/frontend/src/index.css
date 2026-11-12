@@ -560,6 +560,33 @@ body {
   box-shadow: var(--shadow-card-hover);
 }
 
+/* 全站文字提示（Tooltip）：深色毛玻璃 + 细描边 + 柔和投影，取代 antd 默认的纯黑小胶囊；
+   短提示（升序/状态说明）和长文本统一这一套观感。
+   body 前缀用于压过 antd 运行时注入的同名规则 */
+body .ant-tooltip {
+  max-width: 460px;
+}
+
+body .ant-tooltip .ant-tooltip-inner {
+  max-width: 460px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(15, 23, 42, 0.95);
+  -webkit-backdrop-filter: saturate(180%) blur(10px);
+  backdrop-filter: saturate(180%) blur(10px);
+  font-size: 12.5px;
+  line-height: 1.65;
+  letter-spacing: 0.01em;
+  white-space: pre-wrap;
+  word-break: break-word;
+  box-shadow: 0 14px 34px -14px rgba(15, 23, 42, 0.55), 0 2px 6px rgba(15, 23, 42, 0.12);
+}
+
+body .ant-tooltip .ant-tooltip-arrow::before {
+  background: rgba(15, 23, 42, 0.95);
+}
+
 .ant-modal .ant-modal-content {
   box-shadow: 0 24px 64px -24px rgba(15, 23, 42, 0.35);
 }

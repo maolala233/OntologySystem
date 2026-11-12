@@ -23,6 +23,8 @@ interface TechHeroProps {
     compact?: boolean;
     /** 右侧知识图谱星点装饰 */
     showConstellation?: boolean;
+    /** 追加到根节点的自定义类（如覆盖底部外边距） */
+    className?: string;
 }
 
 /**
@@ -36,12 +38,13 @@ const TechHero: React.FC<TechHeroProps> = ({
     actions,
     compact = false,
     showConstellation = true,
+    className = '',
 }) => {
     const C = TECH_COLORS;
 
     return (
         <div
-            className={`relative overflow-hidden rounded-2xl mb-6 sm:mb-8 ${compact ? '' : ''}`}
+            className={`relative overflow-hidden rounded-2xl mb-6 sm:mb-8 ${className}`}
             style={{ background: C.bgDark }}
         >
             <style>{`

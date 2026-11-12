@@ -13,7 +13,12 @@ import {
     ReloadOutlined,
     SearchOutlined,
     SortAscendingOutlined,
- InfoCircleOutlined,
+    InfoCircleOutlined,
+    ClockCircleOutlined,
+    SyncOutlined,
+    CheckCircleOutlined,
+    RocketOutlined,
+    FolderOpenOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { UploadFile } from 'antd/es/upload/interface';
@@ -48,15 +53,34 @@ const EMPTY_COUNTS: Record<StatusKey, number> & { total: number } = {
 const statusOf = (p: ProjectData): string =>
     p.status || (p.is_published ? 'published' : 'draft');
 
-// 状态说明（与 projectStatus.PROJECT_STATUS.desc 同源文案）
-// 状态说明（与 projectStatus.PROJECT_STATUS.desc 同源文案）
+// 状态筛选项：文案与列表状态 Tag 一致（状态说明由 Tag / 统计卡的 tooltip 承载）
 const STATUS_OPTIONS = [
-    { value: 'draft', label: '草稿（已创建未构建）' },
-    { value: 'scheduled', label: '待构建（定时构建已登记）' },
-    { value: 'building', label: '构建中（大模型后台构建）' },
-    { value: 'ready', label: '已构建（完成未发布）' },
-    { value: 'published', label: '已发布（已入资产中心）' },
+    { value: 'draft', label: '草稿' },
+    { value: 'scheduled', label: '待构建' },
+    { value: 'building', label: '构建中' },
+    { value: 'ready', label: '已构建' },
+    { value: 'published', label: '已发布' },
 ];
+
+/** 状态统计卡主色（与列表 Tag 同源）：顶部高光条/数字/角标图标统一取色 */
+const STATUS_ACCENT: Record<string, string> = {
+    draft: '#8c8c8c', scheduled: '#faad14', building: '#5B8DEF',
+    ready: '#52c41a', published: '#722ed1',
+};
+
+const STATUS_ICON: Record<string, React.ReactNode> = {
+    draft: <EditOutlined />,
+    scheduled: <ClockCircleOutlined />,
+    building: <SyncOutlined />,
+    ready: <CheckCircleOutlined />,
+    published: <RocketOutlined />,
+};
+
+/** '#5B8DEF' + 0.09 -> 'rgba(91,141,239,0.09)'（卡片淡色底） */
+const withAlpha = (hex: string, a: number) => {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+};
 
 const fmtDate = (v?: string | null) =>
     v ? new Date(v).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
@@ -79,7 +103,6 @@ const EllipsisTip: React.FC<{
     if (!text) return <span className={className}>{fallback}</span>;
     return (
         <Tooltip title={text} placement={placement}
-                 overlayClassName="mp-tip"
                  open={hovered && overflow}>
             <span
                 ref={ref}
@@ -217,6 +240,7 @@ const MyProjectsPage: React.FC = () => {
     // Upload 受控文件列表：与 pendingFiles 同步，关闭弹窗时可一并清空（否则组件内部状态残留）
     const [uploadList, setUploadList] = useState<UploadFile[]>([]);
     const [creating, setCreating] = useState(false);
+    const [updating, setUpdating] = useState(false);
 
     // 关闭创建弹窗：清空全部输入（名称/描述/构建方式/已选文件），下次打开从空白开始
     const closeCreateModal = () => {
@@ -284,6 +308,7 @@ const MyProjectsPage: React.FC = () => {
 
     const handleUpdateProject = async (values: any) => {
         if (!editingProject) return;
+        setUpdating(true);
         scrollPositionRef.current = window.scrollY;
         try {
             await projectsApi.updateProject(editingProject.id, {
@@ -305,6 +330,8 @@ const MyProjectsPage: React.FC = () => {
             }, 50);
         } catch (error: any) {
             message.error('更新失败，请稍后重试');
+        } finally {
+            setUpdating(false);
         }
     };
 
@@ -404,16 +431,18 @@ const MyProjectsPage: React.FC = () => {
 
     const statusTag = (project: ProjectData, stale?: boolean) => {
         const meta = PROJECT_STATUS[statusOf(project)] || PROJECT_STATUS.draft;
-        // 「有新版本」用角标圆点表达（双 Tag 并排会换行挤占 类/实例 列）
+        // 「有新版本」用角标圆点表达（双 Tag 并排会换行挤占 类/实例 列）；
+        // 说明统一走外层 Tooltip——角标不再挂原生 title，避免两层提示叠着弹
         const tag = <Tag color={meta.color} style={{ marginInlineEnd: 0 }}>{meta.text}</Tag>;
         return (
             <span className="inline-flex items-center">
-                <Tooltip title={meta.desc} className="cursor-help">
+                <Tooltip
+                    className="cursor-help"
+                    title={stale
+                        ? `${meta.desc}；有新版本：重新构建过，资产中心还是旧版本，可重新发布`
+                        : meta.desc}>
                     {stale ? (
-                        <Badge dot color={STALE_PUBLISHED_TAG.color}
-                               title="重新构建过：资产中心还是旧版本，可重新发布">
-                            {tag}
-                        </Badge>
+                        <Badge dot color={STALE_PUBLISHED_TAG.color}>{tag}</Badge>
                     ) : tag}
                 </Tooltip>
             </span>
@@ -472,22 +501,49 @@ const MyProjectsPage: React.FC = () => {
                 }
                 .mp-card { border-radius: 14px; border: 1px solid #EEF1F8; transition: all .25s ease; box-shadow: 0 1px 2px rgba(15,23,42,.05), 0 12px 30px -16px rgba(15,23,42,.20); }
                 .mp-card:hover { box-shadow: 0 16px 34px -12px rgba(15,20,32,.22); transform: translateY(-3px); }
-                /* 名称/简介悬浮提示：antd 默认 250px 宽、一行挤满，长文本读着累——放大留白、支持换行 */
-                .mp-tip { max-width: 460px; }
-                .mp-tip .ant-tooltip-inner {
-                    background: rgba(15, 23, 42, 0.95);
-                    -webkit-backdrop-filter: saturate(180%) blur(10px);
-                    backdrop-filter: saturate(180%) blur(10px);
-                    border: 1px solid rgba(255, 255, 255, 0.08);
-                    border-radius: 10px;
-                    padding: 8px 12px;
-                    font-size: 12.5px;
-                    line-height: 1.7;
-                    white-space: pre-wrap;
-                    word-break: break-word;
-                    box-shadow: 0 14px 34px -14px rgba(15, 23, 42, 0.55);
+                /* 状态统计卡：右角状态色图标块 + 同色淡底，纯展示卡不做 hover 位移
+                   （--stat-accent / --stat-tint 由卡片内联按状态下发） */
+                .mp-stat {
+                    position: relative;
+                    overflow: hidden;
+                    border-radius: 14px;
+                    border: 1px solid #EEF1F8;
+                    background:
+                        radial-gradient(150px 100px at 100% 0%, var(--stat-tint, rgba(91,141,239,.10)), transparent 72%),
+                        linear-gradient(180deg, #FFFFFF 55%, var(--stat-tint, #F7F9FF) 160%);
+                    box-shadow:
+                        0 1px 2px rgba(15,23,42,.05),
+                        0 12px 30px -18px rgba(15,23,42,.18),
+                        inset 0 1px 0 rgba(255,255,255,.6);
                 }
-                .mp-tip .ant-tooltip-arrow::before { background: rgba(15, 23, 42, 0.95); }
+                .mp-stat .ant-statistic-title { font-size: 12px; color: #6B7280; margin-bottom: 4px; }
+                .mp-stat .ant-statistic-content {
+                    font-size: 26px; font-weight: 600;
+                    font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+                    font-variant-numeric: tabular-nums;
+                }
+                .mp-stat-icon {
+                    position: absolute; top: 10px; right: 12px;
+                    width: 26px; height: 26px;
+                    display: inline-flex; align-items: center; justify-content: center;
+                    border-radius: 8px;
+                    background: var(--stat-tint, rgba(91,141,239,.10));
+                    color: var(--stat-accent, #5B8DEF);
+                    font-size: 14px;
+                }
+                /* 创建/编辑弹窗：antd 默认 24px 表单行距 + 20/24 内边距，在 500px 弹窗里显得松散，
+                   表单行距收到 10px、标签 13px；外围留白比默认略宽，避免内容贴边；上传拖拽区图标与留白也缩一档 */
+                .mp-modal .ant-modal-content { padding: 20px 24px 20px; }
+                .mp-modal .ant-modal-header { margin-bottom: 12px; }
+                .mp-modal .ant-modal-title { font-size: 15px; }
+                .mp-modal .ant-form-item { margin-bottom: 10px; }
+                .mp-modal .ant-form-item:last-child { margin-bottom: 0; }
+                .mp-modal .ant-form-item-label { padding-bottom: 4px; }
+                .mp-modal .ant-form-item-label > label { height: auto; font-size: 13px; color: #52607A; }
+                .mp-modal .ant-upload-drag .ant-upload-btn { padding: 12px 0; }
+                .mp-modal .ant-upload-drag-icon { margin-bottom: 4px; }
+                .mp-modal .ant-upload-drag-icon .anticon { font-size: 32px; }
+                .mp-modal .ant-upload-hint { font-size: 12px; line-height: 1.6; }
                 /* 分页器默认贴死在卡片右缘，看起来太挤；整体往左收 16px 留出呼吸感
                    （不做居中：站内其他表格都是靠右，保持一致） */
                 .mp-table .ant-table-pagination.ant-pagination { padding-right: 16px; }
@@ -497,6 +553,7 @@ const MyProjectsPage: React.FC = () => {
             <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
                 <TechHero
                     compact
+                    className="!mb-4"
                     chips={['PROJECT WORKSPACE', `共 ${counts.total} 个项目`]}
                     title={isSuperAdmin && scope === 'all' ? '全部项目' : '我的项目'}
                     subtitle={isSuperAdmin && scope === 'all'
@@ -520,38 +577,42 @@ const MyProjectsPage: React.FC = () => {
                     ) : undefined}
                 />
 
-                {/* 状态统计（2026-11 列表视图改版；说明内嵌卡片 2026-11-09） */}
+                {/* 状态统计（2026-11 列表视图改版；说明内嵌卡片 2026-11-09）
+                   样式 2026-11-12：统一 .mp-stat（右角状态色图标块 + 同色淡底） */}
                 <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-4">
-                    <div className="bg-white border border-gray-100 rounded-xl shadow-sm px-4 py-3">
-                        <Statistic title="项目总数" value={counts.total} />
+                    <div className="mp-stat px-4 py-3"
+                         style={{ '--stat-accent': '#5B8DEF', '--stat-tint': withAlpha('#5B8DEF', 0.09) } as React.CSSProperties}>
+                        <Statistic title="项目总数" value={counts.total}
+                                   valueStyle={{ color: '#5B8DEF' }} />
+                        <span className="mp-stat-icon"><FolderOpenOutlined /></span>
                     </div>
                     {(Object.keys(PROJECT_STATUS) as Array<keyof typeof PROJECT_STATUS>).map((k) => {
                         const meta = PROJECT_STATUS[k];
-                        const countKey = k as 'draft' | 'published' | 'ready' | 'building' | 'scheduled';
-                        const colorOf: Record<string, string> = {
-                            draft: '#8c8c8c', published: '#722ed1', ready: '#52c41a',
-                            building: '#5B8DEF', scheduled: '#faad14',
-                        };
+                        const countKey = k as StatusKey;
+                        const accent = STATUS_ACCENT[k] || '#5B8DEF';
                         return (
-                            <div key={k} className="bg-white border border-gray-100 rounded-xl px-4 py-3">
+                            <div key={k} className="mp-stat px-4 py-3"
+                                 style={{ '--stat-accent': accent, '--stat-tint': withAlpha(accent, 0.09) } as React.CSSProperties}>
                                 <Tooltip title={meta.desc} className="cursor-help">
                                     <div>
                                         <Statistic
                                             title={<span className="cursor-help">{meta.text}
                                                 <InfoCircleOutlined className="ml-1 text-gray-300 text-xs" /></span>}
-                                            value={counts[countKey as StatusKey]}
-                                            valueStyle={{ color: colorOf[k] }} />
+                                            value={counts[countKey]}
+                                            valueStyle={{ color: accent }} />
                                     </div>
                                 </Tooltip>
+                                <span className="mp-stat-icon">{STATUS_ICON[k]}</span>
                             </div>
                         );
                     })}
                 </div>
 
-                {/* 操作栏：搜索/筛选靠左，视图切换与「新建项目」靠右（新建按钮 2026-11-11 从顶栏迁入）。
+                {/* 操作栏：搜索/筛选/排序靠左；视图切换与「新建项目」成组靠右（新建按钮 2026-11-11 从顶栏迁入）。
                     搜索/筛选/视图切换是纯前端控件，首屏直接渲染，不等统计接口——
-                    否则页面进入时会先空一段、再"补出"这一行（统计数据未回来时 counts 全 0） */}
-                <div className="mb-4 flex flex-wrap items-center gap-2">
+                    否则页面进入时会先空一段、再"补出"这一行（统计数据未回来时 counts 全 0）。
+                    2026-11-12：控件统一 32px 高；右侧两个控件固定成组，窄屏换行时不会散开 */}
+                <div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-2">
                     {(!countsReady || counts.total > 0) && (<>
                         <Input
                             prefix={<SearchOutlined className="text-gray-500" />}
@@ -563,13 +624,13 @@ const MyProjectsPage: React.FC = () => {
                         />
                         <Select
                             mode="multiple" allowClear maxTagCount="responsive"
-                            placeholder="全部状态" style={{ minWidth: 180 }}
+                            placeholder="全部状态" style={{ width: 180 }}
                             value={statusFilter}
                             onChange={(v) => { setStatusFilter(v); setPage(1); }}
                             options={STATUS_OPTIONS}
                         />
-                        <div className="flex items-center gap-1">
-                            <span className="text-gray-500 text-sm pl-1">排序</span>
+                        <div className="flex items-center gap-1.5">
+                            <span className="text-gray-500 text-sm whitespace-nowrap">排序</span>
                             <Select
                                 value={sortField}
                                 onChange={(v) => {
@@ -582,19 +643,18 @@ const MyProjectsPage: React.FC = () => {
                                     setPage(1);
                                 }}
                                 options={sortOptions}
-                                style={{ width: 130 }}
-                                size="small"
+                                style={{ width: 124 }}
                             />
-                            <Button
-                                size="small"
-                                icon={<SortAscendingOutlined style={{ transform: sortOrder === 'desc' ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />}
-                                onClick={() => { setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc'); setPage(1); }}
-                                title={sortOrder === 'asc' ? '升序' : '降序'}
-                            />
+                            <Tooltip title={sortOrder === 'asc' ? '升序' : '降序'}>
+                                <Button
+                                    icon={<SortAscendingOutlined style={{ transform: sortOrder === 'desc' ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />}
+                                    onClick={() => { setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc'); setPage(1); }}
+                                />
+                            </Tooltip>
                         </div>
                         {selectedIds.size > 0 && (
-                            <div className="flex items-center gap-1 pl-2 border-l border-gray-200">
-                                <span className="text-sm text-gray-500">
+                            <div className="flex items-center gap-1 pl-3 ml-1 border-l border-gray-200">
+                                <span className="text-sm text-gray-500 whitespace-nowrap">
                                     已选 <span className="text-blue-600 font-medium">{selectedIds.size}</span> 项
                                 </span>
                                 <Button type="link" size="small" danger icon={<DeleteOutlined />}
@@ -607,7 +667,9 @@ const MyProjectsPage: React.FC = () => {
                                 </Button>
                             </div>
                         )}
-                        <div className="ml-auto">
+                    </>)}
+                    <div className="ml-auto flex items-center gap-2">
+                        {(!countsReady || counts.total > 0) && (
                             <Segmented
                                 value={viewMode}
                                 onChange={(v) => setViewMode(v as ViewMode)}
@@ -616,16 +678,15 @@ const MyProjectsPage: React.FC = () => {
                                     { value: 'cards', icon: <AppstoreOutlined />, label: '卡片' },
                                 ]}
                             />
-                        </div>
-                    </>)}
-                    <Button
-                        type={!countsReady || counts.total > 0 ? 'primary' : 'default'}
-                        icon={<PlusOutlined />}
-                        onClick={() => setIsModalOpen(true)}
-                        className={!countsReady || counts.total > 0 ? '' : 'ml-auto'}
-                    >
-                        新建项目
-                    </Button>
+                        )}
+                        <Button
+                            type={!countsReady || counts.total > 0 ? 'primary' : 'default'}
+                            icon={<PlusOutlined />}
+                            onClick={() => setIsModalOpen(true)}
+                        >
+                            新建项目
+                        </Button>
+                    </div>
                 </div>
 
                 {loading && projects.length === 0 ? (
@@ -787,6 +848,8 @@ const MyProjectsPage: React.FC = () => {
                 onCancel={closeCreateModal}
                 footer={null}
                 width={500}
+                className="mp-modal"
+                maskClosable={false}
             >
                 <Form form={form} layout="vertical" onFinish={handleCreateProject}>
                     <Form.Item
@@ -799,11 +862,10 @@ const MyProjectsPage: React.FC = () => {
 
                     <Form.Item name="description" label="项目描述">
                         <Input.TextArea
-                            rows={4}
+                            rows={3}
                             placeholder="简要描述这个项目的用途..."
                         />
                     </Form.Item>
-
 
                     <Form.Item label="上传文档（可选，可稍后补充）">
                         <Upload.Dragger
@@ -874,7 +936,7 @@ const MyProjectsPage: React.FC = () => {
 
             {/* 编辑项目信息弹窗 */}
             <Modal
-                title="编辑项目信息（名称与介绍）"
+                title="编辑项目信息"
                 open={isEditModalOpen}
                 onCancel={() => {
                     setIsEditModalOpen(false);
@@ -883,6 +945,8 @@ const MyProjectsPage: React.FC = () => {
                 }}
                 footer={null}
                 width={500}
+                className="mp-modal"
+                maskClosable={false}
             >
                 <Form form={editForm} layout="vertical" onFinish={handleUpdateProject}>
                     <Form.Item
@@ -895,7 +959,7 @@ const MyProjectsPage: React.FC = () => {
 
                     <Form.Item name="description" label="项目介绍">
                         <Input.TextArea
-                            rows={4}
+                            rows={3}
                             placeholder="简要描述这个项目的用途..."
                         />
                     </Form.Item>
@@ -907,7 +971,7 @@ const MyProjectsPage: React.FC = () => {
                                 setEditingProject(null);
                                 editForm.resetFields();
                             }}>取消</Button>
-                            <Button type="primary" htmlType="submit">
+                            <Button type="primary" htmlType="submit" loading={updating}>
                                 保存
                             </Button>
                         </Space>
