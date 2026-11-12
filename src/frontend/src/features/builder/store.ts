@@ -14,6 +14,10 @@ interface BuilderState {
     projectStatus: string;          // draft/building/ready/published（M3-6 状态机）
     isPublished: boolean;           // 兼容期双读
     domainName?: string;
+    /** 项目描述 / 创建、更新时间：详情页头部卡展示（复用同一次 getProject 的返回） */
+    projectDescription?: string;
+    projectCreatedAt?: string;
+    projectUpdatedAt?: string;
     loading: boolean;
     loadError: boolean;
     loadProject: (projectId: number) => Promise<void>;
@@ -26,6 +30,9 @@ export const useBuilderStore = create<BuilderState>((set) => ({
     projectStatus: 'draft',
     isPublished: false,
     domainName: undefined,
+    projectDescription: undefined,
+    projectCreatedAt: undefined,
+    projectUpdatedAt: undefined,
     loading: false,
     loadError: false,
     loadProject: async (projectId: number) => {
@@ -41,6 +48,9 @@ export const useBuilderStore = create<BuilderState>((set) => ({
                 projectStatus: 'draft',
                 isPublished: false,
                 domainName: undefined,
+                projectDescription: undefined,
+                projectCreatedAt: undefined,
+                projectUpdatedAt: undefined,
             }),
         }));
         try {
@@ -52,6 +62,9 @@ export const useBuilderStore = create<BuilderState>((set) => ({
                 projectStatus: (p as any).status || (p.is_published ? 'published' : 'draft'),
                 isPublished: p.is_published,
                 domainName: p.domain?.name,
+                projectDescription: p.description,
+                projectCreatedAt: p.created_at,
+                projectUpdatedAt: p.updated_at,
                 loading: false,
             });
         } catch {
@@ -61,5 +74,6 @@ export const useBuilderStore = create<BuilderState>((set) => ({
     reset: () => set({
         projectId: null, projectName: '', projectStatus: 'draft',
         isPublished: false, domainName: undefined, loadError: false,
+        projectDescription: undefined, projectCreatedAt: undefined, projectUpdatedAt: undefined,
     }),
 }));

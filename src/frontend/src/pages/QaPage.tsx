@@ -73,6 +73,8 @@ const CONV_ID_KEY = QA_LAST_PROJECT_ID_KEY;
 
 export default function QaPage() {
     const [projects, setProjects] = useState<ProjectData[]>([]);
+    // 项目列表未回来前不展示「还没有可用项目」，否则空状态先错后对、整体跳一下
+    const [projectsLoading, setProjectsLoading] = useState(true);
     const [projectId, setProjectId] = useState<number | null>(null);
     const [models, setModels] = useState<QaModelItem[]>([]);
     const [modelId, setModelId] = useState<number | null>(null);
@@ -119,6 +121,8 @@ export default function QaPage() {
                 setProjectId(initial);
             } catch {
                 message.error('加载项目列表失败');
+            } finally {
+                setProjectsLoading(false);
             }
         })();
     }, []);
@@ -471,25 +475,34 @@ export default function QaPage() {
                                 </div>
                                 <p className="text-gray-600 font-medium">基于本体知识图谱的检索问答</p>
                                 <p className="text-xs text-gray-400 mt-1">回答带 [n] 引用角标，点击角标可定位到对应溯源引用卡</p>
-                                {projectId == null ? (
-                                    <p className="mt-5 text-xs text-amber-600">还没有可用项目，请先在「我的项目」创建并完成建模</p>
-                                ) : (
-                                    <div className="mt-6 flex flex-wrap justify-center gap-2 max-w-lg">
-                                        {SAMPLE_QUESTIONS.map(q => (
+                                {/* 提示行固定占位、示例问题常驻：加载前后结构不变，避免空状态整体上移 */}
+                                <p className="mt-4 h-5 text-xs text-amber-600">
+                                    {!projectsLoading && projectId == null
+                                        ? '还没有可用项目，请先在「我的项目」创建并完成建模'
+                                        : ''}
+                                </p>
+                                <div className="mt-3 flex flex-wrap justify-center gap-2 max-w-lg">
+                                    {SAMPLE_QUESTIONS.map(q => {
+                                        const disabled = projectId == null;
+                                        return (
                                             <button
                                                 key={q}
                                                 type="button"
+                                                disabled={disabled}
                                                 onClick={() => {
                                                     setQuestion(q);
                                                     requestAnimationFrame(() => inputRef.current?.focus());
                                                 }}
-                                                className="px-3 py-1.5 rounded-full border border-[#E6EBF5] bg-white/70 text-xs text-gray-600 hover:border-[#5B8DEF] hover:text-[#4C7DE7] transition-colors"
+                                                className={`px-3 py-1.5 rounded-full border text-xs transition-colors ${disabled
+                                                    ? 'border-[#EDF1F8] bg-white/40 text-gray-300 cursor-not-allowed'
+                                                    : 'border-[#E6EBF5] bg-white/70 text-gray-600 hover:border-[#5B8DEF] hover:text-[#4C7DE7]'
+                                                    }`}
                                             >
                                                 {q}
                                             </button>
-                                        ))}
-                                    </div>
-                                )}
+                                        );
+                                    })}
+                                </div>
                             </div>
                         )}
                         <div className="max-w-3xl mx-auto">

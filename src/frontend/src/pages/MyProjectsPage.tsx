@@ -200,22 +200,17 @@ const MyProjectsPage: React.FC = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [apiScope, page, keyword, statusFilter, sortField, sortOrder, reloadTick]);
 
-    // 状态统计：总数 + 每状态各一次 count（只取 total，不取数据行）
+    // 状态统计：一次轻量 /my 取回全部项目（ProjectBrief，不含图谱），前端按 status 汇总。
+    // 原来是对每个状态各发一次 page_size=1 的 count（连总数共 6 个请求），进页面光统计就 6 发。
     const loadCounts = useCallback(async () => {
-        const base = { scope: apiScope, page: 1, page_size: 1 };
         try {
-            const [all, draft, scheduled, building, ready, published] = await Promise.all([
-                projectsApi.getMyProjectsPaged(base),
-                projectsApi.getMyProjectsPaged({ ...base, status: ['draft'] }),
-                projectsApi.getMyProjectsPaged({ ...base, status: ['scheduled'] }),
-                projectsApi.getMyProjectsPaged({ ...base, status: ['building'] }),
-                projectsApi.getMyProjectsPaged({ ...base, status: ['ready'] }),
-                projectsApi.getMyProjectsPaged({ ...base, status: ['published'] }),
-            ]);
-            setCounts({
-                total: all.total, draft: draft.total, scheduled: scheduled.total,
-                building: building.total, ready: ready.total, published: published.total,
-            });
+            const list = await projectsApi.getMyProjects(apiScope);
+            const next = { ...EMPTY_COUNTS, total: list.length };
+            for (const p of list) {
+                const key = statusOf(p) as StatusKey;
+                if (key in next) next[key] += 1;
+            }
+            setCounts(next);
         } catch {
             // 统计失败不阻塞列表，保留上一次数值
         } finally {
@@ -687,7 +682,8 @@ const MyProjectsPage: React.FC = () => {
                     </div>
                 </div>
 
-                {loading && projects.length === 0 ? (
+                {/* countsReady 之前不判「还没有项目」：列表可能先于统计返回，否则会闪一下空状态 */}
+                {(loading && projects.length === 0) || !countsReady ? (
                     <div className="flex justify-center pt-16 pb-24">
                         <Spin size="large" />
                     </div>

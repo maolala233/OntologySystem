@@ -128,5 +128,23 @@ apiClient.interceptors.response.use(
     }
 );
 
+// ---- 并发 GET 合并 ----
+// React StrictMode（仅开发模式）会把挂载 effects 跑两遍，首屏列表接口因此成双。
+// 这里把「同时进行中」的同 URL+参数 GET 合并成一次，请求结束立即释放——不做结果缓存，
+// 后续重新进入页面仍然现取最新数据。
+const inflightGets = new Map<string, Promise<unknown>>();
+
+export function sharedGet<T = unknown>(url: string, config?: { params?: unknown }): Promise<T> {
+    const key = `${url}?${JSON.stringify(config?.params ?? null)}`;
+    const hit = inflightGets.get(key);
+    if (hit) return hit as Promise<T>;
+    const p = apiClient
+        .get<T>(url, config as any)
+        .then((r) => r.data)
+        .finally(() => { inflightGets.delete(key); });
+    inflightGets.set(key, p);
+    return p;
+}
+
 export { refreshAccessToken, forceLogout, API_BASE_URL };
 export default apiClient;

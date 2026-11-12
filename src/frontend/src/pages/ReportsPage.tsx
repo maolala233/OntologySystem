@@ -35,6 +35,8 @@ export default function ReportsPage() {
     const [elapsed, setElapsed] = useState(0);
     const [templateInfo, setTemplateInfo] = useState<{ exists: boolean; filename?: string }>({ exists: false });
     const [templateUploading, setTemplateUploading] = useState(false);
+    // 项目列表未回来前不判定「还没有可用项目」，避免提示文案先错后对
+    const [projectsLoading, setProjectsLoading] = useState(true);
     const [useTemplate, setUseTemplate] = useState(true);
 
     const loadTemplateInfo = useCallback(async (pid: number) => {
@@ -112,6 +114,8 @@ export default function ReportsPage() {
                 }
             } catch {
                 message.error('加载项目列表失败');
+            } finally {
+                setProjectsLoading(false);
             }
         })();
     }, [loadTemplateInfo]);
@@ -358,7 +362,7 @@ export default function ReportsPage() {
 
                     {!result && !busy && (
                         <div className="bg-white/80 rounded-2xl border border-dashed border-gray-200 p-12 text-center text-gray-500">
-                            {projects.length === 0
+                            {projects.length === 0 && !projectsLoading
                                 ? '还没有可用项目，请先在「我的项目」创建并完成建模，再回到这里生成报告或演示大纲'
                                 : '填写分析主题后点击「生成」——系统会从项目图谱中检索与主题相关的实体、属性与关系，撰写面向业务读者的主题分析报告或演示大纲'}
                         </div>

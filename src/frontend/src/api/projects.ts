@@ -1,4 +1,4 @@
-import apiClient from './client';
+import apiClient, { sharedGet } from './client';
 import { ProjectData } from '../types/ontology';
 import { KnowledgeDomain } from './domains';
 import { resolveFilenameFromDisposition, triggerBlobDownload } from '../utils/blobDownload';
@@ -62,16 +62,14 @@ export const projectsApi = {
     // 获取我的项目列表
     getMyProjects: async (scope?: 'mine' | 'all'): Promise<ProjectData[]> => {
         // scope=all 仅超级管理员（username=admin）可用，返回全部项目（含归属人 owner）
-        const response = await apiClient.get('/api/projects/my', {
+        return sharedGet<ProjectData[]>('/api/projects/my', {
             params: scope === 'all' ? { scope: 'all' } : {},
         });
-        return response.data;
     },
 
     // 获取公共已发布项目
     getPublicProjects: async (): Promise<ProjectData[]> => {
-        const response = await apiClient.get('/api/projects/public');
-        return response.data;
+        return sharedGet<ProjectData[]>('/api/projects/public');
     },
 
     // 可选项目列表：我的项目 + 公共已发布项目（问答/报告/PPT/MCP 等工具页共用）
@@ -153,7 +151,7 @@ export const projectsApi = {
         items: ProjectData[]; total: number; page: number; page_size: number;
         pages: number; has_next: boolean; has_prev: boolean;
     }> => {
-        const response = await apiClient.get('/api/projects/my/paged', {
+        return sharedGet('/api/projects/my/paged', {
             params: {
                 ...(params.scope === 'all' ? { scope: 'all' } : {}),
                 ...(params.page ? { page: params.page } : {}),
@@ -164,7 +162,6 @@ export const projectsApi = {
                 ...(params.order ? { order: params.order } : {}),
             },
         });
-        return response.data;
     },
 
     // 批量删除（后端单事务逐项目提交，返回逐项结果便于展示部分成功）

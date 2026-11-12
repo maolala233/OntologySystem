@@ -2,7 +2,7 @@
  * 本体图谱查看页（2026-11-05 改版）：`/projects/:id/result` —— 只读图谱。
  * 构建结果明细（类/关系/实例/公理）已在项目详情页直接展示，本页专注图谱呈现：
  * D3 力导图（类常显、右键类节点展开实例、点击节点/边看详情）。
- * 头部保留：返回 / 机检与自检标签 / 专家精修 / 取消发布 / 发布到资产中心。
+ * 头部：全站 Navbar（面包屑承载层级）+ 二级工具条（机检与自检标签 / 专家精修 / 取消发布 / 发布到资产中心）。
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -10,7 +10,7 @@ import { message } from '../shared/feedback';
 import { Button, Input, Modal, Space, Spin, Tag, Tooltip, Tree } from 'antd';
 import type { TreeProps } from 'antd/es/tree';
 import {
-    ArrowLeftOutlined, CloudUploadOutlined, EditOutlined, ExpandOutlined,
+    CloudUploadOutlined, EditOutlined, ExpandOutlined,
     LeftOutlined, SearchOutlined, ShrinkOutlined, UnorderedListOutlined,
 } from '@ant-design/icons';
 
@@ -21,6 +21,7 @@ import { useBuilderStore } from '../features/builder/store';
 import QualityCheckTag from '../features/builder/components/QualityCheckTag';
 import D3ForceGraph from '../components/OntologyGraph/D3ForceGraph';
 import DetailDrawer from '../features/graph-explorer/DetailDrawer';
+import Navbar from '../components/Layout/Navbar';
 
 const CLASS_TYPES = new Set(['owl:Class', 'Class']);
 
@@ -197,64 +198,84 @@ const BuildResultPage: React.FC = () => {
         message.info('已收起所有实例');
     };
 
+    // 面包屑：项目名来自 store，未就绪时用「项目详情」占位，避免标题闪变
+    const breadcrumbs = [
+        { title: '首页', path: '/' },
+        { title: '我的项目', path: '/my-projects' },
+        {
+            title: storeProjectId === pid && projectName ? projectName : '项目详情',
+            path: `/projects/${pid}`,
+        },
+        { title: '本体图谱' },
+    ];
+
     if (loading || !summary) {
-        return <Spin size="large" style={{ display: 'block', margin: '120px auto' }} />;
+        // 加载态沿用同一外壳（Navbar + 居中 Spin），避免先闪一屏无顶栏的布局再跳变
+        return (
+            <div className="h-full flex flex-col app-canvas">
+                <Navbar breadcrumbs={breadcrumbs} />
+                <div className="flex-1 flex items-center justify-center">
+                    <Spin size="large" />
+                </div>
+            </div>
+        );
     }
 
     const sc = summary.pipeline?.selfcheck;
 
     return (
         <div className="h-full flex flex-col app-canvas">
-            <div className="shrink-0 flex items-center gap-3 px-4 py-2 page-header">
-                <Button icon={<ArrowLeftOutlined />} size="small"
-                        onClick={() => navigate(`/projects/${pid}`)}>返回</Button>
-                <span className="font-semibold text-gray-800 flex items-baseline min-w-0">
-                    本体图谱
-                    {storeProjectId === pid && projectName && (
-                        <>
-                            <span className="mx-1 text-gray-300">·</span>
-                            <span className="inline-block max-w-[300px] truncate align-bottom">{projectName}</span>
-                        </>
-                    )}
-                </span>
-                {summary.checks && <QualityCheckTag checks={summary.checks} />}
-                {sc && (
-                    <Tag color="geekblue">
-                        自检修复 {sc.rounds} 轮 · 修复 {sc.fixed} 处
-                        {sc.remaining > 0 ? ` · 剩余 ${sc.remaining} 硬伤` : ''}
-                    </Tag>
-                )}
-                <div className="ml-auto">
-                    <Space>
-                        {isExpert && (
-                            <Button icon={<EditOutlined />}
-                                    onClick={() => navigate(`/projects/${pid}/schema`)}>
-                                专家精修
+            <Navbar breadcrumbs={breadcrumbs} />
+            {/* 头部卡：与详情页同款——名称/状态标签/操作收进卡片，不再裸放在画布上 */}
+            <div className="shrink-0 px-3 pt-3">
+                <div className="bg-white border border-[#E6EBF5] rounded-xl shadow-sm px-5 py-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+                    <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-x-2 gap-y-1 flex-wrap">
+                            <h1 className="text-base font-semibold text-gray-800 truncate max-w-full">
+                                {storeProjectId === pid && projectName ? projectName : '项目详情'}
+                            </h1>
+                            <span className="text-xs text-gray-400">本体图谱 · 只读视图</span>
+                            {summary.checks && <QualityCheckTag checks={summary.checks} />}
+                            {sc && (
+                                <Tag color="geekblue" className="mr-0">
+                                    自检修复 {sc.rounds} 轮 · 修复 {sc.fixed} 处
+                                    {sc.remaining > 0 ? ` · 剩余 ${sc.remaining} 硬伤` : ''}
+                                </Tag>
+                            )}
+                        </div>
+                    </div>
+                    <div className="shrink-0">
+                        <Space>
+                            {isExpert && (
+                                <Button icon={<EditOutlined />}
+                                        onClick={() => navigate(`/projects/${pid}/schema`)}>
+                                    专家精修
+                                </Button>
+                            )}
+                            {summary.is_published && (
+                                <Button onClick={async () => {
+                                    try {
+                                        await projectsApi.unpublishProject(pid);
+                                        message.success('已取消发布（资产中心不再展示）');
+                                        load();
+                                    } catch (e: any) {
+                                        message.error(e.response?.data?.error?.message || '取消发布失败');
+                                    }
+                                }}>
+                                    取消发布
+                                </Button>
+                            )}
+                            <Button type="primary" icon={<CloudUploadOutlined />}
+                                    onClick={() => navigate(`/projects/${pid}?stage=publish`)}>
+                                发布到资产中心
                             </Button>
-                        )}
-                        {summary.is_published && (
-                            <Button onClick={async () => {
-                                try {
-                                    await projectsApi.unpublishProject(pid);
-                                    message.success('已取消发布（资产中心不再展示）');
-                                    load();
-                                } catch (e: any) {
-                                    message.error(e.response?.data?.error?.message || '取消发布失败');
-                                }
-                            }}>
-                                取消发布
-                            </Button>
-                        )}
-                        <Button type="primary" icon={<CloudUploadOutlined />}
-                                onClick={() => navigate(`/projects/${pid}?stage=publish`)}>
-                            发布到资产中心
-                        </Button>
-                    </Space>
+                        </Space>
+                    </div>
                 </div>
             </div>
 
             <div className="flex-1 min-h-0 p-3 overflow-y-auto scrollbar-stable">
-                <div className="bg-gray-900 rounded-lg relative flex overflow-hidden" style={{ height: 'calc(100vh - 110px)', minHeight: 480 }}>
+                <div className="bg-gray-900 rounded-lg relative flex overflow-hidden h-full" style={{ minHeight: 480 }}>
                     {/* 左侧类/实例列表（与资产中心同款，可收起） */}
                     <div
                         className={`transition-all duration-300 ease-in-out flex-shrink-0 relative ${

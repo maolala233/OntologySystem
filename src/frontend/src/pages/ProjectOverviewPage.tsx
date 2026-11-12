@@ -9,8 +9,11 @@ import { message } from '../shared/feedback';
 import { Button, Col, Row, Space, Spin, Statistic, Tag, Typography } from 'antd';
 
 const { Text } = Typography;
+
+const fmtDate = (v?: string | null) =>
+    v ? new Date(v).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
 import {
-    ArrowLeftOutlined, AuditOutlined, DatabaseOutlined,
+    AuditOutlined, DatabaseOutlined,
     NodeIndexOutlined, RocketOutlined,
 } from '@ant-design/icons';
 
@@ -26,13 +29,16 @@ import ProjectDocsCard from '../features/builder/components/ProjectDocsCard';
 import QualityCheckTag from '../features/builder/components/QualityCheckTag';
 import BuildResultsPanel from '../features/builder/components/BuildResultsPanel';
 import { useBuilderStore } from '../features/builder/store';
-import SiderToggle from '../components/Layout/SiderToggle';
+import Navbar from '../components/Layout/Navbar';
 
 const ProjectOverviewPage: React.FC = () => {
     const { projectId } = useParams<{ projectId: string }>();
     const navigate = useNavigate();
     const pid = Number(projectId);
-    const { projectId: storeProjectId, projectName, projectStatus, domainName, loadProject } = useBuilderStore();
+    const {
+        projectId: storeProjectId, projectName, projectStatus, domainName,
+        projectDescription, projectCreatedAt, projectUpdatedAt, loadProject,
+    } = useBuilderStore();
     // 元数据属于"当前 pid"才算就绪；切换项目后 fetch 回来之前，头部先显示占位而不是上一个项目的名字
     const projectReady = storeProjectId === pid;
     const { hasModule } = useAuthStore();
@@ -141,31 +147,46 @@ const ProjectOverviewPage: React.FC = () => {
 
     return (
         <div className="h-full flex flex-col app-canvas">
-            {/* 头部 */}
-            <div className="shrink-0 flex items-center gap-3 px-4 py-2 page-header">
-                <SiderToggle />
-                <Button icon={<ArrowLeftOutlined />} size="small"
-                        onClick={() => navigate('/my-projects')}>返回</Button>
-                <span className="font-semibold text-gray-800 max-w-[280px] truncate">
-                    {projectReady ? projectName : null}
-                </span>
-                {projectReady && <Tag color={statusMeta.color}>{statusMeta.text}</Tag>}
-                {projectReady && domainName && <Tag color="blue">{domainName}</Tag>}
-                <div className="ml-auto flex items-center gap-2">
-                    {isExpert && (
-                        <Button size="small" icon={<NodeIndexOutlined />}
-                                onClick={() => navigate(`/projects/${pid}/documents`)}>
-                            专家模式
-                        </Button>
-                    )}
-                    <Button size="small" type="primary" ghost icon={<RocketOutlined />}
-                            onClick={() => navigate(`/qa?projectId=${pid}`)}>
-                        去问答
-                    </Button>
-                </div>
-            </div>
-
+            {/* 顶栏走全站 Navbar（面包屑承载层级与返回）；项目身份/状态/操作收进下方头部卡 */}
+            <Navbar breadcrumbs={[
+                { title: '首页', path: '/' },
+                { title: '我的项目', path: '/my-projects' },
+                { title: projectReady && projectName ? projectName : '项目详情' },
+            ]} />
             <div className="w-full p-4 lg:px-8 2xl:max-w-[1600px] 2xl:mx-auto flex-1 min-h-0 overflow-y-auto scrollbar-stable">
+                {/* 项目头部卡：名称/描述/时间 + 状态/领域 + 项目级操作收进卡片，避免标签裸放在画布上 */}
+                <div className="bg-white border border-[#E6EBF5] rounded-xl shadow-sm px-5 py-4 mb-4 flex flex-wrap items-start gap-x-4 gap-y-3">
+                    <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-x-2 gap-y-1 flex-wrap">
+                            <h1 className="text-lg font-semibold text-gray-800 truncate max-w-full">
+                                {projectReady ? projectName : '加载中…'}
+                            </h1>
+                            {projectReady && <Tag color={statusMeta.color} className="mr-0">{statusMeta.text}</Tag>}
+                            {projectReady && domainName && <Tag color="blue" className="mr-0">{domainName}</Tag>}
+                        </div>
+                        {projectReady && projectDescription && (
+                            <p className="mt-1.5 text-sm text-gray-500 line-clamp-2">{projectDescription}</p>
+                        )}
+                        <p className="mt-2 text-xs text-gray-400">
+                            {projectReady
+                                ? `创建 ${fmtDate(projectCreatedAt)} · 更新 ${fmtDate(projectUpdatedAt)}`
+                                : ' '}
+                        </p>
+                    </div>
+                    <div className="shrink-0 flex items-center gap-2">
+                        {isExpert && (
+                            <Button icon={<NodeIndexOutlined />}
+                                    onClick={() => navigate(`/projects/${pid}/documents`)}>
+                                专家模式
+                            </Button>
+                        )}
+                        <Button type="primary" ghost icon={<RocketOutlined />}
+                                onClick={() => navigate(`/qa?projectId=${pid}`)}>
+                            去问答
+                        </Button>
+                    </div>
+                </div>
+
                 {/* 构建状态卡（PipelinePanel：四步清单 + 阶段计数；构建中可收起） */}
                 <PipelinePanel projectId={pid} signal={pipelineSignal}
                                onPipeStatus={handlePipeStatus}
