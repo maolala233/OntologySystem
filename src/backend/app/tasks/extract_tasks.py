@@ -286,7 +286,7 @@ def run_schema_extraction(self, project_id: int,
                 eta_s = _eta_seconds(done, total, time.monotonic() - t0)
                 eta = _humanize_seconds(eta_s)
                 set_task_progress(
-                    task_id, "extracting", 5 + int(85 * done / max(total, 1)),
+                    task_id, "extracting", 5 + int(50 * done / max(total, 1)),
                     f"骨架抽取中 {done}/{total}"
                     f"（批次 {_batch_no(done, plan['batch_size'], plan['batches_total'])}"
                     f"/{plan['batches_total']}）{('，剩余' + eta) if eta else ''}",
@@ -297,13 +297,35 @@ def run_schema_extraction(self, project_id: int,
                      "eta_seconds": eta_s},
                     queue="extract")
 
+            def _phase_progress(phase: str, done: int, total: int) -> None:
+                """切片抽取后的子阶段进度：55–65 装配 / 65–82 结构映射。
+
+                以前这些阶段没有回调，界面会停在“骨架抽取中 N/N”看起来像卡死。
+                """
+                _cancel_check()
+                if phase == "assemble":
+                    pct = 55 + int(10 * done / max(total, 1))
+                    label = "骨架装配"
+                elif phase == "structure":
+                    pct = 65 + int(17 * done / max(total, 1))
+                    label = "结构映射"
+                else:
+                    pct = 65
+                    label = "骨架整理"
+                msg = f"{label}中 {done}/{total}" if total > 0 else f"{label}：正在准备…"
+                set_task_progress(
+                    task_id, "extracting", pct, msg,
+                    {"project_id": project_id, "phase": phase,
+                     "phase_done": done, "phase_total": total},
+                    queue="extract")
+
             def _stitch_progress(si: int, segs: int) -> None:
                 _cancel_check()
                 set_task_progress(
-                    task_id, "stitching", 90 + int(2 * si / max(segs, 1)),
-                    f"跨切片关系缝合 {si}/{segs}",
-                    {"project_id": project_id, "stitch_segment": si,
-                     "stitch_segments": segs},
+                    task_id, "stitching", 82 + int(10 * si / max(segs, 1)),
+                    f"跨切片关系缝合 {si}/{segs}" if segs > 0 else "跨切片关系缝合：正在准备…",
+                    {"project_id": project_id, "phase": "stitch",
+                     "stitch_segment": si, "stitch_segments": segs},
                     queue="extract")
 
             result = extract_schema(chunks, base_uri=f"urn:onto:{project_id}",
@@ -312,7 +334,8 @@ def run_schema_extraction(self, project_id: int,
                                     guidance=guidance,
                                     strict_config=strict_config,
                                     model_config_id=model_config_id,
-                                    stitch_progress_cb=_stitch_progress)
+                                    stitch_progress_cb=_stitch_progress,
+                                    phase_cb=_phase_progress)
 
             # 全部切片失败（如 LLM 连接中断）：不写画布，避免用空骨架覆盖已有图谱
             if result.chunks_processed and len(result.warnings) >= result.chunks_processed \

@@ -202,14 +202,22 @@ def generate_structure_maps(prepared: list, classes: list[str],
                             use_cache: bool = True,
                             cancel_cb: Optional[Callable] = None,
                             existing_maps: Optional[list[dict]] = None,
-                            material_limit: int = 12000) -> tuple[list[dict], int]:
+                            material_limit: int = 12000,
+                            progress_cb: Optional[Callable[[int, int], None]] = None,
+                            ) -> tuple[list[dict], int]:
     """schema 阶段的结构映射生成：每个签名一次 LLM 决策（缓存）。
 
     返回 (maps, generated_n)。maps 元素：
     {signature, subject_class, key_column, columns: [{column,kind,predicate?,target_class?,attribute_name?}]}
     调用失败/超限的签名跳过（该模式回落 LLM 逐片抽取，不阻断）。
+    progress_cb(done, total)：按签名上报进度，供前端显示“结构映射 3/6”。
     """
     from app.adapters.extraction import _cache_get, _cache_key, _cache_put
+
+    def _notify(done: int, total: int) -> None:
+        # 不吞异常：回调里的取消检查必须向上传播
+        if progress_cb is not None:
+            progress_cb(done, total)
 
     have = {str(m.get("signature") or "") for m in (existing_maps or [])}
     prepared = _normalize_chunks(prepared)
@@ -218,6 +226,7 @@ def generate_structure_maps(prepared: list, classes: list[str],
     sigs = sorted(counts, key=lambda s: (-counts[s], s))
     sigs = [s for s in sigs if s not in have][:MAX_STRUCTURE_MAPS]
     if not sigs:
+        _notify(0, 0)
         return list(existing_maps or []), 0
 
     class_list_text = "\n".join(f"- {c}" for c in classes[:150])
@@ -227,7 +236,8 @@ def generate_structure_maps(prepared: list, classes: list[str],
 
     maps = list(existing_maps or [])
     generated = 0
-    for sig in sigs:
+    for sig_i, sig in enumerate(sigs):
+        _notify(sig_i, len(sigs))
         if cancel_cb is not None:
             cancel_cb()
         # 采样：该签名下的取值样例与数据行
@@ -310,6 +320,7 @@ def generate_structure_maps(prepared: list, classes: list[str],
         generated += 1
         if sum(len(m.get("columns") or []) for m in maps) > material_limit // 50:
             break  # 映射总量防护（极端多签名场景）
+    _notify(len(sigs), len(sigs))
     return maps, generated
 
 

@@ -518,12 +518,16 @@ class LLMClient:
             "stop": ["</s>", "\n\n\n"]
         }
         if self._should_disable_think():
-            # 按平台方言关思考：方舟用 thinking 结构体（chat_template_kwargs 是
-            # vLLM 方言，方舟会静默忽略→思考照开→长 prompt 缝合调用稳超 330s 硬闸）；
-            # ollama 用 reasoning_effort；其余平台用 chat_template_kwargs（Qwen3.5 等）
+            # 按平台方言关思考：方舟/DeepSeek 用 thinking 结构体（chat_template_kwargs
+            # 是 vLLM 方言，两者都会静默忽略→思考照开→长 prompt 缝合调用顶穿硬闸）；
+            # ollama 用 reasoning_effort；其余平台用 chat_template_kwargs（Qwen3.5 等）。
+            # 2026-11-12 实测 DeepSeek：chat_template_kwargs 无效且 reasoning 反而
+            # 暴涨到 16k 字符（缝合首次尝试 16k token 被思考耗尽→空响应重试）；
+            # thinking={"type":"disabled"} 与 reasoning_effort="none" 均能真正关闭。
+            _base = (self.base_url or "").lower()
             if self._is_ollama:
                 api_kwargs["extra_body"] = {"reasoning_effort": "none"}
-            elif "volces.com" in (self.base_url or "").lower():
+            elif "volces.com" in _base or "api.deepseek.com" in _base:
                 api_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
             else:
                 api_kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}

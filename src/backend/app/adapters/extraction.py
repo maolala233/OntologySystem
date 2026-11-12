@@ -733,12 +733,15 @@ def extract_schema(chunks: list, base_uri: str,
                    llm_call: Optional[Callable] = None,
                    progress_cb: Optional[Callable] = None,
                    stitch_progress_cb: Optional[Callable] = None,
+                   phase_cb: Optional[Callable[[str, int, int], None]] = None,
                    cancel_cb: Optional[Callable] = None,
                    guidance: Optional[str] = None,
                    strict_config: Optional[list[dict]] = None) -> SchemaExtractionResult:
     """分块并行抽取 TBox → 归并去重（label_normalized）→ 跨切片关系缝合 → 悬空引用建占位类标记 pending。
 
     - 并行线程预算统一取 settings.LLM_MAX_CONCURRENCY（与全局模型并发闸同源）
+    - phase_cb(phase, done, total)：切片抽取后的子阶段进度（assemble/structure），
+      供前端显示“骨架装配中/结构映射中”，避免停在 N/N 看起来卡死
     - (model, prompt_hash) Redis 8h 缓存（修复缺陷 #9，use_cache=False 可关）；
       guidance 注入用户 prompt，随 prompt 哈希进缓存键（改引导自动换缓存）
     - strict_config（主体配置模板行）：严格白名单模式——prompt 头改为强约束措辞，
@@ -756,6 +759,11 @@ def extract_schema(chunks: list, base_uri: str,
     result.chunks_processed = len(prepared)
     if not prepared:
         return result
+
+    def _notify_phase(phase: str, done: int, total: int) -> None:
+        # 不吞异常：phase_cb 里的取消检查（_TaskCancelled）必须向上传播
+        if phase_cb is not None:
+            phase_cb(phase, done, total)
 
     if llm_call is None:
         model_name, llm_call = _default_llm_call(model_override, model_config_id)
@@ -908,6 +916,7 @@ def extract_schema(chunks: list, base_uri: str,
     # 顺序刻意放在缝合之前：伪类剔除后缝合面对的类清单更干净，不会白连已删类；
     # 严格白名单模式跳过组装（白名单即唯一范围，不许删也不许挂）
     result.consumed_parents = _consume_parents(merged)
+    _notify_phase("assemble", 0, 1)
     if wl is None:
         try:
             result.pruned_classes, result.assembled_parents = _assemble_taxonomy(
@@ -915,6 +924,7 @@ def extract_schema(chunks: list, base_uri: str,
                 use_cache=use_cache, cancel_cb=cancel_cb, prepared=prepared)
         except Exception as e:  # noqa: BLE001 —— 组装是增强不是闸门，失败退回原形态
             result.warnings.append(f"骨架组装跳过: {e}")
+    _notify_phase("assemble", 1, 1)
     _phases["assemble_seconds"] = round(time.perf_counter() - _t_assemble, 6)
     _t_structure = time.perf_counter()
     classes = sorted(merged.values(),
@@ -925,10 +935,13 @@ def extract_schema(chunks: list, base_uri: str,
     #    映射新声明的谓词正式进 TBox（关系契约先行）。失败/无结构信号静默跳过。
     from app.adapters.structure_expand import generate_structure_maps
 
+    _notify_phase("structure", 0, 0)  # 正在盘点表格/条款签名
     try:
         maps, map_calls = generate_structure_maps(
             prepared, [c["label"] for c in classes], obj_props, llm_call,
-            model_name, use_cache=use_cache, cancel_cb=cancel_cb)
+            model_name, use_cache=use_cache, cancel_cb=cancel_cb,
+            progress_cb=((lambda d, t: _notify_phase("structure", d, t))
+                         if phase_cb is not None else None))
         result.structure_maps = maps
         result.structure_map_calls = map_calls
         # 映射新增的关系声明 → TBox（列即关系的正式入约）
@@ -1000,6 +1013,8 @@ def extract_schema(chunks: list, base_uri: str,
         # 并行执行（段间独立），结果按段序应用——并发只加速 IO，不破坏确定性
         seg_results: dict[int, tuple] = {}
         done_si = 0
+        if stitch_progress_cb is not None:
+            stitch_progress_cb(0, len(segs))
         with ThreadPoolExecutor(max_workers=_llm_max_workers()) as spool:
             futures = {submit_with_context(spool, _stitch_one, si, seg): si
                        for si, seg in enumerate(segs)}
