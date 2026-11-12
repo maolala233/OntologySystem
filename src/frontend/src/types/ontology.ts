@@ -73,4 +73,6 @@ export interface ProjectData {
   stale_published?: boolean;
   classes_total?: number;
   instances_total?: number;
+  /** 画布节点总数（列表接口 SQL 侧统计，无需拉 graph_data） */
+  nodes_total?: number;
 }

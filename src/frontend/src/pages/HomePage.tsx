@@ -52,9 +52,7 @@ const HomePage: React.FC = () => {
                 const uniqueProjects = Array.from(new Map(allPublishedProjects.map(p => [p.id, p])).values());
 
                 uniqueProjects.forEach(project => {
-                    if (project.graph_data?.nodes) {
-                        totalNodes += project.graph_data.nodes.length;
-                    }
+                    totalNodes += project.nodes_total ?? project.graph_data?.nodes?.length ?? 0;
                 });
 
                 setStats({

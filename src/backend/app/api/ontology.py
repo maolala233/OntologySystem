@@ -22,7 +22,7 @@ from app.infrastructure.neo4j_client import neo4j_client
 from app.schemas.extraction import (
     SaveGraphRequest,
 )
-from app.schemas.ontology import ProjectCreate, ProjectListItem, ProjectResponse, ProjectUpdate
+from app.schemas.ontology import ProjectBrief, ProjectCreate, ProjectListItem, ProjectResponse, ProjectUpdate
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -30,44 +30,65 @@ router = APIRouter(prefix="/api/projects", tags=["projects"])
 #  CRUD 基础接口（保持不变）
 # ─────────────────────────────────────────────
 
-def _build_project_list_items(db: Session, rows: list[Project]) -> list[ProjectListItem]:
-    """把 Project 行补齐为列表项（状态/类数/实例数），/my 与分页接口共用。"""
+def _build_project_list_items(db: Session, rows: list[Project], *,
+                              running_ids: Optional[set] = None,
+                              scheduled_ids: Optional[set] = None) -> list[ProjectBrief]:
+    """把 Project 行补齐为列表项（状态/类数/实例数），/my 与分页接口共用。
+
+    类数/节点数走 SQL JSON_LENGTH，不把 graph_data 读进 Python；构建中/定时状态
+    一次 SCAN Redis 批量取，避免逐项目两次 GET。
+    """
     from sqlalchemy import func as sa_func
 
     from app.infrastructure.database import Entity
-    from app.tasks.pipeline_tasks import pipeline_running_task_id, pipeline_scheduled_at
+    from app.tasks.pipeline_tasks import pipeline_active_project_ids
 
     if not rows:
         return []
 
+    ids = [p.id for p in rows if p.id is not None]
+    if running_ids is None or scheduled_ids is None:
+        running_ids, scheduled_ids = pipeline_active_project_ids()
+
     inst_counts: dict = dict(
         db.query(Entity.project_id, sa_func.count())
-        .filter(Entity.project_id.in_([p.id for p in rows]),
+        .filter(Entity.project_id.in_(ids),
                 Entity.is_class_node.is_(False),
                 Entity.status != "merged")
         .group_by(Entity.project_id).all())
 
     # 比发布版本新的构建版本存在 → 「已发布但内容已更新」（重新构建过、可重新发布）
     pub_ver = dict(db.query(Publication.project_id, sa_func.max(Publication.version_id))
-                   .filter(Publication.project_id.in_([p.id for p in rows]),
+                   .filter(Publication.project_id.in_(ids),
                            Publication.status == "published")
                    .group_by(Publication.project_id).all())
     latest_ver = dict(db.query(OntologyVersion.project_id, sa_func.max(OntologyVersion.id))
-                      .filter(OntologyVersion.project_id.in_([p.id for p in rows]))
+                      .filter(OntologyVersion.project_id.in_(ids))
                       .group_by(OntologyVersion.project_id).all())
 
-    out: list[ProjectListItem] = []
+    # 列表统计：只取两个 JSON 数组长度，不传输整列 graph_data
+    cls_expr = _project_class_count_expr(db)
+    if cls_expr is None:
+        cls_expr = sa_func.literal(0)
+    node_expr = _project_node_count_expr(db)
+    if node_expr is None:
+        node_expr = sa_func.literal(0)
+    counts: dict = {
+        pid: (int(cls_n or 0), int(node_n or 0))
+        for pid, cls_n, node_n in db.query(
+            Project.id, cls_expr.label("cls_total"), node_expr.label("nodes_total"))
+        .filter(Project.id.in_(ids)).all()
+    }
+
+    out: list[ProjectBrief] = []
     for p in rows:
-        gd = p.graph_data if isinstance(p.graph_data, dict) else {}
-        schema = gd.get("schema") if isinstance(gd.get("schema"), dict) else {}
-        classes_total = len([c for c in (schema.get("classes") or [])
-                             if isinstance(c, dict) and c.get("label")])
-        item = ProjectListItem.model_validate(p)
+        classes_total, nodes_total = counts.get(p.id, (0, 0))
+        item = ProjectBrief.model_validate(p)
         # 判定顺序（2026-11-09 测试4）：构建中/待构建 > 已发布 > 已构建 > 草稿——
         # 发布后重新构建必须显示「构建中」，不能被 is_published 吞掉
-        if (p.id is not None and pipeline_running_task_id(p.id)):
+        if p.id is not None and p.id in running_ids:
             item.status = "building"
-        elif (p.id is not None and pipeline_scheduled_at(p.id)):
+        elif p.id is not None and p.id in scheduled_ids:
             item.status = "scheduled"
         elif p.is_published:
             item.status = "published"
@@ -79,6 +100,7 @@ def _build_project_list_items(db: Session, rows: list[Project]) -> list[ProjectL
         else:
             item.status = "draft"
         item.classes_total = classes_total
+        item.nodes_total = nodes_total
         item.instances_total = int(inst_counts.get(p.id, 0))
         out.append(item)
     return out
@@ -86,7 +108,7 @@ def _build_project_list_items(db: Session, rows: list[Project]) -> list[ProjectL
 
 class ProjectPage(BaseModel):
     """分页项目列表响应。"""
-    items: list[ProjectListItem]
+    items: list[ProjectBrief]
     total: int
     page: int
     page_size: int
@@ -96,18 +118,23 @@ class ProjectPage(BaseModel):
 
 
 # 获取我的项目列表（兼容旧接口：不分页）
-@router.get("/my", response_model=list[ProjectListItem])
+@router.get("/my", response_model=list[ProjectBrief])
 def get_my_projects(scope: str = "mine", current_user: User = Depends(get_current_user),
                     db: Session = Depends(get_db)):
     """我的项目列表；scope=all 仅超级管理员可用，返回全部项目（含归属人）。
 
-    每行附生命周期状态（2026-11 列表视图改版）：published > building（管线
-    运行中/排队/定时）> ready（已有骨架）> draft；附轻量统计（类/实例数），
-    免去前端逐项目拉构建摘要。
+    每行附生命周期状态（2026-11 列表视图改版）：building > scheduled > published >
+    ready > draft；类数/实例数/节点数在 SQL 侧统计。列表不返回 graph_data——
+    图谱由单个项目详情接口按需加载。
     """
-    from sqlalchemy.orm import joinedload
+    from sqlalchemy.orm import joinedload, load_only
 
-    q = db.query(Project).options(joinedload(Project.owner))
+    q = db.query(Project).options(
+        joinedload(Project.owner),
+        joinedload(Project.domain),
+        load_only(Project.id, Project.name, Project.description, Project.owner_id,
+                  Project.domain_id, Project.is_published,
+                  Project.created_at, Project.updated_at))
     if scope == "all":
         if not is_super_admin(current_user):
             raise HTTPException(status_code=403, detail="仅超级管理员可查看全部项目")
@@ -137,10 +164,10 @@ _PROJECT_STATUS_VALUES = ("draft", "scheduled", "building", "ready", "published"
 
 
 def _project_class_count_expr(db: Session):
-    """SQL 侧类数量：schema.classes 数组长度（status=draft/ready 过滤用）。
+    """SQL 侧类数量：schema.classes 数组长度（列表统计与 draft/ready 过滤共用）。
 
-    与 _build_project_list_items 的口径基本一致；唯一差异是 SQL 不校验 label
-    是否为空，极端脏数据下 ready/draft 边界可能与展示相差一条。
+    与 /my 展示口径基本一致；唯一差异是 SQL 不校验 label 是否为空，极端脏数据下
+    ready/draft 边界可能与展示相差一条。
     """
     from sqlalchemy import func
 
@@ -151,6 +178,20 @@ def _project_class_count_expr(db: Session):
     if dialect == "sqlite":
         return func.coalesce(
             func.json_array_length(func.json_extract(Project.graph_data, "$.schema.classes")), 0)
+    return None
+
+
+def _project_node_count_expr(db: Session):
+    """SQL 侧画布节点数：graph_data.nodes 数组长度（首页总节点统计用）。"""
+    from sqlalchemy import func
+
+    dialect = db.get_bind().dialect.name
+    if dialect == "mysql":
+        return func.coalesce(
+            func.json_length(func.json_extract(Project.graph_data, "$.nodes")), 0)
+    if dialect == "sqlite":
+        return func.coalesce(
+            func.json_array_length(func.json_extract(Project.graph_data, "$.nodes")), 0)
     return None
 
 
@@ -180,7 +221,7 @@ def get_my_projects_paged(
     """
     from sqlalchemy import and_, false, func, or_, true
     from sqlalchemy import func as sa_func
-    from sqlalchemy.orm import joinedload
+    from sqlalchemy.orm import joinedload, load_only
 
     if scope == "all" and not is_super_admin(current_user):
         raise HTTPException(status_code=403, detail="仅超级管理员可查看全部项目")
@@ -212,6 +253,8 @@ def get_my_projects_paged(
     # 状态筛选：building/scheduled 存在 Redis，其余可由数据库列 + graph_data 推出；
     # 判定顺序必须与 _build_project_list_items 一致（构建中 > 待构建 > 已发布 > 已构建 > 草稿）
     wanted = {s.strip() for item in (status or []) for s in str(item).split(",") if s.strip()}
+    running_ids: Optional[set] = None
+    sched_ids: Optional[set] = None
     unknown = sorted(wanted - set(_PROJECT_STATUS_VALUES))
     if unknown:
         raise HTTPException(
@@ -260,12 +303,18 @@ def get_my_projects_paged(
         order_by.append(Project.id.asc())  # 稳定分页：同值再按 id 兜底
 
     total = int(count_q.scalar() or 0)
-    rows = (rows_q.options(joinedload(Project.owner))
+    rows = (rows_q.options(
+                joinedload(Project.owner),
+                joinedload(Project.domain),
+                load_only(Project.id, Project.name, Project.description, Project.owner_id,
+                          Project.domain_id, Project.is_published,
+                          Project.created_at, Project.updated_at))
             .order_by(*order_by)
             .offset((page - 1) * page_size)
             .limit(page_size)
             .all())
-    items = _build_project_list_items(db, rows)
+    items = _build_project_list_items(db, rows,
+                                      running_ids=running_ids, scheduled_ids=sched_ids)
     pages = (total + page_size - 1) // page_size
     return ProjectPage(
         items=items,

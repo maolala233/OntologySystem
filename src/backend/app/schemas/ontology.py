@@ -72,11 +72,38 @@ class ProjectResponse(ProjectBase):
 
 
 class ProjectListItem(ProjectResponse):
-    """项目列表行（2026-11 列表视图改版）：附生命周期状态与轻量统计，
-    免去前端逐项目拉构建摘要（状态机：building > scheduled > published > ready > draft——
-    发布后重新构建时显示构建中，不再被"已发布"吞掉，2026-11-09 测试4）。"""
+    """项目详情行（含 graph_data）：用于单个项目详情接口，不能用于列表。"""
     status: str = "draft"  # draft | building | scheduled | ready | published
     classes_total: int = 0
     instances_total: int = 0
     # 已发布后内容又更新过（重新构建过）：前端据此显示「有新版本」标记，提示可重新发布
     stale_published: bool = False
+
+
+class ProjectBrief(ProjectBase):
+    """项目列表行轻量 DTO（/my 与 /my/paged）：不返回 graph_data / ttl_content。
+
+    此前列表行继承 ProjectResponse，每个项目都携带完整图谱 JSON（7 个项目约 2MB），
+    公网下拉列表要数秒。列表只需要元信息与统计，图谱由详情接口按需加载。
+    """
+    id: int
+    owner_id: Optional[int] = None
+    owner: Optional[UserResponse] = None
+    domain_id: Optional[int] = None
+    domain: Optional[KnowledgeDomainResponse] = None
+    is_published: bool
+    created_at: datetime
+    updated_at: datetime
+    status: str = "draft"  # draft | building | scheduled | ready | published
+    classes_total: int = 0
+    instances_total: int = 0
+    nodes_total: int = 0
+    # 已发布后内容又更新过（重新构建过）：前端据此显示「有新版本」标记，提示可重新发布
+    stale_published: bool = False
+
+    @field_serializer("created_at", "updated_at")
+    def _ser_time(self, v: datetime | None) -> str | None:
+        return _utc_iso(v)
+
+    class Config:
+        from_attributes = True
