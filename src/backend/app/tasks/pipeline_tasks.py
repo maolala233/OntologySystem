@@ -142,6 +142,13 @@ def _friendly_error(e: BaseException | str) -> str:
     """
     msg = str(e)
     low = msg.lower()
+    # 数据库异常必须先于“连接异常”判定：MySQL 重启/OOM 时会抛 "Lost connection to
+    # MySQL server" / "Can't connect to MySQL server"，旧逻辑会误报成模型服务连不上
+    # （2026-11-13 项目 17 实测：MySQL 容器 OOM 重启，构建失败提示指向模型配置）。
+    if any(k in low for k in ("mysql", "pymysql", "sqlalchemy", "operationalerror",
+                              "database", "lost connection", "lock wait timeout")):
+        return ("数据库连接异常：构建过程中与数据库的连接中断或超时（数据库可能正在重启"
+                "或资源不足）。请稍后重新构建；若反复出现，请检查 MySQL 容器状态与内存限制。")
     if "硬超时" in msg or "timeout" in low or "timed out" in low:
         return ("模型请求超时：模型服务长时间没有响应，已自动重试仍未成功。"
                 "请稍后重新构建，或在「系统配置 → 模型配置」里换更快的模型 / 调大超时时间。")
