@@ -317,20 +317,21 @@ export default function QaDrawer({ open, onClose, projectId: initialProjectId }:
                                     问答失败：{turn.error}
                                 </div>
                             ) : (
-                                <div className="px-3 py-2 rounded-2xl bg-gray-100">
-                                    {turn.answer ? (
-                                        <>
-                                            <MarkdownAnswer
-                                                content={turn.answer}
-                                                sourceCount={turn.sources.length}
-                                                onCite={handleCite}
-                                            />
-                                            {turn.streaming && <LoadingOutlined className="ml-1 text-gray-500 text-xs" />}
-                                        </>
-                                    ) : (
-                                        <div className="text-sm text-gray-800">
-                                            {turn.streaming ? <LoadingOutlined /> : '（模型未返回内容）'}
+                                <div className="px-3 py-2 rounded-2xl bg-gray-100 overflow-hidden">
+                                    {turn.answer && (
+                                        <MarkdownAnswer
+                                            content={turn.answer}
+                                            sourceCount={turn.sources.length}
+                                            onCite={handleCite}
+                                        />
+                                    )}
+                                    {turn.streaming ? (
+                                        <div className={`flex items-center gap-1.5 text-xs text-gray-500 ${turn.answer ? 'mt-2' : ''}`}>
+                                            <LoadingOutlined className="text-[#5B8DEF]" />
+                                            <span>{turn.answer ? '正在生成…' : '正在检索本体图谱…'}</span>
                                         </div>
+                                    ) : !turn.answer && (
+                                        <div className="text-sm text-gray-800">（模型未返回内容）</div>
                                     )}
                                 </div>
                             )}

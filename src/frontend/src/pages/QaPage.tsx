@@ -97,6 +97,10 @@ export default function QaPage() {
     const [highlightSource, setHighlightSource] = useState<{ turn: number; n: number } | null>(null);
     const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const abortRef = useRef<AbortController | null>(null);
+    // 流式 token 渲染节流：SSE 可能一次推来一大段，逐事件 setState 会让 ReactMarkdown
+    // 整篇重解析 + 布局重排，文字呈现「一蹦一蹦」；这里先攒进缓冲区，每 50ms 合并刷新一次
+    const pendingTokensRef = useRef('');
+    const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     // 对话滚动区边缘渐隐：滚到中间时上下内容不直接切在页头/输入卡的边界上
     const listRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<TextAreaRef>(null);
@@ -110,6 +114,37 @@ export default function QaPage() {
         const top = el.scrollTop > 2;
         const bottom = el.scrollTop + el.clientHeight < el.scrollHeight - 2;
         setEdgeFade((prev) => (prev.top === top && prev.bottom === bottom ? prev : { top, bottom }));
+    }, []);
+
+    /** 把缓冲区里攒下的 token 合并进最后一条回答（节流后的实际渲染点） */
+    const flushTokens = useCallback(() => {
+        const delta = pendingTokensRef.current;
+        if (!delta) return;
+        pendingTokensRef.current = '';
+        setTurns(prev => {
+            if (prev.length === 0) return prev;
+            const next = [...prev];
+            const cur = next[next.length - 1];
+            next[next.length - 1] = { ...cur, answer: cur.answer + delta };
+            return next;
+        });
+    }, []);
+
+    const scheduleFlush = useCallback(() => {
+        if (flushTimerRef.current !== null) return;
+        flushTimerRef.current = setTimeout(() => {
+            flushTimerRef.current = null;
+            flushTokens();
+        }, 50);
+    }, [flushTokens]);
+
+    /** 丢弃缓冲并停掉待触发的刷新（切会话/切项目/卸载时用） */
+    const clearTokenFlush = useCallback(() => {
+        if (flushTimerRef.current !== null) {
+            clearTimeout(flushTimerRef.current);
+            flushTimerRef.current = null;
+        }
+        pendingTokensRef.current = '';
     }, []);
 
     // 项目选择：URL 无项目段，回落 localStorage / 第一个项目
@@ -163,6 +198,7 @@ export default function QaPage() {
     useEffect(() => {
         if (projectId == null) return;
         localStorage.setItem(CONV_ID_KEY, String(projectId));
+        clearTokenFlush();
         setTurns([]);
         setActiveConvId(null);
         const cached = convCache[projectId];
@@ -170,7 +206,7 @@ export default function QaPage() {
         setConvsReady(!!cached);
         loadConversations(projectId);
         loadModels(projectId);
-    }, [projectId, loadConversations, loadModels]);
+    }, [projectId, loadConversations, loadModels, clearTokenFlush]);
 
     // 流式输出逐 token 更新：在容器内贴底滚，比每个 token 重启动一次 smooth scrollIntoView 稳得多
     useEffect(() => {
@@ -188,6 +224,7 @@ export default function QaPage() {
     useEffect(() => () => {
         abortRef.current?.abort();
         if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+        if (flushTimerRef.current !== null) clearTimeout(flushTimerRef.current);
     }, []);
 
     const handleCite = useCallback((turnIdx: number, n: number) => {
@@ -199,15 +236,17 @@ export default function QaPage() {
 
     const newConversation = useCallback(() => {
         abortRef.current?.abort();
+        clearTokenFlush();
         stickBottomRef.current = true;
         setTurns([]);
         setActiveConvId(null);
         setQuestion('');
-    }, []);
+    }, [clearTokenFlush]);
 
     const openConversation = useCallback(async (convId: string) => {
         if (projectId == null) return;
         abortRef.current?.abort();
+        clearTokenFlush();
         stickBottomRef.current = true;
         try {
             const detail = await getQaConversation(projectId, convId);
@@ -229,7 +268,7 @@ export default function QaPage() {
         } catch {
             message.error('加载对话失败');
         }
-    }, [projectId]);
+    }, [projectId, clearTokenFlush]);
 
     const removeConversation = useCallback(async (convId: string) => {
         if (projectId == null) return;
@@ -261,6 +300,7 @@ export default function QaPage() {
         setQuestion('');
         setBusy(true);
         stickBottomRef.current = true;
+        clearTokenFlush();
         setTurns(prev => [...prev, { question: q, answer: '', sources: [], streaming: true }]);
         const controller = new AbortController();
         abortRef.current = controller;
@@ -270,12 +310,9 @@ export default function QaPage() {
                 q,
                 {
                     onToken: delta => {
-                        setTurns(prev => {
-                            const next = [...prev];
-                            const cur = next[next.length - 1];
-                            next[next.length - 1] = { ...cur, answer: cur.answer + delta };
-                            return next;
-                        });
+                        // 先入缓冲区，由 scheduleFlush 每 50ms 合并渲染一次
+                        pendingTokensRef.current += delta;
+                        scheduleFlush();
                     },
                     onSources: sources => {
                         setTurns(prev => {
@@ -286,18 +323,27 @@ export default function QaPage() {
                         });
                     },
                     onDone: done => {
+                        // 收尾：把缓冲区剩余内容并入本次回答，再以服务端的完整答案为准
+                        const pending = pendingTokensRef.current;
+                        pendingTokensRef.current = '';
+                        if (flushTimerRef.current !== null) {
+                            clearTimeout(flushTimerRef.current);
+                            flushTimerRef.current = null;
+                        }
                         setTurns(prev => {
+                            if (prev.length === 0) return prev;
                             const next = [...prev];
                             const cur = next[next.length - 1];
                             next[next.length - 1] = {
                                 ...cur, done, streaming: false,
-                                answer: done.answer || cur.answer,
+                                answer: done.answer || (cur.answer + pending),
                             };
                             return next;
                         });
                         loadConversations(projectId);
                     },
                     onError: msg => {
+                        clearTokenFlush();
                         setTurns(prev => {
                             const next = [...prev];
                             const cur = next[next.length - 1];
@@ -313,6 +359,8 @@ export default function QaPage() {
                     model_config_id: modelId,
                 },
             );
+            // 正常结束但没有 done 帧：补刷缓冲区尾部
+            flushTokens();
             setTurns(prev => {
                 const next = [...prev];
                 const cur = next[next.length - 1];
@@ -330,15 +378,22 @@ export default function QaPage() {
                 setQuestion(q);  // 失败回填，便于直接重试
             }
         } finally {
+            clearTokenFlush();
             setBusy(false);
             abortRef.current = null;
         }
-    }, [question, projectId, activeConvId, modelId, loadConversations]);
+    }, [question, projectId, activeConvId, modelId, loadConversations, scheduleFlush, flushTokens, clearTokenFlush]);
 
     // 停止生成：中断 SSE 请求；已产出的部分回答保留，本轮标记「已停止」
     const stop = useCallback(() => {
         abortRef.current?.abort();
         abortRef.current = null;
+        // 先把节流缓冲里的尾部补上，再结束本轮
+        if (flushTimerRef.current !== null) {
+            clearTimeout(flushTimerRef.current);
+            flushTimerRef.current = null;
+        }
+        flushTokens();
         setBusy(false);
         setTurns(prev => {
             const next = [...prev];
@@ -346,7 +401,7 @@ export default function QaPage() {
             if (cur?.streaming) next[next.length - 1] = { ...cur, streaming: false, stopped: true };
             return next;
         });
-    }, []);
+    }, [flushTokens]);
 
     const canSend = !busy && question.trim().length > 0 && projectId != null;
     // 只在「这一侧确实还有被卷起来的内容」时给对应边缘做渐隐
@@ -540,25 +595,24 @@ export default function QaPage() {
                                                 问答失败：{turn.error}
                                             </div>
                                         ) : (
-                                            <div className="px-4 py-3 rounded-2xl bg-white border border-[#E7ECF6] shadow-sm">
-                                                {turn.answer ? (
-                                                    <>
-                                                        <MarkdownAnswer
-                                                            content={turn.answer}
-                                                            sourceCount={turn.sources.length}
-                                                            onCite={n => handleCite(i, n)}
-                                                        />
-                                                        {turn.streaming && <LoadingOutlined className="ml-1 text-gray-500 text-xs" />}
-                                                    </>
-                                                ) : (
-                                                    <div className="flex items-center gap-2 text-sm text-gray-500">
-                                                        {turn.streaming ? (
-                                                            <>
-                                                                <LoadingOutlined className="text-[#5B8DEF]" />
-                                                                <span>正在检索本体图谱…</span>
-                                                            </>
-                                                        ) : '（模型未返回内容）'}
+                                            <div className="px-4 py-3 rounded-2xl bg-white border border-[#E7ECF6] shadow-sm overflow-hidden">
+                                                {/* 流式状态统一收进卡片内的独立状态行：
+                                                    不再把 spinner 直接跟在 Markdown 块后面（块级元素后单独换行，
+                                                    贴着卡片左缘偶尔会被滚动区底部渐隐/圆角裁掉，看着像"跑出卡片"） */}
+                                                {turn.answer && (
+                                                    <MarkdownAnswer
+                                                        content={turn.answer}
+                                                        sourceCount={turn.sources.length}
+                                                        onCite={n => handleCite(i, n)}
+                                                    />
+                                                )}
+                                                {turn.streaming ? (
+                                                    <div className={`flex items-center gap-2 text-xs text-gray-500 ${turn.answer ? 'mt-2.5' : ''}`}>
+                                                        <LoadingOutlined className="text-[#5B8DEF]" />
+                                                        <span>{turn.answer ? '正在生成…' : '正在检索本体图谱…'}</span>
                                                     </div>
+                                                ) : !turn.answer && (
+                                                    <div className="text-sm text-gray-500">（模型未返回内容）</div>
                                                 )}
                                             </div>
                                         )}
