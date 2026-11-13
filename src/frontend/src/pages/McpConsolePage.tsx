@@ -1,15 +1,16 @@
 // src/pages/McpConsolePage.tsx - MCP 服务控制台（R8，布局对齐 MCP Inspector v0.20.0）
 // 左栏连接配置（端点 + sk-mcp- 令牌签发/选择/撤销 + 连接状态 + 服务端信息卡）
-// │ 顶部 Tab（工具 / 资源 / Ping）│ 工具清单（搜索 + List Tools/Clear）
-// │ 工具详情（Schema 动态表单 + Run Tool + 彩色 JSON 树结果）
+// │ 顶部 Tabs（工具 / 资源 / Ping / 接入说明）│ 工具清单（搜索 + 刷新/清空）
+// │ 工具详情（参数卡 + Run Tool + 彩色 JSON 树结果）
 // │ 底部编号调用历史（可展开请求/响应）+ 服务端通知占位。全部走平台 POST /mcp 网关。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Checkbox, Input, InputNumber, Modal, Select, Tag, Tooltip } from 'antd';
+import { Button, Checkbox, Empty, Input, InputNumber, Modal, Select, Tabs, Tag, Tooltip } from 'antd';
 import { message } from '../shared/feedback';
 import {
-    ApiOutlined, CaretRightOutlined, ClearOutlined, CopyOutlined, DisconnectOutlined,
+    ApiOutlined, BookOutlined, CaretRightOutlined, CheckCircleFilled, ClearOutlined, CloseCircleFilled,
+    CopyOutlined, DeleteOutlined, DisconnectOutlined, FolderOpenOutlined,
     LinkOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined, RightOutlined,
-    SearchOutlined, ThunderboltOutlined, UndoOutlined,
+    SearchOutlined, ThunderboltOutlined, ToolOutlined, UndoOutlined, WifiOutlined,
 } from '@ant-design/icons';
 import {
     McpRpcError, createMcpToken, createMyMcpToken, getDefaultMcpEndpoint,
@@ -102,24 +103,35 @@ function ResultBody({ text }: { text: string }) {
 
 type TabKey = 'tools' | 'resources' | 'ping' | 'docs';
 
-/** 接入说明用的代码块：深色底 + 右上角复制 */
+/** 去掉模板字符串因源码缩进产生的公共前导空格（接入说明里有大段多行代码）：
+ *  首行通常顶格书写，其余行带 JSX 源码缩进，因此按「除首行外」的最小缩进统一回退 */
+const dedent = (code: string) => {
+    const lines = code.replace(/^\n/, '').replace(/\n\s*$/, '').split('\n');
+    const body = lines.slice(1).filter(l => l.trim());
+    const indents = body.map(l => (l.match(/^ +/) || [''])[0].length);
+    const pad = indents.length ? Math.min(...indents) : 0;
+    return [lines[0] ?? '', ...lines.slice(1).map(l => l.slice(pad))].join('\n');
+};
+
+/** 接入说明用的代码块：深色底 + 顶部标题栏 + 复制 */
 function CodeBlock({ title, code }: { title?: string; code: string }) {
     const [copied, setCopied] = useState(false);
+    const text = useMemo(() => dedent(code), [code]);
     return (
-        <div>
-            <div className="flex items-center justify-between mb-1">
-                <span className="text-xs text-gray-500">{title}</span>
-                <Button size="small" type="text" icon={<CopyOutlined />}
-                    onClick={() => {
-                        navigator.clipboard.writeText(code);
-                        setCopied(true);
-                        setTimeout(() => setCopied(false), 1500);
-                    }} />
+        <div className="rounded-xl overflow-hidden border border-[#1A2233] bg-[#0F1420]">
+            <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-white/10">
+                <span className="text-[11px] text-[#8A94B8]">{title}</span>
+                <Tooltip title="复制代码">
+                    <Button size="small" type="text" className="!text-gray-400 hover:!text-white"
+                        icon={copied ? <CheckCircleFilled className="text-emerald-400" /> : <CopyOutlined />}
+                        onClick={() => {
+                            navigator.clipboard.writeText(text);
+                            setCopied(true);
+                            setTimeout(() => setCopied(false), 1500);
+                        }} />
+                </Tooltip>
             </div>
-            <div className="relative border border-gray-700 rounded-lg bg-gray-900 overflow-auto max-h-80">
-                {copied && <span className="absolute bottom-1.5 right-2 text-[11px] text-green-400 z-10">已复制</span>}
-                <pre className="p-3 font-mono text-[12px] leading-relaxed text-gray-100 whitespace-pre">{code}</pre>
-            </div>
+            <pre className="m-0 p-3 font-mono text-[12px] leading-relaxed text-gray-100 overflow-auto max-h-80 whitespace-pre">{text}</pre>
         </div>
     );
 }
@@ -426,11 +438,12 @@ export default function McpConsolePage() {
         message.success('已复制调用入参 JSON');
     }, [selectedTool, formValues]);
 
-    const tabItems: { key: TabKey; label: string }[] = [
-        { key: 'tools', label: '工具' },
-        { key: 'resources', label: '资源' },
-        { key: 'ping', label: 'Ping' },
-        { key: 'docs', label: '接入说明' },
+    // 顶部导航：与全站 Tabs 统一（下划线 + 品牌色 ink bar），图标 + 数量弱提示
+    const tabItems = [
+        { key: 'tools' as TabKey, icon: <ToolOutlined />, label: '工具', count: connected ? tools.length : undefined },
+        { key: 'resources' as TabKey, icon: <FolderOpenOutlined />, label: '资源', count: connected ? resources.length : undefined },
+        { key: 'ping' as TabKey, icon: <WifiOutlined />, label: 'Ping' },
+        { key: 'docs' as TabKey, icon: <BookOutlined />, label: '接入说明' },
     ];
 
     // 接入说明示例中的令牌：已选令牌且有明文缓存则代入，否则占位
@@ -442,148 +455,190 @@ export default function McpConsolePage() {
         <div className="h-full flex flex-col app-canvas">
             <Navbar breadcrumbs={[{ title: '首页', path: '/' }, { title: '工具' }, { title: 'MCP 服务' }]} />
             <div className="flex flex-1 min-h-0">
-                {/* ══ 左栏：连接配置（对齐 Inspector 侧栏） */}
-                <aside className="w-72 shrink-0 bg-white border-r border-[#E6EBF5] p-4 flex flex-col gap-3 overflow-auto">
-                    <div className="flex items-center gap-2">
-                        <ApiOutlined className="text-blue-500 text-lg" />
-                        <span className="font-semibold text-gray-800">MCP 控制台</span>
+                {/* ══ 左栏：连接配置 */}
+                <aside className="w-72 shrink-0 bg-white border-r border-[#E6EBF5] flex flex-col min-h-0">
+                    {/* 标题 + 连接状态 */}
+                    <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                            <span className="w-8 h-8 shrink-0 rounded-lg bg-[rgba(91,141,239,0.10)] text-[#5B8DEF] flex items-center justify-center">
+                                <ApiOutlined />
+                            </span>
+                            <div className="min-w-0">
+                                <div className="font-semibold text-gray-800 text-sm leading-tight">MCP 控制台</div>
+                                <div className="text-[11px] text-gray-400 leading-tight mt-0.5">连接与令牌</div>
+                            </div>
+                        </div>
+                        <Tag color={connected ? 'green' : 'default'} className="!m-0 shrink-0">
+                            {connected ? '已连接' : '未连接'}
+                        </Tag>
                     </div>
 
-                    <div>
-                        <div className="text-xs text-gray-500 mb-1">传输方式</div>
-                        <Select value="http" disabled className="w-full" options={[{ value: 'http', label: 'HTTP (Streamable)' }]} />
-                    </div>
-
-                    <div>
-                        <div className="text-xs text-gray-500 mb-1">端点</div>
-                        <div className="flex gap-1">
-                            <Tooltip title="默认按页面地址自动推导；容器化/反向代理部署可直接改为实际可达地址（如 https://域名/mcp）">
-                                <Input size="small" value={endpoint}
-                                    onChange={e => changeEndpoint(e.target.value)}
-                                    placeholder={defaultEndpoint}
-                                    className="!text-[11px] font-mono" />
-                            </Tooltip>
-                            {endpointDirty && (
-                                <Tooltip title="恢复默认端点">
-                                    <Button size="small" icon={<UndoOutlined />}
-                                        onClick={() => changeEndpoint(defaultEndpoint)} />
+                    <div className="flex-1 overflow-auto p-4 space-y-4">
+                        {/* 端点 */}
+                        <section>
+                            <div className="flex items-center justify-between mb-1.5">
+                                <span className="text-[11px] font-medium tracking-wide text-gray-400">端点</span>
+                                <Tag className="!m-0 !text-[10px]">HTTP Streamable</Tag>
+                            </div>
+                            <div className="flex gap-1.5">
+                                <Tooltip title="默认按页面地址自动推导；容器化/反向代理部署可直接改为实际可达地址（如 https://域名/mcp）">
+                                    <Input size="small" value={endpoint}
+                                        onChange={e => changeEndpoint(e.target.value)}
+                                        placeholder={defaultEndpoint}
+                                        className="!text-[11px] font-mono" />
                                 </Tooltip>
+                                {endpointDirty && (
+                                    <Tooltip title="恢复默认端点">
+                                        <Button size="small" icon={<UndoOutlined />}
+                                            onClick={() => changeEndpoint(defaultEndpoint)} />
+                                    </Tooltip>
+                                )}
+                                <Tooltip title="复制端点">
+                                    <Button size="small" icon={<CopyOutlined />}
+                                        onClick={() => { navigator.clipboard.writeText(endpoint.trim() || defaultEndpoint); message.success('已复制'); }} />
+                                </Tooltip>
+                            </div>
+                            <div className="text-[11px] text-gray-400 mt-1">无状态 POST · 每次请求独立</div>
+                        </section>
+
+                        {/* 令牌 */}
+                        <section>
+                            <div className="flex items-center justify-between mb-1.5">
+                                <span className="text-[11px] font-medium tracking-wide text-gray-400">sk-mcp- 令牌</span>
+                                <Button size="small" type="link" className="!px-0 !text-[11px]" icon={<PlusOutlined />}
+                                    onClick={() => { setIssuedPlain(null); setIssueOpen(true); }}>签发</Button>
+                            </div>
+                            <Select
+                                value={selectedTokenId ?? undefined}
+                                onChange={v => { setSelectedTokenId(v); disconnect(); }}
+                                placeholder="选择令牌"
+                                className="w-full"
+                                optionLabelProp="label"
+                                options={tokens.map(t => ({
+                                    value: t.id,
+                                    label: `${t.name}（${t.token_hint}）`,
+                                }))}
+                                notFoundContent={<span className="text-xs text-gray-500">暂无令牌，点击「签发」创建</span>}
+                            />
+                            {selectedToken && (
+                                <div className="mt-2 rounded-lg border border-gray-100 bg-gray-50/70 px-2.5 py-2 space-y-1">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <span className="flex items-center gap-1.5 min-w-0">
+                                            <Tag color={selectedToken.can_write ? 'orange' : 'blue'} className="!m-0 !text-[10px]">
+                                                {selectedToken.can_write ? '读写' : '只读'}
+                                            </Tag>
+                                            <span className="text-[11px] text-gray-500 truncate">项目 #{selectedToken.project_id}</span>
+                                        </span>
+                                        <Tooltip title="撤销该令牌">
+                                            <Button size="small" type="text" danger icon={<DeleteOutlined />}
+                                                className="!px-1" onClick={() => doRevoke(selectedToken.id)} />
+                                        </Tooltip>
+                                    </div>
+                                    {selectedToken.expires_at && (
+                                        <div className="text-[11px] text-gray-400">有效期至 {selectedToken.expires_at.slice(0, 10)}</div>
+                                    )}
+                                </div>
                             )}
-                            <Tooltip title="复制端点">
-                                <Button size="small" icon={<CopyOutlined />}
-                                    onClick={() => { navigator.clipboard.writeText(endpoint.trim() || defaultEndpoint); message.success('已复制'); }} />
-                            </Tooltip>
-                        </div>
-                    </div>
+                        </section>
 
-                    <div>
-                        <div className="text-xs text-gray-500 mb-1 flex items-center justify-between">
-                            <span>sk-mcp- 令牌</span>
-                            <Button size="small" type="link" className="!px-0 !text-[11px]" icon={<PlusOutlined />}
-                                onClick={() => { setIssuedPlain(null); setIssueOpen(true); }}>签发</Button>
-                        </div>
-                        <Select
-                            value={selectedTokenId ?? undefined}
-                            onChange={v => { setSelectedTokenId(v); disconnect(); }}
-                            placeholder="选择令牌"
-                            className="w-full"
-                            optionLabelProp="label"
-                            options={tokens.map(t => ({
-                                value: t.id,
-                                label: `${t.name}（${t.token_hint}）`,
-                            }))}
-                            notFoundContent={<span className="text-xs text-gray-500">暂无令牌，点击「签发」创建</span>}
-                        />
-                        {selectedToken && (
-                            <div className="text-[11px] text-gray-500 mt-1 flex items-center justify-between">
-                                <span>
-                                    {selectedToken.can_write ? '读写' : '只读'}
-                                    {' · '}项目 #{selectedToken.project_id}
-                                    {selectedToken.expires_at && ` · 有效期至 ${selectedToken.expires_at.slice(0, 10)}`}
-                                </span>
-                                <Button size="small" type="link" danger className="!px-0 !text-[11px]"
-                                    onClick={() => doRevoke(selectedToken.id)}>撤销</Button>
+                        {/* 连接操作 */}
+                        <section className="pt-1">
+                            <div className="flex gap-2">
+                                {!connected ? (
+                                    <Button type="primary" block icon={<PlayCircleOutlined />} onClick={connect} disabled={!bearer}>
+                                        连接
+                                    </Button>
+                                ) : (
+                                    <>
+                                        <Button block icon={<ReloadOutlined />} onClick={connect}>重连</Button>
+                                        <Button block danger icon={<DisconnectOutlined />} onClick={disconnect}>断开</Button>
+                                    </>
+                                )}
                             </div>
+                            {!bearer && (
+                                <div className="mt-1.5 text-[11px] text-gray-400">先选择或签发令牌后才能连接</div>
+                            )}
+                        </section>
+
+                        {/* 服务端信息卡（连接后展示） */}
+                        {connected && serverInfo && (
+                            <section className="rounded-xl border border-green-100 bg-green-50/50 p-3">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
+                                    <span className="font-mono text-sm text-gray-800 truncate">{serverInfo.name ?? 'mcp-server'}</span>
+                                </div>
+                                <div className="text-[11px] text-gray-500 mt-1">
+                                    Version {serverInfo.version ?? '-'}
+                                    {protocolVersion && ` · 协议 ${protocolVersion}`}
+                                </div>
+                            </section>
                         )}
                     </div>
 
-                    <div className="flex gap-2">
-                        {!connected ? (
-                            <Button type="primary" block icon={<PlayCircleOutlined />} onClick={connect} disabled={!bearer}>
-                                连接
-                            </Button>
-                        ) : (
-                            <>
-                                <Button block icon={<ReloadOutlined />} onClick={connect}>重连</Button>
-                                <Button block danger icon={<DisconnectOutlined />} onClick={disconnect}>断开</Button>
-                            </>
-                        )}
-                    </div>
-                    <div className="flex items-center gap-1.5 text-xs">
-                        <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-gray-300'}`} />
-                        <span className={connected ? 'text-green-600' : 'text-gray-500'}>{connected ? '已连接' : '未连接'}</span>
-                    </div>
-
-                    {/* 服务端信息卡（对齐 Inspector 连接后的 server 卡片） */}
-                    {connected && serverInfo && (
-                        <div className="border border-gray-200 rounded-lg p-2.5 bg-gray-50">
-                            <div className="flex items-center gap-1.5">
-                                <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                                <span className="font-mono text-sm text-gray-800">{serverInfo.name ?? 'mcp-server'}</span>
-                            </div>
-                            <div className="text-[11px] text-gray-500 mt-1">
-                                Version: {serverInfo.version ?? '-'}
-                                {protocolVersion && ` · 协议 ${protocolVersion}`}
-                            </div>
-                        </div>
-                    )}
-
-                    <div className="mt-auto border-t border-gray-100 pt-2 text-[11px] text-gray-500 leading-relaxed">
-                        明文令牌仅在签发时展示一次（本页内存留存）；对外服务请把
-                        <span className="font-mono text-gray-500"> Authorization: Bearer sk-mcp-*</span>
+                    <div className="border-t border-gray-100 px-4 py-3 text-[11px] text-gray-400 leading-relaxed">
+                        明文令牌仅签发时展示一次（本页内存留存）；对外服务请把
+                        <span className="font-mono"> Authorization: Bearer sk-mcp-* </span>
                         配入任意支持 Streamable HTTP 的 MCP 客户端。
                     </div>
                 </aside>
 
                 {/* ══ 右侧主区 */}
                 <main className="flex-1 min-w-0 flex flex-col min-h-0">
-                    {/* 顶部 Tab（工具 / 资源 / Ping） */}
-                    <div className="shrink-0 px-4 pt-3 pb-2">
-                        <div className="inline-flex bg-gray-100 rounded-lg p-1 gap-1">
-                            {tabItems.map(t => (
-                                <button key={t.key} type="button"
-                                    onClick={() => setActiveTab(t.key)}
-                                    className={`px-4 py-1.5 rounded-md text-sm transition-colors ${
-                                        activeTab === t.key
-                                            ? 'bg-white shadow-sm font-medium text-gray-800'
-                                            : 'text-gray-500 hover:text-gray-700'
-                                    }`}>
-                                    {t.label}
-                                </button>
-                            ))}
-                        </div>
+                    {/* 顶部导航（与全站 Tabs 同款下划线样式） */}
+                    <div className="shrink-0 bg-white border-b border-[#E6EBF5] px-4">
+                        <Tabs
+                            activeKey={activeTab}
+                            onChange={key => setActiveTab(key as TabKey)}
+                            items={tabItems.map(t => ({
+                                key: t.key,
+                                label: (
+                                    <span className="inline-flex items-center gap-1.5">
+                                        {t.icon}
+                                        <span>{t.label}</span>
+                                        {t.count !== undefined && (
+                                            <span className="text-[11px] text-gray-400">{t.count}</span>
+                                        )}
+                                    </span>
+                                ),
+                            }))}
+                            className="mcp-nav-tabs"
+                        />
                     </div>
 
                     {/* 内容区 */}
                     <div className="flex-1 min-h-0 flex">
                         {activeTab === 'docs' && (
-                            <div className="flex-1 overflow-auto p-4">
+                            <div className="flex-1 overflow-auto scrollbar-stable p-4 sm:p-6">
                                 <div className="max-w-3xl mx-auto space-y-4 pb-8">
-                                    <div className="bg-white border border-gray-200 rounded-xl p-4">
-                                        <div className="font-medium text-gray-800 mb-2">三步接入</div>
-                                        <ol className="text-sm text-gray-600 list-decimal pl-5 space-y-1 leading-relaxed">
+                                    {/* 当前配置速览 */}
+                                    <div className="surface-card p-4">
+                                        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                                            <Tag color="blue" className="!m-0">HTTP Streamable</Tag>
+                                            <span className="font-mono text-xs text-gray-600 break-all">{effEndpoint}</span>
+                                            <span className="text-gray-200">|</span>
+                                            <span className="text-xs text-gray-500">
+                                                {selectedToken
+                                                    ? `当前令牌：${selectedToken.name}（${selectedToken.token_hint}）`
+                                                    : '尚未选择令牌，示例中用占位符表示'}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <div className="surface-card p-5">
+                                        <div className="text-sm font-semibold text-gray-800 mb-3">三步接入</div>
+                                        <ol className="text-sm text-gray-600 list-decimal pl-5 space-y-1.5 leading-relaxed">
                                             <li>左侧「签发」创建 <span className="font-mono">sk-mcp-</span> 令牌：{isAdmin ? '选持有人、' : ''}绑定项目、勾是否允许写入——<b>明文只展示一次</b>，当场复制</li>
                                             <li>端点默认为 <span className="font-mono">{effEndpoint}</span>（host 随访问地址自动推导；容器化/反代部署可在左栏改，HTTP Streamable，无状态 POST-only）</li>
                                             <li>把端点 + 令牌配到下方任意一种客户端 / 自己的 agent 里</li>
                                         </ol>
-                                        <div className="mt-2 text-xs text-gray-500">
+                                        <div className="mt-3 text-xs text-gray-500 leading-relaxed">
                                             令牌绑定单项目（数据隔离）；只读令牌不暴露写入工具；限流：读 60 次/分、写 20 次/分。
                                             {bearer ? ' 已检测到当前选中令牌，下方示例已代入。' : ' 尚未选令牌，示例中用占位符表示，替换为你的明文即可。'}
                                         </div>
                                     </div>
 
-                                    <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
-                                        <div className="font-medium text-gray-800">curl 调用</div>
+                                    <div className="surface-card p-5 space-y-3">
+                                        <div className="text-sm font-semibold text-gray-800">curl 调用</div>
                                         <CodeBlock title="① 握手 + 列出工具（tools/list）" code={`# initialize（唯一不需要令牌的方法）
     curl -s -X POST ${effEndpoint} -H "Content-Type: application/json" \\
       -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}'
@@ -614,8 +669,8 @@ export default function McpConsolePage() {
                sources: [.sources[] | {doc_file, score, ref_type}]}'`} />
                                     </div>
 
-                                    <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
-                                        <div className="font-medium text-gray-800">Python 调用（官方 MCP SDK）</div>
+                                    <div className="surface-card p-5 space-y-3">
+                                        <div className="text-sm font-semibold text-gray-800">Python 调用（官方 MCP SDK）</div>
                                         <CodeBlock title="pip install mcp" code={`import asyncio
     from mcp import ClientSession
     from mcp.client.streamable_http import streamablehttp_client
@@ -640,8 +695,8 @@ export default function McpConsolePage() {
     asyncio.run(main())`} />
                                     </div>
 
-                                    <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
-                                        <div className="font-medium text-gray-800">配到现成 MCP 客户端</div>
+                                    <div className="surface-card p-5 space-y-3">
+                                        <div className="text-sm font-semibold text-gray-800">配到现成 MCP 客户端</div>
                                         <CodeBlock title="Cursor 等支持 HTTP Streamable 的客户端（mcpServers JSON）" code={`{
       "mcpServers": {
         "ontology-platform": {
@@ -664,9 +719,9 @@ export default function McpConsolePage() {
     }`} />
                                     </div>
 
-                                    <div className="bg-white border border-gray-200 rounded-xl p-4">
-                                        <div className="font-medium text-gray-800 mb-2">注意事项</div>
-                                        <ul className="text-sm text-gray-600 list-disc pl-5 space-y-1 leading-relaxed">
+                                    <div className="surface-card p-5">
+                                        <div className="text-sm font-semibold text-gray-800 mb-3">注意事项</div>
+                                        <ul className="text-sm text-gray-600 list-disc pl-5 space-y-1.5 leading-relaxed">
                                             <li>端点为无状态实现：每次 POST 独立、不需要会话保持；GET /mcp 返回 405 是预期行为</li>
                                             <li>除 <span className="font-mono">initialize</span> 外的所有方法都要 <span className="font-mono">Authorization: Bearer sk-mcp-*</span>；令牌无效返回 401 + JSON-RPC 认证错误</li>
                                             <li>令牌与单个项目绑定，工具的读写范围仅限该项目图谱；撤销后立即失效</li>
@@ -681,30 +736,39 @@ export default function McpConsolePage() {
                         {activeTab === 'tools' && (
                             <>
                                 {/* 工具清单 */}
-                                <section className="w-96 shrink-0 bg-white border-r border-gray-200 flex flex-col min-h-0">
-                                    <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-                                        <span className="font-medium text-gray-700">工具（{tools.length}）</span>
-                                        <div className="w-44">
-                                            <Input size="small" allowClear prefix={<SearchOutlined className="text-gray-300" />}
-                                                placeholder="搜索工具" value={toolSearch}
-                                                onChange={e => setToolSearch(e.target.value)} />
+                                <section className="w-80 shrink-0 bg-white border-r border-[#E6EBF5] flex flex-col min-h-0">
+                                    <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-2">
+                                        <div className="flex items-center gap-2 min-w-0">
+                                            <span className="text-sm font-medium text-gray-700">工具清单</span>
+                                            <Tag className="!m-0 !text-[10px]">{tools.length}</Tag>
+                                        </div>
+                                        <div className="flex items-center gap-0.5">
+                                            <Tooltip title="刷新工具列表（List Tools）">
+                                                <Button size="small" type="text" icon={<ReloadOutlined />}
+                                                    disabled={!connected} onClick={listTools} />
+                                            </Tooltip>
+                                            <Tooltip title="清空工具列表">
+                                                <Button size="small" type="text" icon={<ClearOutlined />}
+                                                    disabled={tools.length === 0}
+                                                    onClick={() => { setTools([]); setSelectedTool(null); setCallResult(null); }} />
+                                            </Tooltip>
                                         </div>
                                     </div>
-                                    <div className="px-4 py-2 border-b border-gray-100 space-y-1.5">
-                                        <Button block onClick={listTools} disabled={!connected}>List Tools</Button>
-                                        <Button block disabled={tools.length === 0}
-                                            onClick={() => { setTools([]); setSelectedTool(null); setCallResult(null); }}>
-                                            Clear
-                                        </Button>
+                                    <div className="px-4 py-2 border-b border-gray-100">
+                                        <Input size="small" allowClear prefix={<SearchOutlined className="text-gray-300" />}
+                                            placeholder="搜索工具名称或描述" value={toolSearch}
+                                            onChange={e => setToolSearch(e.target.value)} />
                                     </div>
                                     <div className="flex-1 overflow-auto p-2 min-h-0">
                                         {filteredTools.length === 0 ? (
-                                            <div className="text-xs text-gray-500 text-center py-10">
-                                                {connected ? '没有匹配的工具' : '连接后展示该令牌可见的 MCP 工具'}
-                                            </div>
+                                            <Empty
+                                                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                                                description={connected ? '没有匹配的工具' : '连接后展示该令牌可见的 MCP 工具'}
+                                                className="!my-10"
+                                            />
                                         ) : (
                                             filteredTools.map(t => (
-                                                <div key={t.name}
+                                                <button key={t.name} type="button"
                                                     onClick={() => {
                                                         setSelectedTool(t);
                                                         setCallResult(null);
@@ -714,94 +778,110 @@ export default function McpConsolePage() {
                                                         });
                                                         setFormValues(defaults);
                                                     }}
-                                                    className={`px-3 py-2 mb-1 rounded-lg cursor-pointer border transition-colors ${
+                                                    className={`w-full text-left px-3 py-2 mb-1 rounded-lg border transition-colors ${
                                                         selectedTool?.name === t.name
-                                                            ? 'border-blue-400 bg-blue-50'
-                                                            : 'border-transparent hover:bg-gray-50'
+                                                            ? 'border-[rgba(91,141,239,0.55)] bg-[#F3F7FF]'
+                                                            : 'border-transparent hover:border-gray-200 hover:bg-gray-50'
                                                     }`}>
-                                                    <div className="flex items-center justify-between">
-                                                        <span className="text-sm font-medium text-gray-800 font-mono">{t.name}</span>
-                                                        <RightOutlined className="text-[10px] text-gray-300" />
+                                                    <div className="flex items-center justify-between gap-2">
+                                                        <span className="text-[13px] font-medium text-gray-800 font-mono truncate">{t.name}</span>
+                                                        <RightOutlined className="text-[10px] text-gray-300 shrink-0" />
                                                     </div>
-                                                    <div className="text-[11px] text-gray-500 line-clamp-2 mt-0.5">{t.description}</div>
-                                                </div>
+                                                    <div className="text-[11px] leading-4 text-gray-500 line-clamp-2 mt-0.5">{t.description}</div>
+                                                </button>
                                             ))
                                         )}
                                     </div>
                                 </section>
 
                                 {/* 工具详情 */}
-                                <section className="flex-1 min-w-0 overflow-auto p-4">
+                                <section className="flex-1 min-w-0 overflow-auto scrollbar-stable">
                                     {!selectedTool ? (
-                                        <div className="h-full flex items-center justify-center">
-                                            <div className="border border-gray-200 rounded-xl bg-white px-8 py-6 text-gray-500 shadow-sm">
-                                                <ThunderboltOutlined className="mr-2" />
-                                                从左侧选择一个工具，查看详情并调用
-                                            </div>
+                                        <div className="h-full flex flex-col items-center justify-center gap-3 px-6 text-center">
+                                            <span className="w-12 h-12 rounded-2xl bg-white border border-[#E6EBF5] text-[#5B8DEF] flex items-center justify-center text-xl shadow-sm">
+                                                <ThunderboltOutlined />
+                                            </span>
+                                            <div className="text-sm text-gray-500">从左侧选择一个工具，查看参数并调用</div>
                                         </div>
                                     ) : (
-                                        <div className="max-w-3xl mx-auto">
-                                            <div className="font-mono font-semibold text-gray-800 text-base">{selectedTool.name}</div>
-                                            <div className="text-sm text-gray-500 mt-1 mb-4">{selectedTool.description}</div>
-
-                                            <div className="space-y-3 mb-4">
-                                                {schemaProps.length === 0 && (
-                                                    <div className="text-xs text-gray-500">该工具无入参，直接运行即可</div>
-                                                )}
-                                                {schemaProps.map(([key, prop]) => (
-                                                    <div key={key}>
-                                                        <div className="text-xs mb-1">
-                                                            <span className="font-mono text-gray-700">{key}</span>
-                                                            {requiredKeys.includes(key) && <span className="text-red-400"> *</span>}
-                                                            {prop.description && <span className="ml-2 text-gray-500">{prop.description}</span>}
-                                                        </div>
-                                                        {prop.enum ? (
-                                                            <Select
-                                                                className="w-full max-w-lg"
-                                                                value={formValues[key] ?? prop.default}
-                                                                onChange={v => setFormValues(prev => ({ ...prev, [key]: v }))}
-                                                                options={prop.enum.map(e => ({ value: e, label: e }))}
-                                                                allowClear
-                                                            />
-                                                        ) : prop.type === 'boolean' ? (
-                                                            <Checkbox
-                                                                checked={formValues[key] === 'true'}
-                                                                onChange={e => setFormValues(prev => ({ ...prev, [key]: String(e.target.checked) }))}
-                                                            >{key}</Checkbox>
-                                                        ) : prop.type === 'integer' || prop.type === 'number' ? (
-                                                            <InputNumber
-                                                                className="max-w-lg w-full"
-                                                                value={formValues[key] ? Number(formValues[key]) : undefined}
-                                                                onChange={v => setFormValues(prev => ({ ...prev, [key]: v == null ? '' : String(v) }))}
-                                                                placeholder={prop.description}
-                                                            />
-                                                        ) : (
-                                                            <Input.TextArea
-                                                                className="max-w-lg"
-                                                                rows={2}
-                                                                value={formValues[key] ?? ''}
-                                                                onChange={e => setFormValues(prev => ({ ...prev, [key]: e.target.value }))}
-                                                                placeholder={prop.type === 'array' || prop.type === 'object' ? 'JSON 字符串' : prop.description}
-                                                            />
-                                                        )}
+                                        <div className="p-4 sm:p-5 max-w-4xl mx-auto space-y-4 pb-8">
+                                            {/* 工具信息 */}
+                                            <div className="surface-card p-4">
+                                                <div className="flex items-start justify-between gap-3">
+                                                    <div className="min-w-0">
+                                                        <div className="font-mono font-semibold text-gray-800 text-base break-all">{selectedTool.name}</div>
+                                                        <div className="text-[13px] text-gray-500 mt-1 leading-relaxed">{selectedTool.description}</div>
                                                     </div>
-                                                ))}
+                                                    <Tag className="!m-0 shrink-0">{schemaProps.length} 个参数</Tag>
+                                                </div>
                                             </div>
 
-                                            <div className="flex gap-2 mb-4">
-                                                <Button type="primary" icon={<PlayCircleOutlined />} onClick={runTool} loading={calling}>
-                                                    运行工具
-                                                </Button>
-                                                <Button icon={<CopyOutlined />} onClick={copyInput}>Copy Input</Button>
+                                            {/* 参数 */}
+                                            <div className="surface-card p-4">
+                                                <div className="flex items-center justify-between mb-3">
+                                                    <span className="text-sm font-medium text-gray-700">调用参数</span>
+                                                    <span className="text-[11px] text-gray-400">带 <span className="text-red-400">*</span> 为必填</span>
+                                                </div>
+                                                {schemaProps.length === 0 ? (
+                                                    <div className="text-[13px] text-gray-500 py-2">该工具无入参，直接运行即可</div>
+                                                ) : (
+                                                    <div className="space-y-3">
+                                                        {schemaProps.map(([key, prop]) => (
+                                                            <div key={key}>
+                                                                <div className="text-xs mb-1 flex items-baseline gap-2 flex-wrap">
+                                                                    <span className="font-mono text-gray-700">{key}</span>
+                                                                    {requiredKeys.includes(key) && <span className="text-red-400">*</span>}
+                                                                    {prop.description && <span className="text-gray-400">{prop.description}</span>}
+                                                                </div>
+                                                                {prop.enum ? (
+                                                                    <Select
+                                                                        className="w-full max-w-xl"
+                                                                        value={formValues[key] ?? prop.default}
+                                                                        onChange={v => setFormValues(prev => ({ ...prev, [key]: v }))}
+                                                                        options={prop.enum.map(e => ({ value: e, label: e }))}
+                                                                        allowClear
+                                                                    />
+                                                                ) : prop.type === 'boolean' ? (
+                                                                    <Checkbox
+                                                                        checked={formValues[key] === 'true'}
+                                                                        onChange={e => setFormValues(prev => ({ ...prev, [key]: String(e.target.checked) }))}
+                                                                    >{key}</Checkbox>
+                                                                ) : prop.type === 'integer' || prop.type === 'number' ? (
+                                                                    <InputNumber
+                                                                        className="max-w-xl w-full"
+                                                                        value={formValues[key] ? Number(formValues[key]) : undefined}
+                                                                        onChange={v => setFormValues(prev => ({ ...prev, [key]: v == null ? '' : String(v) }))}
+                                                                        placeholder={prop.description}
+                                                                    />
+                                                                ) : (
+                                                                    <Input.TextArea
+                                                                        className="max-w-xl"
+                                                                        rows={2}
+                                                                        value={formValues[key] ?? ''}
+                                                                        onChange={e => setFormValues(prev => ({ ...prev, [key]: e.target.value }))}
+                                                                        placeholder={prop.type === 'array' || prop.type === 'object' ? 'JSON 字符串' : prop.description}
+                                                                    />
+                                                                )}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                                <div className="flex flex-wrap gap-2 pt-4 mt-4 border-t border-gray-100">
+                                                    <Button type="primary" icon={<PlayCircleOutlined />} onClick={runTool} loading={calling}>
+                                                        运行工具
+                                                    </Button>
+                                                    <Button icon={<CopyOutlined />} onClick={copyInput}>Copy Input</Button>
+                                                </div>
                                             </div>
 
+                                            {/* 结果 */}
                                             {callResult && (
-                                                <div>
-                                                    <div className="text-sm mb-2">
-                                                        <span className="text-gray-600">工具结果：</span>
-                                                        <span className={callResult.ok ? 'text-green-600 font-medium' : 'text-red-500 font-medium'}>
+                                                <div className="surface-card p-4">
+                                                    <div className="flex items-center gap-2 mb-2">
+                                                        <span className="text-sm font-medium text-gray-700">调用结果</span>
+                                                        <Tag color={callResult.ok ? 'green' : 'red'} className="!m-0">
                                                             {callResult.ok ? '成功' : '失败'}
-                                                        </span>
+                                                        </Tag>
                                                     </div>
                                                     <ResultBody text={callResult.text} />
                                                 </div>
@@ -814,62 +894,78 @@ export default function McpConsolePage() {
 
                         {activeTab === 'resources' && (
                             <>
-                                <section className="w-96 shrink-0 bg-white border-r border-gray-200 flex flex-col min-h-0">
-                                    <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-                                        <span className="font-medium text-gray-700">资源（{resources.length}）</span>
-                                    </div>
-                                    <div className="px-4 py-2 border-b border-gray-100">
-                                        <Button block onClick={listResources} disabled={!connected}>List Resources</Button>
+                                <section className="w-80 shrink-0 bg-white border-r border-[#E6EBF5] flex flex-col min-h-0">
+                                    <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-2">
+                                        <div className="flex items-center gap-2 min-w-0">
+                                            <span className="text-sm font-medium text-gray-700">资源清单</span>
+                                            <Tag className="!m-0 !text-[10px]">{resources.length}</Tag>
+                                        </div>
+                                        <Tooltip title="刷新资源列表（List Resources）">
+                                            <Button size="small" type="text" icon={<ReloadOutlined />}
+                                                disabled={!connected} onClick={listResources} />
+                                        </Tooltip>
                                     </div>
                                     <div className="flex-1 overflow-auto p-2 min-h-0">
                                         {resources.length === 0 ? (
-                                            <div className="text-xs text-gray-500 text-center py-10">
-                                                {connected ? '点击 List Resources 列出资源' : '连接后可浏览该项目的 MCP 资源'}
-                                            </div>
+                                            <Empty
+                                                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                                                description={connected ? '点击右上角刷新，列出该项目的 MCP 资源' : '连接后可浏览该项目的 MCP 资源'}
+                                                className="!my-10"
+                                            />
                                         ) : (
                                             resources.map(r => (
-                                                <div key={r.uri}
+                                                <button key={r.uri} type="button"
                                                     onClick={() => readResource(r)}
-                                                    className={`px-3 py-2 mb-1 rounded-lg cursor-pointer border transition-colors ${
+                                                    className={`w-full text-left px-3 py-2 mb-1 rounded-lg border transition-colors ${
                                                         selectedResource?.uri === r.uri
-                                                            ? 'border-blue-400 bg-blue-50'
-                                                            : 'border-transparent hover:bg-gray-50'
+                                                            ? 'border-[rgba(91,141,239,0.55)] bg-[#F3F7FF]'
+                                                            : 'border-transparent hover:border-gray-200 hover:bg-gray-50'
                                                     }`}>
                                                     <div className="flex items-center justify-between gap-2">
-                                                        <span className="text-sm text-gray-800">{r.name ?? r.uri}</span>
-                                                        {r.mimeType && <Tag className="!text-[10px] !m-0">{r.mimeType}</Tag>}
+                                                        <span className="text-[13px] font-medium text-gray-800 truncate">{r.name ?? r.uri}</span>
+                                                        {r.mimeType && <Tag className="!text-[10px] !m-0 shrink-0">{r.mimeType}</Tag>}
                                                     </div>
-                                                    <div className="font-mono text-[11px] text-gray-500 mt-0.5">{r.uri}</div>
-                                                    {r.description && <div className="text-[11px] text-gray-500 mt-0.5">{r.description}</div>}
-                                                </div>
+                                                    <div className="font-mono text-[11px] text-gray-500 mt-0.5 truncate">{r.uri}</div>
+                                                    {r.description && <div className="text-[11px] leading-4 text-gray-400 mt-0.5 line-clamp-2">{r.description}</div>}
+                                                </button>
                                             ))
                                         )}
                                     </div>
                                 </section>
-                                <section className="flex-1 min-w-0 overflow-auto p-4">
+                                <section className="flex-1 min-w-0 overflow-auto scrollbar-stable">
                                     {!selectedResource ? (
-                                        <div className="h-full flex items-center justify-center">
-                                            <div className="border border-gray-200 rounded-xl bg-white px-8 py-6 text-gray-500 shadow-sm">
-                                                点击左侧资源读取内容
-                                            </div>
+                                        <div className="h-full flex flex-col items-center justify-center gap-3 px-6 text-center">
+                                            <span className="w-12 h-12 rounded-2xl bg-white border border-[#E6EBF5] text-[#5B8DEF] flex items-center justify-center text-xl shadow-sm">
+                                                <FolderOpenOutlined />
+                                            </span>
+                                            <div className="text-sm text-gray-500">点击左侧资源，读取其内容</div>
                                         </div>
                                     ) : (
-                                        <div className="max-w-3xl mx-auto">
-                                            <div className="text-base text-gray-800">{selectedResource.name ?? selectedResource.uri}</div>
-                                            <div className="font-mono text-xs text-gray-500 mb-3">{selectedResource.uri}</div>
-                                            {readingRes ? (
-                                                <div className="text-sm text-gray-500">读取中…</div>
-                                            ) : resourceText ? (
-                                                <>
-                                                    <div className="text-sm mb-2">
-                                                        <span className="text-gray-600">读取结果：</span>
-                                                        <span className={resourceText.ok ? 'text-green-600 font-medium' : 'text-red-500 font-medium'}>
+                                        <div className="p-4 sm:p-5 max-w-4xl mx-auto space-y-4 pb-8">
+                                            <div className="surface-card p-4">
+                                                <div className="text-base font-medium text-gray-800 break-all">
+                                                    {selectedResource.name ?? selectedResource.uri}
+                                                </div>
+                                                <div className="font-mono text-xs text-gray-500 mt-1 break-all">{selectedResource.uri}</div>
+                                                {selectedResource.mimeType && <Tag className="!mt-2">{selectedResource.mimeType}</Tag>}
+                                            </div>
+                                            <div className="surface-card p-4">
+                                                <div className="flex items-center gap-2 mb-2">
+                                                    <span className="text-sm font-medium text-gray-700">读取结果</span>
+                                                    {resourceText && (
+                                                        <Tag color={resourceText.ok ? 'green' : 'red'} className="!m-0">
                                                             {resourceText.ok ? '成功' : '失败'}
-                                                        </span>
-                                                    </div>
+                                                        </Tag>
+                                                    )}
+                                                </div>
+                                                {readingRes ? (
+                                                    <div className="text-[13px] text-gray-400 py-2">正在读取…</div>
+                                                ) : resourceText ? (
                                                     <ResultBody text={resourceText.text} />
-                                                </>
-                                            ) : null}
+                                                ) : (
+                                                    <div className="text-[13px] text-gray-400 py-2">即将自动读取…</div>
+                                                )}
+                                            </div>
                                         </div>
                                     )}
                                 </section>
@@ -877,24 +973,53 @@ export default function McpConsolePage() {
                         )}
 
                         {activeTab === 'ping' && (
-                            <section className="flex-1 min-w-0 overflow-auto p-6">
-                                <div className="max-w-xl mx-auto text-center py-10">
-                                    <div className="text-gray-500 mb-4">
-                                        向网关发送 JSON-RPC <span className="font-mono text-gray-700">ping</span> 请求，验证令牌与端点连通性
-                                    </div>
-                                    <Button type="primary" size="large" icon={<LinkOutlined />} loading={pinging}
-                                        onClick={doPing} disabled={!bearer}>
-                                        Ping
-                                    </Button>
-                                    {pingResult && (
-                                        <div className={`mt-5 text-sm ${pingResult.ok ? 'text-green-600' : 'text-red-500'}`}>
-                                            {pingResult.ok
-                                                ? <span className="font-medium">成功 · 延迟 {pingResult.ms} ms</span>
-                                                : `失败：${pingResult.msg}`}
+                            <section className="flex-1 min-w-0 overflow-auto scrollbar-stable p-4 sm:p-6">
+                                <div className="max-w-2xl mx-auto space-y-4">
+                                    <div className="surface-card p-6 text-center">
+                                        <div className="w-12 h-12 rounded-2xl bg-[rgba(91,141,239,0.10)] text-[#5B8DEF] flex items-center justify-center text-xl mx-auto">
+                                            <WifiOutlined />
                                         </div>
-                                    )}
-                                    <div className="mt-6 text-xs text-gray-500">
-                                        限流：读 60 次/分 · 写 20 次/分（每令牌）；认证失败返回 JSON-RPC error -32001
+                                        <div className="text-base font-medium text-gray-800 mt-3">连通性检测</div>
+                                        <div className="text-[13px] text-gray-500 mt-1 leading-relaxed">
+                                            向网关发送 JSON-RPC <span className="font-mono text-gray-700">ping</span>，验证令牌与端点是否可用
+                                        </div>
+                                        <div className="mt-5">
+                                            <Button type="primary" icon={<LinkOutlined />} loading={pinging}
+                                                className="px-5" onClick={doPing} disabled={!bearer}>
+                                                发送 Ping
+                                            </Button>
+                                        </div>
+                                        {pingResult && (
+                                            <div className={`mt-5 inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm ${
+                                                pingResult.ok
+                                                    ? 'border-green-200 bg-green-50 text-green-700'
+                                                    : 'border-red-200 bg-red-50 text-red-600'
+                                            }`}>
+                                                {pingResult.ok ? (
+                                                    <><CheckCircleFilled /> 连通正常 · 延迟 <b className="tk-mono">{pingResult.ms}</b> ms</>
+                                                ) : (
+                                                    <><CloseCircleFilled /> 失败：{pingResult.msg}</>
+                                                )}
+                                            </div>
+                                        )}
+                                        <div className="mt-5 text-[11px] text-gray-400">
+                                            限流：读 60 次/分 · 写 20 次/分（每令牌）；认证失败返回 JSON-RPC error -32001
+                                        </div>
+                                    </div>
+
+                                    <div className="surface-card p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                        <div className="min-w-0">
+                                            <div className="text-[11px] text-gray-400 mb-1">端点</div>
+                                            <div className="font-mono text-xs text-gray-700 break-all">{effEndpoint}</div>
+                                        </div>
+                                        <div className="min-w-0">
+                                            <div className="text-[11px] text-gray-400 mb-1">令牌</div>
+                                            <div className="text-xs text-gray-700 truncate">
+                                                {selectedToken
+                                                    ? `${selectedToken.name}（${selectedToken.token_hint}）`
+                                                    : <span className="text-gray-400">未选择</span>}
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             </section>
@@ -902,16 +1027,24 @@ export default function McpConsolePage() {
                     </div>
 
                     {/* ══ 底部：编号调用历史 + 服务端通知（对齐 Inspector 底栏） */}
-                    <div className="h-56 shrink-0 border-t border-gray-200 bg-white flex min-h-0">
+                    <div className="h-56 shrink-0 border-t border-[#E6EBF5] bg-white flex min-h-0">
                         <div className="flex-1 min-w-0 flex flex-col">
-                            <div className="px-4 py-2 border-b border-gray-100 flex items-center justify-between">
-                                <span className="text-sm font-medium text-gray-700">调用历史</span>
+                            {/* 两栏表头统一固定高度：左侧含「清空」小按钮（24px）、右侧只有 Tag（22px），
+                                用 padding 撑高会差 2px，导致两条分隔线对不齐 */}
+                            <div className="h-10 shrink-0 px-4 border-b border-gray-100 flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-2">
+                                    <span className="text-sm font-medium text-gray-700">调用历史</span>
+                                    <Tag className="!m-0 !text-[10px]">{history.length}</Tag>
+                                </div>
                                 <Button size="small" type="text" icon={<ClearOutlined />} disabled={history.length === 0}
                                     onClick={() => { setHistory([]); setExpandedHistory(null); }}>清空</Button>
                             </div>
                             <div className="flex-1 overflow-auto px-4 py-2 min-h-0">
                                 {history.length === 0 ? (
-                                    <div className="text-xs text-gray-300 italic pt-2">暂无调用记录</div>
+                                    <div className="h-full flex flex-col items-center justify-center gap-1 text-xs text-gray-300">
+                                        <ApiOutlined />
+                                        暂无调用记录
+                                    </div>
                                 ) : (
                                     history.map(h => (
                                         <div key={h.id} className="mb-1">
@@ -921,10 +1054,14 @@ export default function McpConsolePage() {
                                                     expandedHistory === h.id ? 'bg-gray-50 border-gray-200' : 'border-transparent hover:bg-gray-50'
                                                 }`}>
                                                 <CaretRightOutlined className={`text-[10px] text-gray-500 transition-transform ${expandedHistory === h.id ? 'rotate-90' : ''}`} />
-                                                <span className="text-gray-500">{h.seq}.</span>
-                                                <span className="font-mono text-gray-700">{h.method}</span>
-                                                <span className={`ml-auto ${h.ok ? 'text-green-500' : 'text-red-400'}`}>{h.ok ? '✓' : '✗'}</span>
-                                                <span className="text-gray-300">{h.at}</span>
+                                                <span className="text-gray-400 font-mono w-5 shrink-0">{h.seq}.</span>
+                                                <span className="font-mono text-gray-700 truncate">{h.method}</span>
+                                                <span className="ml-auto shrink-0">
+                                                    {h.ok
+                                                        ? <CheckCircleFilled className="text-green-500" />
+                                                        : <CloseCircleFilled className="text-red-400" />}
+                                                </span>
+                                                <span className="text-gray-300 shrink-0">{h.at}</span>
                                             </button>
                                             {expandedHistory === h.id && (
                                                 <div className="mx-2 mb-2 p-2 bg-gray-50 border border-gray-100 rounded-md grid grid-cols-2 gap-3 font-mono text-[11px]">
@@ -945,13 +1082,16 @@ export default function McpConsolePage() {
                                 )}
                             </div>
                         </div>
-                        <div className="w-96 shrink-0 border-l border-gray-100 flex flex-col">
-                            <div className="px-4 py-2 border-b border-gray-100 flex items-center justify-between">
+                        <div className="w-80 shrink-0 border-l border-gray-100 flex flex-col">
+                            <div className="h-10 shrink-0 px-4 border-b border-gray-100 flex items-center justify-between gap-2">
                                 <span className="text-sm font-medium text-gray-700">服务端通知</span>
+                                <Tag className="!m-0 !text-[10px]">0</Tag>
                             </div>
                             <div className="flex-1 px-4 py-2">
-                                <div className="text-xs text-gray-300 italic pt-2">
-                                    暂无通知（无状态 HTTP 传输，无服务端推送）
+                                <div className="h-full flex flex-col items-center justify-center gap-1 text-xs text-gray-300 text-center">
+                                    <ApiOutlined />
+                                    <span>无服务端推送</span>
+                                    <span className="text-[10px] text-gray-300">（HTTP 无状态传输）</span>
                                 </div>
                             </div>
                         </div>

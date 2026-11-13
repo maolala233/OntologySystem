@@ -466,6 +466,21 @@ button[title*="列表"]:hover {
   margin-bottom: 8px;
 }
 
+/* MCP 控制台顶部导航：Tabs 只承担导航（内容区在下方自绘），
+   去掉默认外边距/内容占位，避免在标签下多出一条空白与双分隔线 */
+.mcp-nav-tabs .ant-tabs-nav {
+  margin: 0;
+}
+.mcp-nav-tabs .ant-tabs-nav::before {
+  border-bottom: 0;
+}
+.mcp-nav-tabs .ant-tabs-tab {
+  padding: 12px 0;
+}
+.mcp-nav-tabs .ant-tabs-content-holder {
+  display: none;
+}
+
 
 /* ===================================================================
    视觉系统（2026-11-11）：统一画布 / 顶栏 / 面板 / 表格的层次与质感
