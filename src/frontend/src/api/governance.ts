@@ -1,7 +1,7 @@
 /**
  * M3-6 审核/版本/发布 API（03 §10-§12）——审核工作台与时间轴 Tab 数据源。
  */
-import apiClient from './client';
+import apiClient, { sharedGet } from './client';
 
 // ── 审核 ──
 
@@ -112,10 +112,10 @@ export interface DiffResult {
 }
 
 export const versionsApi = {
-    list: async (projectId: number): Promise<{ items: VersionRow[]; total: number; current_version_id: number | null }> => {
-        const response = await apiClient.get(`/api/projects/${projectId}/versions`);
-        return response.data;
-    },
+    list: (projectId: number): Promise<{ items: VersionRow[]; total: number; current_version_id: number | null }> =>
+        sharedGet<{ items: VersionRow[]; total: number; current_version_id: number | null }>(
+            `/api/projects/${projectId}/versions`,
+        ),
 
     diff: async (projectId: number, a: number, b: number): Promise<DiffResult> => {
         const response = await apiClient.get(`/api/projects/${projectId}/versions/${a}/diff/${b}`);

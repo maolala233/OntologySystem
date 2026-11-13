@@ -2,7 +2,7 @@
  * 一键构建管线 API（新手简化 2026-11）：run/status/cancel + 撤销（合并拆分）。
  * 公理撤销复用 reasoningApi.removeAxiom（api/reasoning.ts）。
  */
-import apiClient from './client';
+import apiClient, { sharedGet } from './client';
 import { authAPI } from './auth';
 
 export type PipelineStageKey = 'parse' | 'schema' | 'instances' | 'resolution'
@@ -135,12 +135,10 @@ export const pipelineApi = {
     },
 
     /** 管线进度聚合（stages 实时计数 + 审核统计）；taskId 缺省读项目当前管线 */
-    status: async (projectId: number, taskId?: string): Promise<PipelineStatus> => {
-        const response = await apiClient.get(`/api/projects/${projectId}/pipeline/status`, {
+    status: (projectId: number, taskId?: string): Promise<PipelineStatus> =>
+        sharedGet<PipelineStatus>(`/api/projects/${projectId}/pipeline/status`, {
             params: taskId ? { task_id: taskId } : {},
-        });
-        return response.data;
-    },
+        }),
 
     /** SSE 事件流 URL（一次性 ticket 鉴权，EventSource 不支持 header）。
      *  lastTask：运行锁过期后兜底展示历史终态；服务端以运行锁为准，新构建免重连。 */
@@ -158,10 +156,8 @@ export const pipelineApi = {
     },
 
     /** 构建结果页数据源：骨架/实例/公理/审核四区 + 机检结论（零 LLM 调用） */
-    buildSummary: async (projectId: number): Promise<BuildSummary> => {
-        const response = await apiClient.get(`/api/projects/${projectId}/pipeline/build/summary`);
-        return response.data;
-    },
+    buildSummary: (projectId: number): Promise<BuildSummary> =>
+        sharedGet<BuildSummary>(`/api/projects/${projectId}/pipeline/build/summary`),
 
     /** 撤销 AI 自动合并（resolution/split：被并成员拆回独立实体） */
     undoMerge: async (projectId: number, canonicalId: number, splitIds: number[]): Promise<void> => {

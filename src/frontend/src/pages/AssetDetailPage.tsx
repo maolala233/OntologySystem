@@ -243,7 +243,7 @@ const AssetDetailPage: React.FC = () => {
     // 加载态沿用详情页外壳（深色底 + 面包屑），避免进入时先闪一屏白底再跳成深色布局
     if (loading) {
         return (
-            <div className="h-screen flex flex-col" style={{ background: '#0F1420' }}>
+            <div className="h-full flex flex-col app-canvas">
                 <Navbar breadcrumbs={breadcrumbs} />
                 <div className="flex-1 flex items-center justify-center">
                     <Spin size="large" />
@@ -254,9 +254,9 @@ const AssetDetailPage: React.FC = () => {
 
     if (!project) {
         return (
-            <div className="h-screen flex flex-col" style={{ background: '#0F1420' }}>
+            <div className="h-full flex flex-col app-canvas">
                 <Navbar breadcrumbs={breadcrumbs} />
-                <div className="flex-1 flex items-center justify-center text-sm" style={{ color: '#8B94AB' }}>
+                <div className="flex-1 flex items-center justify-center text-sm text-[#66738F]">
                     本体不存在或已下线
                 </div>
             </div>
@@ -264,43 +264,53 @@ const AssetDetailPage: React.FC = () => {
     }
 
     return (
-        <div className="h-screen flex flex-col" style={{ background: '#0F1420' }}>
+        <div className="h-full flex flex-col app-canvas">
             <Navbar breadcrumbs={breadcrumbs} />
             <div className="flex-1 flex relative overflow-hidden">
                 {/* 左侧信息面板 - 固定宽度 */}
-                <div className="w-[420px] bg-white border-r border-gray-200 p-6 overflow-y-auto flex-shrink-0">
+                <div className="w-[420px] bg-transparent border-r border-[#E4EBF7]/70 p-6 overflow-y-auto flex-shrink-0">
                     <div className="space-y-6">
                         <div>
-                            <h1 className="text-2xl font-bold text-gray-800 mb-2">{project.name}</h1>
+                            <h1
+                                className="line-clamp-2 text-2xl font-bold leading-tight text-[#1F2A44] mb-2"
+                                title={project.name}
+                            >
+                                {project.name}
+                            </h1>
                             <Tag color={PUBLISHED_TAG.color}>{PUBLISHED_TAG.text}</Tag>
                         </div>
                         <Card title="项目描述" size="small">
-                            <p className="text-gray-600 text-sm">{project.description || '暂无描述'}</p>
+                            <p
+                                className="line-clamp-6 text-sm leading-relaxed text-[#52607A]"
+                                title={project.description || undefined}
+                            >
+                                {project.description || '暂无描述'}
+                            </p>
                         </Card>
                         <Card title="统计信息" size="small">
                             <Descriptions column={1} size="small">
                                 <Descriptions.Item label="节点数量">
-                                    <span className="font-semibold text-blue-600">{graphNodes.length}</span>
+                                    <span className="font-semibold text-[#2F62D8]">{graphNodes.length}</span>
                                 </Descriptions.Item>
                                 <Descriptions.Item label="关系数量">
-                                    <span className="font-semibold text-purple-600">{graphEdges.length}</span>
+                                    <span className="font-semibold text-[#6D3FD8]">{graphEdges.length}</span>
                                 </Descriptions.Item>
                             </Descriptions>
                         </Card>
                         <Card title="创建者" size="small">
                             <div className="flex items-center space-x-2">
-                                <UserOutlined className="text-gray-500" />
-                                <span className="text-gray-700">{project.owner?.username || '未知'}</span>
+                                <UserOutlined className="text-[#66738F]" />
+                                <span className="text-[#3D4B66]">{project.owner?.username || '未知'}</span>
                             </div>
                         </Card>
                         {project.domain && (
                             <Card title="知识域" size="small">
                                 <div className="flex items-start space-x-2">
-                                    <DatabaseOutlined className="text-indigo-500 mt-0.5 flex-shrink-0" />
+                                    <DatabaseOutlined className="text-[#5B8DEF] mt-0.5 flex-shrink-0" />
                                     <div className="flex-1">
-                                        <div className="font-medium text-gray-800">{project.domain.name}</div>
+                                        <div className="font-medium text-[#1F2A44]">{project.domain.name}</div>
                                         {project.domain.description && (
-                                            <div className="text-xs text-gray-500 mt-1">{project.domain.description}</div>
+                                            <div className="text-xs text-[#66738F] mt-1">{project.domain.description}</div>
                                         )}
                                     </div>
                                 </div>
@@ -318,7 +328,7 @@ const AssetDetailPage: React.FC = () => {
                                         <div className="space-y-2">
                                             {Object.entries(typeCount).map(([type, count]) => (
                                                 <div key={type} className="flex justify-between items-center">
-                                                    <span className="text-gray-600">{type}</span>
+                                                    <span className="text-[#52607A]">{type}</span>
                                                     <span className="font-semibold">{count}</span>
                                                 </div>
                                             ))}
@@ -394,7 +404,7 @@ const AssetDetailPage: React.FC = () => {
                                         value={treeSearchValue}
                                         onChange={(e) => setTreeSearchValue(e.target.value)}
                                         allowClear
-                                        prefix={<SearchOutlined className="text-gray-500" />}
+                                        prefix={<SearchOutlined className="text-[#66738F]" />}
                                     />
                                 </div>
                                 <div className="flex-1 overflow-auto p-2">

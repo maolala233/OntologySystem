@@ -83,10 +83,8 @@ export const projectsApi = {
     },
 
     // 获取单个项目详情
-    getProject: async (projectId: number): Promise<ProjectData> => {
-        const response = await apiClient.get(`/api/projects/${projectId}`);
-        return response.data;
-    },
+    getProject: (projectId: number): Promise<ProjectData> =>
+        sharedGet<ProjectData>(`/api/projects/${projectId}`),
 
     // 创建新项目
     createProject: async (data: CreateProjectRequest): Promise<ProjectData> => {

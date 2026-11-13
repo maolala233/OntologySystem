@@ -6,7 +6,8 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { message, confirmModal } from '../../../shared/feedback';
-import { Alert, Button, Card, Popconfirm, Progress, Space, Steps, Tag } from 'antd';
+import InlineNotice from '../../../components/InlineNotice';
+import { Button, Card, Popconfirm, Progress, Space, Steps, Tag } from 'antd';
 import {
     CheckCircleOutlined, CloseCircleOutlined, MinusCircleOutlined,
     SyncOutlined, RetweetOutlined, PauseCircleOutlined,
@@ -37,7 +38,7 @@ interface Props {
 const STATUS_ICON: Record<string, React.ReactNode> = {
     done: <CheckCircleOutlined style={{ color: '#10b981' }} />,
     failed: <CloseCircleOutlined style={{ color: '#ef4444' }} />,
-    running: <SyncOutlined spin style={{ color: '#3b82f6' }} />,
+    running: <SyncOutlined spin style={{ color: '#5B8DEF' }} />,
     skipped: <MinusCircleOutlined style={{ color: '#9ca3af' }} />,
     cancelled: <PauseCircleOutlined style={{ color: '#f59e0b' }} />,
     pending: <span style={{ color: '#d1d5db' }}>○</span>,
@@ -253,15 +254,15 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
             className="mb-3"
             title={(
                 <Space>
-                    {runningNow && <SyncOutlined spin style={{ color: '#3b82f6' }} />}
-                    <span>快速开始</span>
-                    <span className="text-xs text-gray-400 font-normal">
+                    {runningNow && <SyncOutlined spin style={{ color: '#5B8DEF' }} />}
+                    <span>构建</span>
+                    <span className="hidden text-[12px] text-[#8A94AB] font-normal md:inline">
                         上传 → 一键构建 → 查看结果与发布
                     </span>
                 </Space>
             )}
             extra={(
-                <Space split={<span className="text-gray-300">|</span>}>
+                <Space split={<span className="text-[#DCE3F0]">|</span>}>
                     {runningNow && (
                         <Popconfirm title="停止当前构建？"
                                     description={(
@@ -314,14 +315,14 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
                         const shown = st.status === 'running' && !runningNow ? 'cancelled' : st.status;
                         return (
                             <div key={st.key}
-                                 className={`flex items-center gap-1.5 border rounded px-2 py-1 text-xs ${
-                                     shown === 'running' ? 'border-blue-400 bg-blue-50 shadow-sm'
-                                         : shown === 'failed' ? 'border-red-200 bg-red-50'
-                                             : shown === 'cancelled' ? 'border-amber-200 bg-amber-50'
-                                                 : 'border-gray-100 bg-white'}`}>
+                                 className={`flex items-center gap-1.5 border rounded-lg px-2 py-1 text-xs transition-colors ${
+                                     shown === 'running' ? 'border-[rgba(91,141,239,0.45)] bg-[rgba(91,141,239,0.10)]'
+                                         : shown === 'failed' ? 'border-[#F2C6CE] bg-[#FDF2F4]'
+                                             : shown === 'cancelled' ? 'border-[rgba(242,185,80,0.45)] bg-[rgba(242,185,80,0.12)]'
+                                                 : 'border-[#EFF3FA] bg-white'}`}>
                                 {STATUS_ICON[shown] || STATUS_ICON.pending}
                                 <span className={`whitespace-nowrap ${shown === 'running'
-                                    ? 'font-semibold text-blue-700' : 'font-medium'}`}>{st.label}</span>
+                                    ? 'font-semibold text-[#2A57C6]' : 'font-medium text-[#52607A]'}`}>{st.label}</span>
                             </div>
                         );
                     })}
@@ -331,36 +332,47 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
             {/* 当前阶段切片级进度（SSE sub 帧）：切片 x/y + 子百分比——
                 多切片慢抽时不再像卡死（2026-11-08）；子条用青色与主条品牌蓝区分层级 */}
             {runningNow && s?.sub?.message && (
-                <div className="mt-1 border border-blue-100 bg-blue-50/40 rounded px-2 py-1.5">
-                    <div className="text-xs text-blue-700 mb-1">{s.sub.message}</div>
+                <div className="mt-1 rounded-lg border border-[#DCE7F7] px-2.5 py-1.5" style={{ background: 'rgba(91,141,239,0.06)' }}>
+                    <div className="text-[11.5px] text-[#2A57C6] mb-1">{s.sub.message}</div>
                     {typeof s.sub.percent === 'number' && (
-                        <Progress percent={s.sub.percent} size="small" strokeColor="#36CFC9"
+                        <Progress percent={s.sub.percent} size="small" strokeColor="#8B5CF6"
                                   showInfo={false} />
                     )}
                     {(() => {
                         const stt = (s.sub?.stats || {}) as Record<string, any>;
                         // 预计剩余已按用户要求移除（估算不准反成噪音），保留切片计数
                         if (typeof stt.chunks_done === 'number' && typeof stt.chunks_total === 'number') {
-                            return <div className="text-xs text-gray-400 mt-0.5">切片 {stt.chunks_done}/{stt.chunks_total}</div>;
+                            return <div className="text-[11px] text-[#A3ADC2] mt-0.5">切片 {stt.chunks_done}/{stt.chunks_total}</div>;
                         }
                         return null;
                     })()}
                 </div>
             )}
 
+            {/* 状态提示统一走一行式提示条：Alert 带 description 会渲染成一大块，
+                在已经很密的详情卡里过于抢眼（2026-11-13） */}
             {finished && s?.status === 'failed' && (
-                <Alert type="error" showIcon className="mt-2" message="构建未完成"
-                       description={s.message} />
+                <InlineNotice tone="error" className="mt-2">
+                    {`构建未完成${s.message ? `：${s.message}` : ''}`}
+                </InlineNotice>
             )}
             {s?.status === 'cancelled' && (
-                <Alert type="warning" showIcon className="mt-2" message="构建已停止"
-                       description="点击「重新构建」将全部重新解析与抽取。" />
+                <InlineNotice tone="warning" className="mt-2">
+                    构建已停止，点击「重新构建」将全部重新解析与抽取
+                </InlineNotice>
             )}
             {!runningNow && !finished && s?.reviews.pending_total ? (
-                <Alert type="info" showIcon className="mt-2"
-                       message={`有 ${s.reviews.pending_total} 个待审结果将由大模型裁决`}
-                       description="裁决完成后自动留痕，无需人工确认；可在「AI 裁决明细」中查看与撤销。"
-                       action={<Button size="small" onClick={() => onNavigate?.('reviews')}>查看明细</Button>} />
+                <InlineNotice
+                    className="mt-2"
+                    action={(
+                        <Button type="link" size="small" className="!h-auto !px-0 !text-[12px]"
+                                onClick={() => onNavigate?.('reviews')}>
+                            查看明细
+                        </Button>
+                    )}
+                >
+                    {`有 ${s.reviews.pending_total} 个待审结果将由大模型裁决，完成后自动留痕，无需人工确认`}
+                </InlineNotice>
             ) : null}
         </Card>
     );

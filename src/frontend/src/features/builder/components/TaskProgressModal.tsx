@@ -5,8 +5,9 @@
  */
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Modal, Progress, Button, Space, Typography, Alert } from 'antd';
+import { Modal, Progress, Button, Space, Typography } from 'antd';
 import { AuditOutlined, StopOutlined } from '@ant-design/icons';
+import InlineNotice from '../../../components/InlineNotice';
 
 import { extractionApi } from '../../../api/extraction';
 import { reviewsApi } from '../../../api/governance';
@@ -154,27 +155,19 @@ const TaskProgressModal: React.FC<Props> = ({
                     </div>
                 )}
             </div>
+            {/* 一行式提示条：Alert 的 message+description 组合在进度弹窗里太占地方 */}
             {status === 'completed' && (pendingReviews ?? 0) > 0 && (
-                <Alert
-                    className="mt-3"
-                    type="warning"
-                    showIcon
-                    icon={<AuditOutlined />}
-                    message={`抽取完成，有 ${pendingReviews} 项待人工确认（低置信实体/关系、新类、冲突等）`}
-                    description="请在「审核」页逐项核验后通过或驳回，通过项才会落地生效。"
-                />
+                <InlineNotice tone="warning" className="mt-3" icon={<AuditOutlined />}>
+                    {`抽取完成，有 ${pendingReviews} 项待人工确认，请在「审核」页逐项核验后通过或驳回`}
+                </InlineNotice>
             )}
             {cancelReq && status !== 'cancelled' && !TERMINAL.has(status) && (
-                <Alert
-                    className="mt-3"
-                    type="info"
-                    showIcon
-                    message="已请求取消"
-                    description="将在当前阶段结束后生效：进行中的 AI 调用返回后，其结果将被丢弃，不会写入任何数据。"
-                />
+                <InlineNotice tone="info" className="mt-3">
+                    已请求取消：当前阶段结束后生效，进行中的 AI 调用结果会被丢弃
+                </InlineNotice>
             )}
             {status === 'cancelled' && (
-                <Alert className="mt-3" type="info" showIcon message="任务已取消" />
+                <InlineNotice tone="info" className="mt-3">任务已取消</InlineNotice>
             )}
         </Modal>
     );

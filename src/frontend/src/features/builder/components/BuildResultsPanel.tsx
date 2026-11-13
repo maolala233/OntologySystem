@@ -60,12 +60,13 @@ const BuildResultsPanel: React.FC<Props> = ({ projectId, summary, checks, publis
     }
   };
 
-  // 浅色系统计格：品牌蓝/紫/青/橙的浅底，数字用对应深色，与系统配色一致
+  // 统计格：四项指标不再各来一套色相（蓝/紫/青/橙一屏里会显花），
+  // 统一品牌淡底，靠图标和等宽数字区分——与工作台统计卡同一套语言
   const statCards = [
-    { title: '类', value: summary.schema.classes_total, icon: <AppstoreOutlined />, bg: '#EEF3FE', color: '#3D6FE0' },
-    { title: '关系', value: summary.schema.object_properties_total, icon: <PartitionOutlined />, bg: '#F3EEFD', color: '#8B5CD6' },
-    { title: '实例', value: summary.instances.total, icon: <ClusterOutlined />, bg: '#E8F7F5', color: '#189F8F' },
-    { title: '公理', value: summary.axioms.total, icon: <SafetyCertificateOutlined />, bg: '#FDF3E7', color: '#D9822B' },
+    { title: '类', value: summary.schema.classes_total, icon: <AppstoreOutlined /> },
+    { title: '关系', value: summary.schema.object_properties_total, icon: <PartitionOutlined /> },
+    { title: '实例', value: summary.instances.total, icon: <ClusterOutlined /> },
+    { title: '公理', value: summary.axioms.total, icon: <SafetyCertificateOutlined /> },
   ];
 
   return (
@@ -73,7 +74,11 @@ const BuildResultsPanel: React.FC<Props> = ({ projectId, summary, checks, publis
           title={<span className="text-base">本体构建结果</span>}
           extra={(
             <Space wrap>
-              {published && <Tag color="purple">已发布</Tag>}
+              {published && (
+                <Tag style={{ background: 'rgba(91,141,239,0.12)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.28)' }}>
+                  已发布
+                </Tag>
+              )}
               <Button size="small" type="primary" ghost icon={<NodeIndexOutlined />}
                       onClick={() => navigate(`/projects/${projectId}/result?tab=graph`)}>
                 查看图谱
@@ -89,13 +94,16 @@ const BuildResultsPanel: React.FC<Props> = ({ projectId, summary, checks, publis
           )}>
       <Row gutter={12}>
         {statCards.map((st) => (
-          <Col span={6} key={st.title}>
-            <div className="rounded-lg px-4 py-3" style={{ background: st.bg }}>
+          <Col xs={12} sm={6} key={st.title}>
+            <div
+              className="rounded-xl border border-[#EDF2FA] px-4 py-3"
+              style={{ background: 'linear-gradient(135deg, rgba(91,141,239,0.06) 0%, #FFFFFF 70%)' }}
+            >
               <Statistic
-                title={<span className="text-xs text-gray-500">{st.title}</span>}
+                title={<span className="text-[12px] text-[#66738F]">{st.title}</span>}
                 value={st.value}
-                prefix={<span style={{ color: st.color, marginRight: 6, fontSize: 17 }}>{st.icon}</span>}
-                valueStyle={{ color: st.color, fontSize: 26, fontWeight: 600 }}
+                prefix={<span style={{ color: '#5B8DEF', marginRight: 6, fontSize: 16 }}>{st.icon}</span>}
+                valueStyle={{ color: '#0F172A', fontSize: 24, fontWeight: 700, fontFamily: "'JetBrains Mono', Consolas, monospace" }}
               />
             </div>
           </Col>
@@ -104,8 +112,8 @@ const BuildResultsPanel: React.FC<Props> = ({ projectId, summary, checks, publis
       {checks && (
         <div className="mt-2">
           {checks.error_count === 0
-            ? <Tag color="green">✓ 质量自检通过</Tag>
-            : <Tag color="red">机检 {checks.error_count} 处硬伤（发布会被拦截）</Tag>}
+            ? <Tag style={{ background: 'rgba(91,141,239,0.12)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.28)' }}>✓ 质量自检通过</Tag>
+            : <Tag style={{ background: 'rgba(180,35,24,0.10)', color: '#B42318', borderColor: 'rgba(180,35,24,0.22)' }}>机检 {checks.error_count} 处硬伤（发布会被拦截）</Tag>}
         </div>
       )}
     </Card>

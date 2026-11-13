@@ -110,8 +110,14 @@ const Navbar: React.FC<NavbarProps> = ({ breadcrumbs = [] }) => {
                 <SiderToggle />
                 <Breadcrumb
                     items={breadcrumbs.map((item) => ({
-                        // 用路由 Link 做站内跳转：href 会触发整页刷新（白屏闪烁），SPA 内切换才平滑
-                        title: item.path ? <Link to={item.path}>{item.title}</Link> : item.title,
+                        // 用路由 Link 做站内跳转：href 会触发整页刷新（白屏闪烁），SPA 内切换才平滑。
+                        // 末级常是项目/资源名，可能很长：统一限宽截断，悬停看全称，
+                        // 否则超长名字会把顶栏挤得只剩面包屑（2026-11-13）
+                        title: (
+                            <span className="inline-block max-w-[220px] truncate align-middle" title={item.title}>
+                                {item.path ? <Link to={item.path}>{item.title}</Link> : item.title}
+                            </span>
+                        ),
                     }))}
                 />
             </div>

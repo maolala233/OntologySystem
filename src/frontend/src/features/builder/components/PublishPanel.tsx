@@ -7,6 +7,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { message } from '../../../shared/feedback';
 import { Alert, Button, Card, Space, Spin, Table, Tag, Typography } from 'antd';
+import InlineNotice from '../../../components/InlineNotice';
 import { CloudUploadOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 
 import { ImpactSummary, impactApi } from '../../../api/cqs';
@@ -229,9 +230,9 @@ const PublishPanel: React.FC<Props> = ({ projectId, onBackToResults }) => {
                             </div>
                         )}
                         {isPublished && diffTotal(impact) > 0 && (
-                            <Alert type="info" showIcon className="mt-2"
-                                   message="当前工作区与已发布版本存在差异"
-                                   description={`资产中心展示的仍是已发布版本 ${version ? `v${version.version_no}` : ''} 的快照；点上方「重新发布（发新版本）」才会更新公共区内容。`} />
+                            <InlineNotice className="mt-2">
+                                {`当前工作区与已发布版本 ${version ? `v${version.version_no}` : ''} 存在差异：资产中心展示的仍是已发布快照，重新发布后才会更新`}
+                            </InlineNotice>
                         )}
                     </div>
                 )}

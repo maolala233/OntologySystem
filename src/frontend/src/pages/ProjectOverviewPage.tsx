@@ -13,7 +13,7 @@ const { Text } = Typography;
 const fmtDate = (v?: string | null) =>
     v ? new Date(v).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
 import {
-    AuditOutlined, DatabaseOutlined,
+    ApartmentOutlined,
     NodeIndexOutlined, RocketOutlined,
 } from '@ant-design/icons';
 
@@ -30,6 +30,7 @@ import QualityCheckTag from '../features/builder/components/QualityCheckTag';
 import BuildResultsPanel from '../features/builder/components/BuildResultsPanel';
 import { useBuilderStore } from '../features/builder/store';
 import Navbar from '../components/Layout/Navbar';
+import PageHeader from '../components/Layout/PageHeader';
 
 const ProjectOverviewPage: React.FC = () => {
     const { projectId } = useParams<{ projectId: string }>();
@@ -147,74 +148,145 @@ const ProjectOverviewPage: React.FC = () => {
 
     return (
         <div className="h-full flex flex-col app-canvas">
-            {/* 顶栏走全站 Navbar（面包屑承载层级与返回）；项目身份/状态/操作收进下方头部卡 */}
+            <style>{`
+                /* 三段共用一个白面（2026-11-13）：子组件各自渲染的 antd Card 在这里被压平，
+                   变成"同一张卡里的三个区块"，区块之间一条发丝线——不再像三块独立板子。
+                   只作用于本页，专家模式 Tab 里的 Card 外观不受影响 */
+                .overview-stack > .ant-card {
+                    margin-bottom: 0 !important;
+                    border: 0;
+                    border-radius: 0;
+                    background: transparent;
+                    box-shadow: none;
+                }
+                .overview-stack > .ant-card + .ant-card {
+                    border-top: 1px solid #F0F4FB;
+                }
+                .overview-stack > .ant-card > .ant-card-head {
+                    min-height: 44px;
+                    padding-inline: 20px;
+                    border-bottom: 0;
+                    background: transparent;
+                }
+                .overview-stack > .ant-card > .ant-card-head .ant-card-head-title {
+                    font-size: 14px;
+                    font-weight: 600;
+                    color: #1F2A44;
+                }
+                .overview-stack > .ant-card > .ant-card-body {
+                    padding: 16px 20px;
+                }
+                /* 页头固定高度（2026-11-13）：超长项目名 / 描述不允许撑开页头。
+                   PageHeader 外层是 flex-wrap，长名字会先把左侧组撑满整行再换行，
+                   内层的 truncate 就没机会生效——这里强制单行收缩，再对 h1/p 直接兜底 */
+                .overview-head { flex-wrap: nowrap !important; }
+                .overview-head > div:first-child { flex: 1 1 auto !important; min-width: 0 !important; }
+                .overview-head > div:first-child > div { min-width: 0 !important; }
+                .overview-head h1 {
+                    overflow: hidden;
+                    white-space: nowrap;
+                    text-overflow: ellipsis;
+                }
+                .overview-head h1 > span > span:first-child {
+                    /* 项目名单独限宽：比描述更窄一档，长名字不会把状态/领域标签推到很远处 */
+                    max-width: 320px;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                }
+                .overview-head p {
+                    /* 描述限宽（2026-11-13）：铺满整行会让页头成为一整段长文字，
+                       限到 520px 左右读起来是一句说明而不是一条横幅；超出单行省略 */
+                    max-width: 520px;
+                    display: -webkit-box;
+                    -webkit-line-clamp: 1;
+                    -webkit-box-orient: vertical;
+                    overflow: hidden;
+                }
+            `}</style>
+            {/* 顶栏走全站 Navbar（面包屑承载层级与返回） */}
             <Navbar breadcrumbs={[
                 { title: '首页', path: '/' },
                 { title: '我的项目', path: '/my-projects' },
                 { title: projectReady && projectName ? projectName : '项目详情' },
             ]} />
             <div className="w-full p-4 lg:px-8 2xl:max-w-[1600px] 2xl:mx-auto flex-1 min-h-0 overflow-y-auto scrollbar-stable">
-                {/* 项目头部卡：名称/描述/时间 + 状态/领域 + 项目级操作收进卡片，避免标签裸放在画布上 */}
-                <div className="bg-white border border-[#E6EBF5] rounded-xl shadow-sm px-5 py-4 mb-4 flex flex-wrap items-start gap-x-4 gap-y-3">
-                    <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-x-2 gap-y-1 flex-wrap">
-                            <h1 className="text-lg font-semibold text-gray-800 truncate max-w-full">
+                {/* 页头走全站 PageHeader（与报告生成 / 系统配置各页同一规格）：
+                    项目身份与主操作直接挂在页面上，不再单独占一张白卡 */}
+                <PageHeader
+                    className="overview-head"
+                    icon={<ApartmentOutlined />}
+                    title={(
+                        /* 项目名可能很长：名字单行截断（悬停看全称），状态/领域标签 shrink-0 不被挤掉，
+                           整行不再换行——否则长名字会把页头撑成三四行，把下面的内容整个推下去 */
+                        <span className="flex min-w-0 items-center gap-2">
+                            <span className="min-w-0 truncate" title={projectReady ? projectName : undefined}>
                                 {projectReady ? projectName : '加载中…'}
-                            </h1>
-                            {projectReady && <Tag color={statusMeta.color} className="mr-0">{statusMeta.text}</Tag>}
-                            {projectReady && domainName && <Tag color="blue" className="mr-0">{domainName}</Tag>}
-                        </div>
-                        {projectReady && projectDescription && (
-                            <p className="mt-1.5 text-sm text-gray-500 line-clamp-2">{projectDescription}</p>
-                        )}
-                        <p className="mt-2 text-xs text-gray-400">
-                            {projectReady
-                                ? `创建 ${fmtDate(projectCreatedAt)} · 更新 ${fmtDate(projectUpdatedAt)}`
-                                : ' '}
-                        </p>
-                    </div>
-                    <div className="shrink-0 flex items-center gap-2">
-                        {isExpert && (
-                            <Button icon={<NodeIndexOutlined />}
-                                    onClick={() => navigate(`/projects/${pid}/documents`)}>
-                                专家模式
+                            </span>
+                            {projectReady && (
+                                <Tag color={statusMeta.color} className="!m-0 shrink-0">{statusMeta.text}</Tag>
+                            )}
+                            {projectReady && domainName && (
+                                <Tag
+                                    className="!m-0 shrink-0 max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap"
+                                    title={domainName}
+                                    style={{ background: 'rgba(91,141,239,0.12)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.28)' }}
+                                >
+                                    {domainName}
+                                </Tag>
+                            )}
+                        </span>
+                    )}
+                    subtitle={
+                        projectReady && projectDescription
+                            ? (
+                                <span className="line-clamp-1" title={projectDescription}>
+                                    {projectDescription}
+                                </span>
+                            )
+                            : undefined
+                    }
+                    extra={(
+                        <>
+                            <span className="whitespace-nowrap text-[12px] text-[#A3ADC2] mr-1">
+                                {projectReady
+                                    ? `创建 ${fmtDate(projectCreatedAt)} · 更新 ${fmtDate(projectUpdatedAt)}`
+                                    : ' '}
+                            </span>
+                            {isExpert && (
+                                <Button icon={<NodeIndexOutlined />}
+                                        onClick={() => navigate(`/projects/${pid}/documents`)}>
+                                    专家模式
+                                </Button>
+                            )}
+                            <Button type="primary" ghost icon={<RocketOutlined />}
+                                    onClick={() => navigate(`/qa?projectId=${pid}`)}>
+                                去问答
                             </Button>
-                        )}
-                        <Button type="primary" ghost icon={<RocketOutlined />}
-                                onClick={() => navigate(`/qa?projectId=${pid}`)}>
-                            去问答
-                        </Button>
-                    </div>
-                </div>
+                        </>
+                    )}
+                />
 
-                {/* 构建状态卡（PipelinePanel：四步清单 + 阶段计数；构建中可收起） */}
-                <PipelinePanel projectId={pid} signal={pipelineSignal}
-                               onPipeStatus={handlePipeStatus}
-                               published={summary?.is_published}
-                               built={(summary?.schema.classes_total ?? 0) > 0}
-                               onNavigate={(tab) => navigate(tab === 'reviews'
-                                   ? (isExpert ? `/projects/${pid}/reviews` : `/projects/${pid}/result`)
-                                   : `/projects/${pid}/${tab}`)} />
+                {/* 主体：构建 / 文档 / 结果原本是三张独立白卡，堆在一起像三块板子；
+                    现在收进同一张白面，用发丝线分段。子组件自身的 Card 由 .overview-stack
+                    压平（只影响本页，专家模式 Tab 里的用法不变） */}
+                <div className="overview-stack mb-4 overflow-hidden rounded-xl border border-[#E7EEF9] bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04),0_12px_26px_-22px_rgba(15,23,42,0.28)]">
+                    <PipelinePanel projectId={pid} signal={pipelineSignal}
+                                   onPipeStatus={handlePipeStatus}
+                                   published={summary?.is_published}
+                                   built={(summary?.schema.classes_total ?? 0) > 0}
+                                   onNavigate={(tab) => navigate(tab === 'reviews'
+                                       ? (isExpert ? `/projects/${pid}/reviews` : `/projects/${pid}/result`)
+                                       : `/projects/${pid}/${tab}`)} />
 
-                {/* （资产概览统计行已删除：结果卡头部与文档卡标题已含同一组数字，避免重复） */}
-
-                {/* 文档管理卡：清单 + 上传 + 下载 + 删除（2026-11 构建界面改版）
-                    mt-4：卡片自身的 mb-* 被 index.css 的 .ant-card{margin-bottom:0} 覆盖，
-                    间距改用外层 div 控制（2026-11-11） */}
-                <div className="mt-4 mb-4">
                     <ProjectDocsCard projectId={pid} onChanged={load} pipelineStage={pipeStage} />
-                </div>
 
-                {!building && summary && summary.schema.classes_total > 0 && (
-                    <div className="mb-4">
+                    {!building && summary && summary.schema.classes_total > 0 && (
                         <BuildResultsPanel projectId={pid} summary={summary} checks={summary.checks}
                                            publishedVersionNo={publishedVersion?.version_no ?? null}
                                            onPublishedChange={() => { load(); loadProject(pid); }} />
-                    </div>
-                )}
-
-                {/* 空项目引导卡已按用户要求移除（2026-11-06）：构建状态与操作
-                    全部由上方 PipelinePanel 承担，不再展示任何引导文案 */}
+                    )}
+                </div>
             </div>
 
         </div>

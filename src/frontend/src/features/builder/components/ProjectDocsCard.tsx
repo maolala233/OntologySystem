@@ -5,20 +5,21 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { message } from '../../../shared/feedback';
-import { Button, Card, Empty, Popconfirm, Space, Spin, Table, Tag, Upload } from 'antd';
+import { Button, Card, Popconfirm, Space, Spin, Table, Tag, Upload } from 'antd';
 import {
-    CloudDownloadOutlined, DeleteOutlined, UploadOutlined,
+    CloudDownloadOutlined, DeleteOutlined, FileTextOutlined, UploadOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 
 import { documentsApi, DocumentRow } from '../../../api/documents';
 import { UPLOAD_ACCEPT, UPLOAD_EXTS, MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from '../documents/uploadFormats';
 
-const PARSE_TAG: Record<string, { color: string; text: string }> = {
-    uploaded: { color: 'default', text: '待解析' },
-    parsing: { color: 'processing', text: '解析中' },
-    parsed: { color: 'success', text: '已解析' },
-    failed: { color: 'error', text: '解析失败' },
+// 解析状态标签：用冷调淡底代替 antd 的语义色（绿/蓝/红在一屏里过于抢眼）
+const PARSE_TAG: Record<string, { style: React.CSSProperties; text: string }> = {
+    uploaded: { style: { background: 'rgba(15,23,42,0.05)', color: '#8A94AB', borderColor: 'rgba(15,23,42,0.08)' }, text: '待解析' },
+    parsing: { style: { background: 'rgba(242,185,80,0.20)', color: '#B8790F', borderColor: 'rgba(242,185,80,0.45)' }, text: '解析中' },
+    parsed: { style: { background: 'rgba(91,141,239,0.12)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.28)' }, text: '已解析' },
+    failed: { style: { background: 'rgba(180,35,24,0.10)', color: '#B42318', borderColor: 'rgba(180,35,24,0.22)' }, text: '解析失败' },
 };
 
 interface Props {
@@ -65,9 +66,12 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage 
     // 管线正在「解析文档」阶段时也必须轮询：重新构建（restart）会把已解析文档重新置为解析中，
     // 若本地缓存还停留在上一轮的「已解析」，不轮询就会一直显示已解析、看不到真实进度
     const pipelineParsing = pipelineStage?.key === 'parse' && pipelineStage.status === 'running';
+    // 依赖里只能放「聚合出来的布尔值」，不能放 docs 数组：
+    // fetchList 每次都 setDocs 生成新数组，若 docs 进依赖，effect 会被自己触发的渲染
+    // 反复重启，而重启时又会立刻 fetchList 一次 → 死循环（实测构建期间按网络往返速度打接口）
+    const docsBusy = docs.some((d) => d.parse_status === 'parsing' || d.parse_status === 'uploaded');
     useEffect(() => {
-        const busy = pipelineParsing
-            || docs.some((d) => d.parse_status === 'parsing' || d.parse_status === 'uploaded');
+        const busy = pipelineParsing || docsBusy;
         if (!busy) return;
         if (pipelineParsing) void fetchList();  // 刚进入解析阶段先立刻拉一次，不等第一个 2.5s 周期
         const t = setInterval(async () => {
@@ -79,7 +83,7 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage 
             } catch { /* 下一轮再试 */ }
         }, 2500);
         return () => clearInterval(t);
-    }, [docs, fetchList, onChanged, pipelineParsing]);
+    }, [docsBusy, fetchList, onChanged, pipelineParsing]);
 
     // 上传文档（可多选）：上传即同步解析（auto_parse=true）
     // antd 的 onChange 每选一个文件触发一次且携带累积 fileList——必须按 uid 去重，
@@ -120,10 +124,10 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage 
                   : '';
               if (v === 'parsed' && parseMsg.startsWith('解析中') && d?.filename
                   && parseMsg.includes(d.filename)) {
-                  return <Tag color="processing">解析中</Tag>;
+                  return <Tag style={PARSE_TAG.parsing.style}>解析中</Tag>;
               }
               const m = PARSE_TAG[v] || PARSE_TAG.uploaded;
-              return <Tag color={m.color}>{m.text}</Tag>;
+              return <Tag style={m.style}>{m.text}</Tag>;
           } },
         { title: '操作', key: 'ops', width: 160,
           render: (_, d) => (
@@ -161,7 +165,9 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage 
                       <span>上传的文档（{docs.length}）</span>
                       {pipelineStage && (
                           <Tag
-                              color={pipelineStage.status === 'running' ? 'processing' : 'default'}
+                              style={pipelineStage.status === 'running'
+                                  ? { background: 'rgba(91,141,239,0.12)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.28)' }
+                                  : { background: 'rgba(15,23,42,0.05)', color: '#8A94AB', borderColor: 'rgba(15,23,42,0.08)' }}
                               className="!mr-0 !text-[11px]"
                           >
                               {pipelineStage.status === 'running'
@@ -198,13 +204,21 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage 
             {loading ? (
                 <div className="py-6 text-center"><Spin /></div>
             ) : docs.length === 0 ? (
-                <Empty description="暂无文档" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+                <div className="flex flex-col items-center justify-center py-8">
+                    <div
+                        className="w-12 h-12 rounded-2xl flex items-center justify-center text-[20px] text-[#2F62D8]"
+                        style={{ background: 'linear-gradient(135deg, rgba(91,141,239,0.16), rgba(139,92,246,0.10))' }}
+                    >
+                        <FileTextOutlined />
+                    </div>
+                    <div className="mt-2.5 text-[13px] text-[#66738F]">暂无文档，点击右上角「上传文档」添加</div>
+                </div>
             ) : (
                 <Table rowKey="id" size="small" columns={columns}
                        dataSource={docs}
                        pagination={docs.length > 8 ? { pageSize: 8, showSizeChanger: false } : false} />
             )}
-            <div className="text-xs text-gray-400 mt-2 flex items-center gap-1">
+            <div className="mt-2 flex items-center gap-1 text-[11px] text-[#A3ADC2]">
                 <UploadOutlined /> 支持 {UPLOAD_EXTS.join(' / ')}。
             </div>
         </Card>

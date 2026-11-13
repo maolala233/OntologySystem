@@ -1,7 +1,7 @@
 /**
  * M3-1/M3-2 文档面 API（03 §7）——上传/秒传/解析/分块/下载（Documents Tab 数据源）。
  */
-import apiClient from './client';
+import apiClient, { sharedGet } from './client';
 
 export interface DocumentRow {
     id: number;
@@ -49,12 +49,10 @@ export const documentsApi = {
         return response.data;
     },
 
-    list: async (projectId: number, parseStatus?: string): Promise<{ total: number; documents: DocumentRow[] }> => {
-        const response = await apiClient.get(`/api/projects/${projectId}/documents`, {
+    list: (projectId: number, parseStatus?: string): Promise<{ total: number; documents: DocumentRow[] }> =>
+        sharedGet<{ total: number; documents: DocumentRow[] }>(`/api/projects/${projectId}/documents`, {
             params: parseStatus ? { parse_status: parseStatus } : {},
-        });
-        return response.data;
-    },
+        }),
 
     /** 手动（重）解析：backend auto/docling_ocr/docling/vl_model/native + chunk 参数 */
     parse: async (projectId: number, docId: number, options?: {
