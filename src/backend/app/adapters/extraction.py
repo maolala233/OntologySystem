@@ -208,6 +208,9 @@ class SchemaExtractionResult(BaseModel):
     business_rules: list[dict] = Field(default_factory=list)
     # 语义采集表·规则层：[{statement, kind?, evidence, _source_chunk_index}]（文档证据锚定）
     stitch_segments: int = 0      # 缝合实际执行的段数（大文档覆盖可见性）
+    stitch_mode: str = "flat"     # 缝合模式：flat=字符窗口平铺；tree=两两归并树
+    stitch_tree_levels: int = 0   # 归并树层数（tree 模式）
+    stitch_tree_calls: int = 0    # 归并树实际发起的 LLM 调用数（tree 模式）
     structure_maps: list[dict] = Field(default_factory=list)
     # 结构映射（表格/条款 → 行主体类 + 列→关系/属性），实例阶段确定性展开用
     structure_map_calls: int = 0  # 实际发起 LLM 决策的签名数（缓存命中不计）
@@ -538,6 +541,333 @@ def _stitch_user_prompt(class_list_text: str, doc_text: str, error_feedback: str
     return "\n\n".join(parts)
 
 
+# ── 归并树缝合（实验，STITCH_TREE_ENABLED）：叶子两两切片 → 逐层合并结果 ──
+_STITCH_TREE_LEAF_CHARS = 3000       # 叶子段每个切片最多带多少字符
+_STITCH_TREE_MAX_RELATIONS = 120     # 单节点关系数上限（防父节点 prompt 无限增长）
+_STITCH_TREE_EVIDENCE_CHARS = 300    # 父节点只带证据短句，避免关系 JSON 膨胀
+
+_STITCH_MERGE_SYSTEM_PROMPT = (
+    "你是本体关系归并器。给你两组来自相邻文档片段的关系，它们都已有原文证据支持。"
+    "请把两组合并成一组：\n"
+    "1. 同一关系（谓词、domain、range 相同）只保留一条；\n"
+    "2. 明显同义的谓词合并成一个更简短、准确的动词短语；\n"
+    "3. 不要发明两组里都没有的新关系，不要改变 domain/range，不要输出类清单外的类；\n"
+    "4. evidence 保留原有原文证据，不要编造。\n"
+    "只输出一个 JSON 对象：{\"relations\": [...]}，结构严格遵循给定 JSON Schema。"
+)
+
+_STITCH_MERGE_JSON_SCHEMA = STITCH_JSON_SCHEMA
+
+
+def _stitch_merge_user_prompt(class_list_text: str, left: list[dict],
+                              right: list[dict], error_feedback: str = "") -> str:
+    def _clean(rels: list[dict]) -> list[dict]:
+        rows = [{
+            "label": r.get("label"),
+            "domain": r.get("domain"),
+            "range": r.get("range"),
+            "confidence": r.get("confidence"),
+            "evidence": str(r.get("evidence") or "")[:_STITCH_TREE_EVIDENCE_CHARS],
+        } for r in rels]
+        return sorted(rows, key=lambda x: (
+            normalize_label(str(x.get("label") or "")),
+            normalize_label(str(x.get("domain") or "")),
+            normalize_label(str(x.get("range") or ""))))
+
+    parts = [
+        "【类清单】（domain/range 只能取自这里，逐字一致）\n" + class_list_text,
+        "【第一部分关系】\n" + json.dumps(_clean(left), ensure_ascii=False),
+        "【第二部分关系】\n" + json.dumps(_clean(right), ensure_ascii=False),
+    ]
+    if error_feedback:
+        parts.append(f"【上次输出错误，必须修正】\n{error_feedback}")
+    return "\n\n".join(parts)
+
+
+def _stitch_rel_key(r: dict) -> tuple[str, str, str]:
+    return (normalize_label(str(r.get("label") or "")),
+            normalize_label(str(r.get("domain") or "")),
+            normalize_label(str(r.get("range") or "")))
+
+
+def _normalize_stitch_rels(rels: list | None,
+                           norm2label: dict[str, str]) -> list[dict]:
+    """校验并收敛缝合结果：domain/range 必须是已知类，去自环、去重、限量。"""
+    out: list[dict] = []
+    seen: set[tuple[str, str, str]] = set()
+    for r in rels or []:
+        if not isinstance(r, dict):
+            continue
+        label = str(r.get("label") or "").strip()
+        d = normalize_label(str(r.get("domain") or ""))
+        g = normalize_label(str(r.get("range") or ""))
+        if not label or d == g or d not in norm2label or g not in norm2label:
+            continue
+        k = (normalize_label(label), d, g)
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append({
+            "label": label,
+            "domain": norm2label[d],
+            "range": norm2label[g],
+            "confidence": _coerce_confidence(r.get("confidence")),
+            "evidence": str(r.get("evidence") or "")[:1024],
+        })
+        if len(out) >= _STITCH_TREE_MAX_RELATIONS:
+            break
+    return out
+
+
+def _union_stitch_rels(*groups: list[dict]) -> list[dict]:
+    """确定性并集（父节点 LLM 失败/空返回时兜底）。"""
+    out: list[dict] = []
+    seen: set[tuple[str, str, str]] = set()
+    for group in groups:
+        for r in group or []:
+            k = _stitch_rel_key(r)
+            if k in seen:
+                continue
+            seen.add(k)
+            out.append(r)
+            if len(out) >= _STITCH_TREE_MAX_RELATIONS:
+                return out
+    return out
+
+
+def _reconcile_parent_rels(parent: list[dict], left: list[dict],
+                           right: list[dict]) -> list[dict]:
+    """父节点结果与子节点对账：只允许子节点已有的 (domain,range) 类对；
+    父节点给了某类对就采用它的谓词（允许同义合并），没给就保留子节点原关系。"""
+    children = _union_stitch_rels(left, right)
+    allowed_pairs = {(normalize_label(r["domain"]), normalize_label(r["range"]))
+                     for r in children}
+    by_pair: dict[tuple[str, str], list[dict]] = {}
+    for r in parent:
+        pair = (normalize_label(r["domain"]), normalize_label(r["range"]))
+        if pair not in allowed_pairs:
+            continue
+        by_pair.setdefault(pair, []).append(r)
+
+    out: list[dict] = []
+    seen_pairs: set[tuple[str, str]] = set()
+    for child in children:
+        pair = (normalize_label(child["domain"]), normalize_label(child["range"]))
+        if pair in seen_pairs:
+            continue
+        seen_pairs.add(pair)
+        picked = by_pair.get(pair)
+        if picked:
+            # 同类对只留一条：置信度高者优先，其次更短的谓词（结果不依赖 LLM 输出顺序）
+            picked = sorted(
+                picked,
+                key=lambda r: (-(r.get("confidence") or 0.0),
+                               len(str(r.get("label") or "")),
+                               normalize_label(str(r.get("label") or ""))))
+            r = dict(picked[0])
+            if not r.get("evidence"):
+                r["evidence"] = child.get("evidence") or ""
+            if r.get("confidence") is None:
+                r["confidence"] = child.get("confidence")
+            out.append(r)
+        else:
+            out.append(child)
+        if len(out) >= _STITCH_TREE_MAX_RELATIONS:
+            break
+    return out
+
+
+def _call_stitch_llm(model_name: str, system_prompt: str, user_prompt: str,
+                     llm_call: Callable, use_cache: bool,
+                     cancel_cb: Optional[Callable]) -> tuple[Optional[list], Any, str]:
+    """一次缝合/归并调用：Redis 缓存 + 带错误反馈重试一次。"""
+    key = _cache_key(model_name, system_prompt, user_prompt)
+    if use_cache:
+        cached = _cache_get(key)
+        if cached is not None:
+            return cached, True, ""
+    feedback = ""
+    err = "未知错误"
+    for _attempt in range(2):
+        if cancel_cb is not None:
+            cancel_cb()
+        try:
+            raw = llm_call(system_prompt,
+                           user_prompt + (f"\n\n【上次输出错误，必须修正】\n{feedback}"
+                                          if feedback else ""),
+                           STITCH_JSON_SCHEMA)
+        except LLMEndpointUnreachableError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            err = f"LLM调用异常: {e}"
+            feedback = err
+            continue
+        rels, feedback = _validate_stitch_payload(raw)
+        if rels is not None:
+            if use_cache:
+                _cache_put(key, rels)
+            return rels, False, ""
+        err = feedback
+    return None, False, err
+
+
+def _stitch_tree_relations(prepared: list, class_list_text: str,
+                           norm2label: dict[str, str], llm_call: Callable,
+                           model_name: str, use_cache: bool,
+                           cancel_cb: Optional[Callable],
+                           progress_cb: Optional[Callable[[int, int], None]],
+                           leaf_chunks: int = 2,
+                           max_calls: int = 64,
+                           ) -> Optional[tuple[list[dict], dict, list[str]]]:
+    """两两归并树缝合。返回 (relations, stats, warnings)；调用数超限返回 None（回退 flat）。"""
+    nodes = sorted(prepared, key=lambda x: x[0])
+    if len(nodes) < 2:
+        return None
+    leaf_chunks = max(1, int(leaf_chunks or 2))
+    leaf_texts: list[str] = []
+    for i in range(0, len(nodes), leaf_chunks):
+        group = nodes[i:i + leaf_chunks]
+        parts = []
+        for idx, text, _doc, _h in group:
+            parts.append(f"[切片 {idx}] " + str(text).strip()[:_STITCH_TREE_LEAF_CHARS])
+        leaf_texts.append("\n\n".join(parts))
+
+    # 预估调用数：叶子 + 每层两两合并（不计空节点跳过，实际只会更少）
+    total = len(leaf_texts)
+    m = len(leaf_texts)
+    while m > 1:
+        total += (m + 1) // 2
+        m = (m + 1) // 2
+    if total > max(1, int(max_calls or 64)):
+        return None
+
+    warnings: list[str] = []
+    calls = 0
+    done = 0
+
+    def _notify() -> None:
+        if progress_cb is not None:
+            progress_cb(done, total)
+
+    _notify()
+    leaf_rels: list[list[dict]] = [[] for _ in leaf_texts]
+
+    def _leaf(i: int, text: str):
+        rels, hit, err = _call_stitch_llm(
+            model_name, STITCH_SYSTEM_PROMPT,
+            _stitch_user_prompt(class_list_text, text),
+            llm_call, use_cache, cancel_cb)
+        return i, rels, hit, err
+
+    with ThreadPoolExecutor(max_workers=_llm_max_workers()) as pool:
+        futures = {submit_with_context(pool, _leaf, i, t): i
+                   for i, t in enumerate(leaf_texts)}
+        try:
+            for fut in as_completed(futures):
+                i, rels, hit, err = fut.result()
+                done += 1
+                if rels is None:
+                    calls += 1
+                    warnings.append(f"归并树叶子段 #{i} 缝合失败（已重试）: {err}")
+                else:
+                    if not hit:
+                        calls += 1
+                    leaf_rels[i] = _normalize_stitch_rels(rels, norm2label)
+                _notify()
+        except BaseException:
+            for f in futures:
+                f.cancel()
+            raise
+
+    nodes_rels = leaf_rels
+    levels = 1
+    while len(nodes_rels) > 1:
+        new_nodes: list[Optional[list[dict]]] = [None] * ((len(nodes_rels) + 1) // 2)
+        merge_jobs: list[tuple[int, int, list[dict], list[dict]]] = []
+        slot = 0
+        for i in range(0, len(nodes_rels), 2):
+            left = nodes_rels[i]
+            if i + 1 >= len(nodes_rels):
+                new_nodes[slot] = left
+                done += 1
+                _notify()
+            elif not left and not nodes_rels[i + 1]:
+                new_nodes[slot] = []
+                done += 1
+                _notify()
+            elif not left or not nodes_rels[i + 1]:
+                new_nodes[slot] = left or nodes_rels[i + 1]
+                done += 1
+                _notify()
+            else:
+                merge_jobs.append((slot, i, left, nodes_rels[i + 1]))
+            slot += 1
+
+        def _merge(slot_i: int, left: list[dict], right: list[dict]):
+            rels, hit, err = _call_stitch_llm(
+                model_name, _STITCH_MERGE_SYSTEM_PROMPT,
+                _stitch_merge_user_prompt(class_list_text, left, right),
+                llm_call, use_cache, cancel_cb)
+            if rels is None:
+                return slot_i, _union_stitch_rels(left, right), hit, err
+            parent = _normalize_stitch_rels(rels, norm2label)
+            return slot_i, _reconcile_parent_rels(parent, left, right), hit, ""
+
+        if merge_jobs:
+            with ThreadPoolExecutor(max_workers=_llm_max_workers()) as pool:
+                futures = {submit_with_context(pool, _merge, sl, l, r): sl
+                           for sl, _i, l, r in merge_jobs}
+                try:
+                    for fut in as_completed(futures):
+                        sl, rels, hit, err = fut.result()
+                        done += 1
+                        if not hit:
+                            calls += 1
+                        if err:
+                            warnings.append(f"归并树父节点 #{sl} 合并失败，已用并集兜底: {err}")
+                        new_nodes[sl] = rels
+                        _notify()
+                except BaseException:
+                    for f in futures:
+                        f.cancel()
+                    raise
+        nodes_rels = [n if n is not None else [] for n in new_nodes]
+        levels += 1
+
+    done = total
+    _notify()
+    return nodes_rels[0], {"levels": levels, "calls": calls,
+                            "leaves": len(leaf_texts), "nodes": total}, warnings
+
+
+def _apply_stitched_relations(rels: list[dict], obj_props: dict,
+                              norm2label: dict[str, str],
+                              existing_rk: set[tuple[str, str, str]],
+                              strict_rel_norms: Optional[set[str]] = None) -> int:
+    """把缝合关系落到 obj_props（只连已知类、不自环、按 谓词|domain|range 去重）。"""
+    added = 0
+    for r in rels or []:
+        label = str(r.get("label") or "").strip()
+        d = normalize_label(str(r.get("domain") or "").strip())
+        g = normalize_label(str(r.get("range") or "").strip())
+        if not label or d == g or d not in norm2label or g not in norm2label:
+            continue
+        if strict_rel_norms is not None and normalize_label(label) not in strict_rel_norms:
+            continue
+        rk = (normalize_label(label), d, g)
+        if rk in existing_rk:
+            continue
+        existing_rk.add(rk)
+        obj_props[f"{normalize_label(label)}|{d}|{g}"] = {
+            "label": label,
+            "domain": norm2label[d],
+            "range": norm2label[g],
+            "confidence": _coerce_confidence(r.get("confidence")),
+            "evidence": str(r.get("evidence") or "")[:1024]}
+        added += 1
+    return added
+
+
 def _validate_stitch_payload(payload: Any) -> tuple[Optional[list], str]:
     if not isinstance(payload, dict):
         return None, "输出不是 JSON 对象"
@@ -574,37 +904,39 @@ def _stitch_class_list(classes: list[dict]) -> str:
 def _stitch_segments(prepared: list[tuple[int, str, str, str]],
                      merged: dict[str, dict],
                      obj_props: dict[str, dict],
-                     max_calls: int) -> list[str]:
+                     max_calls: int,
+                     include_targeted: bool = True) -> list[str]:
     """缝合素材分段（缺口驱动 + 顺序兜底）。
 
     原实现只做顺序摘录（文档头部起 8 段）——大文档后半部分的关系永远缝不上。
-    现在：①计算类连接度，把零连接/低连接（度≤1）类的首现切片摘录做成【定向段】
-    （缺失关系最可能藏在那里）；②剩余预算给顺序段兜底全局。
+    现在：①可选的计算类连接度，把零连接/低连接（度≤1）类的首现切片摘录做成
+    【定向段】（缺失关系最可能藏在那里）；②剩余预算给顺序段兜底全局。
     返回段列表（顺序确定性），调用方逐段（并行）缝合。
     """
     segs: list[str] = []
-    # ── ① 定向段：低连接类的首现切片 ──
-    deg: dict[str, int] = {}
-    for op in obj_props.values():
-        for side in ("domain", "range"):
-            k = normalize_label(str(op.get(side) or ""))
-            if k:
-                deg[k] = deg.get(k, 0) + 1
-    low_keys = {k for k, v in merged.items() if deg.get(k, 0) <= 1}
-    target_chunks = sorted({v.get("_source_chunk_index") for k, v in merged.items()
-                            if k in low_keys and isinstance(v.get("_source_chunk_index"), int)})
-    text_by_idx = {idx: text for idx, text, _d, _h in prepared}
-    buf = ""
-    for idx in target_chunks:
-        piece = f"[切片 {idx}] " + str(text_by_idx.get(idx, ""))[:_STITCH_TARGET_CHARS]
-        if len(buf) + len(piece) > _STITCH_MAX_CHARS_PER_SEG and buf:
+    # ── ① 定向段：低连接类的首现切片（中小文档通常与顺序段重复，默认关闭）──
+    if include_targeted:
+        deg: dict[str, int] = {}
+        for op in obj_props.values():
+            for side in ("domain", "range"):
+                k = normalize_label(str(op.get(side) or ""))
+                if k:
+                    deg[k] = deg.get(k, 0) + 1
+        low_keys = {k for k, v in merged.items() if deg.get(k, 0) <= 1}
+        target_chunks = sorted({v.get("_source_chunk_index") for k, v in merged.items()
+                                if k in low_keys and isinstance(v.get("_source_chunk_index"), int)})
+        text_by_idx = {idx: text for idx, text, _d, _h in prepared}
+        buf = ""
+        for idx in target_chunks:
+            piece = f"[切片 {idx}] " + str(text_by_idx.get(idx, ""))[:_STITCH_TARGET_CHARS]
+            if len(buf) + len(piece) > _STITCH_MAX_CHARS_PER_SEG and buf:
+                segs.append(buf)
+                buf = ""
+                if len(segs) >= max_calls:
+                    return segs
+            buf = (buf + "\n\n" + piece) if buf else piece
+        if buf and len(segs) < max_calls:
             segs.append(buf)
-            buf = ""
-            if len(segs) >= max_calls:
-                return segs
-        buf = (buf + "\n\n" + piece) if buf else piece
-    if buf and len(segs) < max_calls:
-        segs.append(buf)
     # ── ② 顺序段兜底（剩余预算）──
     remain = max_calls - len(segs)
     if remain > 0:
@@ -748,6 +1080,8 @@ def extract_schema(chunks: list, base_uri: str,
       归并与缝合后按白名单硬过滤（超出的类/属性/关系一律丢弃），防大模型抽取发散
     - 归并后做跨切片关系缝合：全类清单 + 文档摘录补一轮 LLM 调用，连上分散在
       不同切片的类间关系（只连已知类，需原文证据；stitched_relations 记数）
+    - STITCH_TREE_ENABLED=true 时改走归并树：相邻切片两两做叶子，再逐层合并结果；
+      调用数超过 STITCH_TREE_MAX_CALLS 自动回退 flat 平铺
     - 本地校验失败带错误反馈重试 1 次，仍失败计 warning
     - progress_cb(done, total, cache_hits)；cancel_cb() 抛异常即中止（Celery 取消用）
     model_config_id：显式指定 model_configs 行（用户个人选择，API 层已校验可见性）；
@@ -968,6 +1302,7 @@ def extract_schema(chunks: list, base_uri: str,
     # ── 跨切片关系缝合：切片独立抽取只连得到同片共现的关系，这里归并后统一补一轮 ──
     # 依据 = 文档内容摘录（evidence 逐字摘录），只连类清单里已有的类，不造新类。
     stitched = 0
+    stitch_segments_count = 0
     if len(classes) >= 2 and len(prepared) >= 2:
         class_list_text = _stitch_class_list(classes)
         norm2label = {k: v["label"] for k, v in merged.items()}
@@ -976,81 +1311,90 @@ def extract_schema(chunks: list, base_uri: str,
                 norm2label.setdefault(normalize_label(_a), _v["label"])
         existing_rk = {(normalize_label(v["label"]), normalize_label(v["domain"]),
                         normalize_label(v["range"])) for v in obj_props.values()}
-        # 调用上限随切片数扩展（基础 8 + 每 25 切片加一，封顶 24）；
-        # 素材分段缺口驱动（低连接类首现切片优先）+ 顺序兜底
-        max_calls = min(_STITCH_MAX_CALLS_CAP,
-                        _STITCH_MAX_CALLS + len(prepared) // _STITCH_CALLS_PER_CHUNKS)
-        segs = _stitch_segments(prepared, merged, obj_props, max_calls)
+        strict_rel_norms = wl["rel_norms"] if wl is not None else None
 
-        def _stitch_one(si: int, seg: str):
-            """单段缝合（线程内执行）：缓存查询 + 重试一次。返回 (si, rels|None, err)。"""
-            skey = _cache_key(model_name, STITCH_SYSTEM_PROMPT,
-                              _stitch_user_prompt(class_list_text, seg))
-            rels = _cache_get(skey) if use_cache else None
-            if rels is None:
-                feedback = ""
-                for _attempt in range(2):  # 首次 + 带错误反馈重试 1 次
-                    if cancel_cb is not None:
-                        cancel_cb()  # 取消后不再发起新的缝合调用（在途那次返回后中断）
-                    try:
-                        raw = llm_call(STITCH_SYSTEM_PROMPT,
-                                       _stitch_user_prompt(class_list_text, seg, feedback),
-                                       STITCH_JSON_SCHEMA)
-                    except LLMEndpointUnreachableError:
-                        raise  # 端点不可达：中止整段缝合（快速失败）
-                    except Exception as _e:  # noqa: BLE001
-                        rels, feedback = None, f"LLM调用异常: {_e}"
-                        continue
-                    rels, feedback = _validate_stitch_payload(raw)
-                    if rels is not None:
-                        break
+        # 实验：归并树（叶子两两切片 → 逐层合并结果）。调用数超限自动回退 flat。
+        tree_res = None
+        if bool(getattr(settings, "STITCH_TREE_ENABLED", False)):
+            tree_res = _stitch_tree_relations(
+                prepared, class_list_text, norm2label, llm_call, model_name,
+                use_cache=use_cache, cancel_cb=cancel_cb,
+                progress_cb=stitch_progress_cb,
+                leaf_chunks=int(getattr(settings, "STITCH_TREE_LEAF_CHUNKS", 2) or 2),
+                max_calls=int(getattr(settings, "STITCH_TREE_MAX_CALLS", 64) or 64))
+
+        if tree_res is not None:
+            tree_rels, tree_stats, tree_warnings = tree_res
+            result.warnings.extend(tree_warnings)
+            stitched = _apply_stitched_relations(
+                tree_rels, obj_props, norm2label, existing_rk, strict_rel_norms)
+            result.stitch_mode = "tree"
+            result.stitch_tree_levels = int(tree_stats.get("levels") or 0)
+            result.stitch_tree_calls = int(tree_stats.get("calls") or 0)
+            stitch_segments_count = int(tree_stats.get("leaves") or 0)
+        else:
+            # 调用上限随切片数扩展（基础 8 + 每 25 切片加一，封顶 24）；
+            # 素材分段：可选的低连接类定向段 + 顺序兜底
+            max_calls = min(_STITCH_MAX_CALLS_CAP,
+                            _STITCH_MAX_CALLS + len(prepared) // _STITCH_CALLS_PER_CHUNKS)
+            segs = _stitch_segments(
+                prepared, merged, obj_props, max_calls,
+                include_targeted=bool(getattr(settings, "STITCH_TARGETED_ENABLED", False)))
+            stitch_segments_count = len(segs)
+
+            def _stitch_one(si: int, seg: str):
+                """单段缝合（线程内执行）：缓存查询 + 重试一次。返回 (si, rels|None, err)。"""
+                skey = _cache_key(model_name, STITCH_SYSTEM_PROMPT,
+                                  _stitch_user_prompt(class_list_text, seg))
+                rels = _cache_get(skey) if use_cache else None
                 if rels is None:
-                    return si, None, feedback
-                if use_cache:
-                    _cache_put(skey, rels)
-            return si, rels, ""
+                    feedback = ""
+                    for _attempt in range(2):  # 首次 + 带错误反馈重试 1 次
+                        if cancel_cb is not None:
+                            cancel_cb()  # 取消后不再发起新的缝合调用（在途那次返回后中断）
+                        try:
+                            raw = llm_call(STITCH_SYSTEM_PROMPT,
+                                           _stitch_user_prompt(class_list_text, seg, feedback),
+                                           STITCH_JSON_SCHEMA)
+                        except LLMEndpointUnreachableError:
+                            raise  # 端点不可达：中止整段缝合（快速失败）
+                        except Exception as _e:  # noqa: BLE001
+                            rels, feedback = None, f"LLM调用异常: {_e}"
+                            continue
+                        rels, feedback = _validate_stitch_payload(raw)
+                        if rels is not None:
+                            break
+                    if rels is None:
+                        return si, None, feedback
+                    if use_cache:
+                        _cache_put(skey, rels)
+                return si, rels, ""
 
-        # 并行执行（段间独立），结果按段序应用——并发只加速 IO，不破坏确定性
-        seg_results: dict[int, tuple] = {}
-        done_si = 0
-        if stitch_progress_cb is not None:
-            stitch_progress_cb(0, len(segs))
-        with ThreadPoolExecutor(max_workers=_llm_max_workers()) as spool:
-            futures = {submit_with_context(spool, _stitch_one, si, seg): si
-                       for si, seg in enumerate(segs)}
-            for fut in as_completed(futures):
-                if cancel_cb is not None:
-                    cancel_cb()
-                si, rels, err = fut.result()
-                seg_results[si] = (si, rels, err)
-                done_si += 1
-                if stitch_progress_cb is not None:
-                    stitch_progress_cb(done_si, len(segs))
-        for si in sorted(seg_results):
-            si, rels, err = seg_results[si]
-            if rels is None:
-                result.warnings.append(f"关系缝合段 #{si} 失败（已重试）: {err}")
-                continue
-            for r in rels:
-                label = str(r.get("label") or "").strip()
-                d = normalize_label(str(r.get("domain") or "").strip())
-                g = normalize_label(str(r.get("range") or "").strip())
-                if d == g or d not in norm2label or g not in norm2label:
-                    continue  # 缝合只连已知类，不造类不自环
-                if wl is not None and wl["rel_norms"] is not None \
-                        and normalize_label(label) not in wl["rel_norms"]:
-                    continue  # 严格模式：缝合关系谓词同样必须在白名单内
-                rk = (normalize_label(label), d, g)
-                if rk in existing_rk:
+            # 并行执行（段间独立），结果按段序应用——并发只加速 IO，不破坏确定性
+            seg_results: dict[int, tuple] = {}
+            done_si = 0
+            if stitch_progress_cb is not None:
+                stitch_progress_cb(0, len(segs))
+            with ThreadPoolExecutor(max_workers=_llm_max_workers()) as spool:
+                futures = {submit_with_context(spool, _stitch_one, si, seg): si
+                           for si, seg in enumerate(segs)}
+                for fut in as_completed(futures):
+                    if cancel_cb is not None:
+                        cancel_cb()
+                    si, rels, err = fut.result()
+                    seg_results[si] = (si, rels, err)
+                    done_si += 1
+                    if stitch_progress_cb is not None:
+                        stitch_progress_cb(done_si, len(segs))
+            for si in sorted(seg_results):
+                si, rels, err = seg_results[si]
+                if rels is None:
+                    result.warnings.append(f"关系缝合段 #{si} 失败（已重试）: {err}")
                     continue
-                existing_rk.add(rk)
-                obj_props[f"{normalize_label(label)}|{d}|{g}"] = {
-                    "label": label, "domain": norm2label[d], "range": norm2label[g],
-                    "confidence": _coerce_confidence(r.get("confidence")),
-                    "evidence": str(r.get("evidence") or "")[:1024]}
-                stitched += 1
+                stitched += _apply_stitched_relations(
+                    rels, obj_props, norm2label, existing_rk, strict_rel_norms)
     result.stitched_relations = stitched
-    result.stitch_segments = len(segs) if len(classes) >= 2 and len(prepared) >= 2 else 0
+    result.stitch_segments = stitch_segments_count
     _phases["stitch_seconds"] = round(time.perf_counter() - _t_stitch, 6)
 
     # 悬空引用 → 占位类标记 pending（04 §3.1 SchemaGate 归一）

@@ -33,6 +33,16 @@ class Settings(BaseSettings):
     # 唯一并发开关：抽取/缝合等并行阶段的线程预算也统一取该值，不再有独立并行度配置。
     LLM_MAX_CONCURRENCY: int = 16
 
+    # ===== 跨切片关系缝合（实验）=====
+    # flat（默认）：按字符窗口平铺，段间并行；
+    # tree：相邻切片两两一组做叶子，再逐层合并结果（调用次数多、单次短）。
+    STITCH_TREE_ENABLED: bool = False
+    STITCH_TREE_LEAF_CHUNKS: int = 2     # 每个叶子段包含几个切片
+    STITCH_TREE_MAX_CALLS: int = 64      # 安全上限；超过则回退 flat，避免大文档调用爆炸
+    # flat 模式下是否额外生成“低连接类定向段”。中小文档通常冗余，默认关闭；
+    # 大文档（单切片头部被 60k 预算截断）再打开。
+    STITCH_TARGETED_ENABLED: bool = False
+
     VLLM_API_KEY: str = "EMPTY"
     VLLM_BASE_URL: str = "http://localhost:9080/v1/chat/completions"
     VLLM_MODEL: str = "qwen2.5-7B"
