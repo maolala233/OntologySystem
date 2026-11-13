@@ -4,6 +4,8 @@
 #       → document_chunks 落库 → 元数据回填（text_key/page_count/language/parse_backend）。
 # 兼容期：同步双写 text_content（旧 extract-* 端点直接读该列，M3-3 R5 行表双写后收口）。
 
+import hashlib
+import json
 import time
 
 from sqlalchemy.orm import Session
@@ -60,6 +62,148 @@ def _default_chunk_params(project_id: int | None = None) -> ChunkParams:
         return ChunkParams()
 
 
+# ── 解析复用指纹（2026-11）───────────────────────────────────────────────
+# 重建（含「重新构建」restart）时，已解析文档是否要重新解析由后端自己判断：
+#   · 解析指纹（文件内容 + 解析入口 + 切片策略/大小/重叠）不一致 → 重新解析；
+#   · 解析指纹一致、向量指纹（嵌入模型/维度/集合）不一致 → 只重嵌入，不重解析；
+#   · 都一致且切片/向量条数对得上 → 直接复用。
+# 指纹存 DocumentChunk.meta["fingerprint"]（首切片），避免加列迁移；旧数据没有
+# 指纹，首次重建时会重解析一次，之后即走复用。
+# 解析器或切片算法有行为变更时手动 +1，让历史切片自动失效。
+PARSE_FINGERPRINT_VERSION = 1
+
+
+def _hash_signature(payload: dict) -> str:
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _file_ext(filename: str | None) -> str:
+    name = (filename or "").lower()
+    return name.rsplit(".", 1)[-1] if "." in name else ""
+
+
+def effective_chunk_params(project_id: int | None,
+                           chunk_params: dict | None = None) -> ChunkParams:
+    """本次解析实际生效的切片参数（与 run_parse 内同一口径）。"""
+    return ChunkParams(**chunk_params) if chunk_params else _default_chunk_params(project_id)
+
+
+def build_parse_fingerprint(doc: UploadedDocument, params: ChunkParams,
+                            backend: str = "auto") -> str:
+    """解析结果指纹：文件内容 + 解析入口 + 切片参数，任一变化都必须重解析。"""
+    return _hash_signature({
+        "v": PARSE_FINGERPRINT_VERSION,
+        "sha256": doc.sha256 or "",
+        "ext": _file_ext(doc.filename),
+        "backend": backend,
+        "chunk_size": int(params.chunk_size),
+        "chunk_overlap": round(float(params.overlap_ratio), 6),
+        "chunk_strategy": params.strategy,
+    })
+
+
+def build_vector_fingerprint() -> str:
+    """向量指纹：嵌入模型 + 维度 + 集合名（base_url 不参与，同模型换地址不误判）。"""
+    from app.infrastructure.vector_client import get_vector_signature
+
+    return _hash_signature({"v": PARSE_FINGERPRINT_VERSION, **get_vector_signature()})
+
+
+def read_chunk_fingerprint(db: Session, document_id: int) -> dict | None:
+    """读取首切片上记录的指纹（旧数据无指纹返回 None）。"""
+    row = (db.query(DocumentChunk.meta)
+           .filter(DocumentChunk.document_id == document_id)
+           .order_by(DocumentChunk.chunk_index.asc())
+           .first())
+    if not row:
+        return None
+    meta = row[0] or {}
+    fp = meta.get("fingerprint") if isinstance(meta, dict) else None
+    return fp if isinstance(fp, dict) else None
+
+
+def _new_vector_manager():
+    """连接向量库（不建集合）；不可用返回 None（判定时按“无法判断”处理）。"""
+    try:
+        from app.infrastructure.vector_client import VectorStoreManager
+
+        return VectorStoreManager(create_if_missing=False)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[pipeline] 向量库不可用，跳过向量新鲜度检查: {e}")
+        return None
+
+
+def decide_parse_action(doc: UploadedDocument, db: Session,
+                        chunk_params: dict | None = None, backend: str = "auto",
+                        vector_fp: str | None = None,
+                        vm_getter=None) -> str:
+    """已解析文档在重建时的处置：reparse / resync_vectors / reuse。
+
+    vm_getter 为惰性向量库工厂——只有解析指纹对得上时才连接 Milvus。
+    """
+    if doc.parse_status != "parsed":
+        return "reparse"
+    if not doc.sha256:  # 历史数据无内容哈希：无法证明原件未变，保守重解析
+        return "reparse"
+    chunk_count = (db.query(DocumentChunk)
+                   .filter(DocumentChunk.document_id == doc.id)
+                   .count())
+    if chunk_count <= 0:
+        return "reparse"
+    fp = read_chunk_fingerprint(db, doc.id)
+    if not fp:
+        return "reparse"
+    params = effective_chunk_params(doc.project_id, chunk_params)
+    if fp.get("parse") != build_parse_fingerprint(doc, params, backend):
+        return "reparse"
+    if not vector_fp:
+        vector_fp = build_vector_fingerprint()
+    if fp.get("vector") != vector_fp:
+        return "resync_vectors"
+    getter = vm_getter or _new_vector_manager
+    vm = getter()
+    if vm is None:  # Milvus 关闭/连不上：不因向量检查阻断复用
+        return "reuse"
+    n = vm.count_by_source(doc.project_id, doc.filename)
+    if n is None:
+        return "reuse"
+    return "reuse" if int(n) == chunk_count else "resync_vectors"
+
+
+def resync_document_vectors(doc: UploadedDocument, db: Session,
+                            vector_fp: str) -> int:
+    """切片仍在但向量缺失/过期（换嵌入模型、重建集合）：只重嵌入，不重解析。"""
+    from app.adapters.chunking import Chunk
+
+    rows = (db.query(DocumentChunk)
+            .filter(DocumentChunk.document_id == doc.id)
+            .order_by(DocumentChunk.chunk_index.asc())
+            .all())
+    if not rows:
+        return 0
+    chunks = [Chunk(text=r.text or "",
+                    start_index=int(r.char_start or 0),
+                    end_index=int(r.char_end or 0),
+                    chunk_index=int(r.chunk_index or 0),
+                    meta=dict(r.meta or {}))
+              for r in rows]
+    n = _sync_chunks_to_vector(doc, chunks)
+    if n and n >= len(chunks):
+        first = rows[0]
+        meta = dict(first.meta or {})
+        fp = dict(meta.get("fingerprint") or {})
+        fp.update({"version": PARSE_FINGERPRINT_VERSION, "vector": vector_fp})
+        meta["fingerprint"] = fp
+        first.meta = meta
+        try:
+            db.commit()
+        except Exception:  # noqa: BLE001 —— 指纹回写失败只影响下次重复重嵌入
+            db.rollback()
+    logger.info(f"[pipeline] 文档 {doc.id} 仅重嵌入向量: {n}/{len(rows)} 条")
+    return n
+
+
 def run_parse(document_id: int, backend: str = "auto",
               chunk_params: dict | None = None, task_id: str = "") -> dict:
     """解析 + 切片 + 落库全流程（自带会话，任务/请求两侧均可调）。
@@ -112,14 +256,23 @@ def run_parse(document_id: int, backend: str = "auto",
         _mark("store_text")
 
         _progress("chunk", 70, "中文切片中", {"chars": len(full_text)})
-        params = ChunkParams(**chunk_params) if chunk_params else _default_chunk_params(doc.project_id)
+        params = effective_chunk_params(doc.project_id, chunk_params)
         chunks = chunk_text(full_text, params)
         _mark("chunk")
 
+        # 本次解析产物的复用指纹（首切片携带；下次构建据此决定跳过/重嵌入）
+        fingerprint = {
+            "version": PARSE_FINGERPRINT_VERSION,
+            "parse": build_parse_fingerprint(doc, params, backend),
+            "vector": build_vector_fingerprint(),
+        }
         _progress("save", 88, "分块落库", {"chunks": len(chunks)})
         db.query(DocumentChunk).filter(DocumentChunk.document_id == doc.id).delete(
             synchronize_session=False)
         for i, c in enumerate(chunks):
+            meta = {**c.meta, "page": _page_of(parsed, c.start_index)}
+            if i == 0:
+                meta["fingerprint"] = fingerprint
             db.add(DocumentChunk(
                 document_id=doc.id,
                 chunk_index=i,
@@ -127,7 +280,7 @@ def run_parse(document_id: int, backend: str = "auto",
                 char_start=c.start_index,
                 char_end=c.end_index,
                 token_count=estimate_tokens(c.text),
-                meta={**c.meta, "page": _page_of(parsed, c.start_index)},
+                meta=meta,
             ))
         doc.text_key = text_key
         doc.text_content = full_text  # 兼容期双写（M3-3 R5 收口）

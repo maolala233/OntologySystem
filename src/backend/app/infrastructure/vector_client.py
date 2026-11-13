@@ -648,6 +648,35 @@ class VectorStoreManager:
             
             self.collection.flush()
 
+    def count_by_source(self, project_id: int, source_file: str) -> Optional[int]:
+        """统计某项目某源文件当前的向量条数（解析复用判定用）。
+
+        返回 None = 无法判断（Milvus 关闭/连不上），调用方按“保持不变”处理；
+        返回 0 = 连接正常但集合/记录不存在（集合被重建时即此情形）。
+        """
+        if not getattr(self, "milvus_enabled", True):
+            return None
+        if not self.is_enabled:
+            return None
+        if not self.collection:
+            return 0
+        expr = (f"project_id == {int(project_id)} and "
+                f"source_file == {json.dumps(source_file, ensure_ascii=False)}")
+        try:
+            rows = self.collection.query(expr=expr, output_fields=["count(*)"])
+            for row in rows or []:
+                for k, v in row.items():
+                    if str(k).startswith("count"):
+                        return int(v)
+        except Exception as e:  # noqa: BLE001 —— 聚合查询在旧版 Milvus 不支持时退化为取样
+            logger.debug(f"count(*) 查询失败，退化为 id 取样: {e}")
+        try:
+            ids = self.collection.query(expr=expr, output_fields=["id"], limit=16384)
+            return len(ids or [])
+        except Exception as e:  # noqa: BLE001 —— 查询失败按无法判断处理
+            logger.warning(f"向量条数查询失败（按无法判断处理）: {e}")
+            return None
+
     def delete_by_expr(self, expr: str):
         """根据表达式删除记录"""
         if not self.is_enabled or not self.collection:
@@ -795,3 +824,43 @@ class VectorStoreManager:
 
 
 
+
+
+def get_vector_signature() -> dict:
+    """当前向量化配置签名（不连接 Milvus / 不加载集合）。
+
+    解析复用判定用：嵌入模型、维度、集合名任一变化，旧向量都不可再用
+    （同文本换模型后必须重嵌入）。解析口径与 _load_dynamic_config 保持一致：
+    嵌入模型走 model_configs（resolve_provider），Milvus 集合名走 platform_config。
+    base_url 不参与签名——同一模型换服务地址产出的向量相同，避免误判。
+    """
+    try:
+        from app.infrastructure.database import get_db, SystemConfig
+        from app.adapters.provider import ModelPurpose, resolve_provider
+
+        db = next(get_db())
+        try:
+            platform = db.query(SystemConfig).filter(SystemConfig.key == "platform_config").first()
+            platform_cfg = platform.value if platform and platform.value else {}
+            try:
+                emb = resolve_provider(ModelPurpose.EMBEDDING, db=db)
+                model = emb.model_name or ""
+                dim = (emb.params or {}).get("embedding_dim") or emb.dims or settings.EMBEDDING_DIM
+            except Exception:  # noqa: BLE001 —— 无嵌入配置时回落 env 默认
+                model = settings.EMBEDDING_MODEL
+                dim = settings.EMBEDDING_DIM
+            return {
+                "model": str(model or ""),
+                "dim": int(dim or 0),
+                "collection": str(platform_cfg.get("milvus_collection",
+                                                   settings.MILVUS_COLLECTION_NAME) or ""),
+            }
+        finally:
+            db.close()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"读取向量配置签名失败，回落 env 默认: {e}")
+        return {
+            "model": settings.EMBEDDING_MODEL,
+            "dim": int(settings.EMBEDDING_DIM or 0),
+            "collection": settings.MILVUS_COLLECTION_NAME,
+        }

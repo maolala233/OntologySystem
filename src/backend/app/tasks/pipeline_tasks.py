@@ -312,7 +312,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
         （2026-11-06 测试2 实测：LLM 拒连，实例全丢却无任何报错）。
 
         重跑语义：该阶段从头发起（抽取产物只在阶段末尾落库，中断不留半成品）；
-        已完成阶段不重跑（parse_status=parsed 的文档不再解析、已有骨架默认跳过）。
+        已完成阶段不重跑（已解析文档按指纹复用，见 document_pipeline；已有骨架默认跳过）。
         """
         if not isinstance(res, dict):
             return
@@ -397,19 +397,25 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                                      stats={"project_id": project_id, "stages": stages})
                 return {"status": "failed", "reason": "project_not_found"}
 
-            # ── 阶段 1：解析待解析文档（backend=auto，自动路由含扫描件嗅探）──
+            # ── 阶段 1：解析文档（backend=auto，自动路由含扫描件嗅探）──
+            # 已解析文档是否复用由后端按指纹判定（见 document_pipeline 顶部说明）：
+            # 文件/切片策略变 → 重新解析；仅嵌入模型或集合变 → 只重嵌入；否则复用。
             from app.infrastructure.database import UploadedDocument
-            from app.services.document_pipeline import run_parse
+            from app.services.document_pipeline import (
+                build_vector_fingerprint,
+                decide_parse_action,
+                resync_document_vectors,
+                run_parse,
+            )
 
             st = _stage(stages, "parse")
             st["status"] = "running"
             profile_stage_begin("parse", "解析文档")
-            _prog("parse", "检查待解析文档…", 0.0)
-            # 常规：uploaded/failed 待解析 + parsing 在途（上传 auto_parse 已在跑的，
-            # 管线等它结束而不是跳过——否则骨架阶段读到 0 切片直接失败）；
-            # 重头开始（restart）：已解析文档也全部重解析
-            parse_statuses = ("uploaded", "failed", "parsing", "parsed") if restart \
-                else ("uploaded", "failed", "parsing")
+            _prog("parse", "检查已解析文档与切片…", 0.0)
+            # 所有未删除文档都参与判定：uploaded/failed 必解析；parsing 在途的
+            # 等它结束（否则骨架阶段读到 0 切片直接失败）；parsed 的按指纹决定
+            # 「直接复用 / 只重嵌入向量 / 重新解析」——restart 不再无条件重解析。
+            parse_statuses = ("uploaded", "failed", "parsing", "parsed")
             docs = (db.query(UploadedDocument)
                     .filter(UploadedDocument.project_id == project_id,
                             UploadedDocument.deleted_at.is_(None),
@@ -445,14 +451,43 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                                 UploadedDocument.deleted_at.is_(None),
                                 UploadedDocument.parse_status.in_(parse_statuses))
                         .all())
-            # 阶段 B：逐文档执行解析（uploaded/failed；restart 含 parsed）
-            todo = [d for d in docs
-                    if d.parse_status in ("uploaded", "failed")
-                    or (restart and d.parse_status == "parsed")]
-            if not todo:
-                if docs:  # 只有在途解析且已全部结束 → 文档就绪
+            # 阶段 B：逐文档判定处置（复用 / 只重嵌入 / 重新解析）
+            parsed_docs = [d for d in docs if d.parse_status == "parsed"]
+            vector_fp = build_vector_fingerprint() if parsed_docs else ""
+            _vm_holder: list = []
+
+            def _vec_manager():
+                """惰性连接向量库：只有解析指纹对得上的文档才需要。"""
+                if not _vm_holder:
+                    from app.services.document_pipeline import _new_vector_manager
+
+                    _vm_holder.append(_new_vector_manager())
+                return _vm_holder[0]
+
+            todo: list = []      # 需要重新解析
+            resync: list = []    # 切片可复用，只需重嵌入向量
+            reused = 0           # 直接复用
+            from app.core.logging import logger as _plog
+            for d in docs:
+                if d.parse_status in ("uploaded", "failed"):
+                    todo.append(d)
+                elif d.parse_status == "parsed":
+                    action = decide_parse_action(
+                        d, db, backend="auto", vector_fp=vector_fp,
+                        vm_getter=_vec_manager)
+                    _plog.info(f"[pipeline] 解析复用判定 doc={d.id}({d.filename}): {action}")
+                    if action == "reparse":
+                        todo.append(d)
+                    elif action == "resync_vectors":
+                        resync.append(d)
+                    else:
+                        reused += 1
+
+            if not todo and not resync:
+                if docs:  # 在途解析已全部结束 / 已解析文档全部命中复用
                     st["status"] = "done"
-                    st["detail"] = f"{len(docs)} 个文档已就绪"
+                    st["detail"] = (f"{reused} 个已解析文档直接复用（未重复解析）"
+                                    if reused else f"{len(docs)} 个文档已就绪")
                     _prog("parse", st["detail"])
                 else:
                     st["status"] = "skipped"
@@ -461,13 +496,40 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             else:
                 parse_failed: list[str] = []
                 parse_doc_times: list[dict] = []
+                resync_times: list[dict] = []
+                total_work = max(1, len(resync) + len(todo))
+                done_idx = 0
+                # 先补写向量：换嵌入模型/重建集合不需要再读原件、再切片
+                for i, d in enumerate(resync):
+                    _cancel_check()
+                    st["detail"] = f"补写向量 {i + 1}/{len(resync)}"
+                    _prog("parse", f"补写向量 {i + 1}/{len(resync)}：{d.filename}",
+                          done_idx / total_work)
+                    _doc_t0 = time.perf_counter()
+                    try:
+                        _n = resync_document_vectors(d, db, vector_fp)
+                        _ok = bool(_n)
+                        _err = None if _ok else "向量写入未完成（Milvus/嵌入服务）"
+                    except Exception as e:  # noqa: BLE001 —— 向量补写失败不阻断管线
+                        _n, _ok, _err = 0, False, str(e)[:300]
+                    resync_times.append({
+                        "document_id": d.id,
+                        "filename": d.filename,
+                        "seconds": round(time.perf_counter() - _doc_t0, 6),
+                        "ok": _ok,
+                        "error": _err,
+                        "vectors": _n,
+                    })
+                    done_idx += 1
+                profile_metric("parse_vector_resync", resync_times)
                 for i, d in enumerate(todo):
                     _cancel_check()
                     sub_id = f"{task_id}:parse:{d.id}"
                     st["task_id"] = sub_id
                     st["detail"] = f"{i + 1}/{len(todo)}"
                     _prog("parse", f"解析中 {i + 1}/{len(todo)}：{d.filename}",
-                          i / len(todo))
+                          done_idx / total_work)
+                    done_idx += 1
                     _doc_t0 = time.perf_counter()
                     _parse_res: dict = {}
                     try:
@@ -488,16 +550,25 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                         "page_count": _parse_res.get("page_count"),
                     })
                 profile_metric("parse_documents", parse_doc_times)
-                if len(parse_failed) == len(todo):
+                if todo and len(parse_failed) == len(todo):
                     st["status"] = "failed"
                     st["detail"] = f"全部 {len(todo)} 个文档解析失败"
                     profile_stage_end("parse", status="failed", detail=st["detail"])
                     raise RuntimeError("全部文档解析失败，首因：" + parse_failed[0])
                 st["status"] = "done"
-                st["detail"] = f"{len(todo) - len(parse_failed)}/{len(todo)} 个文档"
+                parts = []
+                if todo:
+                    parts.append(f"{len(todo) - len(parse_failed)}/{len(todo)} 个文档解析")
+                if reused:
+                    parts.append(f"复用 {reused} 个已解析文档")
+                if resync:
+                    ok_vectors = sum(1 for x in resync_times if x.get("ok"))
+                    parts.append(f"重嵌入向量 {ok_vectors}/{len(resync)} 个")
+                st["detail"] = "，".join(parts) if parts else "文档已就绪"
                 if parse_failed:
-                    st["detail"] += f"（{len(parse_failed)} 个失败）"
-                summary["parse"] = {"total": len(todo), "failed": parse_failed}
+                    st["detail"] += f"（{len(parse_failed)} 个解析失败）"
+                summary["parse"] = {"total": len(todo), "failed": parse_failed,
+                                    "reused": reused, "vector_resync": len(resync)}
                 _prog("parse", f"解析完成（{st['detail']}）")
             profile_stage_end("parse", status=st["status"], detail=st["detail"])
 
