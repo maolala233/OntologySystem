@@ -605,6 +605,40 @@ body .ant-tooltip .ant-tooltip-arrow::before {
   background: transparent;
 }
 
+/* 分页器默认贴死卡片右缘，右下角没有留白：与内容左右各留 16px（与「我的项目」列表一致） */
+.surface-card .ant-table-pagination.ant-pagination {
+  margin: 14px 0;
+  padding: 0 16px;
+}
+
+/* 最后一行不再画多余底边，避免和卡片下缘叠成双线 */
+.surface-card .ant-table-wrapper .ant-table-tbody > tr:last-child > td {
+  border-bottom: 0;
+}
+
+/* 首列/末列内容与面板边缘的呼吸感：middle 尺寸横向内边距只有 8px，
+   没有勾选列时首列（如知识域 ID）会紧贴表格左边缘 */
+.surface-card .ant-table-wrapper .ant-table .ant-table-thead > tr > th:first-child,
+.surface-card .ant-table-wrapper .ant-table .ant-table-tbody > tr > td:first-child {
+  padding-left: 16px;
+}
+.surface-card .ant-table-wrapper .ant-table .ant-table-thead > tr > th:last-child,
+.surface-card .ant-table-wrapper .ant-table .ant-table-tbody > tr > td:last-child {
+  padding-right: 16px;
+}
+
+/* 宽表格（模块授权矩阵等）需要横向滚动：溢出策略改为 auto，依旧裁圆角 */
+.surface-card.is-scrollable {
+  overflow-x: auto;
+}
+
+/* 等宽字体（编号 / 密钥 / 配置键名）：原先只在 TechHero 的局部样式里定义，
+   管理后台不挂 Hero 时类名不生效，这里提升为全站可用 */
+.tk-mono {
+  font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
 /* 后台管理页的页面标题：统一字重与色彩，和正文拉开层次 */
 .ant-typography h4.ant-typography,
 h4.ant-typography {

@@ -9,10 +9,12 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button, Checkbox, Empty, Input, Modal, Popconfirm, Space, Tabs, Tag, Tooltip, Typography } from 'antd';
 import { message } from '../../shared/feedback';
 import {
-    AppstoreOutlined, CheckOutlined, CloseOutlined, DeleteOutlined, EditOutlined, MinusOutlined,
-    PlusOutlined, ReloadOutlined, SaveOutlined, TeamOutlined, ToolOutlined, UserSwitchOutlined,
+    CheckOutlined, CloseOutlined, DeleteOutlined, EditOutlined, MinusOutlined,
+    PlusOutlined, ReloadOutlined, SafetyOutlined, SaveOutlined, TeamOutlined, ToolOutlined, UserSwitchOutlined,
 } from '@ant-design/icons';
 import { adminApi, AdminModule, AdminRole, AdminUser } from '../../api/admin';
+import Navbar from '../../components/Layout/Navbar';
+import PageHeader from '../../components/Layout/PageHeader';
 
 type CellState = 'default' | 'allow' | 'deny';
 type Matrix = Record<string, Record<string, CellState>>; // userId -> moduleCode -> state
@@ -196,17 +198,20 @@ const ModuleGrantsPage: React.FC = () => {
 
     /** 平铺授权矩阵（用户 × 模块），用户权限/工具授权两个清单共用 */
     const MatrixTable = ({ mods }: { mods: AdminModule[] }) => (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-            <table className="w-full border-collapse" style={{ tableLayout: 'fixed' }}>
+        <div className="surface-card is-scrollable">
+            {/* 模块多时（当前 13 个业务模块）在窄屏会挤成一条：给表格一个下限宽度，横向滚动而不是压缩列名 */}
+            <table className="w-full border-collapse" style={{ tableLayout: 'fixed', minWidth: 200 + mods.length * 76 }}>
                 <thead>
                     <tr className="bg-[#F6F8FC] border-b border-gray-100">
-                        <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 sticky left-0 bg-[#F6F8FC] z-10" style={{ width: 200 }}>用户 / 模块</th>
+                        <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 sticky left-0 bg-[#F6F8FC] z-10" style={{ width: 200 }}>用户 / 模块</th>
                         {mods.map((m) => (
-                            <th key={m.code} className="px-1 py-2 border-l border-gray-100 overflow-hidden">
-                                <Tooltip title={`${m.description ?? ''}（${m.code}）`}>
+                            <th key={m.code} className="px-1 py-2.5 border-l border-gray-100 overflow-hidden text-center">
+                                <Tooltip title={`${m.name}${m.description ? `｜${m.description}` : ''}（${m.code}）`}>
                                     <div className="leading-tight overflow-hidden">
-                                        <div className="text-[11px] text-gray-700 whitespace-nowrap text-ellipsis max-w-[62px] mx-auto">{m.name}</div>
-                                        <div className={`text-[10px] ${m.is_default_on ? 'text-cyan-600' : 'text-gray-300'}`}>
+                                        {/* 列宽固定（76px）时「实体消解与冲突」这类 6 字名称单行会被截断，
+                                            去掉 nowrap 让它占满单元格、过长时折成第二行，而不是省略号 */}
+                                        <div className="text-[11px] leading-[15px] text-gray-700 break-all [text-wrap:balance]">{m.name}</div>
+                                        <div className={`text-[10px] leading-4 mt-0.5 ${m.is_default_on ? 'text-cyan-600' : 'text-gray-300'}`}>
                                             {m.is_default_on ? '默认开' : '默认关'}
                                         </div>
                                     </div>
@@ -217,8 +222,8 @@ const ModuleGrantsPage: React.FC = () => {
                 </thead>
                 <tbody>
                     {users.map((u) => (
-                        <tr key={u.id} className="border-b border-gray-50 hover:bg-[#F7FAFF]">
-                            <td className="px-4 py-2 sticky left-0 bg-white z-10">
+                        <tr key={u.id} className="group border-b border-gray-50 hover:bg-[#F7FAFF]">
+                            <td className="px-4 py-2.5 align-middle sticky left-0 bg-white group-hover:bg-[#F7FAFF] transition-colors z-10">
                                 <Space size={6}>
                                     <span className="w-6 h-6 rounded-full bg-[#5B8DEF] text-white text-xs flex items-center justify-center shrink-0">
                                         {u.username.slice(0, 1).toUpperCase()}
@@ -238,7 +243,7 @@ const ModuleGrantsPage: React.FC = () => {
                             {mods.map((m) => {
                                 if (u.role === 'admin') {
                                     return (
-                                        <td key={m.code} className="text-center border-l border-gray-50">
+                                        <td key={m.code} className="text-center align-middle border-l border-gray-50">
                                             <Tooltip title="管理员默认拥有全部模块">
                                                 <span className="text-gray-300 text-xs">全部</span>
                                             </Tooltip>
@@ -248,7 +253,7 @@ const ModuleGrantsPage: React.FC = () => {
                                 const state = matrix[u.id]?.[m.code] ?? 'default';
                                 const meta = STATE_META[state];
                                 return (
-                                    <td key={m.code} className="text-center border-l border-gray-50 py-1.5">
+                                    <td key={m.code} className="text-center align-middle border-l border-gray-50 py-2.5">
                                         <Tooltip title={`${meta.tip}（点击切换）`}>
                                             <button type="button" onClick={() => cycleCell(u.id, m.code)}
                                                 className={`w-7 h-7 rounded-md inline-flex items-center justify-center text-[11px] transition-colors ${meta.cls}`}>
@@ -266,8 +271,8 @@ const ModuleGrantsPage: React.FC = () => {
     );
 
     const legendBar = (
-        <div className="flex items-center justify-between mb-3">
-            <Space size={16} className="!flex-wrap text-xs text-gray-500">
+        <div className="flex items-center justify-between mb-4">
+            <Space size={20} className="!flex-wrap text-xs text-gray-500">
                 <span className="flex items-center gap-1">
                     <span className="w-4 h-4 rounded bg-gray-100 inline-flex items-center justify-center text-gray-500 text-[10px]">默</span>跟随模块默认
                 </span>
@@ -279,7 +284,6 @@ const ModuleGrantsPage: React.FC = () => {
                 </span>
                 <Typography.Text type="secondary" className="!text-xs">点击单元格切换状态</Typography.Text>
             </Space>
-            <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>刷新</Button>
         </div>
     );
 
@@ -293,11 +297,11 @@ const ModuleGrantsPage: React.FC = () => {
                 <Button type="primary" icon={<PlusOutlined />} onClick={() => openRoleModal(null)}>新建角色</Button>
             </div>
             {roles.length === 0 ? (
-                <Empty description="暂无角色" />
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无角色" />
             ) : (
                 <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
                     {roles.map((r) => (
-                        <div key={r.id} className="bg-white border border-gray-100 rounded-xl p-4 shadow-sm hover:shadow-md transition-shadow flex flex-col">
+                        <div key={r.id} className="bg-white border border-[#EEF1F8] rounded-[14px] p-4 shadow-sm hover:shadow-md transition-shadow flex flex-col">
                             <div className="flex items-center justify-between">
                                 <Space size={10}>
                                     <span className="w-8 h-8 rounded-lg bg-[#5B8DEF]/10 text-[#5B8DEF] inline-flex items-center justify-center text-base">
@@ -369,114 +373,129 @@ const ModuleGrantsPage: React.FC = () => {
     );
 
     return (
-        <div className="h-full overflow-y-auto scrollbar-stable" style={{ padding: 24 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <Typography.Title level={4} style={{ margin: 0 }}>模块授权</Typography.Title>
-                {dirtyUsers.size > 0 && (
-                    <Space>
-                        <Typography.Text type="warning" className="!text-xs">
-                            {dirtyUsers.size} 个用户有未保存的修改
-                        </Typography.Text>
-                        <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={saveAll}>
-                            保存全部
-                        </Button>
-                    </Space>
-                )}
-            </div>
+        <div className="h-full flex flex-col app-canvas">
+            <Navbar breadcrumbs={[
+                { title: '首页', path: '/' },
+                { title: '系统配置' },
+                { title: '模块授权' },
+            ]} />
 
-            <Tabs
-                defaultActiveKey="users"
-                items={[
-                    {
-                        key: 'users', label: '用户权限',
-                        children: (
-                            <div>
-                                {legendBar}
-                                <MatrixTable mods={businessModules} />
-                            </div>
-                        ),
-                    },
-                    {
-                        key: 'tools', label: '工具授权',
-                        children: (
-                            <div>
-                                <div className="flex items-center gap-2 mb-2">
-                                    <ToolOutlined className="text-[#5B8DEF]" />
-                                    <Typography.Text type="secondary" className="!text-xs">
-                                        工具类功能单独授权：本体问答 / 报告生成 / PPT生成 / MCP 工具，分别控制「工具」子菜单中各入口的可见与可用。
+            <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
+                <PageHeader
+                    icon={<SafetyOutlined />}
+                    title="模块授权"
+                    subtitle="按用户配置业务模块与工具功能的开通情况；角色 = 一组可复用的模块授权预设"
+                    extra={
+                        <>
+                            <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>刷新</Button>
+                            {dirtyUsers.size > 0 && (
+                                <Space>
+                                    <Typography.Text type="warning" className="!text-xs">
+                                        {dirtyUsers.size} 个用户有未保存的修改
                                     </Typography.Text>
+                                    <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={saveAll}>
+                                        保存全部
+                                    </Button>
+                                </Space>
+                            )}
+                        </>
+                    }
+                />
+
+                <Tabs
+                    defaultActiveKey="users"
+                    items={[
+                        {
+                            key: 'users', label: '用户权限',
+                            children: (
+                                <div>
+                                    {legendBar}
+                                    <MatrixTable mods={businessModules} />
                                 </div>
-                                {legendBar}
-                                <MatrixTable mods={toolModules} />
-                            </div>
-                        ),
-                    },
-                    { key: 'roles', label: '角色配置', children: roleCards },
-                ]}
-            />
+                            ),
+                        },
+                        {
+                            key: 'tools', label: '工具授权',
+                            children: (
+                                <div>
+                                    <div className="flex items-center gap-2 mb-3">
+                                        <ToolOutlined className="text-[#5B8DEF]" />
+                                        <Typography.Text type="secondary" className="!text-xs">
+                                            工具类功能单独授权：本体问答 / 报告生成 / PPT生成 / MCP 工具，分别控制「工具」子菜单中各入口的可见与可用。
+                                        </Typography.Text>
+                                    </div>
+                                    {legendBar}
+                                    <MatrixTable mods={toolModules} />
+                                </div>
+                            ),
+                        },
+                        { key: 'roles', label: '角色配置', children: roleCards },
+                    ]}
+                />
 
-            {/* 新建/编辑角色 */}
-            <Modal
-                title={editingRole ? `编辑角色 · ${editingRole.name}` : '新建角色'}
-                open={roleModalOpen} onOk={saveRole} onCancel={() => setRoleModalOpen(false)}
-                okText="保存" destroyOnHidden
-            >
-                <div className="space-y-3 py-1">
-                    <div>
-                        <div className="text-xs text-gray-500 mb-1">角色名称</div>
-                        <Input value={roleForm.name} maxLength={64} placeholder="如：建模员"
-                            onChange={(e) => setRoleForm((f) => ({ ...f, name: e.target.value }))} />
-                    </div>
-                    <div>
-                        <div className="text-xs text-gray-500 mb-1">描述（可选）</div>
-                        <Input value={roleForm.description} maxLength={255} placeholder="该角色的职责说明"
-                            onChange={(e) => setRoleForm((f) => ({ ...f, description: e.target.value }))} />
-                    </div>
-                    <div>
-                        <div className="text-xs text-gray-500 mb-2">
-                            开通模块（勾选 = 允许；应用角色时未勾选模块将显式关闭）
+                {/* 新建/编辑角色 */}
+                <Modal
+                    title={editingRole ? `编辑角色 · ${editingRole.name}` : '新建角色'}
+                    open={roleModalOpen} onOk={saveRole} onCancel={() => setRoleModalOpen(false)}
+                    okText="保存" destroyOnHidden
+                >
+                    <div className="space-y-3 py-1">
+                        <div>
+                            <div className="text-xs text-gray-500 mb-1">角色名称</div>
+                            <Input value={roleForm.name} maxLength={64} placeholder="如：建模员"
+                                onChange={(e) => setRoleForm((f) => ({ ...f, name: e.target.value }))} />
                         </div>
-                        {roleModulePicker}
+                        <div>
+                            <div className="text-xs text-gray-500 mb-1">描述（可选）</div>
+                            <Input value={roleForm.description} maxLength={255} placeholder="该角色的职责说明"
+                                onChange={(e) => setRoleForm((f) => ({ ...f, description: e.target.value }))} />
+                        </div>
+                        <div>
+                            <div className="text-xs text-gray-500 mb-2">
+                                开通模块（勾选 = 允许；应用角色时未勾选模块将显式关闭）
+                            </div>
+                            {roleModulePicker}
+                        </div>
                     </div>
-                </div>
-            </Modal>
+                </Modal>
 
-            {/* 应用角色到用户 */}
-            <Modal
-                title={`应用角色「${applyRole?.name ?? ''}」到用户`}
-                open={!!applyRole} onOk={doApplyRole} onCancel={() => setApplyRole(null)}
-                okText={`应用到 ${applyUserIds.length} 个用户`} confirmLoading={applying}
-            >
-                <div className="space-y-3 py-1">
-                    <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700">
-                        应用后所选用户的模块授权将被该角色预设<b>全量覆盖</b>（允许列表内开通、其余关闭）。管理员默认全模块，已自动排除。
+                {/* 应用角色到用户 */}
+                <Modal
+                    title={`应用角色「${applyRole?.name ?? ''}」到用户`}
+                    open={!!applyRole} onOk={doApplyRole} onCancel={() => setApplyRole(null)}
+                    okText={`应用到 ${applyUserIds.length} 个用户`} confirmLoading={applying}
+                >
+                    <div className="space-y-3 py-1">
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700">
+                            应用后所选用户的模块授权将被该角色预设<b>全量覆盖</b>（允许列表内开通、其余关闭）。管理员默认全模块，已自动排除。
+                        </div>
+                        <div className="flex justify-between items-center">
+                            <span className="text-xs text-gray-500">选择用户（{normalUsers.length} 个可选）</span>
+                            <Button size="small" type="link"
+                                onClick={() => setApplyUserIds(applyUserIds.length === normalUsers.length ? [] : normalUsers.map((u) => u.id))}>
+                                {applyUserIds.length === normalUsers.length ? '取消全选' : '全选'}
+                            </Button>
+                        </div>
+                        <div className="border border-gray-200 rounded-lg divide-y divide-gray-50 max-h-64 overflow-auto">
+                            {normalUsers.map((u) => (
+                                <label key={u.id} className="flex items-center gap-2 px-3 py-2 hover:bg-gray-50 cursor-pointer">
+                                    <Checkbox
+                                        checked={applyUserIds.includes(u.id)}
+                                        onChange={(e) => setApplyUserIds((prev) => e.target.checked
+                                            ? [...prev, u.id]
+                                            : prev.filter((id) => id !== u.id))}
+                                    />
+                                    <span className="text-sm text-gray-800">{u.username}</span>
+                                    {!u.is_active && <Tag className="!m-0 !text-[10px]">停用</Tag>}
+                                </label>
+                            ))}
+                            {normalUsers.length === 0 && (
+                                <div className="px-3 py-6 text-center text-xs text-gray-300">暂无普通用户</div>
+                            )}
+                        </div>
                     </div>
-                    <div className="flex justify-between items-center">
-                        <span className="text-xs text-gray-500">选择用户（{normalUsers.length} 个可选）</span>
-                        <Button size="small" type="link"
-                            onClick={() => setApplyUserIds(applyUserIds.length === normalUsers.length ? [] : normalUsers.map((u) => u.id))}>
-                            {applyUserIds.length === normalUsers.length ? '取消全选' : '全选'}
-                        </Button>
-                    </div>
-                    <div className="border border-gray-200 rounded-lg divide-y divide-gray-50 max-h-64 overflow-auto">
-                        {normalUsers.map((u) => (
-                            <label key={u.id} className="flex items-center gap-2 px-3 py-2 hover:bg-gray-50 cursor-pointer">
-                                <Checkbox
-                                    checked={applyUserIds.includes(u.id)}
-                                    onChange={(e) => setApplyUserIds((prev) => e.target.checked
-                                        ? [...prev, u.id]
-                                        : prev.filter((id) => id !== u.id))}
-                                />
-                                <span className="text-sm text-gray-800">{u.username}</span>
-                                {!u.is_active && <Tag className="!m-0 !text-[10px]">停用</Tag>}
-                            </label>
-                        ))}
-                        {normalUsers.length === 0 && (
-                            <div className="px-3 py-6 text-center text-xs text-gray-300">暂无普通用户</div>
-                        )}
-                    </div>
-                </div>
-            </Modal>
+                </Modal>
+            </div>
         </div>
     );
 };

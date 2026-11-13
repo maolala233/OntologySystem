@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { PROJECT_STATUS, PUBLISHED_TAG } from '../shared/projectStatus';
-import { Card, Button, Empty, Spin, Modal, Form, Input, Tag, Space, Table, Select, Typography, Drawer } from 'antd';
+import { Button, Empty, Spin, Modal, Form, Input, Tag, Space, Table, Select, Typography, Drawer } from 'antd';
 import { message } from '../shared/feedback';
 import {
     PlusOutlined,
@@ -8,8 +8,10 @@ import {
     DeleteOutlined,
     SwapOutlined,
     ExclamationCircleOutlined,
+    ClusterOutlined,
 } from '@ant-design/icons';
 import Navbar from '../components/Layout/Navbar';
+import PageHeader from '../components/Layout/PageHeader';
 import { getDomains, createDomain, updateDomain, deleteDomain, getDomainProjects, migrateProjectsBatch, KnowledgeDomain, ProjectInDomain } from '../api/domains';
 
 const { TextArea } = Input;
@@ -226,6 +228,7 @@ const DomainManagementPage: React.FC = () => {
 
     const breadcrumbs = [
         { title: '首页', path: '/' },
+        { title: '系统配置' },
         { title: '知识域管理' },
     ];
 
@@ -235,12 +238,13 @@ const DomainManagementPage: React.FC = () => {
             dataIndex: 'id',
             key: 'id',
             width: 80,
+            render: (id: number) => <span className="font-mono text-xs text-gray-400">#{id}</span>,
         },
         {
             title: '知识域名称',
             dataIndex: 'name',
             key: 'name',
-            width: 200,
+            width: 240,
             render: (name: string) => <Text strong>{name}</Text>,
         },
         {
@@ -248,22 +252,27 @@ const DomainManagementPage: React.FC = () => {
             dataIndex: 'description',
             key: 'description',
             ellipsis: true,
+            render: (description?: string) => (
+                <span className="text-[13px] text-gray-500">{description || '—'}</span>
+            ),
         },
         {
             title: '项目数量',
             key: 'projectCount',
             width: 120,
+            align: 'center' as const,
             render: (_: any, record: DomainWithCount) => (
-                <Tag color="blue">{record.projectCount} 个</Tag>
+                <Tag color="blue" className="!m-0">{record.projectCount} 个</Tag>
             ),
         },
         {
             title: '操作',
             key: 'action',
-            width: 280,
+            width: 230,
             render: (_: any, record: DomainWithCount) => (
-                <Space>
+                <Space size={0}>
                     <Button
+                        size="small"
                         type="link"
                         icon={<EditOutlined />}
                         onClick={() => handleEdit(record)}
@@ -271,6 +280,7 @@ const DomainManagementPage: React.FC = () => {
                         编辑
                     </Button>
                     <Button
+                        size="small"
                         type="link"
                         icon={<SwapOutlined />}
                         onClick={() => handleMigrateClick(record)}
@@ -278,6 +288,7 @@ const DomainManagementPage: React.FC = () => {
                         迁移
                     </Button>
                     <Button
+                        size="small"
                         type="link"
                         danger
                         icon={<DeleteOutlined />}
@@ -306,34 +317,33 @@ const DomainManagementPage: React.FC = () => {
             <Navbar breadcrumbs={breadcrumbs} />
 
             <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
-                {/* 顶部操作栏 */}
-                <div className="mb-6 flex justify-between items-center">
-                    <div>
-                        <h1 className="text-2xl font-bold text-gray-800">知识域管理</h1>
-                        <p className="text-gray-500 mt-1">管理系统中的知识域分类，支持增删改查和项目迁移</p>
-                    </div>
-                    <Button
-                        type="primary"
-                        icon={<PlusOutlined />}
-                        onClick={openCreateModal}
-                        size="large"
-                    >
-                        新建知识域
-                    </Button>
-                </div>
+                <PageHeader
+                    icon={<ClusterOutlined />}
+                    title="知识域管理"
+                    subtitle="管理系统中的知识域分类：新建、编辑、删除，以及知识域之间的项目迁移"
+                    extra={
+                        <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>
+                            新建知识域
+                        </Button>
+                    }
+                />
 
-                {/* 知识域列表表格 */}
-                <Card className="shadow-sm">
+                {/* 知识域列表：与「我的项目」列表同一套浮起面板 / 行高 / 分页留白 */}
+                <div className="surface-card">
                     {loading ? (
                         <div className="flex justify-center items-center h-64">
                             <Spin size="large" />
                         </div>
                     ) : domains.length === 0 ? (
                         <div className="flex flex-col items-center justify-center h-64">
-                            <Empty description="暂无知识域" />
+                            <Empty
+                                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                                description="暂无知识域，创建后可用于归类本体项目"
+                            />
                             <Button
                                 type="primary"
                                 icon={<PlusOutlined />}
+                                className="mt-2"
                                 onClick={openCreateModal}
                             >
                                 创建知识域
@@ -341,13 +351,19 @@ const DomainManagementPage: React.FC = () => {
                         </div>
                     ) : (
                         <Table
+                            size="middle"
                             columns={columns}
                             dataSource={domains}
                             rowKey="id"
-                            pagination={{ pageSize: 10 }}
+                            scroll={{ x: 860 }}
+                            pagination={{
+                                pageSize: 10,
+                                showSizeChanger: false,
+                                showTotal: (t) => `共 ${t} 个知识域`,
+                            }}
                         />
                     )}
-                </Card>
+                </div>
             </div>
 
             {/* 创建/编辑知识域弹窗 */}
@@ -541,7 +557,7 @@ const DomainManagementPage: React.FC = () => {
                             rowKey="id"
                             pagination={false}
                             scroll={{ y: 400 }}
-                            size="middle"
+                            size="small"
                         />
                     </div>
                 </div>

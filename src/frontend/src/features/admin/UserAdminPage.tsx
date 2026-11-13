@@ -5,11 +5,13 @@
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import { Button, Drawer, Empty, Modal, Form, Input, Popconfirm, Select, Space, Table, Tag, Typography } from 'antd';
-import { DeleteOutlined, FolderOpenOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import { DeleteOutlined, FolderOpenOutlined, PlusOutlined, ReloadOutlined, TeamOutlined } from '@ant-design/icons';
 import { message } from '../../shared/feedback';
 import { adminApi, AdminUser } from '../../api/admin';
 import { useAuthStore } from '../../shared/auth/authStore';
 import { PROJECT_STATUS } from '../../shared/projectStatus';
+import Navbar from '../../components/Layout/Navbar';
+import PageHeader from '../../components/Layout/PageHeader';
 
 const { Text } = Typography;
 
@@ -170,8 +172,8 @@ const UserAdminPage: React.FC = () => {
     );
 
     const columns = [
-        { title: 'ID', dataIndex: 'id', width: 70 },
-        { title: '用户名', dataIndex: 'username' },
+        { title: 'ID', dataIndex: 'id', width: 70, render: (id: number) => <span className="font-mono text-xs text-gray-400">#{id}</span> },
+        { title: '用户名', dataIndex: 'username', render: (name: string) => <span className="font-medium text-gray-800">{name}</span> },
         {
             title: '角色', dataIndex: 'role', width: 130,
             render: (role: string, record: AdminUser) => (
@@ -215,133 +217,148 @@ const UserAdminPage: React.FC = () => {
     ];
 
     return (
-        <div className="h-full overflow-y-auto scrollbar-stable" style={{ padding: 24 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-                <Typography.Title level={4} style={{ margin: 0 }}>用户管理</Typography.Title>
-                <Space>
-                    <Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>
-                    <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>新建用户</Button>
-                </Space>
-            </div>
+        <div className="h-full flex flex-col app-canvas">
+            <Navbar breadcrumbs={[
+                { title: '首页', path: '/' },
+                { title: '系统配置' },
+                { title: '用户管理' },
+            ]} />
 
-            {/* 批量操作栏 */}
-            {selectedIds.length > 0 && (
-                <div className="mb-3 flex items-center gap-3 rounded-lg border border-blue-100 bg-blue-50/60 px-4 py-2">
-                    <span className="text-sm text-gray-700">
-                        已选 <b className="text-[#5B8DEF]">{selectedIds.length}</b> 个用户
-                    </span>
-                    <Button size="small" disabled={batchBusy} onClick={batchEnable}>批量启用</Button>
-                    <Button size="small" disabled={batchBusy} onClick={batchDisable}>批量停用</Button>
-                    <Popconfirm
-                        title={`确定批量删除 ${selectedIds.length} 个用户？`}
-                        description="不可恢复；名下有项目的用户会删除失败并逐个报告原因。"
-                        okText="删除" cancelText="取消" okButtonProps={{ danger: true }}
-                        onConfirm={batchDelete}
-                    >
-                        <Button size="small" danger icon={<DeleteOutlined />} disabled={batchBusy}>批量删除</Button>
-                    </Popconfirm>
-                    <Button size="small" type="text" onClick={() => setSelectedIds([])}>取消选择</Button>
-                </div>
-            )}
+            <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
+                <PageHeader
+                    icon={<TeamOutlined />}
+                    title="用户管理"
+                    subtitle="管理平台账号、角色与状态；支持批量启用/停用/删除，并可查看用户名下项目"
+                    extra={
+                        <>
+                            <Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>
+                            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>新建用户</Button>
+                        </>
+                    }
+                />
 
-            <Table
-                rowKey="id"
-                className="surface-card"
-                loading={loading}
-                columns={columns as any}
-                dataSource={users}
-                pagination={{
-                    pageSize: 50,
-                    pageSizeOptions: [50, 100, 200],
-                    showSizeChanger: true,
-                    showTotal: (t) => `共 ${t} 个用户（${ownedCount} 个管理员）`,
-                }}
-                rowSelection={{
-                    selectedRowKeys: selectedIds,
-                    onChange: (keys) => setSelectedIds(keys),
-                    getCheckboxProps: (record: AdminUser) => ({
-                        disabled: record.id === me?.id, // 自己不可批量操作（防自锁）
-                    }),
-                }}
-            />
-
-            <Modal
-                title="新建用户"
-                open={createOpen}
-                onOk={handleCreate}
-                onCancel={() => setCreateOpen(false)}
-                destroyOnHidden
-            >
-                <Form form={form} layout="vertical">
-                    <Form.Item name="username" label="用户名" rules={[{ required: true, min: 2 }]}>
-                        <Input placeholder="2-64 字符" />
-                    </Form.Item>
-                    <Form.Item name="password" label="初始密码" rules={[{ required: true, min: 6 }]}>
-                        <Input.Password placeholder="至少 6 位" />
-                    </Form.Item>
-                    <Form.Item name="role" label="角色" initialValue="user" rules={[{ required: true }]}>
-                        <Select options={[{ value: 'user', label: '普通用户' }, { value: 'admin', label: '管理员' }]} />
-                    </Form.Item>
-                    <Form.Item name="display_name" label="显示名">
-                        <Input placeholder="可选" />
-                    </Form.Item>
-                    <Form.Item name="email" label="邮箱" rules={[{ type: 'email' }]}>
-                        <Input placeholder="可选" />
-                    </Form.Item>
-                </Form>
-            </Modal>
-
-            <Modal
-                title={`重置密码 · ${resetTarget?.username ?? ''}`}
-                open={!!resetTarget}
-                onCancel={() => { setResetTarget(null); setOneTimePassword(''); }}
-                footer={<Button type="primary" onClick={() => { setResetTarget(null); setOneTimePassword(''); }}>我已保存</Button>}
-            >
-                <p>请立即保存新密码（仅本次显示）：</p>
-                <Text copyable code style={{ fontSize: 16 }}>{oneTimePassword}</Text>
-                <p style={{ color: '#999', marginTop: 12 }}>关闭后将无法再次查看，请告知该用户并提醒其尽快修改。</p>
-            </Modal>
-
-            {/* 用户名下项目 */}
-            <Drawer
-                title={`用户项目 · ${projectsUser?.username ?? ''}`}
-                open={!!projectsUser}
-                onClose={() => setProjectsUser(null)}
-                width={480}
-            >
-                {projectsLoading ? (
-                    <div className="py-10 text-center text-sm text-gray-500">加载中…</div>
-                ) : projects.length === 0 ? (
-                    <Empty description="该用户暂无项目（未拥有也未参与任何项目）" />
-                ) : (
-                    <div className="space-y-2">
-                        <div className="text-xs text-gray-500 mb-2">
-                            共 {projects.length} 个项目（拥有 {projects.filter((p) => p.role === 'owner').length} 个，参与 {projects.filter((p) => p.role !== 'owner').length} 个）
-                        </div>
-                        {projects.map((p) => {
-                            const role = ROLE_LABEL[p.role] ?? ROLE_LABEL.viewer;
-                            const status = STATUS_LABEL[p.status] ?? STATUS_LABEL.draft;
-                            return (
-                                <div key={p.id} className="flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2.5 hover:border-blue-200 hover:bg-blue-50/30 transition-colors">
-                                    <div className="min-w-0">
-                                        <div className="flex items-center gap-2">
-                                            <span className="font-mono text-xs text-gray-500">#{p.id}</span>
-                                            <span className="text-sm text-gray-800 truncate">{p.name}</span>
-                                        </div>
-                                        {p.created_at && (
-                                            <div className="text-[11px] text-gray-500 mt-0.5">创建于 {p.created_at.slice(0, 10)}</div>
-                                        )}
-                                    </div>
-                                    <Space size={4}>
-                                        <Tag color={role.color} className="!m-0">{role.text}</Tag>
-                                        <Tag color={status.color} className="!m-0">{status.text}</Tag>
-                                    </Space>
-                                </div>
-                            );
-                        })}
+                {/* 批量操作栏 */}
+                {selectedIds.length > 0 && (
+                    <div className="mb-3 flex items-center gap-3 rounded-lg border border-blue-100 bg-blue-50/60 px-4 py-2">
+                        <span className="text-sm text-gray-700">
+                            已选 <b className="text-[#5B8DEF]">{selectedIds.length}</b> 个用户
+                        </span>
+                        <Button size="small" disabled={batchBusy} onClick={batchEnable}>批量启用</Button>
+                        <Button size="small" disabled={batchBusy} onClick={batchDisable}>批量停用</Button>
+                        <Popconfirm
+                            title={`确定批量删除 ${selectedIds.length} 个用户？`}
+                            description="不可恢复；名下有项目的用户会删除失败并逐个报告原因。"
+                            okText="删除" cancelText="取消" okButtonProps={{ danger: true }}
+                            onConfirm={batchDelete}
+                        >
+                            <Button size="small" danger icon={<DeleteOutlined />} disabled={batchBusy}>批量删除</Button>
+                        </Popconfirm>
+                        <Button size="small" type="text" onClick={() => setSelectedIds([])}>取消选择</Button>
                     </div>
                 )}
-            </Drawer>
+
+                <div className="surface-card">
+                    <Table
+                        rowKey="id"
+                        size="middle"
+                        loading={loading}
+                        columns={columns as any}
+                        dataSource={users}
+                        locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无用户" /> }}
+                        pagination={{
+                            pageSize: 50,
+                            pageSizeOptions: [50, 100, 200],
+                            showSizeChanger: true,
+                            showTotal: (t) => `共 ${t} 个用户（${ownedCount} 个管理员）`,
+                        }}
+                        rowSelection={{
+                            selectedRowKeys: selectedIds,
+                            onChange: (keys) => setSelectedIds(keys),
+                            getCheckboxProps: (record: AdminUser) => ({
+                                disabled: record.id === me?.id, // 自己不可批量操作（防自锁）
+                            }),
+                        }}
+                    />
+                </div>
+
+                <Modal
+                    title="新建用户"
+                    open={createOpen}
+                    onOk={handleCreate}
+                    onCancel={() => setCreateOpen(false)}
+                    destroyOnHidden
+                >
+                    <Form form={form} layout="vertical">
+                        <Form.Item name="username" label="用户名" rules={[{ required: true, min: 2 }]}>
+                            <Input placeholder="2-64 字符" />
+                        </Form.Item>
+                        <Form.Item name="password" label="初始密码" rules={[{ required: true, min: 6 }]}>
+                            <Input.Password placeholder="至少 6 位" />
+                        </Form.Item>
+                        <Form.Item name="role" label="角色" initialValue="user" rules={[{ required: true }]}>
+                            <Select options={[{ value: 'user', label: '普通用户' }, { value: 'admin', label: '管理员' }]} />
+                        </Form.Item>
+                        <Form.Item name="display_name" label="显示名">
+                            <Input placeholder="可选" />
+                        </Form.Item>
+                        <Form.Item name="email" label="邮箱" rules={[{ type: 'email' }]}>
+                            <Input placeholder="可选" />
+                        </Form.Item>
+                    </Form>
+                </Modal>
+
+                <Modal
+                    title={`重置密码 · ${resetTarget?.username ?? ''}`}
+                    open={!!resetTarget}
+                    onCancel={() => { setResetTarget(null); setOneTimePassword(''); }}
+                    footer={<Button type="primary" onClick={() => { setResetTarget(null); setOneTimePassword(''); }}>我已保存</Button>}
+                >
+                    <p>请立即保存新密码（仅本次显示）：</p>
+                    <Text copyable code style={{ fontSize: 16 }}>{oneTimePassword}</Text>
+                    <p style={{ color: '#999', marginTop: 12 }}>关闭后将无法再次查看，请告知该用户并提醒其尽快修改。</p>
+                </Modal>
+
+                {/* 用户名下项目 */}
+                <Drawer
+                    title={`用户项目 · ${projectsUser?.username ?? ''}`}
+                    open={!!projectsUser}
+                    onClose={() => setProjectsUser(null)}
+                    width={480}
+                >
+                    {projectsLoading ? (
+                        <div className="py-10 text-center text-sm text-gray-500">加载中…</div>
+                    ) : projects.length === 0 ? (
+                        <Empty description="该用户暂无项目（未拥有也未参与任何项目）" />
+                    ) : (
+                        <div className="space-y-2">
+                            <div className="text-xs text-gray-500 mb-2">
+                                共 {projects.length} 个项目（拥有 {projects.filter((p) => p.role === 'owner').length} 个，参与 {projects.filter((p) => p.role !== 'owner').length} 个）
+                            </div>
+                            {projects.map((p) => {
+                                const role = ROLE_LABEL[p.role] ?? ROLE_LABEL.viewer;
+                                const status = STATUS_LABEL[p.status] ?? STATUS_LABEL.draft;
+                                return (
+                                    <div key={p.id} className="flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2.5 hover:border-blue-200 hover:bg-blue-50/30 transition-colors">
+                                        <div className="min-w-0">
+                                            <div className="flex items-center gap-2">
+                                                <span className="font-mono text-xs text-gray-500">#{p.id}</span>
+                                                <span className="text-sm text-gray-800 truncate">{p.name}</span>
+                                            </div>
+                                            {p.created_at && (
+                                                <div className="text-[11px] text-gray-500 mt-0.5">创建于 {p.created_at.slice(0, 10)}</div>
+                                            )}
+                                        </div>
+                                        <Space size={4}>
+                                            <Tag color={role.color} className="!m-0">{role.text}</Tag>
+                                            <Tag color={status.color} className="!m-0">{status.text}</Tag>
+                                        </Space>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </Drawer>
+            </div>
         </div>
     );
 };

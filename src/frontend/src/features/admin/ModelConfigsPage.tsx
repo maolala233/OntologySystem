@@ -6,15 +6,15 @@
  * 默认项目作用域、仅展示自己拥有的项目，全局行只读展示。
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { Button, Card, Drawer, Form, Input, InputNumber, Select, Space, Switch, Tag, Typography, Empty, Tooltip } from 'antd';
-import { ApiOutlined, PlusOutlined, ReloadOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
+import { Button, Card, Drawer, Form, Input, InputNumber, Select, Space, Switch, Tabs, Tag, Typography, Empty, Tooltip } from 'antd';
+import { ApiOutlined, PlusOutlined, QuestionCircleOutlined, ReloadOutlined, RobotOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
 import { modelConfigsApi, ModelConfigRow, ProviderMeta } from '../../api/model-configs';
 import { message, confirmModal } from '../../shared/feedback';
 import { useAuthStore } from '../../shared/auth/authStore';
 import { projectsApi } from '../../api/projects';
 import { ProjectData } from '../../types/ontology';
-
-const { Text } = Typography;
+import Navbar from '../../components/Layout/Navbar';
+import PageHeader from '../../components/Layout/PageHeader';
 
 const PURPOSES = [
     { key: 'extract', label: '抽取模型', hint: '文档解析后的本体抽取（消耗最大）' },
@@ -234,189 +234,225 @@ const ModelConfigsPage: React.FC = () => {
         myProjects.find((p) => p.id === pid)?.name || (pid ? `项目#${pid}` : '');
 
     return (
-        <div className="h-full overflow-y-auto scrollbar-stable" style={{ padding: 24 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-                <Typography.Title level={4} style={{ margin: 0 }}>模型配置</Typography.Title>
-                <Space>
-                    <Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>
-                    <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建配置</Button>
-                </Space>
-            </div>
+        <div className="h-full flex flex-col app-canvas">
+            <Navbar breadcrumbs={[
+                { title: '首页', path: '/' },
+                { title: '系统配置' },
+                { title: '模型配置' },
+            ]} />
 
-            <Select
-                style={{ width: 200, marginBottom: 16 }}
-                value={activePurpose}
-                onChange={setActivePurpose}
-                options={PURPOSES.map((p) => ({ value: p.key, label: p.label }))}
-            />
+            <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
+                <PageHeader
+                    icon={<RobotOutlined />}
+                    title="模型配置"
+                    subtitle="配置抽取 / 对话 / 嵌入 / 视觉四类模型服务；全局配置由管理员维护，项目级配置由项目 owner 维护"
+                    extra={
+                        <>
+                            <Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>
+                            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建配置</Button>
+                        </>
+                    }
+                />
 
-            {rows.length === 0 && !loading ? (
-                <Empty description={`暂无 ${activePurpose} 配置，点击「新建配置」添加`} />
-            ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 16 }}>
-                    {rows.map((row) => (
-                        <Card
-                            key={row.id}
-                            size="small"
-                            title={
-                                <Space>
-                                    <span>{row.name}</span>
-                                    {row.is_default && <Tag color="green">默认</Tag>}
-                                    {!row.enabled && <Tag color="red">停用</Tag>}
-                                    <Tag>{row.scope === 'global' ? '全局' : projectName(row.project_id)}</Tag>
-                                    {!canManage(row) && <Tag>只读</Tag>}
-                                </Space>
-                            }
-                            actions={[
-                                <Button key="test" size="small" type="link" icon={<ApiOutlined />}
-                                        loading={testingId === row.id}
-                                        onClick={() => handleTest(row)}>测试连接</Button>,
-                                <Tooltip key="default" title={canManage(row) ? '' : '全局默认由管理员设置，项目配置需为项目 owner'}>
-                                    <Button key="default" size="small" type="link"
-                                            icon={row.is_default ? <StarFilled style={{ color: '#F59E0B' }} /> : <StarOutlined />}
-                                            disabled={row.is_default || !canManage(row)}
-                                            onClick={() => handleSetDefault(row)}>设为默认</Button>
-                                </Tooltip>,
-                                canManage(row) ? (
-                                    <Button key="edit" size="small" type="link" onClick={() => openEdit(row)}>编辑</Button>
-                                ) : (
-                                    <span key="ro" style={{ fontSize: 12, color: '#999' }}>
-                                        {row.scope === 'global' ? '管理员管理' : '项目 owner 可管理'}
-                                    </span>
-                                ),
-                                canManage(row) ? (
-                                    <Button key="del" size="small" type="link" danger
-                                            disabled={row.is_default} onClick={() => handleDelete(row)}>删除</Button>
-                                ) : (
-                                    <span key="ro2" />
-                                ),
-                            ]}
-                        >
-                            <p style={{ margin: '4px 0' }}>
-                                <Text type="secondary">模型：</Text><Text code>{row.model_name}</Text>
-                            </p>
-                            <p style={{ margin: '4px 0', wordBreak: 'break-all' }}>
-                                <Text type="secondary">地址：</Text><Text code style={{ fontSize: 12 }}>{row.base_url}</Text>
-                            </p>
-                            <p style={{ margin: '4px 0' }}>
-                                <Text type="secondary">密钥：</Text>
-                                <Text code>{row.api_key_set ? row.api_key_masked : '（无需密钥）'}</Text>
-                                {row.dims ? <Tag style={{ marginLeft: 8 }}>{row.dims} 维</Tag> : null}
-                            </p>
-                            <p style={{ margin: '4px 0' }}>
-                                <Text type="secondary">最近测试：</Text>
-                                {row.last_test_ok === true && <Tag color="green">通过 {row.last_test_at?.slice(0, 19)}</Tag>}
-                                {row.last_test_ok === false && <Tag color="red">失败 {row.last_test_at?.slice(0, 19)}</Tag>}
-                                {row.last_test_ok == null && <Tag>未测试</Tag>}
-                            </p>
-                        </Card>
-                    ))}
-                </div>
-            )}
+                <Tabs
+                    activeKey={activePurpose}
+                    onChange={setActivePurpose}
+                    items={PURPOSES.map((p) => ({
+                        key: p.key,
+                        label: (
+                            <span className="inline-flex items-center gap-1.5">
+                                {p.label}
+                                <Tooltip title={p.hint}>
+                                    <QuestionCircleOutlined className="text-gray-300 text-xs" />
+                                </Tooltip>
+                            </span>
+                        ),
+                    }))}
+                    className="mb-2"
+                />
 
-            <Drawer
-                title={editing ? '编辑模型配置' : '新建模型配置'}
-                width={520}
-                open={drawerOpen}
-                onClose={() => setDrawerOpen(false)}
-                destroyOnHidden
-                footer={
-                    <Space style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <Button icon={<ApiOutlined />} loading={testingId === 'form'} onClick={() => handleTest()}>
-                            测试连接
-                        </Button>
-                        <Space>
-                            <Button onClick={() => setDrawerOpen(false)}>取消</Button>
-                            <Button type="primary" onClick={handleSave}>保存</Button>
+                {rows.length === 0 && !loading ? (
+                    <div className="surface-card py-16 px-4">
+                        <Empty description={`暂无「${PURPOSES.find((p) => p.key === activePurpose)?.label}」配置`}>
+                            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建配置</Button>
+                        </Empty>
+                    </div>
+                ) : (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 16 }}>
+                        {rows.map((row) => (
+                            <Card
+                                key={row.id}
+                                size="small"
+                                title={
+                                    <div className="flex items-center gap-1.5 min-w-0">
+                                        <span className="truncate" title={row.name}>{row.name}</span>
+                                        {row.is_default && <Tag color="green" className="!m-0 shrink-0">默认</Tag>}
+                                        {!row.enabled && <Tag color="red" className="!m-0 shrink-0">停用</Tag>}
+                                        <Tag className="!m-0 shrink-0">{row.scope === 'global' ? '全局' : projectName(row.project_id)}</Tag>
+                                        {!canManage(row) && <Tag className="!m-0 shrink-0">只读</Tag>}
+                                    </div>
+                                }
+                                actions={[
+                                    <Button key="test" size="small" type="link" icon={<ApiOutlined />}
+                                            loading={testingId === row.id}
+                                            onClick={() => handleTest(row)}>测试连接</Button>,
+                                    <Tooltip key="default" title={canManage(row) ? '设为该用途的默认配置' : '全局默认由管理员设置，项目配置需为项目 owner'}>
+                                        <Button key="default" size="small" type="link"
+                                                icon={row.is_default ? <StarFilled style={{ color: '#F59E0B' }} /> : <StarOutlined />}
+                                                disabled={row.is_default || !canManage(row)}
+                                                onClick={() => handleSetDefault(row)}>设为默认</Button>
+                                    </Tooltip>,
+                                    canManage(row) ? (
+                                        <Button key="edit" size="small" type="link" onClick={() => openEdit(row)}>编辑</Button>
+                                    ) : (
+                                        <span key="ro" style={{ fontSize: 12, color: '#999' }}>
+                                            {row.scope === 'global' ? '管理员管理' : '项目 owner 可管理'}
+                                        </span>
+                                    ),
+                                    canManage(row) ? (
+                                        <Button key="del" size="small" type="link" danger
+                                                disabled={row.is_default} onClick={() => handleDelete(row)}>删除</Button>
+                                    ) : (
+                                        <span key="ro2" />
+                                    ),
+                                ]}
+                            >
+                                <div className="space-y-1.5">
+                                    <div className="flex items-baseline gap-2 min-w-0">
+                                        <span className="w-14 shrink-0 text-xs text-gray-400">模型</span>
+                                        <span className="tk-mono text-[13px] text-gray-700 truncate" title={row.model_name}>
+                                            {row.model_name}
+                                        </span>
+                                    </div>
+                                    <div className="flex items-baseline gap-2 min-w-0">
+                                        <span className="w-14 shrink-0 text-xs text-gray-400">地址</span>
+                                        <span className="tk-mono text-xs text-gray-500 break-all">{row.base_url}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2 min-w-0">
+                                        <span className="w-14 shrink-0 text-xs text-gray-400">密钥</span>
+                                        <span className="tk-mono text-xs text-gray-500 truncate">
+                                            {row.api_key_set ? row.api_key_masked : '（无需密钥）'}
+                                        </span>
+                                        {row.dims ? <Tag className="!m-0 shrink-0">{row.dims} 维</Tag> : null}
+                                    </div>
+                                    <div className="flex items-center gap-2 min-w-0">
+                                        <span className="w-14 shrink-0 text-xs text-gray-400">最近测试</span>
+                                        <span className="flex items-center gap-1 flex-wrap">
+                                            {row.last_test_ok === true && <Tag color="green" className="!m-0">通过 {row.last_test_at?.slice(0, 19)}</Tag>}
+                                            {row.last_test_ok === false && <Tag color="red" className="!m-0">失败 {row.last_test_at?.slice(0, 19)}</Tag>}
+                                            {row.last_test_ok == null && <Tag className="!m-0">未测试</Tag>}
+                                        </span>
+                                    </div>
+                                </div>
+                            </Card>
+                        ))}
+                    </div>
+                )}
+
+                <Drawer
+                    title={editing ? '编辑模型配置' : '新建模型配置'}
+                    width={520}
+                    open={drawerOpen}
+                    onClose={() => setDrawerOpen(false)}
+                    destroyOnHidden
+                    footer={
+                        <Space style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <Button icon={<ApiOutlined />} loading={testingId === 'form'} onClick={() => handleTest()}>
+                                测试连接
+                            </Button>
+                            <Space>
+                                <Button onClick={() => setDrawerOpen(false)}>取消</Button>
+                                <Button type="primary" onClick={handleSave}>保存</Button>
+                            </Space>
                         </Space>
-                    </Space>
-                }
-            >
-                <Form form={form} layout="vertical">
-                    <Form.Item name="purpose" label="用途" rules={[{ required: true }]}>
-                        <Select disabled={!!editing}
-                                options={PURPOSES.map((p) => ({ value: p.key, label: `${p.label} — ${p.hint}` }))} />
-                    </Form.Item>
-                    <Form.Item name="scope" label="作用域" rules={[{ required: true }]}
-                               extra={isAdmin ? undefined : '普通用户仅可创建项目级配置（需为项目 owner）'}>
-                        <Select disabled={!!editing || !isAdmin}
-                                options={isAdmin
-                                    ? [{ value: 'global', label: '全局' }, { value: 'project', label: '项目' }]
-                                    : [{ value: 'project', label: '项目（我的项目）' }]} />
-                    </Form.Item>
-                    {scopeWatch === 'project' && !editing && (
-                        <Form.Item name="project_id" label="所属项目" rules={[{ required: true, message: '请选择项目' }]}>
+                    }
+                >
+                    <Form form={form} layout="vertical">
+                        <Form.Item name="purpose" label="用途" rules={[{ required: true }]}>
+                            <Select disabled={!!editing}
+                                    options={PURPOSES.map((p) => ({ value: p.key, label: `${p.label} — ${p.hint}` }))} />
+                        </Form.Item>
+                        <Form.Item name="scope" label="作用域" rules={[{ required: true }]}
+                                   extra={isAdmin ? undefined : '普通用户仅可创建项目级配置（需为项目 owner）'}>
+                            <Select disabled={!!editing || !isAdmin}
+                                    options={isAdmin
+                                        ? [{ value: 'global', label: '全局' }, { value: 'project', label: '项目' }]
+                                        : [{ value: 'project', label: '项目（我的项目）' }]} />
+                        </Form.Item>
+                        {scopeWatch === 'project' && !editing && (
+                            <Form.Item name="project_id" label="所属项目" rules={[{ required: true, message: '请选择项目' }]}>
+                                <Select
+                                    placeholder="选择要应用该模型配置的项目"
+                                    options={myProjects.map((p) => ({ value: p.id, label: p.name }))}
+                                />
+                            </Form.Item>
+                        )}
+                        <Form.Item name="name" label="配置名称" rules={[{ required: true }]}>
+                            <Input placeholder="如：GLM-抽取-方舟" />
+                        </Form.Item>
+                        <Form.Item name="provider" label="Provider" rules={[{ required: true }]}>
                             <Select
-                                placeholder="选择要应用该模型配置的项目"
-                                options={myProjects.map((p) => ({ value: p.id, label: p.name }))}
+                                onChange={(v) => {
+                                    setProviderSel(v);
+                                    const meta = providers.find((p) => p.id === v);
+                                    if (meta?.default_base_url) form.setFieldsValue({ base_url: meta.default_base_url });
+                                }}
+                                options={providers.map((p) => ({ value: p.id, label: `${p.label}（${p.hint}）` }))}
                             />
                         </Form.Item>
-                    )}
-                    <Form.Item name="name" label="配置名称" rules={[{ required: true }]}>
-                        <Input placeholder="如：GLM-抽取-方舟" />
-                    </Form.Item>
-                    <Form.Item name="provider" label="Provider" rules={[{ required: true }]}>
-                        <Select
-                            onChange={(v) => {
-                                setProviderSel(v);
-                                const meta = providers.find((p) => p.id === v);
-                                if (meta?.default_base_url) form.setFieldsValue({ base_url: meta.default_base_url });
-                            }}
-                            options={providers.map((p) => ({ value: p.id, label: `${p.label}（${p.hint}）` }))}
-                        />
-                    </Form.Item>
-                    <Form.Item name="base_url" label="Base URL" rules={[{ required: true }]}>
-                        <Input placeholder="https://.../v1" />
-                    </Form.Item>
-                    <Form.Item name="model_name" label="模型名称" rules={[{ required: true }]}>
-                        <Input placeholder="如 glm-5-3-flash / bge-m3:latest" />
-                    </Form.Item>
-                    <Form.Item
-                        name="api_key"
-                        label={editing?.api_key_set ? `API Key（当前 ${editing.api_key_masked}，留空保持不变）` : 'API Key'}
-                    >
-                        <Input.Password placeholder={providerMeta?.needs_key === false ? '该 provider 无需密钥' : '必填项（Ollama 留空）'} />
-                    </Form.Item>
-                    {isEmbedding && (
-                        <Form.Item name="dims" label="向量维度" rules={[{ required: true }]}
-                                   extra="必须与 Milvus collection 维度一致（bge-m3=1024）">
-                            <InputNumber min={1} max={65536} style={{ width: '100%' }} />
+                        <Form.Item name="base_url" label="Base URL" rules={[{ required: true }]}>
+                            <Input placeholder="https://.../v1" />
                         </Form.Item>
-                    )}
-                    {isExtract && (
-                        <>
-                            <Typography.Title level={5} style={{ marginTop: 8 }}>抽取运行参数</Typography.Title>
-                            <Space size={16} wrap>
-                                <Form.Item name="chunk_size" label="chunk_size" initialValue={15000}>
-                                    <InputNumber min={200} max={50000} />
-                                </Form.Item>
-                                <Form.Item name="chunk_overlap" label="overlap %" initialValue={10}>
-                                    <InputNumber min={0} max={50} />
-                                </Form.Item>
-                                <Form.Item name="parallelism" label="并行度" initialValue={16}
-                                           tooltip="同时在途的切片抽取任务数（默认 16）：后端按滑动窗口调度，完成一个立即补一个。远端模型服务限速严格时可调小">
-                                    <InputNumber min={1} max={64} />
-                                </Form.Item>
-                                <Form.Item name="request_interval" label="请求间隔(s)" initialValue={2}
-                                           tooltip="每次任务提交之间的间隔（秒），用于给远程模型服务限速；0 表示不限速">
-                                    <InputNumber min={0} max={60} />
-                                </Form.Item>
-                                <Form.Item name="llm_timeout" label="超时(s)" initialValue={300}>
-                                    <InputNumber min={30} max={1800} />
-                                </Form.Item>
-                                <Form.Item name="disable_think" label="关闭思考" valuePropName="checked"
-                                           tooltip="开启后抽取/QA 调用该模型时禁用思考模式（方舟 GLM 等模型关思考可显著提速、避免空回复）">
-                                    <Switch />
-                                </Form.Item>
-                                <Form.Item name="streaming_enabled" label="流式" valuePropName="checked"
-                                           tooltip="预留开关：抽取输出为 JSON 契约固定非流式；问答是否流式由问答页开关控制，此开关当前不改变行为">
-                                    <Switch />
-                                </Form.Item>
-                            </Space>
-                        </>
-                    )}
-                </Form>
-            </Drawer>
+                        <Form.Item name="model_name" label="模型名称" rules={[{ required: true }]}>
+                            <Input placeholder="如 glm-5-3-flash / bge-m3:latest" />
+                        </Form.Item>
+                        <Form.Item
+                            name="api_key"
+                            label={editing?.api_key_set ? `API Key（当前 ${editing.api_key_masked}，留空保持不变）` : 'API Key'}
+                        >
+                            <Input.Password placeholder={providerMeta?.needs_key === false ? '该 provider 无需密钥' : '必填项（Ollama 留空）'} />
+                        </Form.Item>
+                        {isEmbedding && (
+                            <Form.Item name="dims" label="向量维度" rules={[{ required: true }]}
+                                       extra="必须与 Milvus collection 维度一致（bge-m3=1024）">
+                                <InputNumber min={1} max={65536} style={{ width: '100%' }} />
+                            </Form.Item>
+                        )}
+                        {isExtract && (
+                            <>
+                                <Typography.Title level={5} style={{ marginTop: 8 }}>抽取运行参数</Typography.Title>
+                                <Space size={16} wrap>
+                                    <Form.Item name="chunk_size" label="chunk_size" initialValue={15000}>
+                                        <InputNumber min={200} max={50000} />
+                                    </Form.Item>
+                                    <Form.Item name="chunk_overlap" label="overlap %" initialValue={10}>
+                                        <InputNumber min={0} max={50} />
+                                    </Form.Item>
+                                    <Form.Item name="parallelism" label="并行度" initialValue={16}
+                                               tooltip="同时在途的切片抽取任务数（默认 16）：后端按滑动窗口调度，完成一个立即补一个。远端模型服务限速严格时可调小">
+                                        <InputNumber min={1} max={64} />
+                                    </Form.Item>
+                                    <Form.Item name="request_interval" label="请求间隔(s)" initialValue={2}
+                                               tooltip="每次任务提交之间的间隔（秒），用于给远程模型服务限速；0 表示不限速">
+                                        <InputNumber min={0} max={60} />
+                                    </Form.Item>
+                                    <Form.Item name="llm_timeout" label="超时(s)" initialValue={300}>
+                                        <InputNumber min={30} max={1800} />
+                                    </Form.Item>
+                                    <Form.Item name="disable_think" label="关闭思考" valuePropName="checked"
+                                               tooltip="开启后抽取/QA 调用该模型时禁用思考模式（方舟 GLM 等模型关思考可显著提速、避免空回复）">
+                                        <Switch />
+                                    </Form.Item>
+                                    <Form.Item name="streaming_enabled" label="流式" valuePropName="checked"
+                                               tooltip="预留开关：抽取输出为 JSON 契约固定非流式；问答是否流式由问答页开关控制，此开关当前不改变行为">
+                                        <Switch />
+                                    </Form.Item>
+                                </Space>
+                            </>
+                        )}
+                    </Form>
+                </Drawer>
+            </div>
         </div>
     );
 };

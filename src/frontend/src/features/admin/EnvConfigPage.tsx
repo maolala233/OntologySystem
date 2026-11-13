@@ -6,7 +6,7 @@
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import { message } from '../../shared/feedback';
-import { Alert, Button, Card, Input, Spin, Switch, Tag, Typography } from 'antd';
+import { Alert, Button, Card, Empty, Input, Spin, Switch, Tag, Tooltip } from 'antd';
 import {
     ApiOutlined,
     CloudServerOutlined,
@@ -17,8 +17,8 @@ import {
     ThunderboltOutlined,
 } from '@ant-design/icons';
 import { envConfigApi, EnvConfigResponse, EnvTestResult } from '../../api/envConfig';
-
-const { Text } = Typography;
+import Navbar from '../../components/Layout/Navbar';
+import PageHeader from '../../components/Layout/PageHeader';
 
 const SERVICE_META: Record<string, { title: string; icon: React.ReactNode; color: string }> = {
     milvus: { title: 'Milvus 向量库', icon: <ThunderboltOutlined />, color: '#B585F2' },
@@ -26,6 +26,12 @@ const SERVICE_META: Record<string, { title: string; icon: React.ReactNode; color
     redis: { title: 'Redis 缓存/队列', icon: <CloudServerOutlined />, color: '#5AC8FA' },
     minio: { title: 'MinIO 对象存储', icon: <DatabaseOutlined />, color: '#F2B950' },
 };
+
+const BREADCRUMBS = [
+    { title: '首页', path: '/' },
+    { title: '系统配置' },
+    { title: '环境配置' },
+];
 
 const EnvConfigPage: React.FC = () => {
     const [data, setData] = useState<EnvConfigResponse | null>(null);
@@ -87,33 +93,51 @@ const EnvConfigPage: React.FC = () => {
         }
     };
 
-    if (loading) {
-        return <div className="flex justify-center items-center h-96"><Spin size="large" /></div>;
-    }
-    if (!data) return null;
+    // 页面外壳：加载/失败态也保留顶栏，进入页面不会先闪一屏无顶栏的布局再跳变
+    const shell = (body: React.ReactNode) => (
+        <div className="h-full flex flex-col app-canvas">
+            <Navbar breadcrumbs={BREADCRUMBS} />
+            {body}
+        </div>
+    );
 
-    return (
-        <div className="p-4 sm:p-6 h-full overflow-y-auto scrollbar-stable" style={{ maxWidth: 1100, margin: '0 auto' }}>
-            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-                <div>
-                    <h1 className="text-xl font-bold text-gray-800 m-0">环境配置</h1>
-                    <Text type="secondary" className="text-sm">
-                        中间件连接参数 · 修改保存后 API 进程即时生效（无需重启后端）
-                    </Text>
-                </div>
-                <div className="flex items-center gap-2">
-                    <Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>
-                    <Button
-                        type="primary"
-                        icon={<SaveOutlined />}
-                        onClick={handleSave}
-                        loading={saving}
-                        disabled={dirtyCount === 0}
-                    >
-                        保存全部{dirtyCount > 0 ? `（${dirtyCount} 项修改）` : ''}
-                    </Button>
-                </div>
-            </div>
+    if (loading) {
+        return shell(
+            <div className="flex-1 flex items-center justify-center">
+                <Spin size="large" />
+            </div>,
+        );
+    }
+    if (!data) {
+        return shell(
+            <div className="flex-1 flex flex-col items-center justify-center gap-2">
+                <Empty description="环境配置加载失败，请稍后重试" />
+                <Button icon={<ReloadOutlined />} onClick={load}>重试</Button>
+            </div>,
+        );
+    }
+
+    return shell(
+        <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
+            <PageHeader
+                icon={<CloudServerOutlined />}
+                title="环境配置"
+                subtitle="中间件连接参数 · 修改保存后 API 进程即时生效（无需重启后端）"
+                extra={
+                    <>
+                        <Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>
+                        <Button
+                            type="primary"
+                            icon={<SaveOutlined />}
+                            onClick={handleSave}
+                            loading={saving}
+                            disabled={dirtyCount === 0}
+                        >
+                            保存全部{dirtyCount > 0 ? `（${dirtyCount} 项修改）` : ''}
+                        </Button>
+                    </>
+                }
+            />
 
             <Alert
                 type="info"
@@ -134,7 +158,6 @@ const EnvConfigPage: React.FC = () => {
                     return (
                         <Card
                             key={service}
-                            className="rounded-xl shadow-sm"
                             title={
                                 <span className="flex items-center gap-2">
                                     <span style={{ color: meta.color }}>{meta.icon}</span>
@@ -147,9 +170,11 @@ const EnvConfigPage: React.FC = () => {
                             extra={
                                 <div className="flex items-center gap-2">
                                     {tr && (
-                                        <Tag color={tr.status === 'ok' ? 'green' : 'red'}>
-                                            {tr.status === 'ok' ? `连通 ${tr.latency_ms}ms` : `失败：${(tr.error || '').slice(0, 40)}`}
-                                        </Tag>
+                                        <Tooltip title={tr.status === 'ok' ? `连通正常，延迟 ${tr.latency_ms}ms` : (tr.error || '连接失败')}>
+                                            <Tag color={tr.status === 'ok' ? 'green' : 'red'} className="!m-0 max-w-[180px] truncate">
+                                                {tr.status === 'ok' ? `连通 ${tr.latency_ms}ms` : `失败：${(tr.error || '').slice(0, 24)}`}
+                                            </Tag>
+                                        </Tooltip>
                                     )}
                                     <Button
                                         size="small"
@@ -162,7 +187,7 @@ const EnvConfigPage: React.FC = () => {
                                 </div>
                             }
                         >
-                            <div className="space-y-4">
+                            <div className="space-y-3">
                                 {fields.map((f) => {
                                     const changed = f.key in dirty;
                                     return (
@@ -214,7 +239,7 @@ const EnvConfigPage: React.FC = () => {
                     );
                 })}
             </div>
-        </div>
+        </div>,
     );
 };
 
