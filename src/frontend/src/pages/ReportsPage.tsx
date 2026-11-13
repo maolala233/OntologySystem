@@ -16,11 +16,13 @@ import {
 import { projectsApi } from '../api/projects';
 import { QA_LAST_PROJECT_ID_KEY } from '../shared/keys';
 import type { ProjectData } from '../types/ontology';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import MarkdownAnswer from '../features/qa/MarkdownAnswer';
 import Navbar from '../components/Layout/Navbar';
+import PageHeader from '../components/Layout/PageHeader';
 
 export default function ReportsPage() {
+    const navigate = useNavigate();
     const [projects, setProjects] = useState<ProjectData[]>([]);
     const [projectId, setProjectId] = useState<number | null>(null);
     // kind 由路由决定（R11：报告/PPT 分开授权与入口）
@@ -170,38 +172,48 @@ export default function ReportsPage() {
     return (
         <div className="h-full flex flex-col app-canvas">
             <Navbar breadcrumbs={[{ title: '首页', path: '/' }, { title: '工具' }, { title: kind === 'ppt' ? 'PPT生成' : '报告生成' }]} />
-            <div className="flex-1 min-h-0 overflow-auto p-4 sm:p-6">
-                <div className="max-w-4xl mx-auto">
-                    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-4">
-                        <div className="flex items-center gap-3 flex-wrap">
-                            <FileTextOutlined className="text-blue-500 text-lg" />
-                            <span className="font-semibold text-gray-800">{kind === 'ppt' ? 'PPT 演示生成' : '主题分析报告'}</span>
-                            <div className="flex-1" />
+            <div className="flex-1 min-h-0 overflow-auto scrollbar-stable p-4 sm:p-6">
+                <div className="max-w-4xl mx-auto space-y-4">
+                    <PageHeader
+                        icon={<FileTextOutlined />}
+                        title={kind === 'ppt' ? 'PPT 演示生成' : '主题分析报告'}
+                        subtitle={kind === 'ppt'
+                            ? '围绕主题从项目图谱检索实体、属性与关系作为证据，生成演示大纲并按模板排版导出 .pptx'
+                            : '围绕主题从项目图谱检索相关实体、属性与关系作为证据，生成面向业务读者的分析报告'}
+                        extra={
                             <Select
                                 value={projectId ?? undefined}
                                 onChange={onProjectChange}
                                 placeholder="选择项目"
-                                className="w-48"
+                                className="w-56"
                                 showSearch
                                 optionFilterProp="label"
                                 options={projects.map(p => ({ value: p.id, label: p.name }))}
                             />
-                        </div>
-                        <div className="mt-3">
-                            <div className="text-xs text-gray-500 mb-1.5">
-                                围绕主题从知识图谱中提取相关实体、属性与关系作为证据，生成面向业务读者的分析
+                        }
+                    />
+
+                    {/* 生成配置 */}
+                    <div className="surface-card p-5 space-y-5">
+                        {/* 主题 */}
+                        <div>
+                            <div className="flex items-center gap-1.5 mb-2">
+                                <span className="text-sm font-medium text-gray-700">{kind === 'ppt' ? '演示主题' : '分析主题'}</span>
+                                <span className="text-red-400 text-xs">*</span>
                             </div>
-                            <div className="flex items-center gap-3 flex-wrap">
+                            <div className="flex flex-wrap items-center gap-2">
                                 <Input
                                     value={topic}
                                     onChange={e => setTopic(e.target.value)}
-                                    placeholder="分析主题（必填），如：理财产品的风险类型与应对措施"
-                                    className="max-w-lg"
+                                    placeholder={kind === 'ppt'
+                                        ? '演示主题（必填），如：理财产品的风险类型与应对措施'
+                                        : '分析主题（必填），如：理财产品的风险类型与应对措施'}
+                                    className="flex-1 min-w-[260px]"
                                     disabled={busy}
                                     onPressEnter={run}
                                 />
                                 {kind === 'ppt' && (
-                                    <span className="flex items-center gap-1 text-sm text-gray-500">
+                                    <span className="flex items-center gap-1.5 text-sm text-gray-500">
                                         页数
                                         <InputNumber min={3} max={15} value={maxSlides}
                                             onChange={v => setMaxSlides(v ?? 8)} disabled={busy} />
@@ -211,68 +223,16 @@ export default function ReportsPage() {
                                     type="primary" icon={<PlayCircleOutlined />} onClick={run}
                                     loading={busy} disabled={projectId == null}
                                 >
-                                    {busy ? `生成中…（${elapsed}s）` : '生成'}
+                                    {busy ? `生成中…（${elapsed}s）` : (kind === 'ppt' ? '生成 PPT' : '生成报告')}
                                 </Button>
-                                {busy && kind === 'report' && (
-                                    <span className="text-xs text-gray-500">全文生成约需 1~2 分钟，请稍候</span>
+                                {busy && (
+                                    <span className="text-xs text-gray-500">
+                                        {kind === 'ppt' ? '大纲生成与排版约需 1~3 分钟，请稍候' : '全文生成约需 1~2 分钟，请稍候'}
+                                    </span>
                                 )}
                             </div>
-                            {/* 推理附录（语义推理产物，生成后确定性拼接，不进 LLM 正文材料） */}
-                            <div className="mt-2 flex items-center gap-1.5">
-                                <Checkbox checked={includeInferred} disabled={busy}
-                                    onChange={e => setIncludeInferred(e.target.checked)}>
-                                    附录：推理衍生事实
-                                </Checkbox>
-                                <Tooltip title="在报告末尾（PPT 为附录页）追加「推理衍生事实」表：系统基于本体公理/规则自动推导的结论，已标注为语义推理产物、非原始事实记载；正文分析不使用该内容。">
-                                    <QuestionCircleOutlined className="text-gray-300 text-xs" />
-                                </Tooltip>
-                            </div>
 
-                            {/* PPT 自定义模板上传（占位符协议自动填写） */}
-                            {kind === 'ppt' && projectId != null && (
-                                <div className="mt-3 rounded-lg border border-dashed border-gray-300 bg-gray-50/60 p-3">
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                        <span className="text-xs font-medium text-gray-600">自定义模板</span>
-                                        <Tooltip title="封面页 {{title}}/{{subtitle}}/{{date}}/{{project}}；内容页 {{slide_title}} + {{bullets}}；结尾页（可选）{{closing}}。生成时自动按大纲填写并复制内容页。">
-                                            <QuestionCircleOutlined className="text-gray-300 text-xs" />
-                                        </Tooltip>
-                                        <Upload
-                                            accept=".pptx"
-                                            showUploadList={false}
-                                            beforeUpload={() => false}
-                                            disabled={busy || templateUploading}
-                                            onChange={({ file }) => {
-                                                if (file.status === 'removed' || !file.originFileObj) return;
-                                                handleTemplateUpload(file.originFileObj as File);
-                                            }}
-                                        >
-                                            <Button size="small" icon={<UploadOutlined />}
-                                                loading={templateUploading} disabled={busy}>
-                                                上传模板
-                                            </Button>
-                                        </Upload>
-                                        {templateInfo.exists ? (
-                                            <>
-                                                <Tag color="blue" className="!m-0">{templateInfo.filename}</Tag>
-                                                <Checkbox checked={useTemplate} disabled={busy}
-                                                    onChange={e => setUseTemplate(e.target.checked)}>生成时使用模板</Checkbox>
-                                                <Button size="small" type="link" className="!px-1"
-                                                    onClick={() => handleDownload('current')}>下载</Button>
-                                                <Popconfirm title="确定清除已上传的模板？" onConfirm={handleTemplateDelete}>
-                                                    <Button size="small" type="link" danger className="!px-1">清除</Button>
-                                                </Popconfirm>
-                                            </>
-                                        ) : (
-                                            <span className="text-xs text-gray-500">未上传 · 将使用系统默认模板（深蓝商务风）</span>
-                                        )}
-                                        <div className="flex-1" />
-                                        <Button size="small" type="link" className="!px-1 !text-[11px]"
-                                            onClick={() => handleDownload('sample')}>
-                                            下载示例模板（内含使用说明）
-                                        </Button>
-                                    </div>
-                                </div>
-                            )}
+                            {/* 主题建议（AI 生成，点击触发） */}
                             <div className="flex items-center gap-1.5 mt-2 flex-wrap">
                                 <Button size="small" type="link" className="!px-1 !text-[11px]"
                                     loading={chipsLoading}
@@ -299,10 +259,77 @@ export default function ReportsPage() {
                                 </div>
                             )}
                         </div>
+
+                        {/* 生成选项 */}
+                        <div className="pt-4 border-t border-gray-100">
+                            <div className="text-sm font-medium text-gray-700 mb-2">生成选项</div>
+                            <div className="flex items-center gap-1.5">
+                                <Checkbox checked={includeInferred} disabled={busy}
+                                    onChange={e => setIncludeInferred(e.target.checked)}>
+                                    附录：推理衍生事实
+                                </Checkbox>
+                                <Tooltip title={kind === 'ppt'
+                                    ? '在 PPT 末尾追加「推理衍生事实」附录页：系统基于本体公理/规则自动推导的结论，已标注为语义推理产物、非原始事实记载；正文分析不使用该内容。'
+                                    : '在报告末尾追加「推理衍生事实」表：系统基于本体公理/规则自动推导的结论，已标注为语义推理产物、非原始事实记载；正文分析不使用该内容。'}>
+                                    <QuestionCircleOutlined className="text-gray-300 text-xs" />
+                                </Tooltip>
+                            </div>
+
+                            {/* PPT 自定义模板上传（占位符协议自动填写） */}
+                            {kind === 'ppt' && projectId != null && (
+                                <div className="mt-3 rounded-xl border border-dashed border-[#DCE3F0] bg-[#F8FAFE] p-3">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="text-xs font-medium text-gray-600">自定义模板</span>
+                                        <Tooltip title="封面页 {{title}}/{{subtitle}}/{{date}}/{{project}}；内容页 {{slide_title}} + {{bullets}}；结尾页（可选）{{closing}}。生成时自动按大纲填写并复制内容页。">
+                                            <QuestionCircleOutlined className="text-gray-300 text-xs" />
+                                        </Tooltip>
+                                        <Tag color={templateInfo.exists ? 'blue' : 'default'} className="!m-0">
+                                            {templateInfo.exists ? templateInfo.filename : '未上传'}
+                                        </Tag>
+                                        <div className="flex-1" />
+                                        <Upload
+                                            accept=".pptx"
+                                            showUploadList={false}
+                                            beforeUpload={() => false}
+                                            disabled={busy || templateUploading}
+                                            onChange={({ file }) => {
+                                                if (file.status === 'removed' || !file.originFileObj) return;
+                                                handleTemplateUpload(file.originFileObj as File);
+                                            }}
+                                        >
+                                            <Button size="small" icon={<UploadOutlined />}
+                                                loading={templateUploading} disabled={busy}>
+                                                上传模板
+                                            </Button>
+                                        </Upload>
+                                        {templateInfo.exists && (
+                                            <>
+                                                <Checkbox checked={useTemplate} disabled={busy}
+                                                    onChange={e => setUseTemplate(e.target.checked)}>生成时使用</Checkbox>
+                                                <Button size="small" type="link" className="!px-1"
+                                                    onClick={() => handleDownload('current')}>下载</Button>
+                                                <Popconfirm title="确定清除已上传的模板？" onConfirm={handleTemplateDelete}>
+                                                    <Button size="small" type="link" danger className="!px-1">清除</Button>
+                                                </Popconfirm>
+                                            </>
+                                        )}
+                                    </div>
+                                    <div className="mt-2 flex items-center justify-between gap-2 flex-wrap">
+                                        <span className="text-[11px] text-gray-400">
+                                            {templateInfo.exists ? '不勾选「生成时使用」时仍走系统默认模板' : '未上传时使用系统默认模板（深蓝商务风）'}
+                                        </span>
+                                        <Button size="small" type="link" className="!px-0 !text-[11px]"
+                                            onClick={() => handleDownload('sample')}>
+                                            下载示例模板（内含使用说明）
+                                        </Button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                     </div>
 
                     {busy && (
-                        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-10 text-center">
+                        <div className="surface-card p-10 text-center">
                             <Spin size="large" />
                             <div className="text-gray-500 mt-4">
                                 正在围绕「{topic.trim()}」检索图谱证据并生成{kind === 'report' ? '分析报告' : '演示文稿大纲'}…
@@ -311,7 +338,7 @@ export default function ReportsPage() {
                     )}
 
                     {result && !busy && (
-                        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+                        <div className="surface-card p-5">
                             <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                                 <div className="flex items-center gap-2">
                                     <span className="font-semibold text-gray-800">{result.title}</span>
@@ -344,9 +371,9 @@ export default function ReportsPage() {
                                         )}
                                     </div>
                                     {result.outline.slides.map((s, i) => (
-                                        <div key={i} className="border border-gray-200 rounded-lg p-3">
+                                        <div key={i} className="border border-[#E6EBF5] rounded-xl p-3 bg-[#FBFCFE]">
                                             <div className="text-sm font-semibold text-gray-800 mb-1.5">
-                                                <Tag className="mr-1.5">{i + 1}</Tag>{s.title}
+                                                <Tag color="blue" className="mr-1.5">{i + 1}</Tag>{s.title}
                                             </div>
                                             <ul className="list-disc pl-9 text-sm text-gray-600 space-y-0.5">
                                                 {s.bullets.map((b, j) => (
@@ -361,10 +388,32 @@ export default function ReportsPage() {
                     )}
 
                     {!result && !busy && (
-                        <div className="bg-white/80 rounded-2xl border border-dashed border-gray-200 p-12 text-center text-gray-500">
-                            {projects.length === 0 && !projectsLoading
-                                ? '还没有可用项目，请先在「我的项目」创建并完成建模，再回到这里生成报告或演示大纲'
-                                : '填写分析主题后点击「生成」——系统会从项目图谱中检索与主题相关的实体、属性与关系，撰写面向业务读者的主题分析报告或演示大纲'}
+                        <div className="surface-card p-10 text-center" style={{ borderStyle: 'dashed' }}>
+                            <div className="w-12 h-12 rounded-2xl bg-[rgba(91,141,239,0.10)] text-[#5B8DEF] flex items-center justify-center text-xl mx-auto mb-3">
+                                <FileTextOutlined />
+                            </div>
+                            {projects.length === 0 && !projectsLoading ? (
+                                <>
+                                    <div className="text-sm text-gray-500">
+                                        还没有可用项目。请先在「我的项目」创建项目并完成建模，再回来生成
+                                        {kind === 'ppt' ? ' PPT' : '报告'}。
+                                    </div>
+                                    <Button className="mt-3" onClick={() => navigate('/my-projects')}>去我的项目</Button>
+                                </>
+                            ) : (
+                                <>
+                                    <div className="text-sm text-gray-500 leading-relaxed">
+                                        {kind === 'ppt'
+                                            ? '填写演示主题后点击「生成 PPT」：系统会从项目图谱检索相关实体、属性与关系作为证据，生成演示大纲并按模板排版导出 .pptx。'
+                                            : '填写分析主题后点击「生成报告」：系统会从项目图谱检索相关实体、属性与关系作为证据，撰写可下载的主题分析报告。'}
+                                    </div>
+                                    <div className="text-[11px] text-gray-400 mt-1">
+                                        {kind === 'ppt'
+                                            ? '可先在「生成选项」中上传自定义模板；未上传时使用系统默认模板。'
+                                            : '支持 Markdown / Word 下载；全文生成约需 1~2 分钟。'}
+                                    </div>
+                                </>
+                            )}
                         </div>
                     )}
                 </div>
