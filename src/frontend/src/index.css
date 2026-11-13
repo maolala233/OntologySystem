@@ -235,10 +235,10 @@ body,
   scrollbar-gutter: stable;
 }
 
-/* 侧边栏菜单滚动条（深色底）：全局滚动条是浅色轨道，在 #001529 侧栏上很突兀 */
+/* 侧边栏菜单滚动条：侧栏改浅色后沿用全站的浅色细滚动条（6px） */
 .sidebar-scroll {
   scrollbar-width: thin;                                /* Firefox */
-  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+  scrollbar-color: rgba(100, 116, 139, 0.28) transparent;
 }
 .sidebar-scroll::-webkit-scrollbar {
   width: 6px;
@@ -247,11 +247,46 @@ body,
   background: transparent;
 }
 .sidebar-scroll::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.22);
+  background: rgba(100, 116, 139, 0.26);
   border-radius: 3px;
 }
 .sidebar-scroll::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.42);
+  background: rgba(71, 85, 105, 0.46);
+}
+
+/* 浅色侧栏（2026-11-13）：选中项左侧品牌竖条。
+   底色/文字色由 theme.ts 的 Menu token 提供（淡蓝底 + 加深品牌蓝文字），
+   这里只补一条 3px 竖条，让当前板块在白色侧栏里更明确 */
+.app-sider .ant-menu-inline .ant-menu-item,
+.app-sider .ant-menu-inline .ant-menu-submenu-title {
+  position: relative;
+}
+.app-sider .ant-menu-inline .ant-menu-item-selected {
+  font-weight: 600;
+}
+.app-sider .ant-menu-inline .ant-menu-item-selected::before {
+  content: '';
+  position: absolute;
+  inset-inline-start: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 18px;
+  border-radius: 0 3px 3px 0;
+  background: #2A57C6;
+}
+
+/* 子菜单（工具 / 系统配置）的成组底色：上下边缘各做 14px 渐隐。
+   原来的底色块是硬边矩形，叠在侧栏自身的渐变上会出现一条生硬的深浅分界线；
+   渐隐后像一块柔和的"分区"，而不是一个贴上去的深色矩形 */
+.app-sider .ant-menu-inline .ant-menu-sub.ant-menu-inline {
+  background: linear-gradient(
+    180deg,
+    rgba(91, 141, 239, 0) 0,
+    rgba(91, 141, 239, 0.055) 14px,
+    rgba(91, 141, 239, 0.055) calc(100% - 14px),
+    rgba(91, 141, 239, 0) 100%
+  );
 }
 
 /* D3 力导向图样式 */
@@ -520,10 +555,13 @@ body {
   background-attachment: fixed;
 }
 
-/* 全站顶栏：实白 + 极细分隔线 + 轻投影（页面含深色沉浸页，故不做半透明） */
+/* 全站顶栏：淡冷蓝渐变 + 左侧品牌色晕染 + 极细分隔线 + 轻投影
+   （页面含深色沉浸页，故不做半透明；不铺纯白，避免整屏发白） */
 .app-topbar {
-  background: #FFFFFF;
-  border-bottom: 1px solid rgba(226, 232, 240, 0.9);
+  background:
+    linear-gradient(90deg, rgba(91, 141, 239, 0.09) 0%, rgba(139, 92, 246, 0.05) 38%, rgba(255, 255, 255, 0) 72%),
+    linear-gradient(180deg, #F8FBFF 0%, #F3F7FE 100%);
+  border-bottom: 1px solid rgba(214, 224, 240, 0.95);
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 10px 28px -26px rgba(15, 23, 42, 0.5);
 }
 

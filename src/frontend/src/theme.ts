@@ -10,7 +10,12 @@ export const BRAND = {
     primary: '#5B8DEF',
     purple: '#8B5CF6',
     ink: '#0F1420',
-    sider: '#0D1322',
+    /** 2026-11-13：侧栏改浅色，与顶栏连成同一个白色外壳；深色只留给工作台 Hero。
+        底色不用纯白（整屏会显得发白），改用极淡的冷蓝，由 AppLayout 叠一层顶部品牌辉光 */
+    sider: '#EDF2FB',
+    siderLine: '#E9EDF6',
+    /** 浅底上的品牌文字色：直接使用 #5B8DEF 对比度不足，加深一档 */
+    primaryInk: '#2A57C6',
     canvas: '#F3F6FB',
 } as const;
 
@@ -54,11 +59,24 @@ export const appTheme: ThemeConfig = {
         boxShadowTertiary: '0 1px 2px rgba(15, 23, 42, 0.04), 0 12px 30px -20px rgba(15, 23, 42, 0.20)',
     },
     components: {
-        // 侧边栏与 Hero 同色系，整体框架统一为墨蓝而非旧版海军蓝
+        // 侧栏改浅色（2026-11-13）：和顶栏连成同一个白色外壳，内容区是浅蓝画布。
+        // 深色块只保留工作台 Hero 一处，避免"深色边框 + 浅色内容"的割裂
         Layout: { siderBg: BRAND.sider, bodyBg: BRAND.canvas },
         Menu: {
-            darkItemBg: BRAND.sider,
-            darkPopupBg: BRAND.sider,
+            // 浅色档（主侧栏）：底色透明，让侧栏自身的淡蓝渐变透出来；
+            // 悬停用白/淡蓝药丸，选中项 = 品牌淡底 + 加深文字 + 左侧竖条（竖条见 index.css .app-sider）
+            itemBg: 'transparent',
+            subMenuItemBg: 'rgba(91, 141, 239, 0.05)',
+            itemColor: '#52607A',
+            itemHoverColor: '#1F2A44',
+            itemHoverBg: 'rgba(91, 141, 239, 0.10)',
+            itemSelectedColor: BRAND.primaryInk,
+            itemSelectedBg: 'rgba(91, 141, 239, 0.22)',
+            itemActiveBg: 'rgba(91, 141, 239, 0.26)',
+            groupTitleColor: '#8A94AB',
+            // 深色档：构建器 / 图谱查看器里的深色面板仍在用（theme="dark"），保留整套 token
+            darkItemBg: '#0D1322',
+            darkPopupBg: '#0D1322',
             darkSubMenuItemBg: '#091019',
             darkItemColor: 'rgba(203, 213, 225, 0.78)',
             darkItemHoverColor: '#FFFFFF',
@@ -68,6 +86,7 @@ export const appTheme: ThemeConfig = {
             itemBorderRadius: 10,
             itemMarginInline: 8,
             activeBarWidth: 0,
+            activeBarBorderWidth: 0,
         },
         Card: {
             headerBg: 'transparent',

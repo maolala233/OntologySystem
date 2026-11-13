@@ -166,35 +166,43 @@ const AppLayout: React.FC = () => {
     return (
         <SiderCollapseContext.Provider value={{ collapsed, toggle: () => setCollapsed(c => !c) }}>
         <Layout className="h-screen overflow-hidden">
-            {/* 深色侧边栏 */}
-            {/* 2026-11-11：关掉 Sider 底部自带的折叠箭头（trigger=null），
+            {/* 浅色侧边栏（2026-11-13）：与顶栏同为白色，连成一个完整外壳；
+                深色只留给工作台 Hero，避免框架层出现大面积深色块。
+                2026-11-11：关掉 Sider 底部自带的折叠箭头（trigger=null），
                 改由顶栏左侧的 SiderToggle 控制折叠 */}
             <Sider
                 collapsible
                 collapsed={collapsed}
                 onCollapse={setCollapsed}
                 trigger={null}
-                theme="dark"
+                theme="light"
                 width={240}
-                className="sticky top-0 h-screen flex flex-col"
+                className="app-sider sticky top-0 h-screen flex flex-col"
                 style={{
                     position: 'sticky',
                     top: 0,
                     height: '100vh',
-                    boxShadow: '4px 0 24px -8px rgba(15, 23, 42, 0.28)',
+                    // 冷蓝底 + 左上品牌辉光：整屏不再是大面积纯白，
+                    // 和顶栏左侧的品牌色渐变接起来（2026-11-13）
+                    background:
+                        'radial-gradient(360px 260px at 0% -8%, rgba(91, 141, 239, 0.28), transparent 70%), ' +
+                        'radial-gradient(320px 300px at 108% 106%, rgba(139, 92, 246, 0.14), transparent 72%), ' +
+                        'linear-gradient(180deg, #EEF3FC 0%, #E6EDF9 100%)',
+                    // 用 box-shadow 画 1px 分隔线：不占宽度，折叠动画时不会抖动
+                    boxShadow: '1px 0 0 #D8E2F1, 6px 0 24px -22px rgba(15, 23, 42, 0.35)',
                     zIndex: 10,
                 }}
             >
                 {/* Logo 区域：标题随侧栏宽度一起「展开/收起」（max-width 过渡），
                     不能按 collapsed 直接显隐——展开动画途中侧栏还窄，文字会先折成两行再变一行 */}
-                <div className="h-14 flex items-center justify-center border-b border-white/10 overflow-hidden">
+                <div className="h-14 flex items-center justify-center border-b border-[#DEE6F4] overflow-hidden">
                     <div className="flex items-center min-w-0">
                         <div className="w-8 h-8 shrink-0 rounded-lg flex items-center justify-center"
                              style={{ background: 'linear-gradient(135deg, #5B8DEF, #8B5CF6)' }}>
                             <BrandMark size={19} strokeWidth={4} />
                         </div>
                         <span
-                            className={`text-white font-semibold text-lg whitespace-nowrap overflow-hidden transition-all duration-200 ease-out ${
+                            className={`text-[#0F172A] font-semibold text-lg whitespace-nowrap overflow-hidden transition-all duration-200 ease-out ${
                                 collapsed ? 'max-w-0 opacity-0 ml-0' : 'max-w-[6rem] opacity-100 ml-2'
                             }`}
                         >
@@ -206,7 +214,7 @@ const AppLayout: React.FC = () => {
                 {/* 导航菜单 */}
                 <div className="sidebar-scroll pt-2 pb-2" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
                     <Menu
-                        theme="dark"
+                        theme="light"
                         mode="inline"
                         selectedKeys={[selectedMenuKey]}
                         openKeys={openMenus}

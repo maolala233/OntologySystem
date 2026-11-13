@@ -148,10 +148,10 @@ const HomePage: React.FC = () => {
             <Navbar breadcrumbs={breadcrumbs} />
 
             <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
-                {/* ── Hero：深色科技面板（TechHero 共享组件） ── */}
+                {/* ── Hero：深色科技面板（全站唯一保留的深色块，作为品牌门面） ── */}
                 <TechHero
-                    className="!mb-5"
-                    chips={['SEMANTIC KNOWLEDGE PLATFORM', 'ENGINE · v2.0']}
+                    tone="dark"
+                    className="!mb-4"
                     title="企业级语义知识及本体治理平台"
                     subtitle="基于 AI 的本体构建 · 知识图谱 · 溯源治理一站式流水线，让知识资产沉淀为可计算的服务"
                     actions={
@@ -160,10 +160,9 @@ const HomePage: React.FC = () => {
                                 {canUse('projects') && (
                                     <Button
                                         type="primary"
-                                        size="large"
                                         icon={<RocketOutlined />}
                                         onClick={() => navigate('/my-projects')}
-                                        className="h-10 sm:h-12 px-4 sm:px-8 border-0"
+                                        className="h-9 sm:h-10 px-4 sm:px-6 border-0"
                                         style={{ background: `linear-gradient(95deg, ${C.blue}, ${C.purple})`, boxShadow: `0 8px 24px -8px ${C.purple}` }}
                                     >
                                         开始使用
@@ -171,10 +170,9 @@ const HomePage: React.FC = () => {
                                 )}
                                 {canUse('asset_center') && (
                                     <Button
-                                        size="large"
                                         icon={<ArrowRightOutlined />}
                                         onClick={() => navigate('/asset-center')}
-                                        className="hp-hero-ghost h-10 sm:h-12 px-4 sm:px-8 bg-transparent"
+                                        className="hp-hero-ghost h-9 sm:h-10 px-4 sm:px-6 bg-transparent"
                                         style={{ color: '#C9D4FF', borderColor: '#2A3550' }}
                                     >
                                         浏览资产中心

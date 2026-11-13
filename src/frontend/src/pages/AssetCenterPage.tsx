@@ -1,15 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { PROJECT_STATUS, PUBLISHED_TAG } from '../shared/projectStatus';
-import { Card, Empty, Spin, message, Tag, Input, Select, Button } from 'antd';
-import { EyeOutlined, UserOutlined, NodeIndexOutlined, AppstoreOutlined, DatabaseOutlined, ArrowLeftOutlined, CheckCircleOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
+import { Empty, Spin, message, Input, Select, Button } from 'antd';
+import { UserOutlined, NodeIndexOutlined, DatabaseOutlined, ApartmentOutlined, ArrowLeftOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Layout/Navbar';
-import TechHero, { TECH_COLORS, GraphMotif } from '../components/TechHero';
+import TechHero from '../components/TechHero';
 import { projectsApi } from '../api/projects';
 import { getDomains, KnowledgeDomain } from '../api/domains';
 import { ProjectData } from '../types/ontology';
-
-const TC = TECH_COLORS;
 
 // 模块级缓存：进入详情页再返回时，组件会重新挂载——先用上次的数据立即渲染，
 // 再后台刷新，避免"整页转圈 → 内容重现"的闪烁（2026-11-11）
@@ -163,61 +160,54 @@ const AssetCenterPage: React.FC = () => {
                     />
                 </div>
             ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
+                /* 知识域卡片（2026-11-13 重设计）：去掉大封面，改成紧凑信息卡——
+                   一行能放 5–6 个；项目数量提到右上角做成大号数字，成为卡片的第一视觉焦点 */
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3 sm:gap-4">
                     {domains.map((domain) => (
-                        <Card
+                        <div
                             key={domain.id}
-                            hoverable
-                            className="rounded-xl shadow-sm hover:shadow-lg transition-shadow duration-200 cursor-pointer border border-gray-100 overflow-hidden"
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`进入知识域 ${domain.name}`}
                             onClick={() => handleDomainSelect(domain)}
-                            cover={
-                                <div
-                                    className="ac-cover h-32 sm:h-40"
-                                    style={{ background: TC.bgDark }}
-                                >
-                                    {/* 网格底纹 + 辉光 */}
-                                    <div className="absolute inset-0 ac-cover-grid" />
-                                    <div className="absolute inset-0 ac-glow" />
-
-                                    {/* 知识域图标 */}
-                                    <div className="absolute inset-0 flex items-center justify-center">
-                                        <DatabaseOutlined
-                                            className="text-5xl sm:text-6xl"
-                                            style={{ color: TC.cyan, opacity: 0.75, filter: `drop-shadow(0 0 14px ${TC.cyan})` }}
-                                        />
-                                    </div>
-
-                                    {/* 项目数量标签 */}
-                                    <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between">
-                                        <span
-                                            className="tk-mono text-[11px] tracking-wider px-2.5 py-0.5 rounded-full"
-                                            style={{ color: TC.cyan, border: `1px solid ${TC.line}`, background: 'rgba(90,200,250,0.08)' }}
-                                        >
-                                            {domain.projectCount} 个项目
-                                        </span>
-                                        <span
-                                            className="tk-mono text-[10px] tracking-widest"
-                                            style={{ color: TC.textSub }}
-                                        >
-                                            DOMAIN
-                                        </span>
-                                    </div>
-                                </div>
-                            }
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                    e.preventDefault();
+                                    handleDomainSelect(domain);
+                                }
+                            }}
+                            className="group relative rounded-2xl border border-[#E9EEF8] bg-white p-4 cursor-pointer transition-[border-color,box-shadow] duration-200 hover:border-[#CBD9F2] hover:shadow-[0_16px_32px_-20px_rgba(15,23,42,0.30)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
                         >
-                            <Card.Meta
-                                title={
-                                    <div className="text-base sm:text-lg font-semibold text-gray-800 truncate">
-                                        {domain.name}
+                            <div className="flex items-start justify-between gap-2">
+                                <span
+                                    className="w-10 h-10 shrink-0 rounded-xl flex items-center justify-center text-[18px]"
+                                    style={{
+                                        background: 'linear-gradient(135deg, rgba(91,141,239,0.16), rgba(139,92,246,0.10))',
+                                        color: '#5B8DEF',
+                                    }}
+                                >
+                                    <DatabaseOutlined />
+                                </span>
+                                {/* 项目数量：大号等宽数字 + 小标签，压过描述成为卡片主信息 */}
+                                <div className="text-right shrink-0 leading-none">
+                                    <div
+                                        className="tk-mono text-[24px] font-semibold leading-none"
+                                        style={{ color: domain.projectCount > 0 ? '#2F62D8' : '#A9B4C9' }}
+                                    >
+                                        {domain.projectCount}
                                     </div>
-                                }
-                                description={
-                                    <div className="text-gray-500 text-sm line-clamp-2 min-h-[40px]">
-                                        {domain.description || '暂无描述'}
-                                    </div>
-                                }
-                            />
-                        </Card>
+                                    <div className="text-[10px] text-[#8A94AB] mt-1 tracking-wider">个项目</div>
+                                </div>
+                            </div>
+                            <div className="mt-3 min-w-0">
+                                <div className="text-[14.5px] font-semibold text-[#0F172A] truncate group-hover:text-[#2F62D8] transition-colors">
+                                    {domain.name}
+                                </div>
+                                <div className="text-[12px] text-[#8A94AB] truncate mt-0.5" title={domain.description || undefined}>
+                                    {domain.description || '暂无描述'}
+                                </div>
+                            </div>
+                        </div>
                     ))}
                 </div>
             )}
@@ -302,95 +292,70 @@ const AssetCenterPage: React.FC = () => {
                     </Empty>
                 </div>
             ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-5 sm:gap-6 lg:gap-7">
-                    {filteredProjects.map((project) => (
-                        <Card
-                            key={project.id}
-                            hoverable
-                            className="group rounded-2xl shadow-sm hover:shadow-lg transition-shadow duration-200 overflow-hidden border border-gray-100 cursor-pointer"
-                            onClick={() => navigate(`/asset-center/${project.id}`)}
-                            cover={
+                /* 项目卡片（2026-11-13 重设计）：原来是大封面竖卡，列窄、卡高、信息散；
+                   改成缩略图 + 信息区的紧凑横卡，一屏能放更多，统计信息也不再抢戏 */
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3 sm:gap-4">
+                    {filteredProjects.map((project) => {
+                        const nodes = project.graph_data?.nodes?.length || 0;
+                        const edges = project.graph_data?.edges?.length || 0;
+                        // 只有「全部知识域」视图才需要再标一次领域名；进入单域后是重复信息
+                        const showDomain = !!selectedDomain && selectedDomain.id === 0 && !!project.domain;
+                        return (
+                            <div
+                                key={project.id}
+                                role="button"
+                                tabIndex={0}
+                                aria-label={`查看本体 ${project.name}`}
+                                onClick={() => navigate(`/asset-center/${project.id}`)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                        e.preventDefault();
+                                        navigate(`/asset-center/${project.id}`);
+                                    }
+                                }}
+                                className="group flex items-start gap-3 rounded-2xl border border-[#E9EEF8] bg-white p-3.5 cursor-pointer transition-[border-color,box-shadow] duration-200 hover:border-[#CBD9F2] hover:shadow-[0_16px_32px_-20px_rgba(15,23,42,0.30)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
+                            >
+                                {/* 本体缩略图：64px 里画整张图谱会被裁得零碎、认不出是什么；
+                                    改成「淡蓝底 + 层级图标」的图块，语义清楚又不抢信息 */}
                                 <div
-                                    className="ac-cover h-44"
-                                    style={{ background: TC.bgDark }}
+                                    className="relative w-16 h-16 shrink-0 rounded-xl overflow-hidden flex items-center justify-center"
+                                    style={{ background: 'linear-gradient(135deg, #F1F6FF 0%, #EAF1FE 55%, #F4F0FF 100%)' }}
                                 >
-                                    {/* 网格底纹 + 双色辉光 */}
                                     <div className="absolute inset-0 ac-cover-grid" />
                                     <div className="absolute inset-0 ac-glow" />
-                                    <GraphMotif seed={project.id} className="absolute inset-0 w-full h-full opacity-80" />
-
-                                    {/* 标签区域 */}
-                                    <div className="absolute top-3 left-3 right-3 flex items-start justify-between gap-2">
-                                        {/* 知识域标签 */}
-                                        {project.domain && (
-                                            <Tag
-                                                className="font-medium text-xs border-0 tk-mono"
-                                                style={{ color: TC.cyan, background: 'rgba(90,200,250,0.1)', border: `1px solid ${TC.line}` }}
-                                            >
-                                                {project.domain.name}
-                                            </Tag>
-                                        )}
-                                        {/* 发布标签 */}
-                                        <Tag color={PUBLISHED_TAG.color} className="font-medium shadow-sm border-0 bg-purple-500 text-white">
-                                            <CheckCircleOutlined className="mr-0.5" />
-                                            {PUBLISHED_TAG.text}
-                                        </Tag>
-                                    </div>
-
-                                    {/* 底部标识 */}
-                                    <div
-                                        className="absolute bottom-3 right-3 tk-mono text-[10px] tracking-widest"
-                                        style={{ color: TC.textSub }}
-                                    >
-                                        ONTOLOGY
-                                    </div>
+                                    <ApartmentOutlined className="relative text-[22px]" style={{ color: '#5B8DEF' }} />
                                 </div>
-                            }
-                        >
-                            <Card.Meta
-                                title={
-                                    <div className="text-base font-semibold text-gray-800 truncate group-hover:text-indigo-600 transition-colors" title={project.name}>
+                                <div className="min-w-0 flex-1">
+                                    <div className="text-[15px] font-semibold text-[#0F172A] truncate group-hover:text-[#2F62D8] transition-colors" title={project.name}>
                                         {project.name}
                                     </div>
-                                }
-                                description={
-                                    <div className="space-y-3 mt-2">
-                                        <div className="text-gray-500 text-sm line-clamp-2 min-h-[40px]" title={project.description || '暂无描述'}>
-                                            {project.description || '暂无描述'}
-                                        </div>
-
-                                        {/* 统计信息 */}
-                                        <div className="flex items-center justify-between pt-3 border-t border-gray-100">
-                                            <div className="flex items-center gap-1.5 text-blue-600">
-                                                <div className="w-7 h-7 rounded-full bg-blue-50 flex items-center justify-center">
-                                                    <NodeIndexOutlined className="text-sm" />
-                                                </div>
-                                                <span className="font-medium text-sm">
-                                                    {project.graph_data?.nodes?.length || 0}
-                                                </span>
-                                            </div>
-                                            <div className="flex items-center gap-1.5 text-purple-600">
-                                                <div className="w-7 h-7 rounded-full bg-purple-50 flex items-center justify-center">
-                                                    <span className="text-sm font-medium">⚡</span>
-                                                </div>
-                                                <span className="font-medium text-sm">
-                                                    {project.graph_data?.edges?.length || 0}
-                                                </span>
-                                            </div>
-                                            <div className="flex items-center gap-1.5 text-gray-500">
-                                                <div className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center">
-                                                    <UserOutlined className="text-sm" />
-                                                </div>
-                                                <span className="text-xs truncate max-w-[60px]">
-                                                    {project.owner?.username || '未知'}
-                                                </span>
-                                            </div>
-                                        </div>
+                                    <div className="text-[12px] text-[#8A94AB] truncate mt-0.5" title={project.description || undefined}>
+                                        {project.description || '暂无描述'}
                                     </div>
-                                }
-                            />
-                        </Card>
-                    ))}
+                                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-[11px] text-[#8A94AB]">
+                                        <span className="inline-flex items-center gap-1">
+                                            <NodeIndexOutlined style={{ color: '#5B8DEF' }} />
+                                            <span><span className="tk-mono">{nodes}</span> 节点</span>
+                                        </span>
+                                        <span className="inline-flex items-center gap-1">
+                                            <span style={{ color: '#8B5CF6' }}>⚡</span>
+                                            <span><span className="tk-mono">{edges}</span> 关系</span>
+                                        </span>
+                                        <span className="inline-flex items-center gap-1 min-w-0">
+                                            <UserOutlined />
+                                            <span className="truncate max-w-[90px]">{project.owner?.username || '未知'}</span>
+                                        </span>
+                                        {showDomain && (
+                                            <span className="inline-flex items-center gap-1 min-w-0">
+                                                <DatabaseOutlined style={{ color: '#5B8DEF' }} />
+                                                <span className="truncate max-w-[110px]">{project.domain?.name}</span>
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })}
                 </div>
             )}
         </div>
@@ -399,22 +364,17 @@ const AssetCenterPage: React.FC = () => {
     return (
         <div className="h-full flex flex-col app-canvas">
             <style>{`
-                .ac-cover { position: relative; overflow: hidden; }
                 .ac-cover-grid {
                     background-image:
-                        linear-gradient(rgba(91,141,239,0.12) 1px, transparent 1px),
-                        linear-gradient(90deg, rgba(91,141,239,0.12) 1px, transparent 1px);
+                        linear-gradient(rgba(91,141,239,0.09) 1px, transparent 1px),
+                        linear-gradient(90deg, rgba(91,141,239,0.09) 1px, transparent 1px);
                     background-size: 24px 24px;
                 }
-                /* 卡片封面星点改为静态：一屏十几张卡各 6 个点的无限呼吸看不出效果却一直占合成器；
-                   TechHero 顶部的星点动画保留 */
-                .ac-cover .tk-node { animation: none; }
-                /* 辉光：径向渐变一次画好。此前每张卡两层 filter: blur(60px) 的大圆，
-                   卡片一多合成开销明显，hover 阴影过渡时尤其掉帧 */
+                /* 浅色封面（2026-11-13）：辉光用径向渐变一次画好，比两块 blur 大圆更省合成 */
                 .ac-glow {
                     background:
-                        radial-gradient(150px 150px at 92% 0%, rgba(91, 141, 239, 0.42), transparent 72%),
-                        radial-gradient(160px 160px at 0% 108%, rgba(181, 133, 242, 0.38), transparent 72%);
+                        radial-gradient(160px 140px at 92% 0%, rgba(91,141,239,0.22), transparent 72%),
+                        radial-gradient(170px 150px at 0% 108%, rgba(181,133,242,0.18), transparent 72%);
                 }
             `}</style>
             <Navbar breadcrumbs={breadcrumbs} />
@@ -422,13 +382,10 @@ const AssetCenterPage: React.FC = () => {
             <div ref={scrollRef} className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
                 <TechHero
                     compact
+                    tone="light"
                     className="!mb-4"
-                    chips={
-                        currentView === 'domain'
-                            ? ['ASSET CENTER', 'PUBLIC ONTOLOGIES']
-                            : ['ASSET CENTER', selectedDomain && selectedDomain.id !== 0 ? selectedDomain.name : '全部知识域']
-                    }
                     title="资产中心"
+                    titleSuffix="PUBLIC ONTOLOGIES"
                     subtitle="浏览已发布的公共本体资产：按知识域归类 · 只读快照 · 支持在线检索与图谱预览"
                     showConstellation={currentView === 'domain'}
                 />

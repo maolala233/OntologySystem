@@ -486,9 +486,15 @@ const MyProjectsPage: React.FC = () => {
                 .mp-cover { position: relative; overflow: hidden; }
                 .mp-cover-grid {
                     background-image:
-                        linear-gradient(rgba(91,141,239,0.12) 1px, transparent 1px),
-                        linear-gradient(90deg, rgba(91,141,239,0.12) 1px, transparent 1px);
+                        linear-gradient(rgba(91,141,239,0.09) 1px, transparent 1px),
+                        linear-gradient(90deg, rgba(91,141,239,0.09) 1px, transparent 1px);
                     background-size: 24px 24px;
+                }
+                /* 浅色封面（2026-11-13）：辉光改用径向渐变一次画好，不再用两层 blur 大圆 */
+                .mp-cover-glow {
+                    background:
+                        radial-gradient(170px 130px at 96% -8%, rgba(91,141,239,0.22), transparent 72%),
+                        radial-gradient(150px 120px at -4% 110%, rgba(139,92,246,0.16), transparent 72%);
                 }
                 /* 卡片封面星点改为静态（同资产中心）：Hero 的星点动画保留 */
                 .mp-cover .tk-node { animation: none; }
@@ -540,21 +546,59 @@ const MyProjectsPage: React.FC = () => {
                 /* 分页器默认贴死在卡片右缘，看起来太挤；整体往左收 16px 留出呼吸感
                    （不做居中：站内其他表格都是靠右，保持一致） */
                 .mp-table .ant-table-pagination.ant-pagination { padding-right: 16px; }
+                /* 顶部卡片里的「我的项目 / 全部项目」切换（2026-11-13）：
+                   默认的灰轨道 + 白滑块 + 大范围柔阴影，压在浅色渐变横幅上会显得脏，
+                   选中态也糊；改成品牌淡蓝胶囊轨道 + 白色滑块 + 品牌蓝加粗文字，
+                   滑块只保留一层 1px 的轻投影 */
+                .scope-seg.ant-segmented {
+                    background: rgba(91, 141, 239, 0.10);
+                    border: 1px solid rgba(91, 141, 239, 0.16);
+                    padding: 3px;
+                }
+                .scope-seg.ant-segmented .ant-segmented-item {
+                    color: #52607A;
+                    transition: color 0.2s ease;
+                }
+                .scope-seg.ant-segmented .ant-segmented-item-label {
+                    padding: 0 14px;
+                    font-size: 13px;
+                }
+                .scope-seg.ant-segmented .ant-segmented-item-selected {
+                    color: #2A57C6;
+                    font-weight: 600;
+                    background: #FFFFFF;
+                    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.14);
+                }
+                .scope-seg.ant-segmented .ant-segmented-thumb {
+                    background: #FFFFFF;
+                    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.14);
+                }
+                /* 未选中项的悬停/按下底色：默认是灰的，在淡蓝轨道里像一块脏斑，
+                   改成白色微亮；!important 用于压过 antd 的 :hover::after */
+                .scope-seg.ant-segmented .ant-segmented-item:not(.ant-segmented-item-selected)::after {
+                    background-color: rgba(255, 255, 255, 0.65) !important;
+                }
+                .scope-seg.ant-segmented .ant-segmented-item:not(.ant-segmented-item-selected):hover {
+                    color: #1F2A44;
+                }
             `}</style>
             <Navbar breadcrumbs={breadcrumbs} />
 
             <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
                 <TechHero
                     compact
+                    tone="light"
                     className="!mb-4"
-                    chips={['PROJECT WORKSPACE', `共 ${counts.total} 个项目`]}
                     title={isSuperAdmin && scope === 'all' ? '全部项目' : '我的项目'}
+                    titleSuffix="PROJECT WORKSPACE"
                     subtitle={isSuperAdmin && scope === 'all'
                         ? '平台全部用户的项目，可查看与编辑'
                         : '创建与管理你的本体建模项目：AI 框架提取 · 骨架画布 · 实例探索 · 版本治理'}
                     showConstellation={counts.total > 0}
                     actions={isSuperAdmin ? (
                         <Segmented
+                            className="scope-seg"
+                            shape="round"
                             value={scope}
                             onChange={(v) => {
                                 // 切换范围：回到第一页，清掉跨范围失效的勾选
@@ -761,7 +805,7 @@ const MyProjectsPage: React.FC = () => {
                                             type="button"
                                             aria-pressed={isSelected}
                                             aria-label={`选择项目 ${project.name}`}
-                                            className={`absolute top-3 left-3 z-10 w-6 h-6 flex items-center justify-center rounded-full transition-all duration-200 cursor-pointer ${isSelected ? 'bg-blue-500' : 'bg-white/70 hover:bg-white shadow-sm'}`}
+                                            className={`absolute top-3 left-3 z-10 w-6 h-6 flex items-center justify-center rounded-full transition-all duration-200 cursor-pointer ${isSelected ? 'bg-blue-500 border border-blue-500' : 'bg-white/90 hover:bg-white border border-[#DCE3F0] shadow-sm'}`}
                                             onClick={(e) => { e.stopPropagation(); setSelectedIds(prev => {
                                                 const next = new Set(prev);
                                                 if (next.has(project.id)) next.delete(project.id); else next.add(project.id);
@@ -772,22 +816,15 @@ const MyProjectsPage: React.FC = () => {
                                         </button>
                                         <div
                                             className="mp-cover h-32 sm:h-40 rounded-t-xl"
-                                            style={{ background: TC.bgDark }}
+                                            style={{ background: 'linear-gradient(135deg, #F4F8FF 0%, #EDF3FE 55%, #F6F2FF 100%)' }}
                                             onClick={() => navigate(`/projects/${project.id}`)}
                                         >
                                             <div className="absolute inset-0 mp-cover-grid rounded-t-xl" />
-                                            <div
-                                                className="absolute -top-8 -right-8 w-36 h-36 rounded-full"
-                                                style={{ background: TC.purple, filter: 'blur(60px)', opacity: 0.3 }}
-                                            />
-                                            <div
-                                                className="absolute -bottom-10 -left-6 w-36 h-36 rounded-full"
-                                                style={{ background: TC.blue, filter: 'blur(60px)', opacity: 0.3 }}
-                                            />
-                                            <GraphMotif seed={project.id} className="absolute inset-0 w-full h-full opacity-80" />
+                                            <div className="absolute inset-0 mp-cover-glow" />
+                                            <GraphMotif seed={project.id} className="absolute inset-0 w-full h-full opacity-90" />
                                             <div
                                                 className="absolute bottom-3 right-3 tk-mono text-[10px] tracking-widest"
-                                                style={{ color: TC.textSub }}
+                                                style={{ color: '#7C89A8' }}
                                             >
                                                 {statusOf(project).toUpperCase()}
                                             </div>
