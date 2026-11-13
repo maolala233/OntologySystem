@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="base" x1="0" y1="0" x2="1920" y2="1080" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F4F8FE"/>
+      <stop offset="0.45" stop-color="#EEF4FC"/>
+      <stop offset="1" stop-color="#E7EDF8"/>
+    </linearGradient>
+    <radialGradient id="glowBlue">
+      <stop offset="0" stop-color="#5B8DEF" stop-opacity="0.12"/>
+      <stop offset="0.48" stop-color="#5B8DEF" stop-opacity="0.045"/>
+      <stop offset="1" stop-color="#5B8DEF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowPurple">
+      <stop offset="0" stop-color="#8B5CF6" stop-opacity="0.10"/>
+      <stop offset="0.48" stop-color="#8B5CF6" stop-opacity="0.038"/>
+      <stop offset="1" stop-color="#8B5CF6" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowCyan">
+      <stop offset="0" stop-color="#5AC8FA" stop-opacity="0.04"/>
+      <stop offset="0.48" stop-color="#5AC8FA" stop-opacity="0.016"/>
+      <stop offset="1" stop-color="#5AC8FA" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowWhite">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.17"/>
+      <stop offset="0.48" stop-color="#FFFFFF" stop-opacity="0.07"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="topTint" x1="0" y1="0" x2="0" y2="150" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5B8DEF" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#5B8DEF" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="glowEdge">
+      <stop offset="0" stop-color="#5B8DEF" stop-opacity="0.16"/>
+      <stop offset="0.5" stop-color="#5B8DEF" stop-opacity="0.06"/>
+      <stop offset="1" stop-color="#5B8DEF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="ribbon" x1="500" y1="0" x2="1670" y2="1080" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="0.4" stop-color="#FFFFFF" stop-opacity="0.12"/>
+      <stop offset="0.64" stop-color="#5B8DEF" stop-opacity="0.035"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.14"/>
+    </linearGradient>
+    <linearGradient id="ribbonLeft" x1="-160" y1="0" x2="520" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="0.32" stop-color="#5B8DEF" stop-opacity="0.10"/>
+      <stop offset="0.64" stop-color="#FFFFFF" stop-opacity="0.04"/>
+      <stop offset="1" stop-color="#8B5CF6" stop-opacity="0.04"/>
+    </linearGradient>
+    <filter id="softBlur" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="14"/>
+    </filter>
+  </defs>
+
+  <!-- 底色 -->
+  <rect width="1920" height="1080" fill="url(#base)"/>
+
+  <!-- 左缘品牌蓝柔光：让透明列（如问答左侧历史栏）能看出背景图透上来 -->
+  <ellipse cx="120" cy="600" rx="460" ry="560" fill="url(#glowEdge)"/>
+
+  <!-- 氛围辉光：蓝 / 紫 / 青 / 白 -->
+  <ellipse cx="1180" cy="340" rx="880" ry="560" fill="url(#glowBlue)"/>
+  <ellipse cx="1641" cy="910" rx="760" ry="460" fill="url(#glowPurple)"/>
+  <ellipse cx="620" cy="980" rx="900" ry="380" fill="url(#glowCyan)"/>
+  <ellipse cx="540" cy="160" rx="900" ry="640" fill="url(#glowWhite)"/>
+
+  <!-- 顶部品牌蓝薄雾：让磨砂顶栏能看出背景图，不再一片白 -->
+  <rect width="1920" height="150" fill="url(#topTint)"/>
+
+  <!-- 流动光带（取自动画第一帧的曲线位置） -->
+  <g fill="none" stroke-linecap="round">
+    <g stroke="url(#ribbon)" stroke-width="26">
+      <path d="M520 -120 C 1560 180, 640 680, 2120 960"/>
+      <path d="M625 -120 C 1637 245, 602 745, 2120 1095"/>
+      <path d="M727 -120 C 1695 229, 573 729, 2120 1149"/>
+      <path d="M822 -120 C 1720 205, 560 705, 2120 1195"/>
+      <path d="M-140 780 C 420 620, 780 920, 1200 760 S 1800 540, 2120 700"/>
+    </g>
+    <g stroke="#FFFFFF" stroke-opacity="0.25" stroke-width="1">
+      <path d="M520 -120 C 1560 180, 640 680, 2120 960"/>
+      <path d="M625 -120 C 1637 245, 602 745, 2120 1095"/>
+      <path d="M727 -120 C 1695 229, 573 729, 2120 1149"/>
+      <path d="M822 -120 C 1720 205, 560 705, 2120 1195"/>
+      <path d="M-140 780 C 420 620, 780 920, 1200 760 S 1800 540, 2120 700"/>
+    </g>
+  </g>
+
+  <!-- 左侧导航区的光带：宽而浅 + 高斯模糊扩散，只留一点柔和的明暗走势，不形成条纹 -->
+  <g fill="none" stroke-linecap="round" filter="url(#softBlur)">
+    <path d="M-160 190 C 40 130, 180 280, 460 200" stroke="url(#ribbonLeft)" stroke-width="56"/>
+    <path d="M-160 520 C 60 450, 220 610, 480 520" stroke="url(#ribbonLeft)" stroke-width="44"/>
+    <path d="M-160 860 C 80 790, 260 940, 500 850" stroke="url(#ribbonLeft)" stroke-width="34"/>
+  </g>
+</svg>

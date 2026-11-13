@@ -18,8 +18,11 @@ export const TECH_COLORS = {
  * 深色只保留给「工作台」这一处品牌门面，其余页面统一走浅色。
  */
 const LIGHT_COLORS = {
-    bg: 'linear-gradient(120deg, #FFFFFF 0%, #F6F9FF 58%, #F4F1FF 100%)',
-    border: '#E6EBF5',
+    // 半透明的两层玻璃渐变：让下方的氛围背景（流动光带/辉光）隐约透上来
+    bg:
+        'linear-gradient(135deg, rgba(255,255,255,0.82) 0%, rgba(255,255,255,0.46) 44%, rgba(139,92,246,0.08) 100%), ' +
+        'linear-gradient(140deg, rgba(255,255,255,0.95) 0%, rgba(252,253,255,0.86) 55%, rgba(244,248,255,0.90) 100%)',
+    border: 'rgba(226, 235, 248, 0.9)',
     line: '#D9E2F2',
     purple: '#8B5CF6',
     blue: '#5B8DEF',
@@ -103,8 +106,8 @@ const TechHero: React.FC<TechHeroProps> = ({
                 // 深色档也补一层大扩散柔阴影：和下方白卡共用同一套"浮起"语言，
                 // 只是材质相反，避免它看起来像贴在画布上的一个黑块
                 boxShadow: isDark
-                    ? '0 30px 60px -40px rgba(15, 23, 42, 0.7)'
-                    : '0 1px 2px rgba(15, 23, 42, 0.05), 0 22px 48px -34px rgba(15, 23, 42, 0.45)',
+                    ? '0 30px 60px -40px rgba(15, 23, 42, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.07)'
+                    : 'inset 0 1px 0 rgba(255, 255, 255, 0.95), inset 0 -1px 0 rgba(219, 228, 242, 0.55), 0 18px 44px -32px rgba(15, 23, 42, 0.38), 0 2px 6px rgba(15, 23, 42, 0.04)',
             }}
         >
             <style>{`

@@ -498,7 +498,8 @@ const MyProjectsPage: React.FC = () => {
                 }
                 /* 卡片封面星点改为静态（同资产中心）：Hero 的星点动画保留 */
                 .mp-cover .tk-node { animation: none; }
-                .mp-card { border-radius: 14px; border: 1px solid #EEF1F8; transition: all .25s ease; box-shadow: 0 1px 2px rgba(15,23,42,.05), 0 12px 30px -16px rgba(15,23,42,.20); }
+                .mp-card { border-radius: 14px; border: 1px solid #EEF1F8; transition: all .25s ease;
+                    box-shadow: inset 0 1px 0 rgba(255,255,255,.95), inset 0 -1px 0 rgba(219,228,242,.45), 0 10px 26px -20px rgba(15,23,42,.22), 0 2px 5px rgba(15,23,42,.04); }
                 .mp-card:hover { box-shadow: 0 16px 34px -12px rgba(15,20,32,.22); transform: translateY(-3px); }
                 /* 状态统计卡：右角状态色图标块 + 同色淡底，纯展示卡不做 hover 位移
                    （--stat-accent / --stat-tint 由卡片内联按状态下发） */
@@ -543,6 +544,11 @@ const MyProjectsPage: React.FC = () => {
                 .mp-modal .ant-upload-drag-icon { margin-bottom: 4px; }
                 .mp-modal .ant-upload-drag-icon .anticon { font-size: 32px; }
                 .mp-modal .ant-upload-hint { font-size: 12px; line-height: 1.6; }
+                /* 列表面板：和卡片同一套实体感材质（极轻渐变 + 内高光 + 近距投影） */
+                .mp-table {
+                    background-image: linear-gradient(180deg, rgba(255,255,255,.97) 0%, rgba(250,252,255,.95) 100%);
+                    box-shadow: inset 0 1px 0 rgba(255,255,255,.95), inset 0 -1px 0 rgba(219,228,242,.45), 0 10px 26px -20px rgba(15,23,42,.22), 0 2px 5px rgba(15,23,42,.04);
+                }
                 /* 分页器默认贴死在卡片右缘，看起来太挤；整体往左收 16px 留出呼吸感
                    （不做居中：站内其他表格都是靠右，保持一致） */
                 .mp-table .ant-table-pagination.ant-pagination { padding-right: 16px; }

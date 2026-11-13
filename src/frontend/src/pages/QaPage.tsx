@@ -421,16 +421,133 @@ export default function QaPage() {
 
     return (
         <div className="h-full flex flex-col app-canvas">
+            <style>{`
+                /* 问答输入区（参考 aiBank demo 的 composer）：
+                   玻璃底 + 内高光 + 近距投影；聚焦转品牌蓝；
+                   等待用户输入时，外圈有一条缓慢旋转的锥形高光 */
+                .qa-composer {
+                    /* 左上浅、右下深，取的直接是外壳同款色：
+                       侧栏顶部 #F7FAFF → 顶栏下沿 #F3F7FE → 侧栏底部 #E7EEF9，
+                       右下再叠一层极淡的品牌蓝增强纵深，整体和主体界面同色系 */
+                    background:
+                        radial-gradient(220px 150px at 100% 110%, rgba(91,141,239,0.10), transparent 70%),
+                        linear-gradient(135deg, #F7FAFF 0%, #F3F7FE 46%, #E7EEF9 100%);
+                    box-shadow:
+                        inset 0 -1px 0 rgba(219,228,242,0.45),
+                        0 12px 32px -20px rgba(15,23,42,0.30);
+                }
+                @property --qa-orbit-angle {
+                    syntax: '<angle>';
+                    inherits: false;
+                    initial-value: 0deg;
+                }
+                .qa-composer::after {
+                    content: '';
+                    position: absolute;
+                    inset: -1px;
+                    padding: 1.5px;
+                    border-radius: inherit;
+                    pointer-events: none;
+                    background: conic-gradient(
+                        from var(--qa-orbit-angle, 0deg),
+                        rgba(91,141,239,0.03) 0deg,
+                        rgba(91,141,239,0.03) 260deg,
+                        rgba(91,141,239,0.22) 305deg,
+                        #5B8DEF 335deg,
+                        rgba(91,141,239,0.03) 360deg
+                    );
+                    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+                    -webkit-mask-composite: xor;
+                    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+                    mask-composite: exclude;
+                    opacity: 0;
+                    transition: opacity 0.25s ease;
+                    animation: qa-orbit 4.2s linear infinite paused;
+                }
+                .qa-composer--awaiting::after {
+                    opacity: 1;
+                    animation-play-state: running;
+                }
+                @keyframes qa-orbit {
+                    to { --qa-orbit-angle: 360deg; }
+                }
+                /* 发送：图标方块，品牌渐变 + 柔光投影；禁用态降透明度 */
+                .qa-send-btn {
+                    display: grid;
+                    place-items: center;
+                    width: 36px;
+                    height: 36px;
+                    flex-shrink: 0;
+                    border: 0;
+                    border-radius: 12px;
+                    background: linear-gradient(135deg, #5B8DEF, #7C6CF0);
+                    color: #fff;
+                    box-shadow: 0 8px 20px -10px rgba(91,141,239,0.75);
+                    cursor: pointer;
+                    transition: box-shadow 0.15s ease, opacity 0.15s ease;
+                }
+                .qa-send-btn:hover:not(:disabled) {
+                    box-shadow: 0 10px 24px -10px rgba(91,141,239,0.85);
+                }
+                .qa-send-btn:disabled {
+                    opacity: 0.45;
+                    cursor: not-allowed;
+                    box-shadow: none;
+                }
+                .qa-send-btn:focus-visible {
+                    outline: 2px solid rgba(91,141,239,0.5);
+                    outline-offset: 2px;
+                }
+                /* 停止：与本页品牌色同源的淡蓝描边按钮，不用刺眼的红色 */
+                .qa-stop-btn.ant-btn {
+                    border-color: rgba(91,141,239,0.25);
+                    background: rgba(91,141,239,0.08);
+                    color: #2A57C6;
+                    box-shadow: none;
+                }
+                .qa-stop-btn.ant-btn:hover {
+                    border-color: rgba(91,141,239,0.45) !important;
+                    background: rgba(91,141,239,0.12) !important;
+                    color: #2A57C6 !important;
+                }
+                /* 新建对话：淡蓝品牌按钮，替代实心蓝块，避免在透明侧栏里显得过重 */
+                .qa-new-conv {
+                    color: #2A57C6;
+                    background: rgba(91, 141, 239, 0.10);
+                    border: 1px solid rgba(91, 141, 239, 0.22);
+                    transition: background-color 0.18s ease, border-color 0.18s ease;
+                }
+                .qa-new-conv:hover {
+                    background: rgba(91, 141, 239, 0.16);
+                    border-color: rgba(91, 141, 239, 0.36);
+                }
+                .qa-new-conv:active {
+                    background: rgba(91, 141, 239, 0.20);
+                }
+                .qa-new-conv:focus-visible {
+                    outline: 2px solid rgba(91, 141, 239, 0.45);
+                    outline-offset: 2px;
+                }
+                @media (prefers-reduced-motion: reduce) {
+                    .qa-composer::after { animation: none; opacity: 0.35; }
+                }
+            `}</style>
             {/* 全站顶栏：面包屑 + 账号（与工作台/我的项目/资产中心共用，切页不再「失去顶栏」） */}
             <Navbar breadcrumbs={[{ title: '首页', path: '/' }, { title: '工具' }, { title: '本体问答' }]} />
 
             <div className="flex flex-1 min-h-0">
-                {/* 左侧：会话历史 */}
-                <aside className="w-64 shrink-0 border-r border-[#E6EBF5] bg-white flex flex-col">
+                {/* 左侧：会话历史。整列透明，让内容区底部的静态背景图透上来；
+                    只保留一条右侧分隔线，列内条目用白色/品牌蓝药丸保持可读性 */}
+                <aside className="w-64 shrink-0 border-r border-[#E4EBF7]/70 bg-transparent flex flex-col">
                     <div className="p-3 pb-2">
-                        <Button type="primary" icon={<PlusOutlined />} block onClick={newConversation}>
+                        <button
+                            type="button"
+                            onClick={newConversation}
+                            className="qa-new-conv w-full h-9 rounded-xl flex items-center justify-center gap-2 text-[13px] font-medium"
+                        >
+                            <PlusOutlined />
                             新建对话
-                        </Button>
+                        </button>
                     </div>
                     <div className="px-4 pb-2 text-[11px] font-medium tracking-wide text-gray-400 select-none">
                         历史对话{convsReadyForUi ? `（${conversations.length}）` : ''}
@@ -459,12 +576,12 @@ export default function QaPage() {
                                     }}
                                     className={`group px-2.5 py-2 mb-1 rounded-lg cursor-pointer border transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[rgba(91,141,239,0.35)] ${
                                         activeConvId === c.id
-                                            ? 'border-[rgba(91,141,239,0.45)] bg-[rgba(91,141,239,0.08)]'
-                                            : 'border-transparent hover:bg-[#F5F8FD]'
+                                            ? 'border-[rgba(91,141,239,0.35)] bg-[rgba(91,141,239,0.12)]'
+                                            : 'border-transparent hover:bg-[rgba(91,141,239,0.07)]'
                                     }`}
                                 >
                                     <div className="flex items-center justify-between gap-1">
-                                        <span className={`text-sm truncate flex-1 ${activeConvId === c.id ? 'text-[#3A5FB8] font-medium' : 'text-gray-800'}`}>
+                                        <span className={`text-sm truncate flex-1 ${activeConvId === c.id ? 'text-[#2A57C6] font-medium' : 'text-gray-800'}`}>
                                             {c.title}
                                         </span>
                                         <Popconfirm
@@ -545,11 +662,12 @@ export default function QaPage() {
                     >
                         {turns.length === 0 && (
                             <div className="h-full flex flex-col items-center justify-center text-center px-6">
-                                <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-4"
+                                <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3"
                                   style={{ background: 'linear-gradient(135deg, #5B8DEF, #8B5CF6)' }}>
                                     <BrandMark size={32} strokeWidth={3.5} />
                                 </div>
-                                <p className="text-gray-600 font-medium">基于本体知识图谱的检索问答</p>
+                                <p className="tk-mono text-[10px] tracking-[0.24em] text-[#9AA6BF]">ONTOLOGY Q&amp;A</p>
+                                <p className="text-gray-600 font-medium mt-1.5">基于本体知识图谱的检索问答</p>
                                 <p className="text-xs text-gray-400 mt-1">回答带 [n] 引用角标，点击角标可定位到对应溯源引用卡</p>
                                 {/* 提示行固定占位、示例问题常驻：加载前后结构不变，避免空状态整体上移 */}
                                 <p className="mt-4 h-5 text-xs text-amber-600">
@@ -668,11 +786,11 @@ export default function QaPage() {
                         </div>
                     </div>
 
-                    {/* 输入区：一体化 composer（外框圆角 + 细描边 + 柔和投影，聚焦转品牌蓝；
-                        输入框无边框随内容增高，底部一行放快捷键提示与发送/停止） */}
+                    {/* 输入区：一体化 composer（玻璃底 + 细描边 + 柔光；聚焦转品牌蓝；
+                        等待输入时外圈有缓慢旋转的高光，参考 aiBank demo） */}
                     <div className="shrink-0 px-6 pt-3 pb-4">
                         <div className="max-w-3xl mx-auto">
-                            <div className="rounded-2xl border border-[#E6EBF5] bg-white px-3.5 pt-3 pb-2.5 shadow-[0_14px_34px_-20px_rgba(15,23,42,0.32)] transition-[border-color,box-shadow] duration-200 focus-within:border-[#5B8DEF] focus-within:shadow-[0_16px_38px_-18px_rgba(91,141,239,0.42)]">
+                            <div className={`qa-composer relative rounded-2xl border border-[#E5EBF6] px-3.5 pt-3 pb-2.5 transition-[border-color,box-shadow] duration-200 focus-within:border-[#5B8DEF] focus-within:shadow-[0_16px_38px_-18px_rgba(91,141,239,0.42)] ${!busy && projectId != null ? 'qa-composer--awaiting' : ''}`}>
                                 <Input.TextArea
                                     ref={inputRef}
                                     autoFocus
@@ -693,22 +811,25 @@ export default function QaPage() {
                                     }}
                                 />
                                 <div className="mt-2 flex items-center justify-between gap-3">
-                                    <span className="text-[11px] text-gray-400 select-none">
+                                    <span className="flex items-center gap-1.5 text-[11px] text-gray-400 select-none">
+                                        <FileSearchOutlined className="text-[#8A94AB]" />
                                         Enter 发送 · Shift + Enter 换行
                                     </span>
                                     {busy ? (
-                                        <Button danger icon={<StopOutlined />} onClick={stop}>
+                                        <Button icon={<StopOutlined />} onClick={stop} className="qa-stop-btn">
                                             停止
                                         </Button>
                                     ) : (
-                                        <Button
-                                            type="primary"
-                                            icon={<SendOutlined />}
+                                        <button
+                                            type="button"
+                                            aria-label="发送"
+                                            title="发送"
                                             onClick={send}
                                             disabled={!canSend}
+                                            className="qa-send-btn"
                                         >
-                                            发送
-                                        </Button>
+                                            <SendOutlined />
+                                        </button>
                                     )}
                                 </div>
                             </div>

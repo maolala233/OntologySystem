@@ -119,7 +119,7 @@ const Navbar: React.FC<NavbarProps> = ({ breadcrumbs = [] }) => {
             {/* 右侧：当前用户 */}
             <div className="flex items-center flex-shrink-0">
                 <Dropdown menu={accountMenu} placement="bottomRight" trigger={['click']}>
-                    <div className="flex items-center gap-2 px-2 py-1 rounded-lg hover:bg-gray-100 cursor-pointer transition-colors">
+                    <div className="flex items-center gap-2 px-2 py-1 rounded-lg hover:bg-[#EAF1FE] cursor-pointer transition-colors">
                         <Avatar
                             size={32}
                             icon={<UserOutlined />}

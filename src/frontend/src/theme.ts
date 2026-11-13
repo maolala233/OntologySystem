@@ -46,6 +46,11 @@ export const appTheme: ThemeConfig = {
         controlOutline: 'rgba(91, 141, 239, 0.16)',
         controlOutlineWidth: 3,
 
+        // 下拉/选择器的悬停与按下底色：统一为冷色品牌淡蓝。
+        // antd 默认 colorFillTertiary 是中性灰，在偏冷的界面里会显脏、发暖
+        controlItemBgHover: 'rgba(91, 141, 239, 0.08)',
+        controlItemBgActive: 'rgba(91, 141, 239, 0.12)',
+
         // 系统 UI 字体优先：Windows 上落到 Segoe UI（与改版前一致）。
         // 不能把 Inter/微软雅黑放前面——Windows 没有 Inter 时会落到雅黑，
         // 密码框的圆点（•）在雅黑里是等宽全角字形，会被拉得很开（实测 52px → 128px）。
@@ -61,7 +66,8 @@ export const appTheme: ThemeConfig = {
     components: {
         // 侧栏改浅色（2026-11-13）：和顶栏连成同一个白色外壳，内容区是浅蓝画布。
         // 深色块只保留工作台 Hero 一处，避免"深色边框 + 浅色内容"的割裂
-        Layout: { siderBg: BRAND.sider, bodyBg: BRAND.canvas },
+        // 侧栏用行内磨砂玻璃覆盖；Layout 本身透明，把全屏背景图留给最外层
+        Layout: { siderBg: BRAND.sider, bodyBg: 'transparent' },
         Menu: {
             // 浅色档（主侧栏）：底色透明，让侧栏自身的淡蓝渐变透出来；
             // 悬停用白/淡蓝药丸，选中项 = 品牌淡底 + 加深文字 + 左侧竖条（竖条见 index.css .app-sider）

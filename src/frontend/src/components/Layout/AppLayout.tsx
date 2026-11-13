@@ -165,7 +165,7 @@ const AppLayout: React.FC = () => {
 
     return (
         <SiderCollapseContext.Provider value={{ collapsed, toggle: () => setCollapsed(c => !c) }}>
-        <Layout className="h-screen overflow-hidden">
+        <Layout className="h-screen overflow-hidden app-shell-bg">
             {/* 浅色侧边栏（2026-11-13）：与顶栏同为白色，连成一个完整外壳；
                 深色只留给工作台 Hero，避免框架层出现大面积深色块。
                 2026-11-11：关掉 Sider 底部自带的折叠箭头（trigger=null），
@@ -182,14 +182,10 @@ const AppLayout: React.FC = () => {
                     position: 'sticky',
                     top: 0,
                     height: '100vh',
-                    // 冷蓝底 + 左上品牌辉光：整屏不再是大面积纯白，
-                    // 和顶栏左侧的品牌色渐变接起来（2026-11-13）
-                    background:
-                        'radial-gradient(360px 260px at 0% -8%, rgba(91, 141, 239, 0.28), transparent 70%), ' +
-                        'radial-gradient(320px 300px at 108% 106%, rgba(139, 92, 246, 0.14), transparent 72%), ' +
-                        'linear-gradient(180deg, #EEF3FC 0%, #E6EDF9 100%)',
+                    // 全透明外壳：侧栏直接透出全屏背景图，不再叠白纱/模糊
+                    background: 'transparent',
                     // 用 box-shadow 画 1px 分隔线：不占宽度，折叠动画时不会抖动
-                    boxShadow: '1px 0 0 #D8E2F1, 6px 0 24px -22px rgba(15, 23, 42, 0.35)',
+                    boxShadow: '1px 0 0 rgba(228, 235, 247, 0.9), 8px 0 30px -24px rgba(15, 23, 42, 0.25)',
                     zIndex: 10,
                 }}
             >
