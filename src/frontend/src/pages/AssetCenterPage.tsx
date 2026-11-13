@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Empty, Spin, message, Input, Select, Button } from 'antd';
-import { UserOutlined, NodeIndexOutlined, DatabaseOutlined, ApartmentOutlined, ArrowLeftOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
+import { UserOutlined, NodeIndexOutlined, DatabaseOutlined, ApartmentOutlined, ArrowLeftOutlined, ArrowRightOutlined, ReloadOutlined, SearchOutlined, ShareAltOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Layout/Navbar';
 import TechHero from '../components/TechHero';
@@ -15,6 +15,24 @@ interface DomainWithCount extends KnowledgeDomain {
 }
 let cachedDomains: DomainWithCount[] | null = null;
 let cachedPublicProjects: ProjectData[] | null = null;
+
+/** 卡片里只显示 月/日，完整时间留给详情页 */
+const fmtShortDate = (v?: string | null) =>
+    v ? new Date(v).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }) : '—';
+
+/**
+ * 知识域色相轮转（2026-11-13）：所有域共用同一个图标、同一种白底，
+ * 六张卡排在一起彼此分不出来。按索引轮转四种相邻品牌色——蓝/紫/青/琥珀，
+ * 相邻两张必然不同色；wash 是极淡的底色晕染（与工作台功能卡同一手法），
+ * ink 用于图标和计数胶囊上的文字。
+ */
+const DOMAIN_HUES = [
+    { ink: '#2F62D8', wash: 'rgba(91, 141, 239, 0.10)', tint: 'rgba(91, 141, 239, 0.16)' },
+    { ink: '#6D3FD8', wash: 'rgba(139, 92, 246, 0.09)', tint: 'rgba(139, 92, 246, 0.15)' },
+    { ink: '#1B87AD', wash: 'rgba(90, 200, 250, 0.12)', tint: 'rgba(90, 200, 250, 0.18)' },
+    { ink: '#B8790F', wash: 'rgba(242, 185, 80, 0.13)', tint: 'rgba(242, 185, 80, 0.20)' },
+] as const;
+
 
 /**
  * 资产中心页面 - 两层视图结构：
@@ -160,55 +178,93 @@ const AssetCenterPage: React.FC = () => {
                     />
                 </div>
             ) : (
-                /* 知识域卡片（2026-11-13 重设计）：去掉大封面，改成紧凑信息卡——
-                   一行能放 5–6 个；项目数量提到右上角做成大号数字，成为卡片的第一视觉焦点 */
+                /* 知识域卡片（2026-11-13 再设计）：一行 5–6 个的前提下，卡片净宽只有 ~163px。
+                   原来六张卡同一个图标同一张白底，扫视时没有任何锚点——
+                   现在色相按索引轮转做区分，域名与数量各占一层：
+                   右上角 22px 等宽数字是"这个域有多少东西"的第一信号，
+                   下方 14.5px 域名回答"是哪个域"，描述保留并放宽到两行
+                   （6 列下原先必然被截成一个省略号）。
+                   底部补「更新于」+ hover 浮现的箭头，给整卡可点一个暗示。
+                   不用顶部横线做色带——顶部横线在这版界面里已经被否过一次。
+                   空域（0 个已发布本体）整卡降权且不可点击：点进去只有空白，
+                   与其让用户白跑一趟，不如直接置灰、去掉手型光标和 hover 反馈 */
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3 sm:gap-4">
-                    {domains.map((domain) => (
-                        <div
-                            key={domain.id}
-                            role="button"
-                            tabIndex={0}
-                            aria-label={`进入知识域 ${domain.name}`}
-                            onClick={() => handleDomainSelect(domain)}
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter' || e.key === ' ') {
-                                    e.preventDefault();
-                                    handleDomainSelect(domain);
-                                }
-                            }}
-                            className="group relative rounded-2xl border border-[#E9EEF8] bg-white p-4 cursor-pointer transition-[border-color,box-shadow] duration-200 hover:border-[#CBD9F2] hover:shadow-[0_16px_32px_-20px_rgba(15,23,42,0.30)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
-                        >
-                            <div className="flex items-start justify-between gap-2">
-                                <span
-                                    className="w-10 h-10 shrink-0 rounded-xl flex items-center justify-center text-[18px]"
-                                    style={{
-                                        background: 'linear-gradient(135deg, rgba(91,141,239,0.16), rgba(139,92,246,0.10))',
-                                        color: '#5B8DEF',
-                                    }}
-                                >
-                                    <DatabaseOutlined />
-                                </span>
-                                {/* 项目数量：大号等宽数字 + 小标签，压过描述成为卡片主信息 */}
-                                <div className="text-right shrink-0 leading-none">
-                                    <div
-                                        className="tk-mono text-[24px] font-semibold leading-none"
-                                        style={{ color: domain.projectCount > 0 ? '#2F62D8' : '#A9B4C9' }}
+                    {domains.map((domain, index) => {
+                        const hue = DOMAIN_HUES[index % DOMAIN_HUES.length];
+                        const isEmpty = domain.projectCount === 0;
+                        return (
+                            <div
+                                key={domain.id}
+                                role={isEmpty ? undefined : 'button'}
+                                tabIndex={isEmpty ? undefined : 0}
+                                aria-label={isEmpty ? undefined : `进入知识域 ${domain.name}`}
+                                aria-disabled={isEmpty || undefined}
+                                onClick={isEmpty ? undefined : () => handleDomainSelect(domain)}
+                                onKeyDown={isEmpty ? undefined : (e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                        e.preventDefault();
+                                        handleDomainSelect(domain);
+                                    }
+                                }}
+                                className={`group flex flex-col rounded-2xl border p-3.5 transition-[border-color,box-shadow] duration-200 ${
+                                    isEmpty
+                                        ? 'border-[#EDF1F8] cursor-default'
+                                        : 'border-[#E9EEF8] cursor-pointer hover:border-[#CBD9F2] hover:shadow-[0_16px_32px_-20px_rgba(15,23,42,0.30)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300'
+                                }`}
+                                style={{
+                                    backgroundImage: isEmpty
+                                        ? 'linear-gradient(160deg, #FFFFFF 0%, #FAFBFE 100%)'
+                                        : `linear-gradient(160deg, #FFFFFF 0%, ${hue.wash} 100%)`,
+                                }}
+                            >
+                                <div className="flex items-start justify-between gap-2">
+                                    <span
+                                        className="w-9 h-9 shrink-0 rounded-lg flex items-center justify-center text-[16px]"
+                                        style={{
+                                            color: isEmpty ? '#A9B4C9' : hue.ink,
+                                            background: isEmpty
+                                                ? 'rgba(15, 23, 42, 0.04)'
+                                                : `linear-gradient(135deg, ${hue.tint}, rgba(255, 255, 255, 0.55))`,
+                                        }}
                                     >
-                                        {domain.projectCount}
+                                        <DatabaseOutlined />
+                                    </span>
+                                    {/* 项目数量：卡片的第一视觉信号，22px 等宽数字 + 小标签 */}
+                                    <div className="shrink-0 text-right leading-none">
+                                        <div
+                                            className="tk-mono text-[22px] font-bold leading-none"
+                                            style={{ color: isEmpty ? '#A9B4C9' : hue.ink }}
+                                        >
+                                            {domain.projectCount}
+                                        </div>
+                                        <div className="mt-1 text-[10px] tracking-wider text-[#8A94AB]">个本体</div>
                                     </div>
-                                    <div className="text-[10px] text-[#8A94AB] mt-1 tracking-wider">个项目</div>
+                                </div>
+                                <div className="mt-2.5 min-w-0">
+                                    <div
+                                        className={`line-clamp-2 text-[14.5px] font-semibold leading-snug transition-colors ${
+                                            isEmpty ? 'text-[#5A6680]' : 'text-[#0F172A] group-hover:text-[#2F62D8]'
+                                        }`}
+                                    >
+                                        {domain.name}
+                                    </div>
+                                    {/* 域名和描述都放宽到两行，正常数据下一屏就能读完，
+                                        不再挂原生 title——文字可见时再弹一个同样的气泡只是干扰 */}
+                                    <div className="line-clamp-2 mt-1 text-[12px] leading-[1.6] text-[#8A94AB]">
+                                        {domain.description || '暂无描述'}
+                                    </div>
+                                </div>
+                                <div className="mt-auto flex items-center justify-between gap-2 pt-2.5">
+                                    <span className="truncate text-[11px] text-[#A3ADC2]">
+                                        {isEmpty ? '暂无已发布本体' : `更新于 ${fmtShortDate(domain.updated_at)}`}
+                                    </span>
+                                    {!isEmpty && (
+                                        <ArrowRightOutlined className="shrink-0 text-[10px] text-[#B7C1D4] opacity-0 transition-all duration-200 group-hover:translate-x-0.5 group-hover:opacity-100" />
+                                    )}
                                 </div>
                             </div>
-                            <div className="mt-3 min-w-0">
-                                <div className="text-[14.5px] font-semibold text-[#0F172A] truncate group-hover:text-[#2F62D8] transition-colors">
-                                    {domain.name}
-                                </div>
-                                <div className="text-[12px] text-[#8A94AB] truncate mt-0.5" title={domain.description || undefined}>
-                                    {domain.description || '暂无描述'}
-                                </div>
-                            </div>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             )}
         </div>
@@ -217,45 +273,61 @@ const AssetCenterPage: React.FC = () => {
     // 渲染项目列表视图（第二层）
     const renderProjectListView = () => (
         <div>
-            {/* 工具条：返回 + 当前知识域 + 搜索/计数/排序。
-                Hero chips 里已经展示过知识域名，这里只保留一行轻量文字，不再用大图标块重复；
-                控件统一默认尺寸，不再套一层白卡 */}
+            {/* 工具条（2026-11-13）：与「我的项目」同构——左侧返回 + 当前知识域，
+                右侧把搜索和排序收进一条浅色查询条，计数作为结果读数跟在查询条外侧。
+                原来三个控件逐一散着放、颜色走 Tailwind 中性灰，和全站冷调对不上；
+                返回按钮也从实心默认样式降成浅底描边，把最重的位置让给搜索 */}
             <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
-                <Button icon={<ArrowLeftOutlined />} onClick={handleBackToDomains}>
-                    返回知识域
-                </Button>
-                {selectedDomain && selectedDomain.id !== 0 && (
-                    <>
-                        <span className="h-4 w-px bg-gray-300" />
-                        <span className="inline-flex items-center gap-1.5 min-w-0 text-sm font-medium text-gray-700">
-                            <DatabaseOutlined className="text-[#5B8DEF]" />
-                            <span className="truncate max-w-[200px]" title={selectedDomain.description || undefined}>
-                                {selectedDomain.name}
-                            </span>
+                <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-2">
+                    <Button className="ac-back-btn" icon={<ArrowLeftOutlined />} onClick={handleBackToDomains}>
+                        返回知识域
+                    </Button>
+                    {selectedDomain && selectedDomain.id !== 0 && (
+                        <span className="inline-flex min-w-0 items-center gap-1.5 text-[13px] font-medium text-[#1F2A44]">
+                            <DatabaseOutlined className="shrink-0 text-[#5B8DEF]" />
+                            <span className="truncate max-w-[180px]">{selectedDomain.name}</span>
                         </span>
-                    </>
-                )}
-                <div className="w-full sm:w-auto sm:ml-auto flex flex-wrap items-center gap-2">
-                    <Input
-                        allowClear
-                        value={searchText}
-                        onChange={(e) => setSearchText(e.target.value)}
-                        placeholder="搜索本体名称或描述…"
-                        prefix={<SearchOutlined className="text-gray-400" />}
-                        className="w-full sm:w-[220px]"
-                    />
-                    <span className="text-sm text-gray-500 whitespace-nowrap">
-                        <span className="text-[#5B8DEF] font-semibold">{filteredProjects.length}</span> 个本体
+                    )}
+                    {/* 结果读数跟着域名放在左侧，读成一个短语「金融 · 3 个本体」；
+                        原来孤零零贴在右侧查询条外面，既不属于控件也不属于标题。
+                        数字走等宽字体、标签走中文字体，两套字形高度不同，
+                        用 items-baseline 对齐基线，否则数字会看着往上蹿 */}
+                    <span
+                        className="inline-flex shrink-0 items-baseline gap-1 rounded-full px-2.5 py-[3px] text-[11.5px] leading-[16px] text-[#52607A]"
+                        style={{ background: 'rgba(91, 141, 239, 0.10)' }}
+                    >
+                        <span
+                            className="tk-mono text-[12.5px] font-semibold leading-[16px]"
+                            style={{ color: filteredProjects.length > 0 ? '#2F62D8' : '#8A94AB' }}
+                        >
+                            {filteredProjects.length}
+                        </span>
+                        个本体
                     </span>
-                    <Select
-                        value={sortBy}
-                        onChange={setSortBy}
-                        className="min-w-[132px]"
-                        options={[
-                            { label: '最新发布', value: 'latest' },
-                            { label: '节点数量', value: 'nodes' },
-                        ]}
-                    />
+                </div>
+                <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto">
+                    <div className="ac-query flex w-full flex-wrap items-center gap-1 rounded-[12px] border border-[#E7EEF9] bg-white/70 p-1 sm:w-auto">
+                        <Input
+                            allowClear
+                            value={searchText}
+                            onChange={(e) => setSearchText(e.target.value)}
+                            placeholder="搜索本体名称或描述…"
+                            prefix={<SearchOutlined className="text-[#5B8DEF]" />}
+                            className="w-full sm:w-[215px]"
+                        />
+                        <div className="flex items-center gap-1 pl-1">
+                            <span className="px-1 text-[12.5px] whitespace-nowrap text-[#66738F]">排序</span>
+                            <Select
+                                value={sortBy}
+                                onChange={setSortBy}
+                                style={{ width: 118 }}
+                                options={[
+                                    { label: '最新发布', value: 'latest' },
+                                    { label: '节点数量', value: 'nodes' },
+                                ]}
+                            />
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -292,8 +364,13 @@ const AssetCenterPage: React.FC = () => {
                     </Empty>
                 </div>
             ) : (
-                /* 项目卡片（2026-11-13 重设计）：原来是大封面竖卡，列窄、卡高、信息散；
-                   改成缩略图 + 信息区的紧凑横卡，一屏能放更多，统计信息也不再抢戏 */
+                /* 项目卡片（2026-11-13 重排）：原来的 64px 缩略图是纯装饰——
+                   每张卡都是同一张网格 + 同一层辉光 + 同一个图标，项目之间零差异，
+                   却吃掉约 1/4 的卡宽，把描述挤成一行省略号。
+                   改成 36px 图标块 + 两行描述 + 底部 meta，
+                   与「我的项目」卡片视图、知识域卡同一套结构。
+                   meta 分两组：规模数据（节点/关系）做成淡底小胶囊，
+                   归属信息（作者 · 领域）走更淡的 11px 灰字，扫视时先看到体量 */
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3 sm:gap-4">
                     {filteredProjects.map((project) => {
                         const nodes = project.graph_data?.nodes?.length || 0;
@@ -313,45 +390,51 @@ const AssetCenterPage: React.FC = () => {
                                         navigate(`/asset-center/${project.id}`);
                                     }
                                 }}
-                                className="group flex items-start gap-3 rounded-2xl border border-[#E9EEF8] bg-white p-3.5 cursor-pointer transition-[border-color,box-shadow] duration-200 hover:border-[#CBD9F2] hover:shadow-[0_16px_32px_-20px_rgba(15,23,42,0.30)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
+                                className="group flex flex-col rounded-2xl border border-[#E9EEF8] p-3.5 cursor-pointer transition-[border-color,box-shadow] duration-200 hover:border-[#CBD9F2] hover:shadow-[0_16px_32px_-20px_rgba(15,23,42,0.30)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
+                                style={{ backgroundImage: 'linear-gradient(160deg, #FFFFFF 0%, rgba(91, 141, 239, 0.07) 100%)' }}
                             >
-                                {/* 本体缩略图：64px 里画整张图谱会被裁得零碎、认不出是什么；
-                                    改成「淡蓝底 + 层级图标」的图块，语义清楚又不抢信息 */}
-                                <div
-                                    className="relative w-16 h-16 shrink-0 rounded-xl overflow-hidden flex items-center justify-center"
-                                    style={{ background: 'linear-gradient(135deg, #F1F6FF 0%, #EAF1FE 55%, #F4F0FF 100%)' }}
-                                >
-                                    <div className="absolute inset-0 ac-cover-grid" />
-                                    <div className="absolute inset-0 ac-glow" />
-                                    <ApartmentOutlined className="relative text-[22px]" style={{ color: '#5B8DEF' }} />
+                                <div className="flex items-start gap-2.5">
+                                    <span
+                                        className="w-9 h-9 shrink-0 rounded-lg flex items-center justify-center text-[16px] text-[#2F62D8]"
+                                        style={{ background: 'linear-gradient(135deg, rgba(91,141,239,0.16), rgba(139,92,246,0.10))' }}
+                                    >
+                                        <ApartmentOutlined />
+                                    </span>
+                                    <div className="min-w-0 flex-1 pt-0.5">
+                                        <div className="truncate text-[14.5px] font-semibold text-[#0F172A] transition-colors group-hover:text-[#2F62D8]">
+                                            {project.name}
+                                        </div>
+                                        <div className="mt-1 truncate text-[11px] text-[#A3ADC2]">
+                                            <UserOutlined className="mr-1 text-[10px]" />
+                                            {project.owner?.username || '未知作者'}
+                                            {showDomain && <span> · {project.domain?.name}</span>}
+                                        </div>
+                                    </div>
                                 </div>
-                                <div className="min-w-0 flex-1">
-                                    <div className="text-[15px] font-semibold text-[#0F172A] truncate group-hover:text-[#2F62D8] transition-colors" title={project.name}>
-                                        {project.name}
-                                    </div>
-                                    <div className="text-[12px] text-[#8A94AB] truncate mt-0.5" title={project.description || undefined}>
-                                        {project.description || '暂无描述'}
-                                    </div>
-                                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-[11px] text-[#8A94AB]">
-                                        <span className="inline-flex items-center gap-1">
-                                            <NodeIndexOutlined style={{ color: '#5B8DEF' }} />
-                                            <span><span className="tk-mono">{nodes}</span> 节点</span>
+                                <div className="mt-2 line-clamp-2 text-[12px] leading-[1.6] text-[#8A94AB]">
+                                    {project.description || '暂无描述'}
+                                </div>
+                                <div className="mt-auto flex items-center justify-between gap-2 border-t border-[#F0F4FB] pt-2.5">
+                                    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                                        <span
+                                            className="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-[2px] text-[10.5px] leading-[14px] text-[#52607A]"
+                                            style={{ background: 'rgba(91, 141, 239, 0.10)' }}
+                                        >
+                                            <NodeIndexOutlined className="text-[11px]" style={{ color: '#5B8DEF' }} />
+                                            <span className="tk-mono text-[11.5px] font-semibold leading-[14px] text-[#2F62D8]">{nodes}</span>
+                                            节点
                                         </span>
-                                        <span className="inline-flex items-center gap-1">
-                                            <span style={{ color: '#8B5CF6' }}>⚡</span>
-                                            <span><span className="tk-mono">{edges}</span> 关系</span>
+                                        <span
+                                            className="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-[2px] text-[10.5px] leading-[14px] text-[#52607A]"
+                                            style={{ background: 'rgba(139, 92, 246, 0.10)' }}
+                                        >
+                                            <ShareAltOutlined className="text-[11px]" style={{ color: '#8B5CF6' }} />
+                                            <span className="tk-mono text-[11.5px] font-semibold leading-[14px] text-[#6D3FD8]">{edges}</span>
+                                            关系
                                         </span>
-                                        <span className="inline-flex items-center gap-1 min-w-0">
-                                            <UserOutlined />
-                                            <span className="truncate max-w-[90px]">{project.owner?.username || '未知'}</span>
-                                        </span>
-                                        {showDomain && (
-                                            <span className="inline-flex items-center gap-1 min-w-0">
-                                                <DatabaseOutlined style={{ color: '#5B8DEF' }} />
-                                                <span className="truncate max-w-[110px]">{project.domain?.name}</span>
-                                            </span>
-                                        )}
                                     </div>
+                                    {/* 箭头常驻占位、只在 hover 显形，避免出现时把左侧胶囊挤动 */}
+                                    <ArrowRightOutlined className="shrink-0 text-[10px] text-[#B7C1D4] opacity-0 transition-all duration-200 group-hover:translate-x-0.5 group-hover:opacity-100" />
                                 </div>
                             </div>
                         );
@@ -364,17 +447,42 @@ const AssetCenterPage: React.FC = () => {
     return (
         <div className="h-full flex flex-col app-canvas">
             <style>{`
-                .ac-cover-grid {
-                    background-image:
-                        linear-gradient(rgba(91,141,239,0.09) 1px, transparent 1px),
-                        linear-gradient(90deg, rgba(91,141,239,0.09) 1px, transparent 1px);
-                    background-size: 24px 24px;
+                /* 二级工具条（2026-11-13）：与「我的项目」的查询条同构——
+                   搜索/排序收进一条浅色容器，内部控件去边框、透明底，
+                   整条读起来像一个查询栏，而不是几个孤立的框 */
+                .ac-query .ant-input-affix-wrapper,
+                .ac-query .ant-select:not(.ant-select-customize-input) .ant-select-selector,
+                .ac-query .ant-btn {
+                    background-color: transparent !important;
+                    border-color: transparent !important;
+                    box-shadow: none !important;
                 }
-                /* 浅色封面（2026-11-13）：辉光用径向渐变一次画好，比两块 blur 大圆更省合成 */
-                .ac-glow {
-                    background:
-                        radial-gradient(160px 140px at 92% 0%, rgba(91,141,239,0.22), transparent 72%),
-                        radial-gradient(170px 150px at 0% 108%, rgba(181,133,242,0.18), transparent 72%);
+                .ac-query .ant-input-affix-wrapper:hover,
+                .ac-query .ant-select:not(.ant-select-disabled):not(.ant-select-customize-input):hover .ant-select-selector,
+                .ac-query .ant-btn:hover {
+                    background-color: #FFFFFF !important;
+                    border-color: #DCE7F7 !important;
+                }
+                /* 聚焦态只留 1px 品牌蓝描边，不叠 3px 外光晕：
+                   查询条本身已经有容器边，两层框套在一起会显得又粗又重。
+                   注意 antd 5.29 的 affix wrapper 已不挂 -focused 类，焦点态走 :focus-within，
+                   只写 -focused 的话输入时命中的是上面的 hover 规则，边框一直是灰的 */
+                .ac-query .ant-input-affix-wrapper:focus-within,
+                .ac-query .ant-select-focused .ant-select-selector {
+                    background-color: #FFFFFF !important;
+                    border-color: #5B8DEF !important;
+                    box-shadow: none !important;
+                }
+                /* 返回按钮：次要动作，降到低对比的浅底描边，不和右侧搜索抢注意力 */
+                .ac-back-btn.ant-btn-default {
+                    background: rgba(255, 255, 255, 0.72);
+                    border-color: #E1E8F4;
+                    color: #52607A;
+                }
+                .ac-back-btn.ant-btn-default:not(:disabled):hover {
+                    color: #2A57C6 !important;
+                    border-color: rgba(91, 141, 239, 0.42) !important;
+                    background: rgba(255, 255, 255, 0.92) !important;
                 }
             `}</style>
             <Navbar breadcrumbs={breadcrumbs} />

@@ -19,6 +19,7 @@ import {
     CheckCircleOutlined,
     RocketOutlined,
     FolderOpenOutlined,
+    ApartmentOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { UploadFile } from 'antd/es/upload/interface';
@@ -29,7 +30,7 @@ import { useAuthStore } from '../shared/auth/authStore';
 import { PROJECT_STATUS, STALE_PUBLISHED_TAG, projectStatusOf as statusOf } from '../shared/projectStatus';
 import { UPLOAD_ACCEPT, UPLOAD_EXTS, MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from '../features/builder/documents/uploadFormats';
 import Navbar from '../components/Layout/Navbar';
-import TechHero, { TECH_COLORS, GraphMotif } from '../components/TechHero';
+import TechHero, { TECH_COLORS } from '../components/TechHero';
 import { documentsApi } from '../api/documents';
 import { pipelineApi } from '../api/pipeline';
 import { projectsApi } from '../api/projects';
@@ -80,6 +81,10 @@ const withAlpha = (hex: string, a: number) => {
 
 const fmtDate = (v?: string | null) =>
     v ? new Date(v).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+
+/** 紧凑卡片用的短日期：只保留 月/日 */
+const fmtShortDate = (v?: string | null) =>
+    v ? new Date(v).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }) : '—';
 
 
 /**
@@ -483,24 +488,22 @@ const MyProjectsPage: React.FC = () => {
     return (
         <div className="h-full flex flex-col app-canvas">
             <style>{`
-                .mp-cover { position: relative; overflow: hidden; }
-                .mp-cover-grid {
-                    background-image:
-                        linear-gradient(rgba(91,141,239,0.09) 1px, transparent 1px),
-                        linear-gradient(90deg, rgba(91,141,239,0.09) 1px, transparent 1px);
-                    background-size: 24px 24px;
+                /* 项目卡（2026-11-13）：不再是纯白底——白到冷蓝的极轻渐变，
+                   右下角一组品牌蓝同心圆环做装饰（不用图标，避免和左上角图标重复），
+                   hover 时圆环更清晰 */
+                .mp-proj-card {
+                    background-image: linear-gradient(158deg, #FFFFFF 0%, #F8FBFF 55%, #EEF5FE 100%);
                 }
-                /* 浅色封面（2026-11-13）：辉光改用径向渐变一次画好，不再用两层 blur 大圆 */
-                .mp-cover-glow {
-                    background:
-                        radial-gradient(170px 130px at 96% -8%, rgba(91,141,239,0.22), transparent 72%),
-                        radial-gradient(150px 120px at -4% 110%, rgba(139,92,246,0.16), transparent 72%);
+                .mp-proj-ring {
+                    position: absolute; right: -26px; bottom: -34px;
+                    width: 112px; height: 112px; opacity: .12;
+                    pointer-events: none; transition: opacity .2s ease;
+                    background: radial-gradient(circle at center,
+                        transparent 27%, currentColor 28.2%, transparent 29.6%,
+                        transparent 47%, currentColor 48.2%, transparent 49.6%,
+                        transparent 67%, currentColor 68.2%, transparent 69.6%);
                 }
-                /* 卡片封面星点改为静态（同资产中心）：Hero 的星点动画保留 */
-                .mp-cover .tk-node { animation: none; }
-                .mp-card { border-radius: 14px; border: 1px solid #EEF1F8; transition: all .25s ease;
-                    box-shadow: inset 0 1px 0 rgba(255,255,255,.95), inset 0 -1px 0 rgba(219,228,242,.45), 0 10px 26px -20px rgba(15,23,42,.22), 0 2px 5px rgba(15,23,42,.04); }
-                .mp-card:hover { box-shadow: 0 16px 34px -12px rgba(15,20,32,.22); transform: translateY(-3px); }
+                .group:hover .mp-proj-ring { opacity: .20; }
                 /* 状态统计卡：右角状态色图标块 + 同色淡底，纯展示卡不做 hover 位移
                    （--stat-accent / --stat-tint 由卡片内联按状态下发） */
                 .mp-stat {
@@ -545,6 +548,7 @@ const MyProjectsPage: React.FC = () => {
                 .mp-modal .ant-upload-drag-icon .anticon { font-size: 32px; }
                 .mp-modal .ant-upload-hint { font-size: 12px; line-height: 1.6; }
                 /* 列表面板：和卡片同一套实体感材质（极轻渐变 + 内高光 + 近距投影） */
+                /* 列表面板：和卡片同一套实体感材质（极轻渐变 + 内高光 + 近距投影） */
                 .mp-table {
                     background-image: linear-gradient(180deg, rgba(255,255,255,.97) 0%, rgba(250,252,255,.95) 100%);
                     box-shadow: inset 0 1px 0 rgba(255,255,255,.95), inset 0 -1px 0 rgba(219,228,242,.45), 0 10px 26px -20px rgba(15,23,42,.22), 0 2px 5px rgba(15,23,42,.04);
@@ -586,6 +590,55 @@ const MyProjectsPage: React.FC = () => {
                 }
                 .scope-seg.ant-segmented .ant-segmented-item:not(.ant-segmented-item-selected):hover {
                     color: #1F2A44;
+                }
+                /* 查询条（2026-11-13）：搜索 / 状态 / 排序收进一条浅色容器，
+                   内部控件去边框、透明底，整条读起来像一个查询栏，而不是三个孤立的框 */
+                .mp-query .ant-input-affix-wrapper,
+                .mp-query .ant-select:not(.ant-select-customize-input) .ant-select-selector,
+                .mp-query .ant-btn {
+                    background-color: transparent !important;
+                    border-color: transparent !important;
+                    box-shadow: none !important;
+                }
+                .mp-query .ant-input-affix-wrapper:hover,
+                .mp-query .ant-select:not(.ant-select-disabled):not(.ant-select-customize-input):hover .ant-select-selector,
+                .mp-query .ant-btn:hover {
+                    background-color: #FFFFFF !important;
+                    border-color: #DCE7F7 !important;
+                }
+                /* 聚焦态只留 1px 品牌蓝描边，不再叠 3px 外光晕：
+                   查询条本身有自己的容器边，两层框叠在一起会显得很重。
+                   注意 antd 5.29 的 affix wrapper 已不挂 -focused 类，焦点态走 :focus-within，
+                   只写 -focused 的话输入时命中的是 hover 规则，边框一直是灰的 */
+                .mp-query .ant-input-affix-wrapper:focus-within,
+                .mp-query .ant-select-focused .ant-select-selector {
+                    background-color: #FFFFFF !important;
+                    border-color: #5B8DEF !important;
+                    box-shadow: none !important;
+                }
+                /* 新建项目（2026-11-13）：antd 默认主色 #5B8DEF 在整页浅色里是最亮的一块，
+                   抢过上方 Hero；主操作改用深一档品牌蓝，投影收小，层级降到"重要但不用喊" */
+                .mp-new-btn.ant-btn-primary {
+                    background: #3F6FD8 !important;
+                    box-shadow: 0 6px 16px -12px rgba(47, 98, 216, 0.55) !important;
+                }
+                .mp-new-btn.ant-btn-primary:not(:disabled):hover {
+                    background: #3562C8 !important;
+                }
+                .mp-new-btn.ant-btn-primary:not(:disabled):active {
+                    background: #2F58B8 !important;
+                }
+                /* 空状态「清除筛选」：默认按钮在浅色画布上太素，改成品牌蓝描边 + 白底，
+                   hover 时底色和描边一起加深（与 Hero 的幽灵按钮同一套语言） */
+                .mp-clear-btn.ant-btn-default {
+                    color: #2A57C6;
+                    border-color: rgba(91, 141, 239, 0.38);
+                    background: rgba(255, 255, 255, 0.75);
+                }
+                .mp-clear-btn.ant-btn-default:hover {
+                    color: #2A57C6 !important;
+                    border-color: rgba(91, 141, 239, 0.60) !important;
+                    background: rgba(91, 141, 239, 0.10) !important;
                 }
             `}</style>
             <Navbar breadcrumbs={breadcrumbs} />
@@ -655,65 +708,68 @@ const MyProjectsPage: React.FC = () => {
                     搜索/筛选/视图切换是纯前端控件，首屏直接渲染，不等统计接口——
                     否则页面进入时会先空一段、再"补出"这一行（统计数据未回来时 counts 全 0）。
                     2026-11-12：控件统一 32px 高；右侧两个控件固定成组，窄屏换行时不会散开 */}
-                <div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-2">
-                    {(!countsReady || counts.total > 0) && (<>
-                        <Input
-                            prefix={<SearchOutlined className="text-gray-500" />}
-                            placeholder="搜索项目名称/描述..."
-                            value={searchText}
-                            onChange={e => setSearchText(e.target.value)}
-                            allowClear
-                            style={{ width: 240 }}
-                        />
-                        <Select
-                            mode="multiple" allowClear maxTagCount="responsive"
-                            placeholder="全部状态" style={{ width: 180 }}
-                            value={statusFilter}
-                            onChange={(v) => { setStatusFilter(v); setPage(1); }}
-                            options={STATUS_OPTIONS}
-                        />
-                        <div className="flex items-center gap-1.5">
-                            <span className="text-gray-500 text-sm whitespace-nowrap">排序</span>
-                            <Select
-                                value={sortField}
-                                onChange={(v) => {
-                                    if (v === sortField) {
-                                        setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
-                                    } else {
-                                        setSortField(v);
-                                        setSortOrder('desc');
-                                    }
-                                    setPage(1);
-                                }}
-                                options={sortOptions}
-                                style={{ width: 124 }}
+                <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+                    {(!countsReady || counts.total > 0) && (
+                        <div className="mp-query flex flex-wrap items-center gap-1 rounded-[12px] border border-[#E7EEF9] bg-white/70 p-1">
+                            <Input
+                                prefix={<SearchOutlined className="text-[#5B8DEF]" />}
+                                placeholder="搜索项目名称/描述..."
+                                value={searchText}
+                                onChange={e => setSearchText(e.target.value)}
+                                allowClear
+                                style={{ width: 220 }}
                             />
-                            <Tooltip title={sortOrder === 'asc' ? '升序' : '降序'}>
-                                <Button
-                                    icon={<SortAscendingOutlined style={{ transform: sortOrder === 'desc' ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />}
-                                    onClick={() => { setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc'); setPage(1); }}
+                            <Select
+                                mode="multiple" allowClear maxTagCount="responsive"
+                                placeholder="全部状态" style={{ width: 170 }}
+                                value={statusFilter}
+                                onChange={(v) => { setStatusFilter(v); setPage(1); }}
+                                options={STATUS_OPTIONS}
+                            />
+                            <div className="flex items-center gap-1 pl-1">
+                                <span className="px-1 text-[12.5px] whitespace-nowrap text-[#66738F]">排序</span>
+                                <Select
+                                    value={sortField}
+                                    onChange={(v) => {
+                                        if (v === sortField) {
+                                            setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+                                        } else {
+                                            setSortField(v);
+                                            setSortOrder('desc');
+                                        }
+                                        setPage(1);
+                                    }}
+                                    options={sortOptions}
+                                    style={{ width: 118 }}
                                 />
-                            </Tooltip>
-                        </div>
-                        {selectedIds.size > 0 && (
-                            <div className="flex items-center gap-1 pl-3 ml-1 border-l border-gray-200">
-                                <span className="text-sm text-gray-500 whitespace-nowrap">
-                                    已选 <span className="text-blue-600 font-medium">{selectedIds.size}</span> 项
-                                </span>
-                                <Button type="link" size="small" danger icon={<DeleteOutlined />}
-                                        className="!px-1" onClick={handleBatchDelete}>
-                                    批量删除
-                                </Button>
-                                <Button type="link" size="small" className="!px-1"
-                                        onClick={() => setSelectedIds(new Set())}>
-                                    取消选择
-                                </Button>
+                                <Tooltip title={sortOrder === 'asc' ? '升序' : '降序'}>
+                                    <Button
+                                        icon={<SortAscendingOutlined style={{ transform: sortOrder === 'desc' ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />}
+                                        onClick={() => { setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc'); setPage(1); }}
+                                    />
+                                </Tooltip>
                             </div>
-                        )}
-                    </>)}
+                        </div>
+                    )}
+                    {selectedIds.size > 0 && (
+                        <div className="flex items-center gap-1 rounded-full border border-[rgba(91,141,239,0.22)] bg-[rgba(91,141,239,0.10)] pl-3 pr-1.5 py-0.5">
+                            <span className="text-[12.5px] whitespace-nowrap text-[#2A57C6]">
+                                已选 <span className="font-semibold">{selectedIds.size}</span> 项
+                            </span>
+                            <Button type="link" size="small" danger icon={<DeleteOutlined />}
+                                    className="!px-1" onClick={handleBatchDelete}>
+                                批量删除
+                            </Button>
+                            <Button type="link" size="small" className="!px-1"
+                                    onClick={() => setSelectedIds(new Set())}>
+                                取消选择
+                            </Button>
+                        </div>
+                    )}
                     <div className="ml-auto flex items-center gap-2">
                         {(!countsReady || counts.total > 0) && (
                             <Segmented
+                                className="scope-seg"
                                 value={viewMode}
                                 onChange={(v) => setViewMode(v as ViewMode)}
                                 options={[
@@ -726,6 +782,7 @@ const MyProjectsPage: React.FC = () => {
                             type={!countsReady || counts.total > 0 ? 'primary' : 'default'}
                             icon={<PlusOutlined />}
                             onClick={() => setIsModalOpen(true)}
+                            className="mp-new-btn"
                         >
                             新建项目
                         </Button>
@@ -764,17 +821,30 @@ const MyProjectsPage: React.FC = () => {
                         </Empty>
                     </div>
                 ) : total === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-96 px-4">
-                        <Empty
-                            description="没有找到匹配的项目"
-                            image={Empty.PRESENTED_IMAGE_SIMPLE}
-                        >
-                            <Button onClick={() => {
-                                setSearchText(''); setStatusFilter([]); setPage(1);
-                            }}>
+                    /* 空结果（2026-11-13）：antd 默认 Empty 只有一张灰图和一句灰字，在浅蓝画布上很单薄。
+                       改成「图标块 + 主标题 + 一句原因提示 + 品牌蓝次要按钮」：
+                       先告诉用户为什么是空的，再给出一个明确的下一步 */
+                    <div className="flex flex-col items-center justify-center px-4 py-14">
+                        <div className="flex max-w-[420px] flex-col items-center text-center">
+                            <span
+                                className="flex h-14 w-14 items-center justify-center rounded-2xl text-[24px] text-[#2F62D8]"
+                                style={{ background: 'linear-gradient(135deg, rgba(91,141,239,0.16), rgba(139,92,246,0.10))' }}
+                            >
+                                <SearchOutlined />
+                            </span>
+                            <h3 className="mt-4 text-[15px] font-semibold text-[#0F172A]">没有找到匹配的项目</h3>
+                            <p className="mt-1.5 text-[12.5px] leading-[1.7] text-[#66738F]">
+                                检查一下关键词，或清除当前的状态筛选后再试
+                            </p>
+                            <Button
+                                className="mp-clear-btn mt-4"
+                                onClick={() => {
+                                    setSearchText(''); setStatusFilter([]); setPage(1);
+                                }}
+                            >
                                 清除筛选
                             </Button>
-                        </Empty>
+                        </div>
                     </div>
                 ) : viewMode === 'list' ? (
                     <div className="mp-table bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
@@ -802,60 +872,113 @@ const MyProjectsPage: React.FC = () => {
                     </div>
                 ) : (
                     <>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
+                        {/* 卡片视图（2026-11-13 重设计）：原来的 160px 大封面只承载装饰，
+                            一张卡 310px，一屏只能看到 4–6 个项目。改成紧凑信息卡——
+                            图标 + 名称 + 状态 + 一行描述 + 节点/更新时间的元信息行，
+                            大屏一行 6 个，一屏能看到 15 个以上；操作按钮 hover 才出现，
+                            不挤占常驻信息 */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
                             {projects.map((project) => {
                                 const isSelected = selectedIds.has(project.id);
+                                const nodes = project.nodes_total ?? project.graph_data?.nodes?.length ?? 0;
                                 return (
-                                    <div key={project.id} className="relative">
+                                    <div key={project.id} className="group relative h-full">
+                                        {/* 选择圆圈：右侧，未选中时 hover 才浮现 */}
                                         <button
                                             type="button"
                                             aria-pressed={isSelected}
                                             aria-label={`选择项目 ${project.name}`}
-                                            className={`absolute top-3 left-3 z-10 w-6 h-6 flex items-center justify-center rounded-full transition-all duration-200 cursor-pointer ${isSelected ? 'bg-blue-500 border border-blue-500' : 'bg-white/90 hover:bg-white border border-[#DCE3F0] shadow-sm'}`}
-                                            onClick={(e) => { e.stopPropagation(); setSelectedIds(prev => {
-                                                const next = new Set(prev);
-                                                if (next.has(project.id)) next.delete(project.id); else next.add(project.id);
-                                                return next;
-                                            }); }}
+                                            className={`absolute top-2.5 right-2.5 z-10 w-5 h-5 flex items-center justify-center rounded-full transition-all duration-200 cursor-pointer ${
+                                                isSelected
+                                                    ? 'bg-blue-500 border border-blue-500 opacity-100'
+                                                    : 'bg-white border border-[#DCE3F0] shadow-sm opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
+                                            }`}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                setSelectedIds(prev => {
+                                                    const next = new Set(prev);
+                                                    if (next.has(project.id)) next.delete(project.id); else next.add(project.id);
+                                                    return next;
+                                                });
+                                            }}
                                         >
-                                            <Checkbox checked={isSelected} className="[&_.ant-checkbox-inner]:border-gray-400 pointer-events-none" tabIndex={-1} aria-hidden />
+                                            <Checkbox
+                                                checked={isSelected}
+                                                className="[&_.ant-checkbox-inner]:border-gray-400 scale-75 pointer-events-none"
+                                                tabIndex={-1}
+                                                aria-hidden
+                                            />
                                         </button>
+
                                         <div
-                                            className="mp-cover h-32 sm:h-40 rounded-t-xl"
-                                            style={{ background: 'linear-gradient(135deg, #F4F8FF 0%, #EDF3FE 55%, #F6F2FF 100%)' }}
+                                            role="button"
+                                            tabIndex={0}
+                                            aria-label={`查看项目 ${project.name}`}
                                             onClick={() => navigate(`/projects/${project.id}`)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter' || e.key === ' ') {
+                                                    e.preventDefault();
+                                                    navigate(`/projects/${project.id}`);
+                                                }
+                                            }}
+                                            className="mp-proj-card relative flex h-full flex-col overflow-hidden rounded-xl border border-[#E7EEF9] p-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-[border-color,box-shadow] duration-200 hover:border-[#D3E1F5] hover:shadow-[0_16px_30px_-22px_rgba(15,23,42,0.40)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
                                         >
-                                            <div className="absolute inset-0 mp-cover-grid rounded-t-xl" />
-                                            <div className="absolute inset-0 mp-cover-glow" />
-                                            <GraphMotif seed={project.id} className="absolute inset-0 w-full h-full opacity-90" />
-                                            <div
-                                                className="absolute bottom-3 right-3 tk-mono text-[10px] tracking-widest"
-                                                style={{ color: '#7C89A8' }}
-                                            >
-                                                {statusOf(project).toUpperCase()}
+                                            <span className="mp-proj-ring" style={{ color: '#5B8DEF' }} aria-hidden />
+                                            <div className="flex items-start gap-2.5">
+                                                <span
+                                                    className="w-9 h-9 shrink-0 rounded-lg flex items-center justify-center text-[16px] text-[#2F62D8]"
+                                                    style={{ background: 'linear-gradient(135deg, rgba(91,141,239,0.16), rgba(139,92,246,0.10))' }}
+                                                >
+                                                    <ApartmentOutlined />
+                                                </span>
+                                                <div className="min-w-0 flex-1 pr-4">
+                                                    <EllipsisTip
+                                                        text={project.name}
+                                                        className="text-[14px] font-semibold text-[#0F172A] transition-colors group-hover:text-[#2F62D8]"
+                                                    />
+                                                </div>
                                             </div>
-                                        </div>
-                                        <div className="mp-card bg-white rounded-b-xl border-t-0 p-4" style={{ borderRadius: '0 0 14px 14px' }}>
-                                            <div className="flex items-center justify-between gap-2 mb-1">
-                                                <EllipsisTip
-                                                    text={project.name}
-                                                    className="font-medium text-gray-800 cursor-pointer hover:text-blue-500 transition-colors min-w-0"
-                                                    placement="top"
-                                                    onClick={() => navigate(`/projects/${project.id}`)}
-                                                />
+
+                                            <div className="mt-2 flex flex-wrap items-center gap-1.5">
                                                 {statusTag(project, project.stale_published)}
+                                                {isSuperAdmin && scope === 'all' && (
+                                                    <Tag className="!m-0 !text-[10px]" color="blue">
+                                                        {project.owner?.username || `用户#${project.owner_id ?? '?'}`}
+                                                    </Tag>
+                                                )}
                                             </div>
+
                                             <EllipsisTip
                                                 text={project.description}
                                                 fallback="暂无描述"
-                                                className="text-gray-500 text-sm mb-2 cursor-default"
-                                                placement="top"
+                                                className="mt-1.5 text-[12px] text-[#66738F]"
                                             />
-                                            <div className="flex items-center justify-between text-xs text-gray-400 mb-2">
-                                                <span>创建 {fmtDate(project.created_at)}</span>
-                                                <span>修改 {fmtDate(project.updated_at)}</span>
+
+                                            <div className="mt-auto flex h-6 items-center justify-between gap-2 border-t border-[#F0F4FB] pt-2">
+                                                <span className="truncate text-[11px] text-[#8A94AB]">
+                                                    <span className="tk-mono">{nodes}</span> 节点 · {fmtShortDate(project.updated_at)} 更新
+                                                </span>
+                                                <div
+                                                    className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100"
+                                                    onClick={(e) => e.stopPropagation()}
+                                                >
+                                                    <Tooltip title="详情">
+                                                        <Button type="text" size="small" icon={<EyeOutlined />}
+                                                                onClick={() => navigate(`/projects/${project.id}`)} />
+                                                    </Tooltip>
+                                                    <Tooltip title="编辑项目名称与介绍">
+                                                        <Button type="text" size="small" icon={<EditOutlined />}
+                                                                onClick={() => handleEditProject(project)} />
+                                                    </Tooltip>
+                                                    <Popconfirm
+                                                        title="确认删除项目？"
+                                                        description="文档、图谱数据、审核项与版本快照将一并删除且无法恢复"
+                                                        okText="删除" okButtonProps={{ danger: true }} cancelText="取消"
+                                                        onConfirm={() => handleDeleteProject(project.id)}>
+                                                        <Button type="text" size="small" danger icon={<DeleteOutlined />} />
+                                                    </Popconfirm>
+                                                </div>
                                             </div>
-                                            {actionsRenderer(project)}
                                         </div>
                                     </div>
                                 );

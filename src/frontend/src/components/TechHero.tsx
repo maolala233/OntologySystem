@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useId } from 'react';
 
 // 图谱页同源色板（features/graph-explorer/colors.ts 的 GRAPH_THEME）
 export const TECH_COLORS = {
@@ -45,7 +45,8 @@ const DARK_PALETTE = {
     blue: TECH_COLORS.blue,
     cyan: TECH_COLORS.cyan,
     amber: TECH_COLORS.amber,
-    textSub: TECH_COLORS.textSub,
+    // 深蓝底上的副标题原来偏暗（#8A94B8），提到 #A9B7D9 提升可读性
+    textSub: '#A9B7D9',
     textBright: TECH_COLORS.textBright,
 };
 
@@ -72,8 +73,8 @@ interface TechHeroProps {
 
 /**
  * 科技风 Hero 面板（工作台/我的项目/资产中心共用）：
- * - light：白→浅蓝紫渐变底 + 细描边 + 柔阴影 + 淡网格/辉光（二级页）
- * - dark ：#0F1420 底 + 网格底纹 + 蓝紫辉光 + 扫描线 + 星点装饰（工作台）
+ * - light：白→浅蓝紫玻璃渐变 + 细描边 + 柔阴影 + 柔光带（二级页）
+ * - dark ：深海军蓝渐变 + 蓝紫辉光 + 柔光带 + 扫描线 + 星点装饰（工作台）
  */
 const TechHero: React.FC<TechHeroProps> = ({
     chips = [],
@@ -88,14 +89,15 @@ const TechHero: React.FC<TechHeroProps> = ({
 }) => {
     const isDark = tone === 'dark';
     const C = isDark ? DARK_PALETTE : LIGHT_COLORS;
+    // 同一页面可能渲染多个 Hero：模糊/渐变 id 加唯一后缀，避免互相覆盖
+    const uid = useId().replace(/:/g, '');
+    const bandGradientId = `hero-band-${uid}`;
+    const bandBlurId = `hero-blur-${uid}`;
 
-    // 标题：深色档用白→蓝紫渐变；浅色档保持墨蓝（紧凑版直接纯色，避免小面板上出现彩色标题）
-    const titleClass = isDark
-        ? 'tk-gradient-text'
-        : compact
-            ? ''
-            : 'tk-gradient-text-light';
-    const titleStyle = !isDark && compact ? { color: '#0F172A' } : undefined;
+    // 标题：深色档保留白→蓝紫渐变；浅色档统一用墨蓝纯色，
+    // 和我的项目/资产中心的标题保持一致，避免首页出现另一套彩色标题语言
+    const titleClass = isDark ? 'tk-gradient-text' : '';
+    const titleStyle = isDark ? undefined : { color: '#0F172A' };
 
     return (
         <div
@@ -111,18 +113,6 @@ const TechHero: React.FC<TechHeroProps> = ({
             }}
         >
             <style>{`
-                .tk-grid {
-                    background-image:
-                        linear-gradient(rgba(91,141,239,0.056) 1px, transparent 1px),
-                        linear-gradient(90deg, rgba(91,141,239,0.056) 1px, transparent 1px);
-                    background-size: 36px 36px;
-                }
-                .tk-grid-light {
-                    background-image:
-                        linear-gradient(rgba(91,141,239,0.075) 1px, transparent 1px),
-                        linear-gradient(90deg, rgba(91,141,239,0.075) 1px, transparent 1px);
-                    background-size: 36px 36px;
-                }
                 /* 浅色档的辉光改用径向渐变一次画好（不用 blur 大圆，合成开销更低） */
                 .tk-wash {
                     background:
@@ -144,14 +134,9 @@ const TechHero: React.FC<TechHeroProps> = ({
                     background: linear-gradient(100deg, #FFFFFF 15%, ${TECH_COLORS.textBright} 45%, ${TECH_COLORS.purple} 90%);
                     -webkit-background-clip: text; background-clip: text; color: transparent;
                 }
-                .tk-gradient-text-light {
-                    background: linear-gradient(96deg, #16233D 0%, #2F5BD0 62%, #7C3AED 100%);
-                    -webkit-background-clip: text; background-clip: text; color: transparent;
-                }
             `}</style>
 
             {/* 底纹 + 辉光 */}
-            <div className={`absolute inset-0 ${isDark ? 'tk-grid' : 'tk-grid-light'}`} />
             {isDark ? (
                 <>
                     <div className="absolute -top-24 -right-16 w-[420px] h-[420px] rounded-full tk-glow" style={{ background: TECH_COLORS.purple }} />
@@ -162,33 +147,107 @@ const TechHero: React.FC<TechHeroProps> = ({
                 <div className="absolute inset-0 tk-wash" />
             )}
 
-            {/* 右侧知识图谱星点装饰 */}
+            {/* 光带：与全屏背景同一种"带子"语言——宽、浅、模糊，不做网格线 */}
+            <svg
+                className="absolute inset-0 w-full h-full pointer-events-none"
+                viewBox="0 0 900 300"
+                preserveAspectRatio="xMidYMid slice"
+                fill="none"
+                aria-hidden
+            >
+                <defs>
+                    <filter id={bandBlurId} x="-30%" y="-40%" width="160%" height="180%">
+                        <feGaussianBlur stdDeviation="18" />
+                    </filter>
+                    <linearGradient id={bandGradientId} x1="0" y1="0" x2="900" y2="0" gradientUnits="userSpaceOnUse">
+                        {isDark ? (
+                            <>
+                                <stop offset="0" stopColor="#FFFFFF" stopOpacity="0" />
+                                <stop offset="0.35" stopColor="#B585F2" stopOpacity="0.14" />
+                                <stop offset="0.65" stopColor="#FFFFFF" stopOpacity="0.04" />
+                                <stop offset="1" stopColor="#5B8DEF" stopOpacity="0.12" />
+                            </>
+                        ) : (
+                            <>
+                                <stop offset="0" stopColor="#FFFFFF" stopOpacity="0" />
+                                <stop offset="0.35" stopColor="#5B8DEF" stopOpacity="0.10" />
+                                <stop offset="0.65" stopColor="#FFFFFF" stopOpacity="0.05" />
+                                <stop offset="1" stopColor="#8B5CF6" stopOpacity="0.05" />
+                            </>
+                        )}
+                    </linearGradient>
+                </defs>
+                <g filter={`url(#${bandBlurId})`} strokeLinecap="round">
+                    <path
+                        d="M-80 80 C 180 20, 360 150, 620 70 S 860 30, 980 90"
+                        stroke={`url(#${bandGradientId})`}
+                        strokeWidth="44"
+                    />
+                    <path
+                        d="M-80 220 C 160 150, 340 270, 560 200 S 820 160, 980 220"
+                        stroke={`url(#${bandGradientId})`}
+                        strokeWidth="56"
+                    />
+                </g>
+            </svg>
+
+            {/* 右侧几何装饰：六边形网架 + 虚线轨道 + 小节点。
+                紧凑版单独用更矮的尺寸和裁切后的 viewBox，避免在矮卡片里被上下截断 */}
             {showConstellation && (
                 <svg
-                    className={`absolute right-4 lg:right-16 top-1/2 -translate-y-1/2 hidden md:block ${compact ? 'opacity-60' : ''}`}
-                    width={compact ? 240 : 320}
-                    height={compact ? 180 : 230}
-                    viewBox="0 0 360 260"
+                    className={`absolute right-3 lg:right-12 top-1/2 -translate-y-1/2 hidden md:block ${compact ? 'opacity-60' : ''}`}
+                    width={compact ? 160 : 300}
+                    height={compact ? 100 : 216}
+                    viewBox={compact ? '20 30 320 200' : '0 0 360 260'}
                     fill="none"
-                    preserveAspectRatio="xMidYMid meet"
+                    aria-hidden
                 >
-                    <g stroke={C.line} strokeWidth="1">
-                        <line x1="60" y1="50" x2="170" y2="110" />
-                        <line x1="170" y1="110" x2="300" y2="60" />
-                        <line x1="170" y1="110" x2="120" y2="200" />
-                        <line x1="170" y1="110" x2="290" y2="190" />
-                        <line x1="300" y1="60" x2="290" y2="190" />
-                        <line x1="60" y1="50" x2="120" y2="200" />
+                    <defs>
+                        <radialGradient id={`hero-core-${uid}`}>
+                            <stop offset="0" stopColor={isDark ? '#8B5CF6' : '#5B8DEF'} stopOpacity={isDark ? 0.32 : 0.16} />
+                            <stop offset="1" stopColor={isDark ? '#8B5CF6' : '#5B8DEF'} stopOpacity="0" />
+                        </radialGradient>
+                    </defs>
+
+                    {/* 核心柔光 + 虚线轨道 */}
+                    <circle cx="190" cy="130" r="112" fill={`url(#hero-core-${uid})`} />
+                    <circle
+                        cx="190" cy="130" r="118"
+                        stroke={isDark ? 'rgba(201,212,255,0.22)' : '#D5E1F2'}
+                        strokeDasharray="2 8"
+                    />
+
+                    {/* 双层六边形 + 辐条 */}
+                    <g stroke={isDark ? 'rgba(201,212,255,0.22)' : '#D3DFF0'} strokeWidth="1">
+                        <polygon points="280,130 235,208 145,208 100,130 145,52 235,52" />
+                        <polygon points="236,130 213,170 167,170 144,130 167,90 213,90" />
+                        <path d="M280 130 L236 130 M235 208 L213 170 M145 208 L167 170 M100 130 L144 130 M145 52 L167 90 M235 52 L213 90" />
                     </g>
-                    <circle className="tk-node" cx="60" cy="50" r="7" fill={C.blue} />
-                    <circle className="tk-node" cx="170" cy="110" r="11" fill={C.purple} />
-                    <circle className="tk-node" cx="300" cy="60" r="6" fill={C.cyan} />
-                    <circle className="tk-node" cx="120" cy="200" r="6" fill={C.amber} />
-                    <circle className="tk-node" cx="290" cy="190" r="8" fill={C.blue} />
+
+                    {/* 外层节点 */}
+                    <g>
+                        <circle cx="280" cy="130" r="3" fill={C.blue} opacity="0.9" />
+                        <circle cx="235" cy="208" r="2.5" fill={C.cyan} opacity="0.85" />
+                        <circle cx="145" cy="208" r="2.5" fill={C.purple} opacity="0.85" />
+                        <circle cx="100" cy="130" r="3" fill={C.amber} opacity="0.8" />
+                        <circle cx="145" cy="52" r="2.5" fill={C.blue} opacity="0.85" />
+                        <circle cx="235" cy="52" r="2.5" fill={C.cyan} opacity="0.85" />
+                    </g>
+
+                    {/* 内层节点 + 核心 */}
+                    <g fill={isDark ? 'rgba(201,212,255,0.55)' : '#9FB0CB'}>
+                        <circle cx="236" cy="130" r="1.5" />
+                        <circle cx="213" cy="170" r="1.5" />
+                        <circle cx="167" cy="170" r="1.5" />
+                        <circle cx="144" cy="130" r="1.5" />
+                        <circle cx="167" cy="90" r="1.5" />
+                        <circle cx="213" cy="90" r="1.5" />
+                    </g>
+                    <circle cx="190" cy="130" r="4.5" fill={isDark ? '#C9D4FF' : '#5B8DEF'} />
                 </svg>
             )}
 
-            <div className={`relative z-10 ${compact ? 'p-4 sm:p-5 lg:p-6' : 'p-6 sm:p-7 lg:p-9'}`}>
+            <div className={`relative z-10 ${compact ? 'p-4 sm:p-5 lg:p-6' : 'p-5 sm:p-6 lg:p-7'}`}>
                 {chips.length > 0 && (
                     <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-2.5 sm:mb-3">
                         {chips.map((chip, i) => (
@@ -211,9 +270,9 @@ const TechHero: React.FC<TechHeroProps> = ({
                     </div>
                 )}
 
-                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-2.5 sm:mb-3">
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-2 sm:mb-2.5">
                     <h1
-                        className={`${titleClass} font-bold leading-tight ${compact ? 'text-[18px] sm:text-[20px] lg:text-[24px]' : 'text-[22px] sm:text-[26px] lg:text-[32px]'}`}
+                        className={`${titleClass} font-bold leading-tight ${compact ? 'tracking-[-0.01em]' : 'tracking-[-0.02em]'} ${compact ? 'text-[18px] sm:text-[20px] lg:text-[24px]' : 'text-[22px] sm:text-[26px] lg:text-[32px]'}`}
                         style={titleStyle}
                     >
                         {title}
@@ -238,7 +297,7 @@ const TechHero: React.FC<TechHeroProps> = ({
                     <p
                         // 只有下面还有按钮时才留下边距；否则这段 margin 会和卡片底部内边距叠加，
                         // 让卡片"上紧下松"（我的项目/资产中心都没有 actions，表现最明显）
-                        className={`${actions ? 'mb-4 sm:mb-5' : ''} max-w-2xl ${compact ? 'text-[13px] sm:text-sm' : 'text-sm sm:text-base'}`}
+                        className={`${actions ? 'mb-3.5 sm:mb-4' : ''} ${compact ? 'max-w-2xl text-sm leading-[1.6]' : 'max-w-xl text-sm sm:text-base leading-[1.7]'} [text-wrap:balance]`}
                         style={{ color: C.textSub }}
                     >
                         {subtitle}

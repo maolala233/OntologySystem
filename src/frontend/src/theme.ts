@@ -99,11 +99,13 @@ export const appTheme: ThemeConfig = {
             headerFontSize: 15,
         },
         Table: {
-            headerBg: '#F6F8FC',
+            // 表头/悬停/分隔线换成冷蓝调（2026-11-13）：antd 默认的表头是中性灰白，
+            // 在浅蓝画布上显得"脏"；只调色温，不动任何结构
+            headerBg: '#F5F8FE',
             headerColor: '#5A6680',
             headerSplitColor: 'transparent',
-            borderColor: '#ECF0F8',
-            rowHoverBg: '#F5F8FF',
+            borderColor: '#EDF1F8',
+            rowHoverBg: 'rgba(91, 141, 239, 0.04)',
             headerBorderRadius: 12,
         },
         Segmented: {
