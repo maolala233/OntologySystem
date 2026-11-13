@@ -172,16 +172,16 @@ const UserAdminPage: React.FC = () => {
     );
 
     const columns = [
-        { title: 'ID', dataIndex: 'id', width: 70, render: (id: number) => <span className="font-mono text-xs text-gray-400">#{id}</span> },
-        { title: '用户名', dataIndex: 'username', render: (name: string) => <span className="font-medium text-gray-800">{name}</span> },
+        { title: 'ID', dataIndex: 'id', width: 70, render: (id: number) => <span className="font-mono text-xs text-[#8A94AB]">#{id}</span> },
+        { title: '用户名', dataIndex: 'username', render: (name: string) => <span className="font-medium text-[#1F2A44]">{name}</span> },
         {
             title: '角色', dataIndex: 'role', width: 130,
             render: (role: string, record: AdminUser) => (
                 <Space size={4} className="!flex-wrap">
-                    <Tag color={role === 'admin' ? 'gold' : 'blue'} className="!m-0">
+                    <Tag className="!m-0" style={role === 'admin' ? { background: 'rgba(242,185,80,0.20)', color: '#B8790F', borderColor: 'rgba(242,185,80,0.45)' } : { background: 'rgba(91,141,239,0.12)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.28)' }}>
                         {role === 'admin' ? '管理员' : '普通用户'}
                     </Tag>
-                    {record.app_role_name && <Tag color="geekblue" className="!m-0">{record.app_role_name}</Tag>}
+                    {record.app_role_name && <Tag className="!m-0" style={{ background: 'rgba(139,92,246,0.12)', color: '#6D3FD8', borderColor: 'rgba(139,92,246,0.28)' }}>{record.app_role_name}</Tag>}
                 </Space>
             ),
         },
@@ -189,7 +189,7 @@ const UserAdminPage: React.FC = () => {
         { title: '邮箱', dataIndex: 'email', render: (v: string | null) => v || '-' },
         {
             title: '状态', dataIndex: 'is_active', width: 90,
-            render: (active: boolean) => <Tag color={active ? 'green' : 'red'}>{active ? '正常' : '停用'}</Tag>,
+            render: (active: boolean) => <Tag style={active ? { background: 'rgba(91,141,239,0.12)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.28)' } : { background: 'rgba(15,23,42,0.05)', color: '#8A94AB', borderColor: 'rgba(15,23,42,0.08)' }}>{active ? '正常' : '停用'}</Tag>,
         },
         {
             title: '操作', key: 'action', width: 290,
@@ -239,8 +239,8 @@ const UserAdminPage: React.FC = () => {
 
                 {/* 批量操作栏 */}
                 {selectedIds.length > 0 && (
-                    <div className="mb-3 flex items-center gap-3 rounded-lg border border-blue-100 bg-blue-50/60 px-4 py-2">
-                        <span className="text-sm text-gray-700">
+                    <div className="mb-3 flex items-center gap-3 rounded-lg border border-[#DCE7F7] bg-[rgba(91,141,239,0.06)] px-4 py-2">
+                        <span className="text-sm text-[#3D4B66]">
                             已选 <b className="text-[#5B8DEF]">{selectedIds.length}</b> 个用户
                         </span>
                         <Button size="small" disabled={batchBusy} onClick={batchEnable}>批量启用</Button>
@@ -326,26 +326,26 @@ const UserAdminPage: React.FC = () => {
                     width={480}
                 >
                     {projectsLoading ? (
-                        <div className="py-10 text-center text-sm text-gray-500">加载中…</div>
+                        <div className="py-10 text-center text-sm text-[#66738F]">加载中…</div>
                     ) : projects.length === 0 ? (
                         <Empty description="该用户暂无项目（未拥有也未参与任何项目）" />
                     ) : (
                         <div className="space-y-2">
-                            <div className="text-xs text-gray-500 mb-2">
+                            <div className="text-xs text-[#66738F] mb-2">
                                 共 {projects.length} 个项目（拥有 {projects.filter((p) => p.role === 'owner').length} 个，参与 {projects.filter((p) => p.role !== 'owner').length} 个）
                             </div>
                             {projects.map((p) => {
                                 const role = ROLE_LABEL[p.role] ?? ROLE_LABEL.viewer;
                                 const status = STATUS_LABEL[p.status] ?? STATUS_LABEL.draft;
                                 return (
-                                    <div key={p.id} className="flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2.5 hover:border-blue-200 hover:bg-blue-50/30 transition-colors">
+                                    <div key={p.id} className="flex items-center justify-between rounded-lg border border-[#E7EEF9] px-3 py-2.5 hover:border-[#DCE7F7] hover:bg-[rgba(91,141,239,0.05)] transition-colors">
                                         <div className="min-w-0">
                                             <div className="flex items-center gap-2">
-                                                <span className="font-mono text-xs text-gray-500">#{p.id}</span>
-                                                <span className="text-sm text-gray-800 truncate">{p.name}</span>
+                                                <span className="font-mono text-xs text-[#66738F]">#{p.id}</span>
+                                                <span className="text-sm text-[#1F2A44] truncate">{p.name}</span>
                                             </div>
                                             {p.created_at && (
-                                                <div className="text-[11px] text-gray-500 mt-0.5">创建于 {p.created_at.slice(0, 10)}</div>
+                                                <div className="text-[11px] text-[#66738F] mt-0.5">创建于 {p.created_at.slice(0, 10)}</div>
                                             )}
                                         </div>
                                         <Space size={4}>

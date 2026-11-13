@@ -198,8 +198,8 @@ export default function ReportsPage() {
                         {/* 主题 */}
                         <div>
                             <div className="flex items-center gap-1.5 mb-2">
-                                <span className="text-sm font-medium text-gray-700">{kind === 'ppt' ? '演示主题' : '分析主题'}</span>
-                                <span className="text-red-400 text-xs">*</span>
+                                <span className="text-sm font-semibold text-[#1F2A44]">{kind === 'ppt' ? '演示主题' : '分析主题'}</span>
+                                <span className="text-[#C2413A] text-xs">*</span>
                             </div>
                             <div className="flex flex-wrap items-center gap-2">
                                 <Input
@@ -213,7 +213,7 @@ export default function ReportsPage() {
                                     onPressEnter={run}
                                 />
                                 {kind === 'ppt' && (
-                                    <span className="flex items-center gap-1.5 text-sm text-gray-500">
+                                    <span className="flex items-center gap-1.5 text-[13px] text-[#66738F]">
                                         页数
                                         <InputNumber min={3} max={15} value={maxSlides}
                                             onChange={v => setMaxSlides(v ?? 8)} disabled={busy} />
@@ -226,7 +226,7 @@ export default function ReportsPage() {
                                     {busy ? `生成中…（${elapsed}s）` : (kind === 'ppt' ? '生成 PPT' : '生成报告')}
                                 </Button>
                                 {busy && (
-                                    <span className="text-xs text-gray-500">
+                                    <span className="text-xs text-[#66738F]">
                                         {kind === 'ppt' ? '大纲生成与排版约需 1~3 分钟，请稍候' : '全文生成约需 1~2 分钟，请稍候'}
                                     </span>
                                 )}
@@ -240,18 +240,18 @@ export default function ReportsPage() {
                                     onClick={() => projectId != null && loadChips(projectId)}>
                                     生成主题建议
                                 </Button>
-                                <span className="text-xs text-gray-400">（AI 生成，点击触发；也可直接手填主题）</span>
+                                <span className="text-xs text-[#8A94AB]">（AI 生成，点击触发；也可直接手填主题）</span>
                             </div>
                             {chipsLoading && (
-                                <div className="flex items-center gap-1.5 mt-1 text-xs text-gray-500">
+                                <div className="flex items-center gap-1.5 mt-1 text-xs text-[#66738F]">
                                     <Spin size="small" /> 正在根据图谱内容生成主题建议（AI 生成约需 1-2 分钟，超时会回退到知识锚点）…
                                 </div>
                             )}
                             {!chipsLoading && chips.length > 0 && (
                                 <div className="flex items-center gap-1.5 flex-wrap mt-2">
-                                    <span className="text-xs text-gray-500">主题建议：</span>
+                                    <span className="text-xs text-[#66738F]">主题建议：</span>
                                     {chips.map(c => (
-                                        <Tag key={c} className="!m-0 cursor-pointer hover:border-blue-400 hover:text-blue-500"
+                                        <Tag key={c} className="!m-0 cursor-pointer hover:border-[#5B8DEF] hover:text-[#2A57C6]"
                                             onClick={() => { if (!busy) setTopic(t => (t ? `${t.trim()}与${c}` : `${c}`)); }}>
                                             {c}
                                         </Tag>
@@ -261,8 +261,8 @@ export default function ReportsPage() {
                         </div>
 
                         {/* 生成选项 */}
-                        <div className="pt-4 border-t border-gray-100">
-                            <div className="text-sm font-medium text-gray-700 mb-2">生成选项</div>
+                        <div className="pt-4 border-t border-[#F0F4FB]">
+                            <div className="text-sm font-semibold text-[#1F2A44] mb-2">生成选项</div>
                             <div className="flex items-center gap-1.5">
                                 <Checkbox checked={includeInferred} disabled={busy}
                                     onChange={e => setIncludeInferred(e.target.checked)}>
@@ -271,19 +271,19 @@ export default function ReportsPage() {
                                 <Tooltip title={kind === 'ppt'
                                     ? '在 PPT 末尾追加「推理衍生事实」附录页：系统基于本体公理/规则自动推导的结论，已标注为语义推理产物、非原始事实记载；正文分析不使用该内容。'
                                     : '在报告末尾追加「推理衍生事实」表：系统基于本体公理/规则自动推导的结论，已标注为语义推理产物、非原始事实记载；正文分析不使用该内容。'}>
-                                    <QuestionCircleOutlined className="text-gray-300 text-xs" />
+                                    <QuestionCircleOutlined className="text-[#A9B4C9] text-xs" />
                                 </Tooltip>
                             </div>
 
                             {/* PPT 自定义模板上传（占位符协议自动填写） */}
                             {kind === 'ppt' && projectId != null && (
-                                <div className="mt-3 rounded-xl border border-dashed border-[#DCE3F0] bg-[#F8FAFE] p-3">
+                                <div className="mt-3 rounded-xl border border-dashed border-[#DCE3F0] bg-[#F7F9FD] p-3">
                                     <div className="flex items-center gap-2 flex-wrap">
-                                        <span className="text-xs font-medium text-gray-600">自定义模板</span>
+                                        <span className="text-xs font-medium text-[#52607A]">自定义模板</span>
                                         <Tooltip title="封面页 {{title}}/{{subtitle}}/{{date}}/{{project}}；内容页 {{slide_title}} + {{bullets}}；结尾页（可选）{{closing}}。生成时自动按大纲填写并复制内容页。">
-                                            <QuestionCircleOutlined className="text-gray-300 text-xs" />
+                                            <QuestionCircleOutlined className="text-[#A9B4C9] text-xs" />
                                         </Tooltip>
-                                        <Tag color={templateInfo.exists ? 'blue' : 'default'} className="!m-0">
+                                        <Tag className="!m-0" style={templateInfo.exists ? { background: 'rgba(91,141,239,0.12)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.28)' } : undefined}>
                                             {templateInfo.exists ? templateInfo.filename : '未上传'}
                                         </Tag>
                                         <div className="flex-1" />
@@ -315,7 +315,7 @@ export default function ReportsPage() {
                                         )}
                                     </div>
                                     <div className="mt-2 flex items-center justify-between gap-2 flex-wrap">
-                                        <span className="text-[11px] text-gray-400">
+                                        <span className="text-[11px] text-[#8A94AB]">
                                             {templateInfo.exists ? '不勾选「生成时使用」时仍走系统默认模板' : '未上传时使用系统默认模板（深蓝商务风）'}
                                         </span>
                                         <Button size="small" type="link" className="!px-0 !text-[11px]"
@@ -331,7 +331,7 @@ export default function ReportsPage() {
                     {busy && (
                         <div className="surface-card p-10 text-center">
                             <Spin size="large" />
-                            <div className="text-gray-500 mt-4">
+                            <div className="text-[#66738F] mt-4">
                                 正在围绕「{topic.trim()}」检索图谱证据并生成{kind === 'report' ? '分析报告' : '演示文稿大纲'}…
                             </div>
                         </div>
@@ -341,9 +341,9 @@ export default function ReportsPage() {
                         <div className="surface-card p-5">
                             <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                                 <div className="flex items-center gap-2">
-                                    <span className="font-semibold text-gray-800">{result.title}</span>
-                                    <Tag color="blue">{result.kind === 'report' ? '分析报告' : '演示文稿'}</Tag>
-                                    <span className="text-xs text-gray-500">{(result.latency_ms / 1000).toFixed(1)}s</span>
+                                    <span className="font-semibold text-[#1F2A44]">{result.title}</span>
+                                    <Tag style={{ background: 'rgba(91,141,239,0.12)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.28)' }}>{result.kind === 'report' ? '分析报告' : '演示文稿'}</Tag>
+                                    <span className="text-xs text-[#66738F]">{(result.latency_ms / 1000).toFixed(1)}s</span>
                                 </div>
                                 <div className="flex gap-2">
                                     {Object.entries(result.downloads).map(([fmt, url]) => (
@@ -356,13 +356,13 @@ export default function ReportsPage() {
                             </div>
 
                             {result.kind === 'report' && result.content && (
-                                <div className="border-t border-gray-100 pt-3">
+                                <div className="border-t border-[#F0F4FB] pt-3">
                                     <MarkdownAnswer content={result.content} sourceCount={0} onCite={() => {}} />
                                 </div>
                             )}
 
                             {result.kind === 'ppt' && result.outline && (
-                                <div className="border-t border-gray-100 pt-3 space-y-3">
+                                <div className="border-t border-[#F0F4FB] pt-3 space-y-3">
                                     <div className="text-center py-6 bg-gradient-to-br from-blue-600 to-purple-600 rounded-lg text-white"
                                              style={{ background: 'linear-gradient(135deg, #2563eb, #9333ea)' }}>
                                         <div className="text-xl font-bold">{result.outline.title}</div>
@@ -371,11 +371,11 @@ export default function ReportsPage() {
                                         )}
                                     </div>
                                     {result.outline.slides.map((s, i) => (
-                                        <div key={i} className="border border-[#E6EBF5] rounded-xl p-3 bg-[#FBFCFE]">
-                                            <div className="text-sm font-semibold text-gray-800 mb-1.5">
-                                                <Tag color="blue" className="mr-1.5">{i + 1}</Tag>{s.title}
+                                        <div key={i} className="border border-[#E7EEF9] rounded-xl p-3 bg-[#F7F9FD]">
+                                            <div className="text-sm font-semibold text-[#1F2A44] mb-1.5">
+                                                <Tag className="mr-1.5" style={{ background: 'rgba(91,141,239,0.12)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.28)' }}>{i + 1}</Tag>{s.title}
                                             </div>
-                                            <ul className="list-disc pl-9 text-sm text-gray-600 space-y-0.5">
+                                            <ul className="list-disc pl-9 text-sm text-[#52607A] space-y-0.5">
                                                 {s.bullets.map((b, j) => (
                                                     <li key={j}>{typeof b === 'string' ? b : JSON.stringify(b)}</li>
                                                 ))}
@@ -389,12 +389,15 @@ export default function ReportsPage() {
 
                     {!result && !busy && (
                         <div className="surface-card p-10 text-center" style={{ borderStyle: 'dashed' }}>
-                            <div className="w-12 h-12 rounded-2xl bg-[rgba(91,141,239,0.10)] text-[#5B8DEF] flex items-center justify-center text-xl mx-auto mb-3">
+                            <div
+                                className="w-14 h-14 rounded-2xl flex items-center justify-center text-[22px] text-[#2F62D8] mx-auto mb-3"
+                                style={{ background: 'linear-gradient(135deg, rgba(91,141,239,0.16), rgba(139,92,246,0.10))' }}
+                            >
                                 <FileTextOutlined />
                             </div>
                             {projects.length === 0 && !projectsLoading ? (
                                 <>
-                                    <div className="text-sm text-gray-500">
+                                    <div className="text-[13px] text-[#66738F]">
                                         还没有可用项目。请先在「我的项目」创建项目并完成建模，再回来生成
                                         {kind === 'ppt' ? ' PPT' : '报告'}。
                                     </div>
@@ -402,12 +405,12 @@ export default function ReportsPage() {
                                 </>
                             ) : (
                                 <>
-                                    <div className="text-sm text-gray-500 leading-relaxed">
+                                    <div className="text-[13px] text-[#66738F] leading-relaxed">
                                         {kind === 'ppt'
                                             ? '填写演示主题后点击「生成 PPT」：系统会从项目图谱检索相关实体、属性与关系作为证据，生成演示大纲并按模板排版导出 .pptx。'
                                             : '填写分析主题后点击「生成报告」：系统会从项目图谱检索相关实体、属性与关系作为证据，撰写可下载的主题分析报告。'}
                                     </div>
-                                    <div className="text-[11px] text-gray-400 mt-1">
+                                    <div className="text-[11px] text-[#8A94AB] mt-1">
                                         {kind === 'ppt'
                                             ? '可先在「生成选项」中上传自定义模板；未上传时使用系统默认模板。'
                                             : '支持 Markdown / Word 下载；全文生成约需 1~2 分钟。'}

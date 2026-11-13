@@ -263,7 +263,7 @@ const ModelConfigsPage: React.FC = () => {
                             <span className="inline-flex items-center gap-1.5">
                                 {p.label}
                                 <Tooltip title={p.hint}>
-                                    <QuestionCircleOutlined className="text-gray-300 text-xs" />
+                                    <QuestionCircleOutlined className="text-[#A9B4C9] text-xs" />
                                 </Tooltip>
                             </span>
                         ),
@@ -286,8 +286,8 @@ const ModelConfigsPage: React.FC = () => {
                                 title={
                                     <div className="flex items-center gap-1.5 min-w-0">
                                         <span className="truncate" title={row.name}>{row.name}</span>
-                                        {row.is_default && <Tag color="green" className="!m-0 shrink-0">默认</Tag>}
-                                        {!row.enabled && <Tag color="red" className="!m-0 shrink-0">停用</Tag>}
+                                        {row.is_default && <Tag className="!m-0 shrink-0" style={{ background: 'rgba(91,141,239,0.12)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.28)' }}>默认</Tag>}
+                                        {!row.enabled && <Tag className="!m-0 shrink-0" style={{ background: 'rgba(15,23,42,0.05)', color: '#8A94AB', borderColor: 'rgba(15,23,42,0.08)' }}>停用</Tag>}
                                         <Tag className="!m-0 shrink-0">{row.scope === 'global' ? '全局' : projectName(row.project_id)}</Tag>
                                         {!canManage(row) && <Tag className="!m-0 shrink-0">只读</Tag>}
                                     </div>
@@ -319,27 +319,27 @@ const ModelConfigsPage: React.FC = () => {
                             >
                                 <div className="space-y-1.5">
                                     <div className="flex items-baseline gap-2 min-w-0">
-                                        <span className="w-14 shrink-0 text-xs text-gray-400">模型</span>
-                                        <span className="tk-mono text-[13px] text-gray-700 truncate" title={row.model_name}>
+                                        <span className="w-14 shrink-0 text-xs text-[#8A94AB]">模型</span>
+                                        <span className="tk-mono text-[13px] text-[#3D4B66] truncate" title={row.model_name}>
                                             {row.model_name}
                                         </span>
                                     </div>
                                     <div className="flex items-baseline gap-2 min-w-0">
-                                        <span className="w-14 shrink-0 text-xs text-gray-400">地址</span>
-                                        <span className="tk-mono text-xs text-gray-500 break-all">{row.base_url}</span>
+                                        <span className="w-14 shrink-0 text-xs text-[#8A94AB]">地址</span>
+                                        <span className="tk-mono text-xs text-[#66738F] break-all">{row.base_url}</span>
                                     </div>
                                     <div className="flex items-center gap-2 min-w-0">
-                                        <span className="w-14 shrink-0 text-xs text-gray-400">密钥</span>
-                                        <span className="tk-mono text-xs text-gray-500 truncate">
+                                        <span className="w-14 shrink-0 text-xs text-[#8A94AB]">密钥</span>
+                                        <span className="tk-mono text-xs text-[#66738F] truncate">
                                             {row.api_key_set ? row.api_key_masked : '（无需密钥）'}
                                         </span>
                                         {row.dims ? <Tag className="!m-0 shrink-0">{row.dims} 维</Tag> : null}
                                     </div>
                                     <div className="flex items-center gap-2 min-w-0">
-                                        <span className="w-14 shrink-0 text-xs text-gray-400">最近测试</span>
+                                        <span className="w-14 shrink-0 text-xs text-[#8A94AB]">最近测试</span>
                                         <span className="flex items-center gap-1 flex-wrap">
-                                            {row.last_test_ok === true && <Tag color="green" className="!m-0">通过 {row.last_test_at?.slice(0, 19)}</Tag>}
-                                            {row.last_test_ok === false && <Tag color="red" className="!m-0">失败 {row.last_test_at?.slice(0, 19)}</Tag>}
+                                            {row.last_test_ok === true && <Tag className="!m-0" style={{ background: 'rgba(91,141,239,0.12)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.28)' }}>通过 {row.last_test_at?.slice(0, 19)}</Tag>}
+                                            {row.last_test_ok === false && <Tag className="!m-0" style={{ background: 'rgba(180,35,24,0.10)', color: '#B42318', borderColor: 'rgba(180,35,24,0.22)' }}>失败 {row.last_test_at?.slice(0, 19)}</Tag>}
                                             {row.last_test_ok == null && <Tag className="!m-0">未测试</Tag>}
                                         </span>
                                     </div>

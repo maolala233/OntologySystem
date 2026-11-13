@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { PROJECT_STATUS, PUBLISHED_TAG } from '../shared/projectStatus';
-import { Button, Empty, Spin, Modal, Form, Input, Tag, Space, Table, Select, Typography, Drawer } from 'antd';
+import { Button, Spin, Modal, Form, Input, Tag, Space, Table, Select, Typography, Drawer } from 'antd';
 import { message } from '../shared/feedback';
 import {
     PlusOutlined,
@@ -238,7 +238,7 @@ const DomainManagementPage: React.FC = () => {
             dataIndex: 'id',
             key: 'id',
             width: 80,
-            render: (id: number) => <span className="font-mono text-xs text-gray-400">#{id}</span>,
+            render: (id: number) => <span className="font-mono text-xs text-[#8A94AB]">#{id}</span>,
         },
         {
             title: '知识域名称',
@@ -253,7 +253,7 @@ const DomainManagementPage: React.FC = () => {
             key: 'description',
             ellipsis: true,
             render: (description?: string) => (
-                <span className="text-[13px] text-gray-500">{description || '—'}</span>
+                <span className="text-[13px] text-[#66738F]">{description || '—'}</span>
             ),
         },
         {
@@ -262,7 +262,7 @@ const DomainManagementPage: React.FC = () => {
             width: 120,
             align: 'center' as const,
             render: (_: any, record: DomainWithCount) => (
-                <Tag color="blue" className="!m-0">{record.projectCount} 个</Tag>
+                <Tag className="!m-0" style={{ background: 'rgba(91,141,239,0.12)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.28)' }}>{record.projectCount} 个</Tag>
             ),
         },
         {
@@ -335,15 +335,19 @@ const DomainManagementPage: React.FC = () => {
                             <Spin size="large" />
                         </div>
                     ) : domains.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center h-64">
-                            <Empty
-                                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                                description="暂无知识域，创建后可用于归类本体项目"
-                            />
+                        <div className="flex flex-col items-center justify-center px-4 py-16">
+                            <div
+                                className="w-14 h-14 rounded-2xl flex items-center justify-center text-[22px] text-[#2F62D8]"
+                                style={{ background: 'linear-gradient(135deg, rgba(91,141,239,0.16), rgba(139,92,246,0.10))' }}
+                            >
+                                <ClusterOutlined />
+                            </div>
+                            <div className="mt-3 text-[14px] font-semibold text-[#0F172A]">暂无知识域</div>
+                            <div className="mt-1 text-[12.5px] text-[#66738F]">创建后可用于归类本体项目</div>
                             <Button
                                 type="primary"
                                 icon={<PlusOutlined />}
-                                className="mt-2"
+                                className="mt-4"
                                 onClick={openCreateModal}
                             >
                                 创建知识域
@@ -415,7 +419,7 @@ const DomainManagementPage: React.FC = () => {
             <Drawer
                 title={
                     <div className="flex items-center gap-2">
-                        <SwapOutlined className="text-blue-500" />
+                        <SwapOutlined className="text-[#5B8DEF]" />
                         <span>{deletingDomain ? '迁移项目后删除知识域' : '迁移项目'}</span>
                     </div>
                 }
@@ -430,7 +434,7 @@ const DomainManagementPage: React.FC = () => {
                 width={1200}
                 footer={
                     <div className="flex justify-between items-center w-full">
-                        <div className="text-sm text-gray-500">
+                        <div className="text-sm text-[#66738F]">
                             共 {domainProjects.length} 个项目，
                             已指定 {Object.keys(projectTargetDomains).length} 个项目的目标知识域
                         </div>
@@ -455,7 +459,7 @@ const DomainManagementPage: React.FC = () => {
                 }
             >
                 <div className="space-y-4">
-                    <p className="text-gray-600">
+                    <p className="text-[#52607A]">
                         {deletingDomain ? (
                             <>
                                 知识域「<Text strong>{migratingDomain?.name}</Text>」中有 <Text strong>{migratingDomain?.projectCount}</Text> 个本体项目。
@@ -467,8 +471,8 @@ const DomainManagementPage: React.FC = () => {
                             </>
                         )}
                     </p>
-                    <div className="bg-blue-50 p-3 rounded border border-blue-100">
-                        <p className="text-sm text-blue-800">
+                    <div className="rounded-lg border border-[#DCE7F7] p-3" style={{ background: 'rgba(91,141,239,0.06)' }}>
+                        <p className="text-sm text-[#2A57C6]">
                             <strong>操作说明：</strong>为每个项目选择要迁移到的目标知识域（从左到右：本体名、类数量、实例数量、关系数量、当前知识域、目标知识域）。
                             不指定目标知识域的项目将不会被迁移。
                         </p>
@@ -499,7 +503,7 @@ const DomainManagementPage: React.FC = () => {
                                     width: 100,
                                     align: 'center',
                                     render: (count: number) => (
-                                        <Tag color="blue">{count}</Tag>
+                                        <span className="tk-mono text-[13px] text-[#3D4B66]">{count}</span>
                                     ),
                                 },
                                 {
@@ -509,7 +513,7 @@ const DomainManagementPage: React.FC = () => {
                                     width: 100,
                                     align: 'center',
                                     render: (count: number) => (
-                                        <Tag color="green">{count}</Tag>
+                                        <span className="tk-mono text-[13px] text-[#3D4B66]">{count}</span>
                                     ),
                                 },
                                 {
@@ -519,7 +523,7 @@ const DomainManagementPage: React.FC = () => {
                                     width: 100,
                                     align: 'center',
                                     render: (count: number) => (
-                                        <Tag color="purple">{count}</Tag>
+                                        <span className="tk-mono text-[13px] text-[#3D4B66]">{count}</span>
                                     ),
                                 },
                                 {
@@ -528,7 +532,7 @@ const DomainManagementPage: React.FC = () => {
                                     key: 'current_domain_name',
                                     width: 150,
                                     render: (name: string) => (
-                                        <Tag color="orange">{name}</Tag>
+                                        <Tag className="!m-0">{name}</Tag>
                                     ),
                                 },
                                 {
@@ -566,7 +570,7 @@ const DomainManagementPage: React.FC = () => {
             {/* 直接删除确认弹窗（无项目时） */}
             <Modal
                 title={
-                    <div className="flex items-center gap-2 text-red-500">
+                    <div className="flex items-center gap-2 text-[#B42318]">
                         <ExclamationCircleOutlined className="text-xl" />
                         <span>确认删除</span>
                     </div>
@@ -581,7 +585,7 @@ const DomainManagementPage: React.FC = () => {
                 <p>
                     确定要删除知识域「<Text strong>{deletingDomain?.name}</Text>」吗？
                 </p>
-                <p className="text-gray-500 mt-2">此操作不可恢复！</p>
+                <p className="text-[#66738F] mt-2">此操作不可恢复！</p>
             </Modal>
         </div>
     );

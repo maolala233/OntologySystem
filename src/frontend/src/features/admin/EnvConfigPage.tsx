@@ -162,7 +162,7 @@ const EnvConfigPage: React.FC = () => {
                                 <span className="flex items-center gap-2">
                                     <span style={{ color: meta.color }}>{meta.icon}</span>
                                     <span className="font-semibold">{meta.title}</span>
-                                    <span className="tk-mono text-[10px] tracking-widest text-gray-500 uppercase">
+                                    <span className="tk-mono text-[10px] tracking-widest text-[#66738F] uppercase">
                                         {service}
                                     </span>
                                 </span>
@@ -171,7 +171,7 @@ const EnvConfigPage: React.FC = () => {
                                 <div className="flex items-center gap-2">
                                     {tr && (
                                         <Tooltip title={tr.status === 'ok' ? `连通正常，延迟 ${tr.latency_ms}ms` : (tr.error || '连接失败')}>
-                                            <Tag color={tr.status === 'ok' ? 'green' : 'red'} className="!m-0 max-w-[180px] truncate">
+                                            <Tag className="!m-0 max-w-[180px] truncate" style={tr.status === 'ok' ? { background: 'rgba(91,141,239,0.12)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.28)' } : { background: 'rgba(180,35,24,0.10)', color: '#B42318', borderColor: 'rgba(180,35,24,0.22)' }}>
                                                 {tr.status === 'ok' ? `连通 ${tr.latency_ms}ms` : `失败：${(tr.error || '').slice(0, 24)}`}
                                             </Tag>
                                         </Tooltip>
@@ -193,7 +193,7 @@ const EnvConfigPage: React.FC = () => {
                                     return (
                                         <div key={f.key}>
                                             <div className="flex items-center justify-between mb-1">
-                                                <span className="text-sm text-gray-700 font-medium">
+                                                <span className="text-sm text-[#3D4B66] font-medium">
                                                     {f.label}
                                                     {f.source === 'db' && (
                                                         <Tag className="ml-2" style={{ fontSize: 10, lineHeight: '16px' }} color="blue">
@@ -206,7 +206,7 @@ const EnvConfigPage: React.FC = () => {
                                                         </Tag>
                                                     )}
                                                 </span>
-                                                <span className="tk-mono text-[10px] text-gray-500">{f.key}</span>
+                                                <span className="tk-mono text-[10px] text-[#66738F]">{f.key}</span>
                                             </div>
 
                                             {f.kind === 'switch' ? (
@@ -230,7 +230,7 @@ const EnvConfigPage: React.FC = () => {
                                                     onChange={(e) => setValue(f.key, e.target.value)}
                                                 />
                                             )}
-                                            {f.help && <div className="text-xs text-gray-500 mt-1">{f.help}</div>}
+                                            {f.help && <div className="text-xs text-[#66738F] mt-1">{f.help}</div>}
                                         </div>
                                     );
                                 })}

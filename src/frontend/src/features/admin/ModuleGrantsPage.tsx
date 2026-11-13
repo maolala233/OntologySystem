@@ -21,9 +21,9 @@ type Matrix = Record<string, Record<string, CellState>>; // userId -> moduleCode
 
 const NEXT_STATE: Record<CellState, CellState> = { default: 'allow', allow: 'deny', deny: 'default' };
 const STATE_META: Record<CellState, { label: string; icon: React.ReactNode; cls: string; tip: string }> = {
-    default: { label: '默', icon: <MinusOutlined />, cls: 'bg-gray-100 text-gray-500 hover:bg-gray-200', tip: '默认（跟随模块开关）' },
+    default: { label: '默', icon: <MinusOutlined />, cls: 'bg-[rgba(15,23,42,0.05)] text-[#8A94AB] hover:bg-[rgba(15,23,42,0.09)]', tip: '默认（跟随模块开关）' },
     allow: { label: '许', icon: <CheckOutlined />, cls: 'bg-[#5B8DEF] text-white hover:bg-[#4a7de0]', tip: '允许（显式开通）' },
-    deny: { label: '拒', icon: <CloseOutlined />, cls: 'bg-red-100 text-red-500 hover:bg-red-200', tip: '拒绝（显式关闭）' },
+    deny: { label: '拒', icon: <CloseOutlined />, cls: 'bg-[rgba(180,35,24,0.10)] text-[#B42318] hover:bg-[rgba(180,35,24,0.16)]', tip: '拒绝（显式关闭）' },
 };
 
 // 工具类模块码（R11）：在「工具授权」清单单独配置；侧栏「工具」子菜单与之对应
@@ -202,16 +202,16 @@ const ModuleGrantsPage: React.FC = () => {
             {/* 模块多时（当前 13 个业务模块）在窄屏会挤成一条：给表格一个下限宽度，横向滚动而不是压缩列名 */}
             <table className="w-full border-collapse" style={{ tableLayout: 'fixed', minWidth: 200 + mods.length * 76 }}>
                 <thead>
-                    <tr className="bg-[#F6F8FC] border-b border-gray-100">
-                        <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 sticky left-0 bg-[#F6F8FC] z-10" style={{ width: 200 }}>用户 / 模块</th>
+                    <tr className="bg-[#F6F8FC] border-b border-[#F0F4FB]">
+                        <th className="text-left px-4 py-2.5 text-xs font-medium text-[#66738F] sticky left-0 bg-[#F6F8FC] z-10" style={{ width: 200 }}>用户 / 模块</th>
                         {mods.map((m) => (
-                            <th key={m.code} className="px-1 py-2.5 border-l border-gray-100 overflow-hidden text-center">
+                            <th key={m.code} className="px-1 py-2.5 border-l border-[#F0F4FB] overflow-hidden text-center">
                                 <Tooltip title={`${m.name}${m.description ? `｜${m.description}` : ''}（${m.code}）`}>
                                     <div className="leading-tight overflow-hidden">
                                         {/* 列宽固定（76px）时「实体消解与冲突」这类 6 字名称单行会被截断，
                                             去掉 nowrap 让它占满单元格、过长时折成第二行，而不是省略号 */}
-                                        <div className="text-[11px] leading-[15px] text-gray-700 break-all [text-wrap:balance]">{m.name}</div>
-                                        <div className={`text-[10px] leading-4 mt-0.5 ${m.is_default_on ? 'text-cyan-600' : 'text-gray-300'}`}>
+                                        <div className="text-[11px] leading-[15px] text-[#3D4B66] break-all [text-wrap:balance]">{m.name}</div>
+                                        <div className={`text-[10px] leading-4 mt-0.5 ${m.is_default_on ? 'text-[#1B87AD]' : 'text-[#A9B4C9]'}`}>
                                             {m.is_default_on ? '默认开' : '默认关'}
                                         </div>
                                     </div>
@@ -222,18 +222,18 @@ const ModuleGrantsPage: React.FC = () => {
                 </thead>
                 <tbody>
                     {users.map((u) => (
-                        <tr key={u.id} className="group border-b border-gray-50 hover:bg-[#F7FAFF]">
+                        <tr key={u.id} className="group border-b border-[#F5F8FD] hover:bg-[#F7FAFF]">
                             <td className="px-4 py-2.5 align-middle sticky left-0 bg-white group-hover:bg-[#F7FAFF] transition-colors z-10">
                                 <Space size={6}>
                                     <span className="w-6 h-6 rounded-full bg-[#5B8DEF] text-white text-xs flex items-center justify-center shrink-0">
                                         {u.username.slice(0, 1).toUpperCase()}
                                     </span>
-                                    <span className="text-sm text-gray-800 whitespace-nowrap">{u.username}</span>
-                                    {u.role === 'admin' && <Tag color="gold" className="!m-0">管理员</Tag>}
+                                    <span className="text-sm text-[#1F2A44] whitespace-nowrap">{u.username}</span>
+                                    {u.role === 'admin' && <Tag className="!m-0" style={{ background: 'rgba(242,185,80,0.20)', color: '#B8790F', borderColor: 'rgba(242,185,80,0.45)' }}>管理员</Tag>}
                                     {!u.is_active && <Tag className="!m-0">停用</Tag>}
                                     {dirtyUsers.has(u.id) && (
                                         <>
-                                            <Tag color="blue" className="!m-0">未保存</Tag>
+                                            <Tag className="!m-0" style={{ background: 'rgba(91,141,239,0.12)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.28)' }}>未保存</Tag>
                                             <Button size="small" type="link" className="!px-0 !text-[11px]"
                                                 onClick={() => resetRow(u.id)}>还原</Button>
                                         </>
@@ -243,9 +243,9 @@ const ModuleGrantsPage: React.FC = () => {
                             {mods.map((m) => {
                                 if (u.role === 'admin') {
                                     return (
-                                        <td key={m.code} className="text-center align-middle border-l border-gray-50">
+                                        <td key={m.code} className="text-center align-middle border-l border-[#F5F8FD]">
                                             <Tooltip title="管理员默认拥有全部模块">
-                                                <span className="text-gray-300 text-xs">全部</span>
+                                                <span className="text-[#A9B4C9] text-xs">全部</span>
                                             </Tooltip>
                                         </td>
                                     );
@@ -253,7 +253,7 @@ const ModuleGrantsPage: React.FC = () => {
                                 const state = matrix[u.id]?.[m.code] ?? 'default';
                                 const meta = STATE_META[state];
                                 return (
-                                    <td key={m.code} className="text-center align-middle border-l border-gray-50 py-2.5">
+                                    <td key={m.code} className="text-center align-middle border-l border-[#F5F8FD] py-2.5">
                                         <Tooltip title={`${meta.tip}（点击切换）`}>
                                             <button type="button" onClick={() => cycleCell(u.id, m.code)}
                                                 className={`w-7 h-7 rounded-md inline-flex items-center justify-center text-[11px] transition-colors ${meta.cls}`}>
@@ -272,15 +272,15 @@ const ModuleGrantsPage: React.FC = () => {
 
     const legendBar = (
         <div className="flex items-center justify-between mb-4">
-            <Space size={20} className="!flex-wrap text-xs text-gray-500">
+            <Space size={20} className="!flex-wrap text-xs text-[#66738F]">
                 <span className="flex items-center gap-1">
-                    <span className="w-4 h-4 rounded bg-gray-100 inline-flex items-center justify-center text-gray-500 text-[10px]">默</span>跟随模块默认
+                    <span className="w-4 h-4 rounded bg-[rgba(15,23,42,0.05)] inline-flex items-center justify-center text-[#8A94AB] text-[10px]">默</span>跟随模块默认
                 </span>
                 <span className="flex items-center gap-1">
                     <span className="w-4 h-4 rounded bg-[#5B8DEF] inline-flex items-center justify-center text-white text-[10px]">许</span>允许
                 </span>
                 <span className="flex items-center gap-1">
-                    <span className="w-4 h-4 rounded bg-red-100 inline-flex items-center justify-center text-red-500 text-[10px]">拒</span>拒绝
+                    <span className="w-4 h-4 rounded bg-[rgba(180,35,24,0.10)] inline-flex items-center justify-center text-[#B42318] text-[10px]">拒</span>拒绝
                 </span>
                 <Typography.Text type="secondary" className="!text-xs">点击单元格切换状态</Typography.Text>
             </Space>
@@ -307,8 +307,8 @@ const ModuleGrantsPage: React.FC = () => {
                                     <span className="w-8 h-8 rounded-lg bg-[#5B8DEF]/10 text-[#5B8DEF] inline-flex items-center justify-center text-base">
                                         <TeamOutlined />
                                     </span>
-                                    <span className="font-medium text-gray-800">{r.name}</span>
-                                    {r.is_builtin && <Tag color="blue" className="!m-0">内置</Tag>}
+                                    <span className="font-medium text-[#1F2A44]">{r.name}</span>
+                                    {r.is_builtin && <Tag className="!m-0" style={{ background: 'rgba(91,141,239,0.12)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.28)' }}>内置</Tag>}
                                 </Space>
                                 <Space size={0}>
                                     <Tooltip title="编辑">
@@ -324,7 +324,7 @@ const ModuleGrantsPage: React.FC = () => {
                                     )}
                                 </Space>
                             </div>
-                            <div className="text-xs text-gray-500 mt-2 min-h-[32px] leading-relaxed">
+                            <div className="text-xs text-[#66738F] mt-2 min-h-[32px] leading-relaxed">
                                 {r.description || '暂无描述'}
                                 <span className="ml-2 whitespace-nowrap">· {r.module_codes.length} 个模块</span>
                             </div>
@@ -333,7 +333,7 @@ const ModuleGrantsPage: React.FC = () => {
                                     <Tag key={c} color="blue" className="!m-0 !text-[11px]">{moduleMap.get(c)?.name ?? c}</Tag>
                                 ))}
                             </div>
-                            <div className="mt-3 pt-3 border-t border-gray-100">
+                            <div className="mt-3 pt-3 border-t border-[#F0F4FB]">
                                 <Button size="small" type="primary" ghost block icon={<UserSwitchOutlined />}
                                     onClick={() => { setApplyRole(r); setApplyUserIds([]); }}>
                                     应用到用户
@@ -354,7 +354,7 @@ const ModuleGrantsPage: React.FC = () => {
                 { title: '工具模块', mods: toolModules },
             ].map((group) => (
                 <div key={group.title}>
-                    <div className="text-[11px] text-gray-500 mb-1.5 flex items-center gap-1">
+                    <div className="text-[11px] text-[#66738F] mb-1.5 flex items-center gap-1">
                         {group.title === '工具模块' && <ToolOutlined />}
                         {group.title}
                     </div>
@@ -363,7 +363,7 @@ const ModuleGrantsPage: React.FC = () => {
                             <Checkbox key={m.code} checked={roleForm.module_codes.includes(m.code)}
                                 onChange={(e) => toggleRoleModule(m.code, e.target.checked)}>
                                 <span className="text-sm">{group.title === '工具模块' ? (TOOL_LABELS[m.code] ?? m.name) : m.name}</span>
-                                <span className="text-[10px] text-gray-500 ml-1">{m.code}</span>
+                                <span className="text-[10px] text-[#66738F] ml-1">{m.code}</span>
                             </Checkbox>
                         ))}
                     </div>
@@ -441,17 +441,17 @@ const ModuleGrantsPage: React.FC = () => {
                 >
                     <div className="space-y-3 py-1">
                         <div>
-                            <div className="text-xs text-gray-500 mb-1">角色名称</div>
+                            <div className="text-xs text-[#66738F] mb-1">角色名称</div>
                             <Input value={roleForm.name} maxLength={64} placeholder="如：建模员"
                                 onChange={(e) => setRoleForm((f) => ({ ...f, name: e.target.value }))} />
                         </div>
                         <div>
-                            <div className="text-xs text-gray-500 mb-1">描述（可选）</div>
+                            <div className="text-xs text-[#66738F] mb-1">描述（可选）</div>
                             <Input value={roleForm.description} maxLength={255} placeholder="该角色的职责说明"
                                 onChange={(e) => setRoleForm((f) => ({ ...f, description: e.target.value }))} />
                         </div>
                         <div>
-                            <div className="text-xs text-gray-500 mb-2">
+                            <div className="text-xs text-[#66738F] mb-2">
                                 开通模块（勾选 = 允许；应用角色时未勾选模块将显式关闭）
                             </div>
                             {roleModulePicker}
@@ -470,27 +470,27 @@ const ModuleGrantsPage: React.FC = () => {
                             应用后所选用户的模块授权将被该角色预设<b>全量覆盖</b>（允许列表内开通、其余关闭）。管理员默认全模块，已自动排除。
                         </div>
                         <div className="flex justify-between items-center">
-                            <span className="text-xs text-gray-500">选择用户（{normalUsers.length} 个可选）</span>
+                            <span className="text-xs text-[#66738F]">选择用户（{normalUsers.length} 个可选）</span>
                             <Button size="small" type="link"
                                 onClick={() => setApplyUserIds(applyUserIds.length === normalUsers.length ? [] : normalUsers.map((u) => u.id))}>
                                 {applyUserIds.length === normalUsers.length ? '取消全选' : '全选'}
                             </Button>
                         </div>
-                        <div className="border border-gray-200 rounded-lg divide-y divide-gray-50 max-h-64 overflow-auto">
+                        <div className="border border-[#E7EEF9] rounded-lg divide-y divide-[#F0F4FB] max-h-64 overflow-auto">
                             {normalUsers.map((u) => (
-                                <label key={u.id} className="flex items-center gap-2 px-3 py-2 hover:bg-gray-50 cursor-pointer">
+                                <label key={u.id} className="flex items-center gap-2 px-3 py-2 hover:bg-[rgba(91,141,239,0.05)] cursor-pointer">
                                     <Checkbox
                                         checked={applyUserIds.includes(u.id)}
                                         onChange={(e) => setApplyUserIds((prev) => e.target.checked
                                             ? [...prev, u.id]
                                             : prev.filter((id) => id !== u.id))}
                                     />
-                                    <span className="text-sm text-gray-800">{u.username}</span>
+                                    <span className="text-sm text-[#1F2A44]">{u.username}</span>
                                     {!u.is_active && <Tag className="!m-0 !text-[10px]">停用</Tag>}
                                 </label>
                             ))}
                             {normalUsers.length === 0 && (
-                                <div className="px-3 py-6 text-center text-xs text-gray-300">暂无普通用户</div>
+                                <div className="px-3 py-6 text-center text-xs text-[#A9B4C9]">暂无普通用户</div>
                             )}
                         </div>
                     </div>
