@@ -314,14 +314,31 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
                         const shown = st.status === 'running' && !runningNow ? 'cancelled' : st.status;
                         return (
                             <div key={st.key}
-                                 className={`flex items-center gap-1.5 border rounded px-2 py-1 text-xs ${
+                                 className={`flex flex-col gap-0.5 min-w-0 border rounded px-2 py-1 text-xs ${
                                      shown === 'running' ? 'border-blue-400 bg-blue-50 shadow-sm'
                                          : shown === 'failed' ? 'border-red-200 bg-red-50'
                                              : shown === 'cancelled' ? 'border-amber-200 bg-amber-50'
                                                  : 'border-gray-100 bg-white'}`}>
-                                {STATUS_ICON[shown] || STATUS_ICON.pending}
-                                <span className={`whitespace-nowrap ${shown === 'running'
-                                    ? 'font-semibold text-blue-700' : 'font-medium'}`}>{st.label}</span>
+                                <div className="flex items-center gap-1.5">
+                                    {STATUS_ICON[shown] || STATUS_ICON.pending}
+                                    <span className={`whitespace-nowrap ${shown === 'running'
+                                        ? 'font-semibold text-blue-700' : 'font-medium'}`}>{st.label}</span>
+                                </div>
+                                {/* 静默子阶段（业务规则挖掘、能力问题评测）：缩进挂在父阶段下 */}
+                                {(st.substages || []).map((sub) => (
+                                    <div key={sub.key} className="flex items-center gap-1 min-w-0 pl-4 leading-4">
+                                        <span className="flex-none" style={{ fontSize: 11 }}>
+                                            {STATUS_ICON[sub.status] || STATUS_ICON.pending}
+                                        </span>
+                                        <span className={`whitespace-nowrap ${sub.status === 'running'
+                                            ? 'text-blue-600' : 'text-gray-500'}`}>{sub.label}</span>
+                                        {sub.detail && (
+                                            <span className="text-gray-400 truncate" title={sub.detail}>
+                                                {sub.detail}
+                                            </span>
+                                        )}
+                                    </div>
+                                ))}
                             </div>
                         );
                     })}

@@ -79,6 +79,22 @@ def _stage(stages: list[dict], key: str) -> dict:
     return next(s for s in stages if s["key"] == key)
 
 
+def _substage(stages: list[dict], stage_key: str, sub_key: str,
+              label: str) -> dict:
+    """取/建父阶段的子阶段（业务规则挖掘、能力问题评测这类静默段）。
+
+    子阶段挂在父阶段状态里随 stages 快照一起下发，前端在父阶段下缩进展示；
+    不新增主阶段，主进度条/阶段计数语义不变。
+    """
+    parent = _stage(stages, stage_key)
+    subs = parent.setdefault("substages", [])
+    sub = next((x for x in subs if x["key"] == sub_key), None)
+    if sub is None:
+        sub = {"key": sub_key, "label": label, "status": "pending", "detail": ""}
+        subs.append(sub)
+    return sub
+
+
 def _task_index() -> dict:
     """懒加载既有任务对象（apply 就地执行用）。"""
     from app.tasks.extract_tasks import (
@@ -799,7 +815,10 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 # ── 业务规则挖掘（外部方法论对照：SWRL 控制规则层）：
                 #    IF-THEN 产生式候选（IF 侧逐字命中白名单的存在性门禁在
                 #    rule_llm 内做）→ 直接落推理规则表（错误规则可停用，风险低）。
-                #    失败静默，不影响公理阶段主产物。
+                #    失败静默，不影响公理阶段主产物；作为公理阶段的子阶段展示。
+                br_sub = _substage(stages, "axioms", "business_rules", "业务规则挖掘")
+                br_sub["status"] = "running"
+                _prog("axioms", "业务规则挖掘中…")
                 try:
                     _fresh_read()
                     _br_t0 = time.perf_counter()
@@ -808,11 +827,19 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                                    round(time.perf_counter() - _br_t0, 6))
                     summary["business_rules"] = rules_res
                     n_rules = int(rules_res.get("rules_added") or 0)
-                    if n_rules:
+                    if rules_res.get("skipped") and not n_rules:
+                        br_sub["status"] = "skipped"
+                        br_sub["detail"] = str(rules_res["skipped"])[:60]
+                    else:
+                        br_sub["status"] = "done"
+                        br_sub["detail"] = f"{n_rules} 条"
                         st["detail"] += f"，业务规则 {n_rules} 条"
-                        _prog("axioms", st["detail"])
+                    _prog("axioms", st["detail"])
                 except Exception as e:  # noqa: BLE001
                     summary["business_rules"] = {"rules_added": 0, "skipped": str(e)[:120]}
+                    br_sub["status"] = "skipped"
+                    br_sub["detail"] = "挖掘失败"
+                    _prog("axioms", st["detail"])
                 profile_stage_end("axioms", status=st["status"], detail=st["detail"])
 
             # ── 阶段 8：AI 自动裁决（含公理自动申报 + 一致性复验撤回）──
@@ -855,6 +882,10 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             #    有模板且图可查 = SPARQL 真执行出答案行；否则回落检索式。
             #    任一环节失败都不影响构建终态 ──
             profile_stage_begin("cq_eval", "能力问题评测", tracked=False)
+            # 作为「AI 结果审查」的子阶段展示（原本是构建结束后的静默段）
+            cq_sub = _substage(stages, "adjudicate", "cq_eval", "能力问题评测")
+            cq_sub["status"] = "running"
+            _prog("adjudicate", "能力问题评测中…")
             cq_note = ""
             try:
                 from app.services.cq_service import (
@@ -889,10 +920,21 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                         mode_note = "（SPARQL 实查）" if ev.mode == "sparql+retrieval" else ""
                         cq_note = (f"，能力问题验证通过 {ev.answerable_count}/{ev.total_cq}{mode_note}"
                                    + ("" if ok else "（部分问题暂无证据，可补充文档后重新构建）"))
+                        cq_sub["status"] = "done"
+                        cq_sub["detail"] = f"通过 {ev.answerable_count}/{ev.total_cq}"
+                    else:
+                        cq_sub["status"] = "done"
+                        cq_sub["detail"] = "无评测结果"
+                else:
+                    cq_sub["status"] = "skipped"
+                    cq_sub["detail"] = "无能力问题清单"
             except Exception as e:  # noqa: BLE001
                 from app.core.logging import logger
 
                 logger.warning(f"[pipeline] CQ 评测失败 project={project_id}: {e}")
+                cq_sub["status"] = "skipped"
+                cq_sub["detail"] = "评测失败"
+            _prog("adjudicate", f"能力问题评测完成{cq_note}" if cq_note else "能力问题评测结束")
             profile_stage_end("cq_eval", status="done", detail=cq_note or "完成")
 
             # ── 构建报告（外部方法论交付物对照：人话版，零 LLM）──
