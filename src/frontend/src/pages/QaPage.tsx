@@ -2,6 +2,7 @@
 // 左侧：新建对话 + 历史对话列表（按会话分组）；右侧：项目/模型选择 + 流式对话 + 引用溯源。
 // 与 QaDrawer 共用 MarkdownAnswer（[n] 角标点击定位）与 SourceCard。
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { message } from '../shared/feedback';
 import { Button, Input, Popconfirm, Popover, Select, Tag, Tooltip } from 'antd';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
@@ -10,7 +11,10 @@ import BrandMark from '../components/BrandMark';
 import Navbar from '../components/Layout/Navbar';
 import { projectStatusMeta } from '../shared/projectStatus';
 import {
+    ArrowRightOutlined,
+    BulbOutlined,
     DeleteOutlined,
+    ExclamationCircleOutlined,
     FileSearchOutlined,
     LoadingOutlined,
     MessageOutlined,
@@ -76,6 +80,7 @@ const CONV_ID_KEY = QA_LAST_PROJECT_ID_KEY;
 let convCache: Record<number, QaConversationItem[]> = {};
 
 export default function QaPage() {
+    const navigate = useNavigate();
     const [projects, setProjects] = useState<ProjectData[]>([]);
     // 项目列表未回来前不展示「还没有可用项目」，否则空状态先错后对、整体跳一下
     const [projectsLoading, setProjectsLoading] = useState(true);
@@ -415,6 +420,7 @@ export default function QaPage() {
         return undefined;
     })();
     const activeProject = projects.find(p => p.id === projectId);
+    const activeProjectName = activeProject?.name;
     const activeStatusMeta = activeProject ? projectStatusMeta(activeProject) : null;
     // 列表加载中留白（不画骨架、不判「暂无」）；确定没有任何可用项目、或列表已就绪时才下结论
     const convsReadyForUi = convsReady || (!projectsLoading && projectId == null);
@@ -426,15 +432,39 @@ export default function QaPage() {
                    玻璃底 + 内高光 + 近距投影；聚焦转品牌蓝；
                    等待用户输入时，外圈有一条缓慢旋转的锥形高光 */
                 .qa-composer {
-                    /* 左上浅、右下深，取的直接是外壳同款色：
-                       侧栏顶部 #F7FAFF → 顶栏下沿 #F3F7FE → 侧栏底部 #E7EEF9，
-                       右下再叠一层极淡的品牌蓝增强纵深，整体和主体界面同色系 */
+                    /* 左上浅、右下深。原来的 #F7FAFF 起手比画布本身还亮，
+                       输入框看着像浮起来的一块白玻璃，和页面底色拉不开；
+                       整体往深压一档，做成"凹进去的输入井"，比画布深、比白色消息卡浅，
+                       右下再叠一层品牌蓝增强纵深 */
                     background:
-                        radial-gradient(220px 150px at 100% 110%, rgba(91,141,239,0.10), transparent 70%),
-                        linear-gradient(135deg, #F7FAFF 0%, #F3F7FE 46%, #E7EEF9 100%);
+                        radial-gradient(240px 160px at 100% 112%, rgba(91,141,239,0.16), transparent 72%),
+                        linear-gradient(135deg, #F0F5FE 0%, #E6EEFB 46%, #D8E4F6 100%);
                     box-shadow:
-                        inset 0 -1px 0 rgba(219,228,242,0.45),
-                        0 12px 32px -20px rgba(15,23,42,0.30);
+                        inset 0 -1px 0 rgba(203,215,235,0.55),
+                        0 12px 32px -20px rgba(15,23,42,0.34);
+                }
+                /* 二级配置条（2026-11-13）：项目 / 对话模型收进一条浅色容器，
+                   与资产中心、我的项目的查询条同一套做法——内部控件透明去边框，
+                   hover 浮白、聚焦转品牌蓝，整条读成一个"本次问答的上下文" */
+                .qa-config .ant-select .ant-select-selector {
+                    background-color: transparent !important;
+                    border-color: transparent !important;
+                    box-shadow: none !important;
+                }
+                .qa-config .ant-select:hover .ant-select-selector {
+                    background-color: #FFFFFF !important;
+                    border-color: #DCE7F7 !important;
+                }
+                .qa-config .ant-select-focused .ant-select-selector {
+                    background-color: #FFFFFF !important;
+                    border-color: #5B8DEF !important;
+                    box-shadow: none !important;
+                }
+                /* 还没选项目：把"必须先选项目"从下方那行黄字提到控件本身，
+                   否则选择器看起来一切正常，用户会直接开始输入然后发现发不出去 */
+                .qa-config .qa-select-warn:not(.ant-select-focused) .ant-select-selector {
+                    background-color: rgba(240, 178, 122, 0.12) !important;
+                    border-color: rgba(240, 178, 122, 0.55) !important;
                 }
                 @property --qa-orbit-angle {
                     syntax: '<angle>';
@@ -549,15 +579,25 @@ export default function QaPage() {
                             新建对话
                         </button>
                     </div>
-                    <div className="px-4 pb-2 text-[11px] font-medium tracking-wide text-gray-400 select-none">
-                        历史对话{convsReadyForUi ? `（${conversations.length}）` : ''}
+                    <div className="px-4 pb-2 select-none">
+                        <div className="flex items-baseline gap-1">
+                            <span className="shrink-0 text-[11px] font-medium tracking-wide text-[#8A94AB]">
+                                历史对话{convsReadyForUi ? `（${conversations.length}）` : ''}
+                            </span>
+                            {/* 会话按项目隔离，切项目后整列会换掉；标题里带上项目名，列表突然变化时不至于莫名其妙 */}
+                            {activeProjectName && (
+                                <span className="truncate text-[11px] text-[#A9B4C9]" title={activeProjectName}>
+                                    · {activeProjectName}
+                                </span>
+                            )}
+                        </div>
                     </div>
                     <div className="flex-1 overflow-auto px-2 pb-2">
                         {!convsReadyForUi ? null : conversations.length === 0 ? (
                             <div className="flex flex-col items-center justify-center text-center py-10 px-3">
-                                <MessageOutlined className="text-2xl text-gray-300 mb-2" />
-                                <div className="text-xs text-gray-400">暂无历史对话</div>
-                                <div className="text-[11px] text-gray-300 mt-1">提问后会按会话归档在这里</div>
+                                <MessageOutlined className="text-2xl text-[#C3CCDD] mb-2" />
+                                <div className="text-xs text-[#8A94AB]">暂无历史对话</div>
+                                <div className="text-[11px] text-[#A9B4C9] mt-1">提问后会按会话归档在这里</div>
                             </div>
                         ) : (
                             conversations.map(c => (
@@ -576,12 +616,16 @@ export default function QaPage() {
                                     }}
                                     className={`group px-2.5 py-2 mb-1 rounded-lg cursor-pointer border transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[rgba(91,141,239,0.35)] ${
                                         activeConvId === c.id
-                                            ? 'border-[rgba(91,141,239,0.35)] bg-[rgba(91,141,239,0.12)]'
+                                            ? 'border-[rgba(91,141,239,0.40)] bg-[rgba(91,141,239,0.16)]'
                                             : 'border-transparent hover:bg-[rgba(91,141,239,0.07)]'
                                     }`}
                                 >
+                                    {/* 当前会话：填充胶囊 + 描边，不挂左侧竖条——
+                                        「竖条贴边」这个手法留给左侧主导航（表示所在板块），
+                                        会话是列表内的一条记录，用填充区分的语义更准确，
+                                        两处也不会在同一屏相邻出现两个几乎一样的选中态 */}
                                     <div className="flex items-center justify-between gap-1">
-                                        <span className={`text-sm truncate flex-1 ${activeConvId === c.id ? 'text-[#2A57C6] font-medium' : 'text-gray-800'}`}>
+                                        <span className={`text-sm truncate flex-1 ${activeConvId === c.id ? 'text-[#2A57C6] font-medium' : 'text-[#1F2A44]'}`}>
                                             {c.title}
                                         </span>
                                         <Popconfirm
@@ -603,13 +647,13 @@ export default function QaPage() {
                                                             ? 'opacity-100'
                                                             : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto focus-visible:opacity-100'
                                                     }`}
-                                                    icon={<DeleteOutlined className="text-gray-400 hover:text-red-500" />}
+                                                    icon={<DeleteOutlined className="text-[#A3ADC2] hover:text-red-500" />}
                                                     onClick={e => e.stopPropagation()}
                                                 />
                                             </Tooltip>
                                         </Popconfirm>
                                     </div>
-                                    <div className="text-[11px] text-gray-400 mt-0.5 flex justify-between">
+                                    <div className="text-[11px] text-[#A3ADC2] mt-0.5 flex justify-between">
                                         <span>{c.message_count} 轮</span>
                                         <span>{formatConvTime(c.last_time)}</span>
                                     </div>
@@ -621,36 +665,51 @@ export default function QaPage() {
 
                 {/* 右侧：对话区 */}
                 <div className="flex-1 flex flex-col min-w-0">
-                    {/* 二级工具条：项目 + 模型。放在画布上（不自建白色页头），避免与全站顶栏叠成两条白条 */}
-                    <div className="shrink-0 px-6 pt-3 pb-1 flex flex-wrap items-center gap-x-3 gap-y-2">
-                        <span className="text-xs text-gray-500 shrink-0">项目</span>
-                        <Select
-                            value={projectId ?? undefined}
-                            onChange={v => setProjectId(v)}
-                            placeholder="选择项目"
-                            className="w-52"
-                            showSearch
-                            optionFilterProp="label"
-                            options={projects.map(p => ({ value: p.id, label: p.name }))}
-                        />
-                        {activeStatusMeta && (
-                            <Tag color={activeStatusMeta.color} className="mr-0">{activeStatusMeta.text}</Tag>
-                        )}
-                        <div className="flex-1" />
-                        <span className="text-xs text-gray-500 shrink-0">对话模型</span>
-                        <Select
-                            value={modelId ?? undefined}
-                            onChange={v => setModelId(v)}
-                            placeholder="默认模型"
-                            className="w-56"
-                            allowClear
-                            onClear={() => setModelId(null)}
-                            options={models.map(m => ({
-                                value: m.id,
-                                label: `${m.name}${m.is_default ? ' · 默认' : ''}`,
-                            }))}
-                            notFoundContent={<span className="text-xs text-gray-500">暂无可用模型，请在管理后台「模型配置」添加</span>}
-                        />
+                    {/* 二级工具条：项目 + 模型。放在画布上（不自建白色页头），避免与全站顶栏叠成两条白条。
+                        两者是同一组上下文配置（这次问答用哪个项目、哪个模型），
+                        收进一条浅色胶囊并用一条淡竖线分隔，不再用 flex-1 推到屏幕两端 */}
+                    {/* 配置条与下方消息区、输入框共用同一条 768px 轴：
+                        原来贴内容区左缘，1920 屏上会和居中的对话列错开 400 多像素。
+                        胶囊在列内保持左对齐——居中会让它浮在空白中间，
+                        它读作「工具条」，不读作「标题」 */}
+                    <div className="shrink-0 px-6 pt-3 pb-1">
+                        <div className="max-w-3xl mx-auto">
+                            <div className="qa-config inline-flex max-w-full flex-wrap items-center gap-1 rounded-[12px] border border-[#E7EEF9] bg-white/70 p-1">
+                                <div className="flex min-w-0 items-center gap-1.5 pl-2.5">
+                                    <span className="shrink-0 text-[13px] font-semibold text-[#3D4B66]">项目</span>
+                                    <Select
+                                        value={projectId ?? undefined}
+                                        onChange={v => setProjectId(v)}
+                                        placeholder="选择项目"
+                                        showSearch
+                                        optionFilterProp="label"
+                                        className={projectId == null ? 'qa-select-warn' : undefined}
+                                        style={{ width: 'auto', minWidth: 200, maxWidth: 270 }}
+                                        options={projects.map(p => ({ value: p.id, label: p.name }))}
+                                    />
+                                    {activeStatusMeta && (
+                                        <Tag color={activeStatusMeta.color} className="!mr-0 shrink-0">{activeStatusMeta.text}</Tag>
+                                    )}
+                                </div>
+                                <span className="mx-1 h-4 w-px shrink-0 bg-[#E4EBF7]" aria-hidden />
+                                <div className="flex min-w-0 items-center gap-1.5 px-1">
+                                    <span className="shrink-0 text-[13px] font-semibold text-[#3D4B66]">对话模型</span>
+                                    <Select
+                                        value={modelId ?? undefined}
+                                        onChange={v => setModelId(v)}
+                                        placeholder="跟随默认模型"
+                                        allowClear
+                                        onClear={() => setModelId(null)}
+                                        style={{ width: 'auto', minWidth: 200, maxWidth: 270 }}
+                                        options={models.map(m => ({
+                                            value: m.id,
+                                            label: `${m.name}${m.is_default ? ' · 默认' : ''}`,
+                                        }))}
+                                        notFoundContent={<span className="text-xs text-gray-500">暂无可用模型，请在管理后台「模型配置」添加</span>}
+                                    />
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     {/* 消息区 */}
@@ -661,111 +720,174 @@ export default function QaPage() {
                         className="flex-1 overflow-auto px-6 pb-2 [scrollbar-gutter:stable_both-edges]"
                     >
                         {turns.length === 0 && (
-                            <div className="h-full flex flex-col items-center justify-center text-center px-6">
+                            <div className="flex h-full flex-col items-center justify-center px-6 text-center">
                                 <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3"
                                   style={{ background: 'linear-gradient(135deg, #5B8DEF, #8B5CF6)' }}>
                                     <BrandMark size={32} strokeWidth={3.5} />
                                 </div>
                                 <p className="tk-mono text-[10px] tracking-[0.24em] text-[#9AA6BF]">ONTOLOGY Q&amp;A</p>
-                                <p className="text-gray-600 font-medium mt-1.5">基于本体知识图谱的检索问答</p>
-                                <p className="text-xs text-gray-400 mt-1">回答带 [n] 引用角标，点击角标可定位到对应溯源引用卡</p>
-                                {/* 提示行固定占位、示例问题常驻：加载前后结构不变，避免空状态整体上移 */}
-                                <p className="mt-4 h-5 text-xs text-amber-600">
-                                    {!projectsLoading && projectId == null
-                                        ? '还没有可用项目，请先在「我的项目」创建并完成建模'
-                                        : ''}
+                                <h3 className="mt-2 text-[17px] font-semibold text-[#0F172A]">基于本体知识图谱的检索问答</h3>
+                                {/* 上下文行：告诉用户这次问答落在哪个图谱上，引用还能溯源到原文 */}
+                                <p className="mt-1.5 text-[12.5px] leading-5 text-[#66738F]">
+                                    {activeProjectName
+                                        ? <>将从 <span className="font-medium text-[#2F62D8]">《{activeProjectName}》</span> 的本体图谱中检索答案，引用可溯源到原文</>
+                                        : '选择一个项目后即可开始提问'}
                                 </p>
-                                <div className="mt-3 flex flex-wrap justify-center gap-2 max-w-lg">
-                                    {SAMPLE_QUESTIONS.map(q => {
-                                        const disabled = projectId == null;
-                                        return (
-                                            <button
-                                                key={q}
-                                                type="button"
-                                                disabled={disabled}
-                                                onClick={() => {
-                                                    setQuestion(q);
-                                                    requestAnimationFrame(() => inputRef.current?.focus());
-                                                }}
-                                                className={`px-3 py-1.5 rounded-full border text-xs transition-colors ${disabled
-                                                    ? 'border-[#EDF1F8] bg-white/40 text-gray-300 cursor-not-allowed'
-                                                    : 'border-[#E6EBF5] bg-white/70 text-gray-600 hover:border-[#5B8DEF] hover:text-[#4C7DE7]'
+
+                                {/* 没项目时：一条能直接操作的提示，替代原来那行不起眼的黄字 */}
+                                {!projectsLoading && projectId == null && (
+                                    <div className="mt-4 flex items-center gap-2 rounded-xl border border-[rgba(240,178,122,0.45)] bg-[rgba(240,178,122,0.10)] px-3 py-2 text-[12px] text-[#8A5A12]">
+                                        <ExclamationCircleOutlined className="shrink-0 text-[13px] text-[#C98A2E]" />
+                                        <span>还没有可用项目，请先在「我的项目」创建并完成建模</span>
+                                        <Button
+                                            type="link" size="small"
+                                            className="!h-auto !px-1 !text-[12px] !text-[#2A57C6]"
+                                            onClick={() => navigate('/my-projects')}
+                                        >
+                                            去我的项目
+                                        </Button>
+                                    </div>
+                                )}
+
+                                {/* 示例问题：空状态下唯一能一键开始的动作，做成竖排卡片，
+                                    比原来三个长短不一的灰胶囊更容易点中 */}
+                                <div className="mt-5 w-full max-w-lg text-left">
+                                    <div className="mb-2 flex items-center gap-1.5 text-[12px] text-[#8A94AB]">
+                                        <BulbOutlined className="text-[#5B8DEF]" />
+                                        <span>试试这样问</span>
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        {SAMPLE_QUESTIONS.map(q => {
+                                            const disabled = projectId == null;
+                                            return (
+                                                <button
+                                                    key={q}
+                                                    type="button"
+                                                    disabled={disabled}
+                                                    onClick={() => {
+                                                        setQuestion(q);
+                                                        requestAnimationFrame(() => inputRef.current?.focus());
+                                                    }}
+                                                    className={`group flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left text-[12.5px] transition-colors ${
+                                                        disabled
+                                                            ? 'cursor-not-allowed border-[#EDF1F8] bg-white/40 text-[#B7C1D4]'
+                                                            : 'border-[#E7EEF9] bg-white/70 text-[#3D4B66] hover:border-[#5B8DEF] hover:bg-white hover:text-[#2A57C6]'
                                                     }`}
-                                            >
-                                                {q}
-                                            </button>
-                                        );
-                                    })}
+                                                >
+                                                    <span className="truncate">{q}</span>
+                                                    <ArrowRightOutlined
+                                                        className={`shrink-0 text-[10px] ${
+                                                            disabled
+                                                                ? 'opacity-40'
+                                                                : 'text-[#B7C1D4] transition-all duration-200 group-hover:translate-x-0.5 group-hover:text-[#5B8DEF]'
+                                                        }`}
+                                                    />
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
                                 </div>
                             </div>
                         )}
                         <div className="max-w-3xl mx-auto">
-                            {turns.map((turn, i) => (
+                            {turns.map((turn, i) => {
+                                const meta = turn.done;
+                                const confidence = meta?.confidence ?? 0;
+                                const confHigh = confidence >= 0.6;
+                                return (
                                 <div key={i} className="pt-4">
+                                    {/* 提问气泡：品牌淡蓝底 + 深墨字。原来是品牌渐变 + 发光投影——
+                                        整页一直在往下压，只有这里还在喊；多轮之后右侧是一屏蓝块，
+                                        反而把真正要读的「回答」压成了背景 */}
                                     <div className="flex justify-end mb-2">
-                                        <div className="max-w-[85%] px-3 py-2 rounded-2xl text-white text-sm whitespace-pre-wrap shadow-[0_8px_20px_-12px_rgba(91,141,239,0.55)]" style={{ background: 'linear-gradient(135deg, #5B8DEF, #6C7CF5)' }}>
+                                        <div
+                                            className="max-w-[85%] rounded-2xl border border-[rgba(91,141,239,0.28)] px-3.5 py-2 text-[14px] leading-[1.7] whitespace-pre-wrap text-[#1F2A44]"
+                                            style={{ background: 'rgba(91, 141, 239, 0.12)' }}
+                                        >
                                             {turn.question}
                                         </div>
                                     </div>
                                     <div>
                                         {turn.error ? (
-                                            <div className="px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-600">
+                                            <div
+                                                className="rounded-xl border border-[#F2C6CE] px-3.5 py-2.5 text-sm text-[#B42318]"
+                                                style={{ background: '#FDF2F4' }}
+                                            >
                                                 问答失败：{turn.error}
                                             </div>
                                         ) : (
-                                            <div className="px-4 py-3 rounded-2xl bg-white border border-[#E7ECF6] shadow-sm overflow-hidden">
-                                                {/* 流式状态统一收进卡片内的独立状态行：
-                                                    不再把 spinner 直接跟在 Markdown 块后面（块级元素后单独换行，
-                                                    贴着卡片左缘偶尔会被滚动区底部渐隐/圆角裁掉，看着像"跑出卡片"） */}
-                                                {turn.answer && (
-                                                    <MarkdownAnswer
-                                                        content={turn.answer}
-                                                        sourceCount={turn.sources.length}
-                                                        onCite={n => handleCite(i, n)}
-                                                    />
-                                                )}
-                                                {turn.streaming ? (
-                                                    <div className={`flex items-center gap-2 text-xs text-gray-500 ${turn.answer ? 'mt-2.5' : ''}`}>
-                                                        <LoadingOutlined className="text-[#5B8DEF]" />
-                                                        <span>{turn.answer ? '正在生成…' : '正在检索本体图谱…'}</span>
-                                                    </div>
-                                                ) : !turn.answer && (
-                                                    <div className="text-sm text-gray-500">（模型未返回内容）</div>
-                                                )}
-                                            </div>
-                                        )}
-                                        {turn.stopped && (
-                                            <div className="mt-1 text-[11px] text-gray-400">已停止生成</div>
-                                        )}
-                                        {turn.done && (
-                                            <div className="flex items-center gap-2 mt-1.5 text-[11px] text-gray-500 flex-wrap">
-                                                {turn.done.confidence > 0 && (
-                                                    <Tag color={turn.done.confidence >= 0.6 ? 'green' : 'orange'} className="mr-0">
-                                                        置信度 {(turn.done.confidence * 100).toFixed(0)}%
-                                                    </Tag>
-                                                )}
-                                                {turn.done.model && <span>{turn.done.model}</span>}
-                                                <span>{turn.done.latency_ms}ms</span>
-                                                {turn.done.reasoning_path?.length > 0 && (
-                                                    <Popover
-                                                        content={(
-                                                            <ol className="list-decimal pl-4 text-xs max-w-xs">
-                                                                {turn.done.reasoning_path.map((s, k) => <li key={k}>{s}</li>)}
-                                                            </ol>
+                                            <div className="overflow-hidden rounded-2xl border border-[#E7EEF9] bg-white shadow-[0_2px_10px_-8px_rgba(15,23,42,0.18)]">
+                                                <div className="px-4 py-3">
+                                                    {/* 流式状态统一收进卡片内的独立状态行：
+                                                        不再把 spinner 直接跟在 Markdown 块后面（块级元素后单独换行，
+                                                        贴着卡片左缘偶尔会被滚动区底部渐隐/圆角裁掉，看着像"跑出卡片"） */}
+                                                    {turn.answer && (
+                                                        <MarkdownAnswer
+                                                            content={turn.answer}
+                                                            sourceCount={turn.sources.length}
+                                                            onCite={n => handleCite(i, n)}
+                                                        />
+                                                    )}
+                                                    {turn.streaming ? (
+                                                        <div className={`flex items-center gap-2 text-xs text-[#8A94AB] ${turn.answer ? 'mt-2.5' : ''}`}>
+                                                            <LoadingOutlined className="text-[#5B8DEF]" />
+                                                            <span>{turn.answer ? '正在生成…' : '正在检索本体图谱…'}</span>
+                                                        </div>
+                                                    ) : !turn.answer && (
+                                                        <div className="text-sm text-[#8A94AB]">（模型未返回内容）</div>
+                                                    )}
+                                                </div>
+                                                {/* 元信息收进卡片底部：置信度 / 模型 / 延迟 / 推理路径
+                                                    是这条回答自身的属性，不该浮在卡外和下面的溯源区抢位置。
+                                                    置信度不再用 antd 的绿/橙 Tag——那是一套和冷调蓝紫无关的语义色 */}
+                                                {(meta || turn.stopped) && (
+                                                    <div className="flex flex-wrap items-center justify-end gap-x-2.5 gap-y-1 border-t border-[#F0F4FB] px-4 py-2 text-[11px] text-[#A3ADC2]">
+                                                        {turn.stopped && <span className="mr-auto">已停止生成</span>}
+                                                        {confidence > 0 && (
+                                                            <span
+                                                                className="inline-flex items-center gap-1.5 rounded-full px-2 py-[3px]"
+                                                                style={{ background: confHigh ? 'rgba(91, 141, 239, 0.10)' : 'rgba(242, 185, 80, 0.16)' }}
+                                                            >
+                                                                <span
+                                                                    className="h-1.5 w-1.5 shrink-0 rounded-full"
+                                                                    style={{ background: confHigh ? '#2F62D8' : '#B8790F' }}
+                                                                />
+                                                                置信度
+                                                                <span
+                                                                    className="tk-mono font-semibold"
+                                                                    style={{ color: confHigh ? '#2F62D8' : '#B8790F' }}
+                                                                >
+                                                                    {(confidence * 100).toFixed(0)}%
+                                                                </span>
+                                                            </span>
                                                         )}
-                                                        title="推理路径"
-                                                    >
-                                                        <Button size="small" type="link" className="!px-0 !text-[11px]">推理路径</Button>
-                                                    </Popover>
+                                                        {meta?.model && <span>{meta.model}</span>}
+                                                        {meta && <span>{meta.latency_ms}ms</span>}
+                                                        {meta && meta.reasoning_path?.length > 0 && (
+                                                            <Popover
+                                                                content={(
+                                                                    <ol className="list-decimal pl-4 text-xs max-w-xs">
+                                                                        {meta.reasoning_path.map((s, k) => <li key={k}>{s}</li>)}
+                                                                    </ol>
+                                                                )}
+                                                                title="推理路径"
+                                                            >
+                                                                <Button size="small" type="link" className="!h-auto !px-0 !text-[11px]">推理路径</Button>
+                                                            </Popover>
+                                                        )}
+                                                    </div>
                                                 )}
                                             </div>
                                         )}
                                         {turn.sources.length > 0 && (
                                             /* 溯源证据区：浅底容器把「引用卡」和「答案正文」分成两层，白卡不再直接叠白卡 */
-                                            <div className="mt-2 rounded-xl border border-[#EAF0F9] bg-[#F7F9FD] p-2.5">
-                                                <div className="flex items-center gap-1.5 text-xs text-gray-500 mb-2">
+                                            <div className="mt-2 rounded-xl border border-[#E7EEF9] bg-[#F7F9FD] p-2.5">
+                                                <div className="mb-2 flex items-center gap-1.5 text-[11.5px] text-[#66738F]">
                                                     <FileSearchOutlined className="text-[#5B8DEF]" />
-                                                    <span>溯源引用（{turn.sources.length}）</span>
+                                                    <span>溯源引用</span>
+                                                    <span className="tk-mono rounded-full bg-white px-1.5 py-[1px] text-[10.5px] text-[#52607A]">
+                                                        {turn.sources.length}
+                                                    </span>
                                                 </div>
                                                 <div className="space-y-1.5">
                                                     {turn.sources.map((s, k) => (
@@ -782,7 +904,8 @@ export default function QaPage() {
                                         )}
                                     </div>
                                 </div>
-                            ))}
+                                );
+                            })}
                         </div>
                     </div>
 
@@ -790,7 +913,7 @@ export default function QaPage() {
                         等待输入时外圈有缓慢旋转的高光，参考 aiBank demo） */}
                     <div className="shrink-0 px-6 pt-3 pb-4">
                         <div className="max-w-3xl mx-auto">
-                            <div className={`qa-composer relative rounded-2xl border border-[#E5EBF6] px-3.5 pt-3 pb-2.5 transition-[border-color,box-shadow] duration-200 focus-within:border-[#5B8DEF] focus-within:shadow-[0_16px_38px_-18px_rgba(91,141,239,0.42)] ${!busy && projectId != null ? 'qa-composer--awaiting' : ''}`}>
+                            <div className={`qa-composer relative rounded-2xl border border-[#D7E3F3] px-3.5 pt-3 pb-2.5 transition-[border-color,box-shadow] duration-200 focus-within:border-[#5B8DEF] focus-within:shadow-[0_16px_38px_-18px_rgba(91,141,239,0.42)] ${!busy && projectId != null ? 'qa-composer--awaiting' : ''}`}>
                                 <Input.TextArea
                                     ref={inputRef}
                                     autoFocus
