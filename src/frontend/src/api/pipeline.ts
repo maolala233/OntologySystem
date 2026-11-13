@@ -8,21 +8,12 @@ import { authAPI } from './auth';
 export type PipelineStageKey = 'parse' | 'schema' | 'instances' | 'resolution'
     | 'conflicts' | 'axioms' | 'adjudicate';
 
-export interface PipelineSubStageState {
-    key: string;
-    label: string;
-    status: 'pending' | 'running' | 'done' | 'skipped' | 'failed';
-    detail: string;
-}
-
 export interface PipelineStageState {
     key: PipelineStageKey;
     label: string;
     status: 'pending' | 'running' | 'done' | 'skipped' | 'failed';
     detail: string;
     task_id: string | null;
-    /** 挂在父阶段下展示的静默子阶段（业务规则挖掘、能力问题评测） */
-    substages?: PipelineSubStageState[];
 }
 
 export interface PipelineReviews {
