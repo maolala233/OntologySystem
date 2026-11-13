@@ -71,6 +71,10 @@ const SAMPLE_QUESTIONS = [
 
 const CONV_ID_KEY = QA_LAST_PROJECT_ID_KEY;
 
+// 会话列表模块级缓存（按项目隔离）：进入页面先用上次的列表立即渲染、后台静默刷新，
+// 返回再进入时左侧完全没有加载痕迹；首次进入则在数据回来前留白。删除/新会话后随刷新更新。
+let convCache: Record<number, QaConversationItem[]> = {};
+
 export default function QaPage() {
     const [projects, setProjects] = useState<ProjectData[]>([]);
     // 项目列表未回来前不展示「还没有可用项目」，否则空状态先错后对、整体跳一下
@@ -80,6 +84,10 @@ export default function QaPage() {
     const [modelId, setModelId] = useState<number | null>(null);
 
     const [conversations, setConversations] = useState<QaConversationItem[]>([]);
+    // 会话列表是否已就绪：未就绪时列表区留白（不画骨架/空状态），就绪后才下「暂无」的结论
+    const [convsReady, setConvsReady] = useState(false);
+    // 切项目时作废旧请求的响应，防止慢请求回来覆盖新项目的列表
+    const convSeqRef = useRef(0);
     const [activeConvId, setActiveConvId] = useState<string | null>(null);
 
     const [turns, setTurns] = useState<QaTurn[]>([]);
@@ -128,9 +136,17 @@ export default function QaPage() {
     }, []);
 
     const loadConversations = useCallback(async (pid: number) => {
+        const seq = ++convSeqRef.current;
         try {
-            setConversations(await listQaConversations(pid, 50));
+            const list = await listQaConversations(pid, 50);
+            if (seq === convSeqRef.current) {
+                convCache[pid] = list; // 供下次进入页面立即渲染
+                setConversations(list);
+            }
         } catch { /* 列表失败不阻断对话区 */ }
+        finally {
+            if (seq === convSeqRef.current) setConvsReady(true);
+        }
     }, []);
 
     const loadModels = useCallback(async (pid: number) => {
@@ -149,6 +165,9 @@ export default function QaPage() {
         localStorage.setItem(CONV_ID_KEY, String(projectId));
         setTurns([]);
         setActiveConvId(null);
+        const cached = convCache[projectId];
+        setConversations(cached ?? []);
+        setConvsReady(!!cached);
         loadConversations(projectId);
         loadModels(projectId);
     }, [projectId, loadConversations, loadModels]);
@@ -342,6 +361,8 @@ export default function QaPage() {
     })();
     const activeProject = projects.find(p => p.id === projectId);
     const activeStatusMeta = activeProject ? projectStatusMeta(activeProject) : null;
+    // 列表加载中留白（不画骨架、不判「暂无」）；确定没有任何可用项目、或列表已就绪时才下结论
+    const convsReadyForUi = convsReady || (!projectsLoading && projectId == null);
 
     return (
         <div className="h-full flex flex-col app-canvas">
@@ -357,10 +378,10 @@ export default function QaPage() {
                         </Button>
                     </div>
                     <div className="px-4 pb-2 text-[11px] font-medium tracking-wide text-gray-400 select-none">
-                        历史对话（{conversations.length}）
+                        历史对话{convsReadyForUi ? `（${conversations.length}）` : ''}
                     </div>
                     <div className="flex-1 overflow-auto px-2 pb-2">
-                        {conversations.length === 0 ? (
+                        {!convsReadyForUi ? null : conversations.length === 0 ? (
                             <div className="flex flex-col items-center justify-center text-center py-10 px-3">
                                 <MessageOutlined className="text-2xl text-gray-300 mb-2" />
                                 <div className="text-xs text-gray-400">暂无历史对话</div>
