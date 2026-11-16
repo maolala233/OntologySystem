@@ -875,9 +875,15 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             adj = run_auto_adjudication(project_id, db=db, level="fast")
             summary["adjudication"] = adj
             st["status"] = "done"
-            st["detail"] = (f"自动确认 {adj['auto_approved']} 项"
-                            + (f"，撤回 {adj['rolled_back']} 条引发矛盾的公理"
-                               if adj.get("rolled_back") else ""))
+            _adj_parts = [f"自动处理 {adj['auto_approved']} 项"]
+            if adj.get("rolled_back"):
+                _adj_parts.append(f"撤回 {adj['rolled_back']} 条引发矛盾的公理")
+            _llm_left = int((adj.get("llm_leftover") or {}).get("llm_adjudicated") or 0)
+            if _llm_left:
+                _adj_parts.append(f"模型复核遗留 {_llm_left} 项")
+            if adj.get("fallback_closed"):
+                _adj_parts.append(f"兜底关闭 {adj['fallback_closed']} 项")
+            st["detail"] = "，".join(_adj_parts)
             profile_stage_end("adjudicate", status="done", detail=st["detail"])
 
             # 收尾统计：剩余需人裁决的数量

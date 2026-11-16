@@ -112,6 +112,19 @@ CONSERVATIVE_RULES: dict[str, Callable] = {
     "axiom_suggestion": _rule_axiom_suggestion,
 }
 
+# fast 档遗留项兜底（2026-11-16）：只有“留痕关闭、不改数据”的类型可以 approve；
+# 其余（实体合并/新增类/申报公理等）一律 reject——模型没判掉时自动执行数据变更
+# 风险太高。目的是构建结束前把 pending 清零，用户发布时不再被遗留项挡住。
+_LEFTOVER_SAFE_APPROVE = {
+    "conflict_value", "conflict_relationship",
+    "low_confidence_entity", "low_confidence_relation",
+    "missing_evidence", "conflict_axiom",
+}
+
+
+def _leftover_fallback_action(item) -> str:
+    return "approve" if item.item_type in _LEFTOVER_SAFE_APPROVE else "reject"
+
 
 def _mark_auto(item, rule: str) -> None:
     item.result_ref = {**(item.result_ref or {}), AUTO_RULE_KEY: rule}
@@ -561,10 +574,62 @@ def run_auto_adjudication(project_id: int, db: Optional[Session] = None,
                 except Exception:  # noqa: BLE001 —— 单项失败不阻断
                     db.rollback()
             auto_approved += fast_approved
+            # ── 遗留项收敛（2026-11-16）──
+            # 快照之后的公理撤回项（conflict_axiom）、低置信合并、执行失败项不会
+            # 被上面的循环覆盖，会一直 pending。这里补一轮：先让模型逐条裁决
+            # （_llm_adjudicate 覆盖所有类型），模型不可用/超时/解析失败时按类型
+            # 做确定性兜底关闭——保证构建结束前 pending 清零。
+            try:
+                db.commit()
+            except Exception:  # noqa: BLE001
+                db.rollback()
+            db.expire_all()
+            leftover = (db.query(ReviewItem)
+                        .filter(ReviewItem.project_id == project_id,
+                                ReviewItem.status == "pending")
+                        .all())
+            leftover_before = len(leftover)
+            llm_leftover: dict = {}
+            if leftover and _budget_left() > 0:
+                try:
+                    llm_leftover = _llm_adjudicate(
+                        db, project_id, leftover, budget_left_fn=_budget_left)
+                except Exception:  # noqa: BLE001 —— 模型裁决失败走兜底
+                    llm_leftover = {}
+            auto_approved += int(llm_leftover.get("llm_adjudicated") or 0)
+            for k, v in (llm_leftover.get("by_type") or {}).items():
+                by_type[k] = by_type.get(k, 0) + int(v)
+            fallback_closed = 0
+            try:
+                db.commit()
+            except Exception:  # noqa: BLE001
+                db.rollback()
+            db.expire_all()
+            still_pending = (db.query(ReviewItem)
+                             .filter(ReviewItem.project_id == project_id,
+                                     ReviewItem.status == "pending")
+                             .all())
+            decide3 = _decide_item_fn()
+            for item in still_pending:
+                try:
+                    decide3(item, SYSTEM_ACTOR, _leftover_fallback_action(item),
+                            note="AI 无法判定，按默认策略自动关闭（可在「AI 已自动处理」中撤销）",
+                            db=db)
+                    _mark_auto(item, f"auto_close:{item.item_type}")
+                    db.commit()
+                    fallback_closed += 1
+                    auto_approved += 1
+                    by_type[item.item_type] = by_type.get(item.item_type, 0) + 1
+                except Exception:  # noqa: BLE001 —— 单项失败不阻断
+                    db.rollback()
             out = {"level": lvl, "scanned": len(pending),
                    "auto_approved": auto_approved,
                    "rolled_back": rolled_back, "by_type": by_type,
-                   "fast_approved": fast_approved}
+                   "fast_approved": fast_approved,
+                   "leftover_before": leftover_before,
+                   "llm_leftover": {k: v for k, v in llm_leftover.items()
+                                    if k != "by_type"},
+                   "fallback_closed": fallback_closed}
             if _budget_left() < 0:
                 out["budget_exceeded"] = True
             return out
