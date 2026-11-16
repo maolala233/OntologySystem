@@ -160,7 +160,9 @@ def build_sub_steps(stage_key: str, sub: Optional[dict]) -> list[dict]:
     for key, label, lo, hi in defs:
         if status == "completed" or pct >= hi:
             steps.append(_step(key, label, "done", 100))
-        elif pct <= lo:
+        elif pct < lo:
+            # 严格小于：pct == lo 表示该步骤刚开始（如缝合 0/3 → 82%），
+            # 应显示 running 0%，而不是还停在「待开始」（2026-11-16 实测）
             steps.append(_step(key, label, "pending", 0))
         else:
             state = {"failed": "failed", "cancelled": "cancelled"}.get(status, "running")
