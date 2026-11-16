@@ -439,19 +439,13 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
     const stages: PipelineStageState[] = subDone
         ? rawStages.map((st) => (st.status === 'running' ? { ...st, status: 'done' as const } : st))
         : rawStages;
-    // 主进度条：后端主键只在阶段边界更新百分比，长阶段内（尤其骨架/实例抽取）会长时间不动。
-    // 有本阶段子进度时按「阶段序号 + 子百分比」折算，主条随切片推进平滑增长（只增不减）。
-    const runningIdx = rawStages.findIndex((st) => st.status === 'running');
+    // 总进度只认后端下发的 percent（2026-11-16 用户要求：前端不自己算）。
+    // 原来在长阶段内按「阶段序号 + 子百分比」折算过平滑值——那是前端估算，已去掉；
+    // 主键在阶段边界更新，阶段内的细粒度进度以上方子步骤/子进度为准
     const subSameStage = typeof s?.sub?.percent === 'number'
         && !!s?.sub?.stage && s.sub.stage === s?.stage;
     const subPercent = s?.sub?.percent;
-    const computedPercent = (runningIdx >= 0 && subSameStage && typeof subPercent === 'number'
-        && rawStages.length > 0)
-        ? Math.min(99, Math.round(((runningIdx + subPercent / 100) / rawStages.length) * 100))
-        : undefined;
-    const mainPercent = typeof s?.percent === 'number'
-        ? (computedPercent != null ? Math.max(s.percent, computedPercent) : s.percent)
-        : computedPercent;
+    const mainPercent = typeof s?.percent === 'number' ? s.percent : undefined;
     // 运行中 3s 轮询；其余状态不轮询（事件驱动：signal / 手动刷新）
     const runningNow = !!s && (s.status === 'running' || s.status === 'queued'
         || (!!stages.length && s.stages.some((x) => x.status === 'running')
@@ -587,18 +581,15 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                     ? `已中止 · 完成 ${doneCount}/${stages.length || 8} 个阶段`
                     : '尚未构建';
 
-    // 详情区百分比：完成/跳过 100，待开始 0，运行中优先用子进度，
-    // 没有子进度键（如解析文档阶段）按全局 percent 反推阶段内进度
-    const stagePercentOf = (st: PipelineStageState): number => {
-        if (st.status === 'done' || st.status === 'skipped') return 100;
+    // 详情区的阶段百分比也只认后端（2026-11-16 用户要求：前端不自己算）：
+    // - 有本阶段子进度（sub.percent）直接用；
+    // - 完成后 100、待开始 0（阶段真实终态，不是估算）；
+    // - 已跳过/失败/中止或运行中但后端还没给子进度 → null，界面显示不确定态而不是编个数字
+    const stagePercentOf = (st: PipelineStageState): number | null => {
+        if (st.status === 'done') return 100;
         if (st.status === 'pending') return 0;
         if (activeKey === st.key && subSameStage && typeof subPercent === 'number') return subPercent;
-        const idx = stages.findIndex((x) => x.key === st.key);
-        if (idx >= 0 && typeof s?.percent === 'number' && stages.length > 0) {
-            return Math.max(0, Math.min(99,
-                Math.round((s.percent * stages.length / 100 - idx) * 100)));
-        }
-        return 0;
+        return null;
     };
 
     // 段头只补充运行中的上下文：完成态的总用时已经在总进度行与汇总区表达，不再重复第三遍
@@ -728,6 +719,14 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                     flex: none; animation: pl-blink 1.4s infinite;
                 }
                 @keyframes pl-blink { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+                /* 后端还没给阶段内百分比时的「不确定态」：一条往返的细条，不显示具体数字 */
+                .pl-ind {
+                    position: absolute; top: 0; bottom: 0; width: 35%;
+                    border-radius: 9999px; display: block;
+                    background: linear-gradient(90deg,#84ACF7,#5B8DEF);
+                    animation: pl-ind 1.4s ease-in-out infinite;
+                }
+                @keyframes pl-ind { 0% { left: -35%; } 100% { left: 100%; } }
             `}</style>
 
             {/* 总进度（阶段边界才更新的后端主键 + 子进度折算，平滑但只增不减） */}
@@ -893,18 +892,33 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                         </span>
                                     </div>
                                     <div className="mt-2 flex items-center gap-2.5">
-                                        <div className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-[#EEF0F3]">
-                                            {/* key=阶段：切阶段时重建，避免宽度从上一阶段的 100%
-                                                动画收缩到 0（看起来像进度条"闪没了"，2026-11-16） */}
-                                            <div key={activeStage.key}
-                                                 className="h-full rounded-full transition-[width] duration-500"
-                                                 style={{ width: `${pct}%`, background: BAR_BG[shown] || BAR_BG.running }} />
+                                        <div className="relative h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-[#EEF0F3]">
+                                            {/* 有后端百分比才画实际宽度；拿不到就显示不确定态/
+                                                终态底色，不编一个数字（2026-11-16） */}
+                                            {pct != null && (
+                                                /* key=阶段：切阶段时重建，避免宽度从上一阶段的 100%
+                                                   动画收缩到 0（看起来像进度条"闪没了"） */
+                                                <div key={activeStage.key}
+                                                     className="h-full rounded-full transition-[width] duration-500"
+                                                     style={{
+                                                         width: `${Math.max(0, Math.min(100, pct))}%`,
+                                                         background: BAR_BG[shown] || BAR_BG.running,
+                                                     }} />
+                                            )}
+                                            {pct == null && shown === 'running' && <i className="pl-ind" />}
+                                            {pct == null && shown === 'skipped' && (
+                                                <div className="h-full w-full rounded-full"
+                                                     style={{ background: BAR_BG.skipped }} />
+                                            )}
                                         </div>
                                         <span className="min-w-[38px] text-right text-[12.5px] font-semibold"
                                               style={{ color: shown === 'failed' ? '#B42318'
                                                   : shown === 'done' ? '#1B87AD'
                                                       : shown === 'running' ? '#5B8DEF' : '#8A94AB' }}>
-                                            {pct}%
+                                            {pct != null
+                                                ? `${pct}%`
+                                                : (shown === 'skipped' ? '已跳过'
+                                                    : STAGE_STATUS_TEXT[shown] || '—')}
                                         </span>
                                     </div>
 
