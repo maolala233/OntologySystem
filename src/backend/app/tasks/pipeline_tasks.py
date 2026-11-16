@@ -1025,7 +1025,8 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             # "结果确认"阶段从分钟级缩到 10-30s
             adj = run_auto_adjudication(project_id, db=db, level="fast")
             summary["adjudication"] = adj
-            st["status"] = "done"
+            # 不在这里置 done：能力问题评测还在同一张阶段卡里跑（2026-11-16
+            # 用户反馈——8 个阶段全打勾了，页面还挂着「能力问题评测中…」）
             _adj_parts = [f"自动处理 {adj['auto_approved']} 项"]
             if adj.get("rolled_back"):
                 _adj_parts.append(f"撤回 {adj['rolled_back']} 条引发矛盾的公理")
@@ -1062,7 +1063,25 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 task_id, "adjudicate", 0, "能力问题评测中…",
                 steps=_phase_steps("adjudicate", "cq_eval"))
             _prog("adjudicate", "能力问题评测中…")
+            # CQ 实测约 28s，其中 attach_sparql 占 27s 且没有百分比可报；
+            # 每 5s 写已用时，阶段保持 running 直到评测结束
             cq_note = ""
+            _cq_msg = ""
+            _cq_step_state = "done"
+            _cq_t0 = time.perf_counter()
+            _cq_stop = _threading.Event()
+
+            def _cq_ticker() -> None:
+                while not _cq_stop.wait(5):
+                    elapsed = int(time.perf_counter() - _cq_t0)
+                    _sub_stage_progress(
+                        task_id, "adjudicate", 0,
+                        f"能力问题评测中… 已 {elapsed} 秒",
+                        steps=_phase_steps("adjudicate", "cq_eval"))
+
+            _cq_thread = _threading.Thread(
+                target=_cq_ticker, name=f"cq-tick-{task_id}", daemon=True)
+            _cq_thread.start()
             try:
                 from app.services.cq_service import (
                     attach_sparql, ensure_rdf_graphs, evaluate_cqs, list_cqs,
@@ -1096,25 +1115,27 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                         mode_note = "（SPARQL 实查）" if ev.mode == "sparql+retrieval" else ""
                         cq_note = (f"，能力问题验证通过 {ev.answerable_count}/{ev.total_cq}{mode_note}"
                                    + ("" if ok else "（部分问题暂无证据，可补充文档后重新构建）"))
-                        _sub_stage_progress(
-                            task_id, "adjudicate", 100,
-                            f"能力问题评测完成：通过 {ev.answerable_count}/{ev.total_cq}",
-                            steps=_phase_steps("adjudicate", "cq_eval", "done", 100))
+                        _cq_msg = f"能力问题评测完成：通过 {ev.answerable_count}/{ev.total_cq}"
                     else:
-                        _sub_stage_progress(
-                            task_id, "adjudicate", 100, "能力问题评测结束：无评测结果",
-                            steps=_phase_steps("adjudicate", "cq_eval", "done", 100))
+                        _cq_msg = "能力问题评测结束：无评测结果"
                 else:
-                    _sub_stage_progress(
-                        task_id, "adjudicate", 100, "能力问题评测结束：无能力问题清单",
-                        steps=_phase_steps("adjudicate", "cq_eval", "skipped", 100))
+                    _cq_msg = "能力问题评测结束：无能力问题清单"
+                    _cq_step_state = "skipped"
             except Exception as e:  # noqa: BLE001
                 from app.core.logging import logger
 
                 logger.warning(f"[pipeline] CQ 评测失败 project={project_id}: {e}")
-                _sub_stage_progress(
-                    task_id, "adjudicate", 100, "能力问题评测失败（不影响构建结果）",
-                    steps=_phase_steps("adjudicate", "cq_eval", "failed", 100))
+                _cq_msg = "能力问题评测失败（不影响构建结果）"
+                _cq_step_state = "failed"
+            finally:
+                _cq_stop.set()
+                _cq_thread.join(timeout=1)
+            _sub_stage_progress(
+                task_id, "adjudicate", 100, _cq_msg,
+                steps=_phase_steps("adjudicate", "cq_eval", _cq_step_state, 100))
+            if cq_note:
+                st["detail"] += cq_note
+            st["status"] = "done"
             _prog("adjudicate", f"能力问题评测完成{cq_note}" if cq_note else "能力问题评测结束")
             profile_stage_end("cq_eval", status="done", detail=cq_note or "完成")
 
