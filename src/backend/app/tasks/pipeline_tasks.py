@@ -152,6 +152,15 @@ def build_sub_steps(stage_key: str, sub: Optional[dict]) -> list[dict]:
     status = str(sub.get("status") or "running")
     defs = _SUB_STEP_RANGES.get(stage_key)
     if not defs:
+        silent = _SILENT_STEPS.get(stage_key)
+        if silent:
+            # 静默段子任务只写 percent、不带 steps（如公理扫描 35%）：按第一阶段
+            # 合成「当前进行中 + 后续待开始」，避免前端退化成静态清单全 pending。
+            # 进入后段时管线会写显式 steps，这里的合成结果随即被覆盖。
+            state = {"completed": "done", "failed": "failed",
+                     "cancelled": "cancelled"}.get(status, "running")
+            return _phase_steps(stage_key, silent[0][0], state,
+                                100 if state == "done" else pct)
         label = next((lbl for k, lbl in STAGE_DEFS if k == stage_key), stage_key)
         state = {"completed": "done", "failed": "failed",
                  "cancelled": "cancelled"}.get(status, "running")
@@ -1039,21 +1048,23 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 #    阶段状态保持 running 直到本段结束：业务规则挖掘属于公理阶段
                 #    的一部分，不能先给阶段打勾再继续干活（2026-11-16 用户反馈）。
                 _sub_stage_progress(
-                    task_id, "axioms", 0, "业务规则挖掘中…",
-                    steps=_phase_steps("axioms", "business_rules"))
+                    task_id, "axioms", 5, "业务规则挖掘中…",
+                    steps=_phase_steps("axioms", "business_rules", "running", 5))
                 _prog("axioms", "业务规则挖掘中…")
                 # 单次 LLM 调用要 1 分钟上下，期间没有可报的百分比；
-                # 每 10s 把「已用时」写进子进度，避免看起来像卡死（2026-11-16）
+                # 每 10s 把「已用时」和软进度写进子进度，避免看起来卡死（2026-11-16）
                 _br_t0 = time.perf_counter()
                 _br_stop = _threading.Event()
 
                 def _br_ticker() -> None:
                     while not _br_stop.wait(10):
                         elapsed = int(time.perf_counter() - _br_t0)
+                        pct = min(90, 5 + 10 * (elapsed // 10))
                         _sub_stage_progress(
-                            task_id, "axioms", 0,
+                            task_id, "axioms", pct,
                             f"业务规则挖掘中… 已 {elapsed} 秒",
-                            steps=_phase_steps("axioms", "business_rules"))
+                            steps=_phase_steps(
+                                "axioms", "business_rules", "running", pct))
 
                 _br_thread = _threading.Thread(
                     target=_br_ticker, name=f"br-tick-{task_id}", daemon=True)
@@ -1098,8 +1109,8 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             # 阶段一开始就把子步骤写出来（结果确认 running / 能力问题评测 pending）：
             # 裁决本身没有子任务进度键，等 CQ 开始才写会导致整个裁决期间子区空白
             _sub_stage_progress(
-                task_id, "adjudicate", 0, "结果确认中…",
-                steps=_phase_steps("adjudicate", "adjudicate"))
+                task_id, "adjudicate", 5, "结果确认中…",
+                steps=_phase_steps("adjudicate", "adjudicate", "running", 5))
             _prog("adjudicate", "结果确认中…", 0.0)
             from app.services.auto_adjudication import run_auto_adjudication
 
@@ -1110,10 +1121,13 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             def _adj_ticker() -> None:
                 while not _adj_stop.wait(5):
                     elapsed = int(time.perf_counter() - _adj_t0)
+                    # 审查无真实百分比，按耗时给软进度（每 5s +10%，封顶 90%），
+                    # 避免子步骤一直显示 0%（2026-11-16 实测）
+                    pct = min(90, 10 * (elapsed // 5))
                     _sub_stage_progress(
-                        task_id, "adjudicate", 0,
+                        task_id, "adjudicate", pct,
                         f"结果确认中… 已 {elapsed} 秒",
-                        steps=_phase_steps("adjudicate", "adjudicate"))
+                        steps=_phase_steps("adjudicate", "adjudicate", "running", pct))
 
             _adj_thread = _threading.Thread(
                 target=_adj_ticker, name=f"adj-tick-{task_id}", daemon=True)
@@ -1162,8 +1176,8 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             profile_stage_begin("cq_eval", "能力问题评测", tracked=False)
             # 进度写进「AI 结果审查」的阶段子进度区（与业务规则挖掘同一展示位）
             _sub_stage_progress(
-                task_id, "adjudicate", 0, "能力问题评测中…",
-                steps=_phase_steps("adjudicate", "cq_eval"))
+                task_id, "adjudicate", 5, "能力问题评测中…",
+                steps=_phase_steps("adjudicate", "cq_eval", "running", 5))
             _prog("adjudicate", "能力问题评测中…")
             # CQ 实测约 28s，其中 attach_sparql 占 27s 且没有百分比可报；
             # 每 5s 写已用时，阶段保持 running 直到评测结束
@@ -1176,10 +1190,13 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             def _cq_ticker() -> None:
                 while not _cq_stop.wait(5):
                     elapsed = int(time.perf_counter() - _cq_t0)
+                    # CQ 无真实百分比（attach_sparql 占大半且不可观测），
+                    # 同样按耗时给软进度，封顶 90%，结束时置 100%
+                    pct = min(90, 5 + 10 * (elapsed // 5))
                     _sub_stage_progress(
-                        task_id, "adjudicate", 0,
+                        task_id, "adjudicate", pct,
                         f"能力问题评测中… 已 {elapsed} 秒",
-                        steps=_phase_steps("adjudicate", "cq_eval"))
+                        steps=_phase_steps("adjudicate", "cq_eval", "running", pct))
 
             _cq_thread = _threading.Thread(
                 target=_cq_ticker, name=f"cq-tick-{task_id}", daemon=True)
