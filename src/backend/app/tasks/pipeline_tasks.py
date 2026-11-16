@@ -205,15 +205,6 @@ def _sync_stage_times(stages: list[dict], current: Optional[str] = None) -> None
                     pass
 
 
-def _sub_stage_message(task_id: str, stage_key: str) -> str:
-    """读当前阶段子进度键上已有的消息（用于保留上一段的产出摘要）。"""
-    try:
-        return str((get_task_progress(f"{task_id}:{stage_key}") or {})
-                   .get("message") or "").strip()
-    except Exception:  # noqa: BLE001 —— 读不到按空串处理
-        return ""
-
-
 def _sub_stage_progress(task_id: str, stage_key: str, percent: int,
                         message: str, steps: Optional[list[dict]] = None) -> None:
     """把静默段写进当前阶段的子进度键（前端「当前阶段」区域直接展示）。
@@ -939,17 +930,22 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                         st["status"] = "skipped"
                         st["detail"] = "模型不可用，已跳过公理扫描"
                     else:
-                        st["status"] = "done"
+                        # 状态保持 running 到业务规则挖掘结束（2026-11-16 用户反馈：
+                        # 先置 done 再挖规则，页面会在「AI 公理扫描」已完成的格子上
+                        # 挂着「业务规则挖掘中…」近 1 分钟，状态与进度自相矛盾）
                         llm_ch = axiom_res.get("llm") or {}
-                        if axiom_res.get("review_created", 0) > 0:
-                            st["detail"] = "完成扫描"
+                        n_axioms = int(axiom_res.get("review_created") or 0)
+                        if n_axioms > 0:
+                            # 汇总行保留条数（此前只写「完成扫描」，子进度里的
+                            # 「新增公理建议 11 条」在规则挖掘结束后就丢了）
+                            st["detail"] = f"完成扫描，新增公理建议 {n_axioms} 条"
                         elif llm_ch.get("skipped"):
                             st["detail"] = f"未产出公理（{str(llm_ch['skipped'])[:50]}）"
                         else:
                             # "完成扫描"掩盖空手而归（2026-11-08 项目 265 实测：
                             # 方舟限流时段空响应，parsed=0 用户以为扫描没用）
                             st["detail"] = "完成扫描，未产出公理（模型响应为空，稍后重新构建可重试）"
-                    _prog("axioms", "公理扫描结束")
+                    _prog("axioms", st["detail"])
                 except _PipelineCancelled:
                     raise  # 取消传导：不得当作阶段失败吞掉
                 except Exception as e:  # noqa: BLE001 —— 公理扫描失败不阻碍自动裁决其余项
@@ -961,40 +957,58 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 #    IF-THEN 产生式候选（IF 侧逐字命中白名单的存在性门禁在
                 #    rule_llm 内做）→ 直接落推理规则表（错误规则可停用，风险低）。
                 #    失败静默，不影响公理阶段主产物；进度写在公理阶段的子进度键，
-                #    界面沿用「公理扫描完成：…」那块区域展示，不新增阶段/前端组件。
-                _axiom_msg = _sub_stage_message(task_id, "axioms")
-                _br_prefix = f"{_axiom_msg}；" if _axiom_msg else ""
+                #    界面沿用该阶段的子进度区展示，不新增阶段/前端组件。
+                #    阶段状态保持 running 直到本段结束：业务规则挖掘属于公理阶段
+                #    的一部分，不能先给阶段打勾再继续干活（2026-11-16 用户反馈）。
                 _sub_stage_progress(
-                    task_id, "axioms", 0, f"{_br_prefix}业务规则挖掘中…",
+                    task_id, "axioms", 0, "业务规则挖掘中…",
                     steps=_phase_steps("axioms", "business_rules"))
-                _prog("axioms", f"{_br_prefix}业务规则挖掘中…")
+                _prog("axioms", "业务规则挖掘中…")
+                # 单次 LLM 调用要 1 分钟上下，期间没有可报的百分比；
+                # 每 10s 把「已用时」写进子进度，避免看起来像卡死（2026-11-16）
+                _br_t0 = time.perf_counter()
+                _br_stop = _threading.Event()
+
+                def _br_ticker() -> None:
+                    while not _br_stop.wait(10):
+                        elapsed = int(time.perf_counter() - _br_t0)
+                        _sub_stage_progress(
+                            task_id, "axioms", 0,
+                            f"业务规则挖掘中… 已 {elapsed} 秒",
+                            steps=_phase_steps("axioms", "business_rules"))
+
+                _br_thread = _threading.Thread(
+                    target=_br_ticker, name=f"br-tick-{task_id}", daemon=True)
+                _br_thread.start()
+                _br_msg = ""
+                _br_step_state = "done"
                 try:
                     _fresh_read()
-                    _br_t0 = time.perf_counter()
                     rules_res = _mine_business_rules(db, project_id)
                     profile_metric("business_rules_seconds",
                                    round(time.perf_counter() - _br_t0, 6))
                     summary["business_rules"] = rules_res
                     n_rules = int(rules_res.get("rules_added") or 0)
                     if rules_res.get("skipped") and not n_rules:
-                        _sub_stage_progress(
-                            task_id, "axioms", 100,
-                            f"{_br_prefix}业务规则挖掘结束（{str(rules_res['skipped'])[:40]}）",
-                            steps=_phase_steps("axioms", "business_rules", "skipped", 100))
+                        _br_msg = f"业务规则挖掘结束（{str(rules_res['skipped'])[:40]}）"
+                        _br_step_state = "skipped"
                     else:
                         st["detail"] += f"，业务规则 {n_rules} 条"
-                        _sub_stage_progress(
-                            task_id, "axioms", 100,
-                            f"{_br_prefix}业务规则挖掘完成：新增规则 {n_rules} 条",
-                            steps=_phase_steps("axioms", "business_rules", "done", 100))
-                    _prog("axioms", st["detail"])
+                        _br_msg = f"业务规则挖掘完成：新增规则 {n_rules} 条"
                 except Exception as e:  # noqa: BLE001
                     summary["business_rules"] = {"rules_added": 0, "skipped": str(e)[:120]}
-                    _sub_stage_progress(
-                        task_id, "axioms", 100,
-                        f"{_br_prefix}业务规则挖掘失败（不影响公理结果）",
-                        steps=_phase_steps("axioms", "business_rules", "failed", 100))
-                    _prog("axioms", st["detail"])
+                    _br_msg = "业务规则挖掘失败（不影响公理结果）"
+                    _br_step_state = "failed"
+                finally:
+                    _br_stop.set()
+                    _br_thread.join(timeout=1)
+                _sub_stage_progress(
+                    task_id, "axioms", 100, _br_msg,
+                    steps=_phase_steps("axioms", "business_rules", _br_step_state, 100))
+                # 扫描成功才收尾为 done；扫描本身失败/跳过时保持原状态，只补规则结果
+                if st["status"] == "running":
+                    st["status"] = "done"
+                _prog("axioms", st["detail"])
                 profile_stage_end("axioms", status=st["status"], detail=st["detail"])
 
             # ── 阶段 8：AI 自动裁决（含公理自动申报 + 一致性复验撤回）──
