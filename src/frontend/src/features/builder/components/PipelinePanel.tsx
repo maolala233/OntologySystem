@@ -2,7 +2,7 @@
  * 一键构建管线进度面板（2026-11 新手简化；2026-11-16 按项目详情原型重排）。
  *
  * 展示形式收敛为一层：「阶段时间线 + 单一详情区」——
- * - 八阶段时间线可点、可固定，默认跟随当前运行阶段；
+ * - 八阶段时间线可点开临时查看，默认跟随当前运行阶段；阶段一推进就自动回到实时；
  * - 详情区展示该阶段主进度、阶段内子步骤（后端 build_sub_steps 下发 steps）、
  *   实时计数与耗时；构建结束后默认落在「本次构建」汇总（各阶段耗时）；
  * - 原来的「三步清单 + 主进度条 + 阶段格子 + 子进度框」四层表达合并掉。
@@ -42,6 +42,8 @@ interface PipelineSnap {
     percent?: number;
     message?: string;
     stages: PipelineStageState[];
+    /** 运行中真实收到过的各阶段 steps（后端数据，仅做回放，不由前端生成） */
+    stepsByStage?: Record<string, PipelineSubStep[]>;
     saved_at: number;
 }
 
@@ -116,93 +118,13 @@ const BAR_BG: Record<string, string> = {
 };
 
 /**
- * 每个阶段的工作项清单（2026-11-16）：详情区一次性把本阶段要做的活全部列出来，
- * 不再等后端一步步行进才逐个出现，也让「构建完成后点开某个阶段」能看到完整工作内容。
+ * 阶段子步骤只认后端数据（2026-11-16 用户要求：前端不写死）。
  *
- * - 后端给出一套真实分步（steps >= 2 条）时一律以后端为准：schema / instances /
- *   parse 全程有子进度，axioms / adjudicate 在业务规则挖掘、能力问题评测阶段有；
- *   前端不维护第二份说法；
- * - 剩余阶段（resolution / conflicts / selfcheck，以及 axioms / adjudicate 的
- *   前段）后端只报阶段级进度。这里按后端实现（tasks/services）列出工作项，但
- *   **不按百分比猜「当前走到哪一步」**：进行中一律显示待开始，阶段结束才整列标成
- *   完成/跳过——猜出来的位置会和真实执行错位（2026-11-16 用户确认不要假进度）。
+ * - 运行中：显示当前阶段的 sub.steps（后端 build_sub_steps / 各任务显式写入）；
+ * - 完成后：后端只保留「当前阶段」的子进度键，不再下发历史阶段的 steps，这里回放
+ *   运行中真实收到过的那份（按阶段缓存进本机快照）；没有采集到的阶段明确显示未下发，
+ *   不补任何前端臆造的清单。
  */
-const STAGE_STEP_DEFS: Record<string, Array<{ key: string; label: string }>> = {
-    parse: [
-        { key: 'inspect', label: '检查已解析文档' },
-        { key: 'resync', label: '补写向量' },
-        { key: 'parse', label: '逐份解析' },
-    ],
-    schema: [
-        { key: 'read', label: '读取切片' },
-        { key: 'extract', label: '批次抽取' },
-        { key: 'assemble', label: '骨架装配' },
-        { key: 'structure', label: '结构映射' },
-        { key: 'stitch', label: '跨切片缝合' },
-        { key: 'write', label: '写入画布与行表' },
-    ],
-    instances: [
-        { key: 'read', label: '读取切片' },
-        { key: 'extract', label: '批次抽取' },
-        { key: 'enrich', label: '结构展开与反向补全' },
-        { key: 'write', label: '写入画布与行表' },
-    ],
-    resolution: [
-        { key: 'attr', label: '属性键合并' },
-        { key: 'block', label: '分块与拼音归并' },
-        { key: 'vector', label: '向量相似度聚类' },
-        { key: 'merge', label: '自动合并与待审物化' },
-    ],
-    conflicts: [
-        { key: 'value', label: '值冲突检测' },
-        { key: 'type', label: '类型冲突检测' },
-        { key: 'relation', label: '关系冲突检测' },
-        { key: 'axiom', label: '公理冲突检测' },
-        { key: 'logical', label: '逻辑冲突检测' },
-    ],
-    selfcheck: [
-        { key: 'check', label: '结构机检（层次 / 引用 / 基数）' },
-        { key: 'repair', label: 'LLM 定向修复' },
-        { key: 'recheck', label: '修复后复检' },
-        { key: 'review', label: '剩余问题转审核' },
-    ],
-    axioms: [
-        { key: 'scan', label: '公理扫描' },
-        { key: 'business_rules', label: '业务规则挖掘' },
-    ],
-    adjudicate: [
-        { key: 'adjudicate', label: 'AI 结果审查' },
-        { key: 'cq_eval', label: '能力问题评测' },
-    ],
-};
-
-/**
- * 生成某阶段的完整子步骤列表：后端有真实子进度时按 key 合并，否则只按阶段终态着色。
- * 阶段已结束（done/skipped）时全部标成对应终态——构建完成后点开阶段也能看到全部工作项。
- */
-const buildStageSteps = (
-    stageKey: string,
-    stageState: string,
-    backendSteps?: PipelineSubStep[],
-): PipelineSubStep[] => {
-    const defs = STAGE_STEP_DEFS[stageKey] || [];
-    const provided = backendSteps || [];
-    // 后端给出了本阶段的分步（>=2 步；只有 1 步是它对不分步阶段的兜底）：直接以后端为准，
-    // 步骤名、顺序、状态都跟任务实际写出的走，前端清单只做兜底（2026-11-16：解析阶段
-    // 后端新增 inspect/resync/parse 三步后，前端无需再维护一份自己的说法）
-    if (provided.length > 1) {
-        return provided.map((s) => ({
-            key: s.key, label: s.label || s.key, state: s.state, percent: s.percent,
-        }));
-    }
-    if (!defs.length) return provided;
-    return defs.map((d) => {
-        if (stageState === 'done') return { key: d.key, label: d.label, state: 'done' as const, percent: 100 };
-        if (stageState === 'skipped') return { key: d.key, label: d.label, state: 'skipped' as const, percent: 0 };
-        // 进行中/失败/中止且后端没有分步状态：不推算位置，统一按“待开始”列出
-        return { key: d.key, label: d.label, state: 'pending' as const, percent: 0 };
-    });
-};
 
 /** 秒 → 「3 分 12 秒」；空值「—」 */
 const fmtDuration = (sec?: number | null): string => {
@@ -249,8 +171,12 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
     const [status, setStatus] = useState<PipelineStatus | null>(null);
     const [loaded, setLoaded] = useState(false);
     const [starting, setStarting] = useState(false);
-    // 详情区固定的阶段（null=跟随实时进度 / 构建结束后落在汇总）
-    const [pinned, setPinned] = useState<string | null>(null);
+    // 临时查看的阶段（null=跟随实时进度 / 构建结束后落在汇总）。
+    // 纯跟随（2026-11-16 用户确认不要「固定查看」）：点一下就只是看一眼，
+    // 运行阶段一推进/构建结束就自动回到实时，不长期钉住详情区
+    const [peekKey, setPeekKey] = useState<string | null>(null);
+    // 点开临时查看时后端所处阶段：阶段推进后据此自动收回
+    const peekLiveKeyRef = useRef<string | null>(null);
     // SSE 订阅（2026-11-07）：后端运行锁为事实源推送进度，3s 轮询降级为断流兜底
     const esRef = useRef<EventSource | null>(null);
     // 订阅代际：换票（eventsUrl）是异步的，等待期间组件可能已卸载/已重订；
@@ -271,6 +197,25 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
     const idleCheckAtRef = useRef(0);
     // 快照落盘节流：运行中最多 5s 写一次 localStorage
     const snapAtRef = useRef(0);
+    // 最近一次收到 SSE 数据帧的时间：半开连接（无 onerror 也不再推帧）时靠它兜底轮询
+    const lastFrameAtRef = useRef(Date.now());
+
+    // 运行中真实收到过的各阶段 steps（纯后端数据）：后端只对「当前阶段」下发 steps，
+    // 完成后不再提供历史阶段的明细，这里按阶段缓存进本机快照做回放（2026-11-16）。
+    const stepsCacheRef = useRef<Record<string, PipelineSubStep[]>>({});
+    const [stepsByStage, setStepsByStage] = useState<Record<string, PipelineSubStep[]>>({});
+    // 上一次看到的 task_id：换任务时清空步骤缓存（首屏首次加载不清，避免把快照回放的清掉）
+    const lastTaskSeenRef = useRef<string | null>(null);
+    const rememberSteps = useCallback((stageKey?: string | null, steps?: PipelineSubStep[]) => {
+        if (!stageKey || !steps || !steps.length) return;
+        const prev = stepsCacheRef.current[stageKey];
+        const same = !!prev && prev.length === steps.length && prev.every((p, i) => (
+            p.key === steps[i].key && p.state === steps[i].state && p.percent === steps[i].percent));
+        if (same) return;
+        const next = { ...stepsCacheRef.current, [stageKey]: steps };
+        stepsCacheRef.current = next;
+        setStepsByStage(next);
+    }, []);
 
     const refresh = useCallback(async () => {
         try {
@@ -285,8 +230,8 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
             }
             // 服务端进度键 24h 过期 / 换了浏览器：用本机最后一次终态快照兜底，
             // 构建结束后阶段时间线也保留（用户要求「步骤条永远不消失」，2026-11-16）
+            const snap = readSnap(projectId);
             if (s.status === 'idle' && !(s.stages || []).length) {
-                const snap = readSnap(projectId);
                 if (snap && snap.status !== 'running' && snap.status !== 'queued') {
                     s = {
                         ...s,
@@ -299,6 +244,14 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                     };
                 }
             }
+            // 同一轮任务的子步骤缓存（本机快照里保存的是运行中真实收到过的后端 steps）。
+            // 只在内存缓存为空时回填，避免刷新把运行中更新过的缓存覆盖回旧快照
+            if (snap?.task_id && snap.task_id === s.task_id && snap.stepsByStage
+                && !Object.keys(stepsCacheRef.current).length) {
+                stepsCacheRef.current = snap.stepsByStage;
+                setStepsByStage(snap.stepsByStage);
+            }
+            if (s.stage && s.sub?.steps?.length) rememberSteps(s.stage, s.sub.steps);
             setStatus(s);
             if (s.task_id && s.status !== 'idle') {
                 localStorage.setItem(lastTaskKey(projectId), s.task_id);
@@ -308,19 +261,45 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
         } finally {
             setLoaded(true);
         }
-    }, [projectId]);
+    }, [projectId, rememberSteps]);
 
     // 项目切换（路由参数变化、组件不重挂载）时清掉上一个项目的进度快照，
     // refresh 返回前不显示旧项目的阶段/进度
-    useEffect(() => { setStatus(null); setLoaded(false); setPinned(null); }, [projectId]);
+    useEffect(() => {
+        setStatus(null); setLoaded(false); setPeekKey(null);
+        stepsCacheRef.current = {};
+        setStepsByStage({});
+        lastTaskSeenRef.current = null;
+    }, [projectId]);
 
     useEffect(() => { refresh(); }, [refresh, signal]);
 
     // 状态上抛：父页面（ProjectOverviewPage）据此做跃迁刷新，免自建 5s 轮询
     useEffect(() => { onPipeStatus?.(status); }, [status, onPipeStatus]);
 
-    // 新一轮构建开始时解除固定，回到跟随实时进度
-    useEffect(() => { setPinned(null); }, [status?.task_id]);
+    // 换了新一轮构建：收回临时查看，并清掉上一轮的步骤缓存（同一任务的首屏加载不清）
+    useEffect(() => {
+        const tid = status?.task_id || null;
+        if (lastTaskSeenRef.current && tid && tid !== lastTaskSeenRef.current) {
+            setPeekKey(null);
+            stepsCacheRef.current = {};
+            setStepsByStage({});
+        }
+        lastTaskSeenRef.current = tid;
+    }, [status?.task_id]);
+
+    // 纯跟随：临时查看只在打开时的那个阶段内有效——后端阶段推进（status.stage 变化）
+    // 就自动回到实时；构建结束（完成/失败/中止）也收回，回到「本次构建」汇总
+    useEffect(() => {
+        if (!peekKey) return;
+        const live = status?.stage || null;
+        if (live && live !== peekLiveKeyRef.current) setPeekKey(null);
+    }, [peekKey, status?.stage]);
+
+    useEffect(() => {
+        const st = status?.status;
+        if (st === 'completed' || st === 'failed' || st === 'cancelled') setPeekKey(null);
+    }, [status?.status]);
 
     // 落一份阶段快照：终态立即写，运行中最多 5s 写一次（阶段时间线的兜底数据源）
     useEffect(() => {
@@ -334,7 +313,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
             localStorage.setItem(snapKey(projectId), JSON.stringify({
                 status: st.status, task_id: st.task_id, stage: st.stage || '',
                 percent: st.percent || 0, message: st.message || '',
-                stages: st.stages, saved_at: now,
+                stages: st.stages, stepsByStage: stepsCacheRef.current, saved_at: now,
             }));
         } catch {
             /* 配额满 / 隐私模式：忽略，下次刷新再试 */
@@ -356,6 +335,10 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
             es.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
+                    lastFrameAtRef.current = Date.now();
+                    if (data.stage && data.sub?.steps?.length) {
+                        rememberSteps(data.stage, data.sub.steps);
+                    }
                     const noReviews = {
                         pending_by_priority: {}, pending_total: 0, need_human: 0, auto_handled: 0,
                     };
@@ -430,7 +413,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
             /* ticket 获取失败：一次性 refresh + 轮询兜底照常工作 */
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [projectId, refresh]);
+    }, [projectId, refresh, rememberSteps]);
 
     useEffect(() => {
         subscribe();
@@ -479,6 +462,20 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
         const t = setInterval(refresh, 3000);
         return () => clearInterval(t);
     }, [refresh, runningNow, sseUp, s?.task_id]);
+
+    // SSE 半开兜底（2026-11-16 反馈）：连接看起来在线、却超过 30s 没收到任何数据帧
+    // （后端每秒读一次进度、15s 一条心跳注释，正常不会这么久），主动 REST 复核一次，
+    // 防止界面停在旧阶段不动
+    useEffect(() => {
+        if (!runningNow || !sseUp) return;
+        const t = setInterval(() => {
+            if (Date.now() - lastFrameAtRef.current > 30000) {
+                lastFrameAtRef.current = Date.now();
+                void refresh();
+            }
+        }, 10000);
+        return () => clearInterval(t);
+    }, [refresh, runningNow, sseUp]);
 
     // 运行中每秒走一次时钟：阶段耗时由 started_at 推算，SSE 静默期（长批次）也能走动
     const [, setTick] = useState(0);
@@ -552,7 +549,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
             : s?.status === 'cancelled'
                 ? (cancelledStage?.key ?? 'summary')
                 : 'summary';
-    const activeKey = pinned ?? fallbackKey;
+    const activeKey = peekKey ?? fallbackKey;
     const activeStage = stages.find((st) => st.key === activeKey) || null;
 
     // 阶段快照里的 started/finished 是 UTC ISO；运行中的阶段用当前时间补终点
@@ -670,7 +667,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
             )}
         >
             <style>{`
-                /* 阶段时间线（2026-11-16 按原型）：圆点 + 连接线，点选固定详情 */
+                /* 阶段时间线（2026-11-16 按原型）：圆点 + 连接线，点开临时查看 */
                 .pl-tl { display: flex; align-items: flex-start; gap: 2px; padding: 4px 2px 10px; overflow-x: auto; overflow-y: hidden; }
                 .pl-tl-item {
                     /* basis 0 + min-width：宽屏按等分撑满、不因分数宽度多出 1px 触发滚动条
@@ -754,7 +751,8 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                 </div>
             )}
 
-            {/* 阶段时间线：默认跟随运行中的阶段；点任意阶段固定查看，再点取消固定 */}
+            {/* 阶段时间线：默认跟随运行中的阶段；点已完成阶段只是临时看一眼，
+                运行阶段推进后自动回到实时（纯跟随，无固定） */}
             {stages.length > 0 && (
                 <div className="pl-tl mt-2">
                     {stages.map((st) => {
@@ -765,8 +763,17 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                     /* 未走到的阶段不可点（2026-11-16）：还没开始就没有明细可看，
                                        点开只会是空的「等待前置阶段完成」，徒增困惑 */
                                     disabled={st.status === 'pending'}
-                                    onClick={() => setPinned((prev) => (
-                                        prev === st.key || (!prev && st.key === fallbackKey) ? null : st.key))}
+                                    /* 点「当前阶段」＝回到跟随；点别的已完成阶段＝临时查看，
+                                       再点一次也收回 */
+                                    onClick={() => {
+                                        if (st.key === fallbackKey || peekKey === st.key) {
+                                            setPeekKey(null);
+                                            peekLiveKeyRef.current = null;
+                                            return;
+                                        }
+                                        setPeekKey(st.key);
+                                        peekLiveKeyRef.current = status?.stage || null;
+                                    }}
                                     className={`pl-tl-item ${shown} ${activeKey === st.key ? 'selected' : ''}`}
                                     title={`${st.label} · ${STAGE_STATUS_TEXT[shown] || '待开始'}`}>
                                 <span className="pl-tl-inner">
@@ -799,7 +806,10 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                             <div className="mt-2.5 grid grid-cols-2 gap-2 md:grid-cols-4">
                                 {stages.map((st) => (
                                     <button type="button" key={st.key}
-                                            onClick={() => setPinned(st.key)}
+                                            onClick={() => {
+                                                setPeekKey((prev) => (prev === st.key ? null : st.key));
+                                                peekLiveKeyRef.current = status?.stage || null;
+                                            }}
                                             className="rounded-lg border border-[#E7EEF9] bg-white px-2.5 py-2 text-left transition-colors hover:border-[rgba(91,141,239,0.45)]">
                                         <div className="truncate text-[11.5px] text-[#8A94AB]">{st.label}</div>
                                         <div className={`mt-0.5 text-[12.5px] font-semibold ${
@@ -825,15 +835,34 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                 ? 'cancelled' : activeStage.status;
                             const pct = stagePercentOf(activeStage);
                             const live = stageDuration(activeStage);
-                            // 完整子步骤清单一次性展示：后端有真实子进度时按 key 合并，
-                            // 没有时按阶段状态摊平（构建完成后点开也列出全部工作项）。
-                            // 子进度只属于当前阶段——固定查看别的阶段时不能把它挂过来
-                            const detailSteps = buildStageSteps(
-                                activeStage.key, shown,
-                                activeKey === s?.stage ? s?.sub?.steps : undefined,
-                            );
+                            // 子步骤只用后端数据（2026-11-16 用户要求前端不写死）：
+                            // 当前阶段优先取实时 sub.steps，其次取运行中真实采集到的缓存
+                            // （完成态回放）；都没有就不展示，由下面的占位文案说明
+                            const observed: PipelineSubStep[] = (activeKey === s?.stage && s?.sub?.steps?.length)
+                                ? s.sub.steps
+                                : (stepsByStage[activeStage.key] || []);
+                            const detailSteps: PipelineSubStep[] = observed.map((st) => (
+                                shown === 'done' ? { ...st, state: 'done' as const, percent: 100 }
+                                    : shown === 'skipped' ? { ...st, state: 'skipped' as const, percent: 0 }
+                                        : st
+                            ));
                             return (
                                 <>
+                                    {/* 临时查看与实时进度不一致时给出说明：这只是看一眼，
+                                        运行阶段一推进就会自动回到实时（2026-11-16 纯跟随） */}
+                                    {peekKey && runningNow && runningStage
+                                        && activeStage.key !== runningStage.key && (
+                                        <div className="mb-2 flex items-center gap-2 rounded-md border border-[rgba(91,141,239,0.35)] bg-[rgba(91,141,239,0.08)] px-2.5 py-[5px] text-[11.5px] text-[#2A57C6]">
+                                            <span className="min-w-0 flex-1 truncate">
+                                                临时查看「{activeStage.label}」· 当前进行「{runningStage.label}」，阶段推进后自动回到实时
+                                            </span>
+                                            <Button type="link" size="small"
+                                                    className="!h-auto !p-0 !text-[11.5px]"
+                                                    onClick={() => setPeekKey(null)}>
+                                                立即回到实时
+                                            </Button>
+                                        </div>
+                                    )}
                                     <div className="flex flex-wrap items-center gap-2">
                                         <span className="text-[15px] font-semibold text-[#0F172A]">
                                             {activeStage.label}
@@ -843,13 +872,15 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                             {STAGE_STATUS_TEXT[shown] || '待开始'}
                                         </Tag>
                                         <span className="ml-auto flex items-center gap-2 whitespace-nowrap text-[11.5px] text-[#A3ADC2]">
-                                            {pinned && (
+                                            {/* 构建已结束（或正处于阶段切换的间隙）时，顶部没有那条
+                                                自动收回的提示带，这里给一个明确的返回入口 */}
+                                            {peekKey && !(runningNow && runningStage) && (
                                                 <span>
-                                                    已固定查看 ·{' '}
+                                                    临时查看 ·{' '}
                                                     <Button type="link" size="small"
                                                             className="!h-auto !p-0 !text-[11.5px]"
-                                                            onClick={() => setPinned(null)}>
-                                                        跟随即时进度
+                                                            onClick={() => setPeekKey(null)}>
+                                                        {runningNow ? '回到实时进度' : '返回本次构建'}
                                                     </Button>
                                                 </span>
                                             )}
@@ -926,6 +957,13 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                                     </div>
                                                 );
                                             })}
+                                        </div>
+                                    )}
+                                    {detailSteps.length === 0 && (
+                                        <div className="mt-2.5 text-[11.5px] text-[#A3ADC2]">
+                                            {shown === 'running'
+                                                ? '等待本阶段子步骤进度…'
+                                                : '后端未下发该阶段的分步明细'}
                                         </div>
                                     )}
 
