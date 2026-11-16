@@ -6,6 +6,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { message } from '../../../shared/feedback';
 import { Button, Card, Popconfirm, Space, Spin, Table, Tag, Upload } from 'antd';
+import type { UploadProps } from 'antd';
 import {
     CloudDownloadOutlined, DeleteOutlined, FileTextOutlined, UploadOutlined,
 } from '@ant-design/icons';
@@ -14,7 +15,9 @@ import type { ColumnsType } from 'antd/es/table';
 import { documentsApi, DocumentRow } from '../../../api/documents';
 import { UPLOAD_ACCEPT, UPLOAD_EXTS, MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from '../documents/uploadFormats';
 
-// 解析状态标签：用冷调淡底代替 antd 的语义色（绿/蓝/红在一屏里过于抢眼）
+// 解析状态标签：用冷调淡底代替 antd 的语义色（绿/蓝/红在一屏里过于抢眼）。
+// 渲染时统一补 marginInlineEnd: 0——antd Tag 默认带 8px 右外边距，列居中后
+// 这 8px 会把胶囊往左推，看起来"居中了但没完全居中"（2026-11-16）
 const PARSE_TAG: Record<string, { style: React.CSSProperties; text: string }> = {
     uploaded: { style: { background: 'rgba(15,23,42,0.05)', color: '#8A94AB', borderColor: 'rgba(15,23,42,0.08)' }, text: '待解析' },
     parsing: { style: { background: 'rgba(242,185,80,0.20)', color: '#B8790F', borderColor: 'rgba(242,185,80,0.45)' }, text: '解析中' },
@@ -113,23 +116,27 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage 
     };
 
     const columns: ColumnsType<DocumentRow> = [
-        { title: '文档', dataIndex: 'filename', key: 'filename', ellipsis: true },
+        // 列名用「文档名称」：卡片标题已经是「文档（N）」，表头再写「文档」会和标题重复，
+        // 也说不清这一列装的是什么（2026-11-16）
+        { title: '文档名称', dataIndex: 'filename', key: 'filename', ellipsis: true },
         // 默认展示文档自身的解析状态；只有「解析阶段正在解析这一份」时临时显示「解析中」——
         // 后端 run_parse 结束才落 parsed，本地缓存可能还是上一轮的 parsed（进入页面瞬间/轮询间隔），
         // 不兜这一下会出现「上面正在解析、下面已解析」（2026-11-11 实测）
-        { title: '解析状态', dataIndex: 'parse_status', key: 'parse_status', width: 110,
+        // 解析状态 / 操作两列统一居中（2026-11-16）：都是定宽的短内容列，
+        // 左对齐会让胶囊和按钮贴着左边界、右边留一大块空白，读起来像没排满
+        { title: '解析状态', dataIndex: 'parse_status', key: 'parse_status', width: 130, align: 'center' as const,
           render: (v: string, d) => {
               const parseMsg = pipelineStage?.key === 'parse' && pipelineStage.status === 'running'
                   ? String(pipelineStage.message || '')
                   : '';
               if (v === 'parsed' && parseMsg.startsWith('解析中') && d?.filename
                   && parseMsg.includes(d.filename)) {
-                  return <Tag style={PARSE_TAG.parsing.style}>解析中</Tag>;
+                  return <Tag style={{ ...PARSE_TAG.parsing.style, marginInlineEnd: 0 }}>解析中</Tag>;
               }
               const m = PARSE_TAG[v] || PARSE_TAG.uploaded;
-              return <Tag style={m.style}>{m.text}</Tag>;
+              return <Tag style={{ ...m.style, marginInlineEnd: 0 }}>{m.text}</Tag>;
           } },
-        { title: '操作', key: 'ops', width: 160,
+        { title: '操作', key: 'ops', width: 190, align: 'center' as const,
           render: (_, d) => (
               <Space size={0}>
                   <Button type="link" size="small" icon={<CloudDownloadOutlined />}
@@ -158,11 +165,33 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage 
           ) },
     ];
 
+    // 上传配置（2026-11-16）：段头按钮与空状态里的入口是同一个动作，抽出来复用，
+    // 空状态因此不用再写"点击右上角…"这种指路文案，直接给可点的入口
+    const uploadProps: UploadProps = {
+        multiple: true,
+        showUploadList: false,
+        accept: UPLOAD_ACCEPT,
+        disabled: uploading,
+        beforeUpload: (f) => {
+            const ext = String(f.name).split('.').pop()?.toLowerCase() || '';
+            if (!UPLOAD_EXTS.includes(ext)) {
+                message.warning(`不支持 .${ext} 格式：仅支持 ${UPLOAD_EXTS.join(' / ')}`);
+                return Upload.LIST_IGNORE;
+            }
+            if (f.size > MAX_UPLOAD_BYTES) {
+                message.warning(`「${f.name}」超过 ${MAX_UPLOAD_LABEL} 上限`);
+                return Upload.LIST_IGNORE;
+            }
+            return false;
+        },
+        onChange: handleUpload,
+    };
+
     return (
         <Card size="small"
               title={(
                   <span className="inline-flex items-center gap-2">
-                      <span>上传的文档（{docs.length}）</span>
+                      <span>文档（{docs.length}）</span>
                       {pipelineStage && (
                           <Tag
                               style={pipelineStage.status === 'running'
@@ -178,33 +207,20 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage 
                   </span>
               )}
               extra={(
-                  <Upload
-                      multiple
-                      showUploadList={false}
-                      beforeUpload={(f) => {
-                          const ext = String(f.name).split('.').pop()?.toLowerCase() || '';
-                          if (!UPLOAD_EXTS.includes(ext)) {
-                              message.warning(`不支持 .${ext} 格式：仅支持 ${UPLOAD_EXTS.join(' / ')}`);
-                              return Upload.LIST_IGNORE;
-                          }
-                          if (f.size > MAX_UPLOAD_BYTES) {
-                              message.warning(`「${f.name}」超过 ${MAX_UPLOAD_LABEL} 上限`);
-                              return Upload.LIST_IGNORE;
-                          }
-                          return false;
-                      }}
-                      onChange={handleUpload}
-                      accept={UPLOAD_ACCEPT}
-                      disabled={uploading}>
+                  <Upload {...uploadProps}>
+                      {/* 按钮文案跟状态走（2026-11-16）：已有文档时再说"上传文档"像是第一次操作，
+                          改为"继续上传"——语义是往这个列表里再加一份，不是重新上传整个项目 */}
                       <Button size="small" icon={<UploadOutlined />} loading={uploading}>
-                          上传文档
+                          {docs.length > 0 ? '继续上传' : '上传文档'}
                       </Button>
                   </Upload>
               )}>
             {loading ? (
                 <div className="py-6 text-center"><Spin /></div>
             ) : docs.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-8">
+                /* 保持原来的图标块 + 文案（2026-11-16 一行式版本观感更差，已回退），
+                   只把上下留白从 py-8 收到 py-4：整块高度约 110px，不再空一大片 */
+                <div className="flex flex-col items-center justify-center py-4">
                     <div
                         className="w-12 h-12 rounded-2xl flex items-center justify-center text-[20px] text-[#2F62D8]"
                         style={{ background: 'linear-gradient(135deg, rgba(91,141,239,0.16), rgba(139,92,246,0.10))' }}

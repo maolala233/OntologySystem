@@ -12,10 +12,7 @@ const { Text } = Typography;
 
 const fmtDate = (v?: string | null) =>
     v ? new Date(v).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
-import {
-    ApartmentOutlined,
-    NodeIndexOutlined, RocketOutlined,
-} from '@ant-design/icons';
+import { NodeIndexOutlined, RocketOutlined } from '@ant-design/icons';
 
 import { BuildSummary, pipelineApi } from '../api/pipeline';
 import type { PipelineStatus } from '../api/pipeline';
@@ -30,7 +27,6 @@ import QualityCheckTag from '../features/builder/components/QualityCheckTag';
 import BuildResultsPanel from '../features/builder/components/BuildResultsPanel';
 import { useBuilderStore } from '../features/builder/store';
 import Navbar from '../components/Layout/Navbar';
-import PageHeader from '../components/Layout/PageHeader';
 
 const ProjectOverviewPage: React.FC = () => {
     const { projectId } = useParams<{ projectId: string }>();
@@ -162,9 +158,16 @@ const ProjectOverviewPage: React.FC = () => {
                 .overview-stack > .ant-card + .ant-card {
                     border-top: 1px solid #F0F4FB;
                 }
+                /* 段头留白（2026-11-16）：
+                   ① 段头 6px 上留白 + min-height 44 → 段标题距上方分隔线约 14px。
+                      原来只有 8px，标题贴着分隔线显得挤；
+                   ② 段体上留白 10px（原 16），把"段标题→内容"从 26px 收到 17px ——
+                      文档段下面紧跟表头色带，原来那一大块空白尤其显空。
+                   注意：6px 只加在顶部（padding: 6px 20px 0），底部不加，
+                   否则段标题到内容又会变松。 */
                 .overview-stack > .ant-card > .ant-card-head {
                     min-height: 44px;
-                    padding-inline: 20px;
+                    padding: 6px 20px 0;
                     border-bottom: 0;
                     background: transparent;
                 }
@@ -174,35 +177,10 @@ const ProjectOverviewPage: React.FC = () => {
                     color: #1F2A44;
                 }
                 .overview-stack > .ant-card > .ant-card-body {
-                    padding: 16px 20px;
+                    padding: 10px 20px 16px;
                 }
-                /* 页头固定高度（2026-11-13）：超长项目名 / 描述不允许撑开页头。
-                   PageHeader 外层是 flex-wrap，长名字会先把左侧组撑满整行再换行，
-                   内层的 truncate 就没机会生效——这里强制单行收缩，再对 h1/p 直接兜底 */
-                .overview-head { flex-wrap: nowrap !important; }
-                .overview-head > div:first-child { flex: 1 1 auto !important; min-width: 0 !important; }
-                .overview-head > div:first-child > div { min-width: 0 !important; }
-                .overview-head h1 {
-                    overflow: hidden;
-                    white-space: nowrap;
-                    text-overflow: ellipsis;
-                }
-                .overview-head h1 > span > span:first-child {
-                    /* 项目名单独限宽：比描述更窄一档，长名字不会把状态/领域标签推到很远处 */
-                    max-width: 320px;
-                    overflow: hidden;
-                    text-overflow: ellipsis;
-                    white-space: nowrap;
-                }
-                .overview-head p {
-                    /* 描述限宽（2026-11-13）：铺满整行会让页头成为一整段长文字，
-                       限到 520px 左右读起来是一句说明而不是一条横幅；超出单行省略 */
-                    max-width: 520px;
-                    display: -webkit-box;
-                    -webkit-line-clamp: 1;
-                    -webkit-box-orient: vertical;
-                    overflow: hidden;
-                }
+                /* 项目名与描述的截断改用 Tailwind 的 truncate 直接写在元素上
+                   （2026-11-16 随页头并入卡内），这里不再需要 .overview-head 的兜底 */
             `}</style>
             {/* 顶栏走全站 Navbar（面包屑承载层级与返回） */}
             <Navbar breadcrumbs={[
@@ -210,67 +188,71 @@ const ProjectOverviewPage: React.FC = () => {
                 { title: '我的项目', path: '/my-projects' },
                 { title: projectReady && projectName ? projectName : '项目详情' },
             ]} />
-            <div className="w-full p-4 lg:px-8 2xl:max-w-[1600px] 2xl:mx-auto flex-1 min-h-0 overflow-y-auto scrollbar-stable">
-                {/* 页头走全站 PageHeader（与报告生成 / 系统配置各页同一规格）：
-                    项目身份与主操作直接挂在页面上，不再单独占一张白卡 */}
-                <PageHeader
-                    className="overview-head"
-                    icon={<ApartmentOutlined />}
-                    title={(
-                        /* 项目名可能很长：名字单行截断（悬停看全称），状态/领域标签 shrink-0 不被挤掉，
-                           整行不再换行——否则长名字会把页头撑成三四行，把下面的内容整个推下去 */
-                        <span className="flex min-w-0 items-center gap-2">
-                            <span className="min-w-0 truncate" title={projectReady ? projectName : undefined}>
-                                {projectReady ? projectName : '加载中…'}
-                            </span>
-                            {projectReady && (
-                                <Tag color={statusMeta.color} className="!m-0 shrink-0">{statusMeta.text}</Tag>
-                            )}
-                            {projectReady && domainName && (
-                                <Tag
-                                    className="!m-0 shrink-0 max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap"
-                                    title={domainName}
-                                    style={{ background: 'rgba(91,141,239,0.12)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.28)' }}
-                                >
-                                    {domainName}
-                                </Tag>
-                            )}
-                        </span>
-                    )}
-                    subtitle={
-                        projectReady && projectDescription
-                            ? (
-                                <span className="line-clamp-1" title={projectDescription}>
-                                    {projectDescription}
-                                </span>
-                            )
-                            : undefined
-                    }
-                    extra={(
-                        <>
-                            <span className="whitespace-nowrap text-[12px] text-[#A3ADC2] mr-1">
-                                {projectReady
-                                    ? `创建 ${fmtDate(projectCreatedAt)} · 更新 ${fmtDate(projectUpdatedAt)}`
-                                    : ' '}
-                            </span>
-                            {isExpert && (
-                                <Button icon={<NodeIndexOutlined />}
-                                        onClick={() => navigate(`/projects/${pid}/documents`)}>
-                                    专家模式
-                                </Button>
-                            )}
-                            <Button type="primary" ghost icon={<RocketOutlined />}
-                                    onClick={() => navigate(`/qa?projectId=${pid}`)}>
-                                去问答
-                            </Button>
-                        </>
-                    )}
-                />
-
+            {/* 页面留白与工作台 / 我的项目统一（2026-11-16）：p-4 sm:p-6，不再用 lg:px-8 +
+                2xl:max-w-[1600px] 居中——那套让详情页在宽屏上比同级页面更"缩"，边界也对不齐 */}
+            <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
                 {/* 主体：构建 / 文档 / 结果原本是三张独立白卡，堆在一起像三块板子；
                     现在收进同一张白面，用发丝线分段。子组件自身的 Card 由 .overview-stack
                     压平（只影响本页，专家模式 Tab 里的用法不变） */}
                 <div className="overview-stack mb-4 overflow-hidden rounded-xl border border-[#E7EEF9] bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04),0_12px_26px_-22px_rgba(15,23,42,0.28)]">
+                    {/* 卡内第 0 段：项目身份（2026-11-16）。原来是挂在页面上的 PageHeader，
+                        浮在画布上另起一段，和下面白卡割裂；名称/状态/领域/时间/主操作本质都是
+                        "这个项目的属性"，与构建、文档、结果同属一张白面，因此并进卡里当第一段。
+                        图标块去掉：层级已由面包屑「我的项目 / 项目名」表达，卡内再来一个图标是重复。
+                        内边距 16 / 14 / 20（上/下/左右）：顶部试过 24，整块反而显空，已回退 */}
+                    <div className="border-b border-[#F0F4FB] px-5 pb-3.5 pt-4">
+                        <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+                            <div className="min-w-0 flex-1">
+                                <div className="flex min-w-0 items-center gap-2">
+                                    <h1
+                                        className="m-0 max-w-[240px] min-w-0 truncate text-[18px] font-semibold leading-7 text-[#0F172A]"
+                                        title={projectReady ? projectName : undefined}
+                                    >
+                                        {projectReady ? projectName : '加载中…'}
+                                    </h1>
+                                    {projectReady && (
+                                        <Tag color={statusMeta.color} className="!m-0 shrink-0">
+                                            {statusMeta.text}
+                                        </Tag>
+                                    )}
+                                    {projectReady && domainName && (
+                                        <Tag
+                                            className="!m-0 shrink-0 max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap"
+                                            title={domainName}
+                                            style={{ background: 'rgba(91,141,239,0.12)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.28)' }}
+                                        >
+                                            {domainName}
+                                        </Tag>
+                                    )}
+                                </div>
+                                {projectReady && projectDescription && (
+                                    <p
+                                        className="m-0 mt-1 max-w-[440px] truncate text-[12.5px] leading-5 text-[#66738F]"
+                                        title={projectDescription}
+                                    >
+                                        {projectDescription}
+                                    </p>
+                                )}
+                            </div>
+                            <div className="flex shrink-0 items-center gap-2.5">
+                                <span className="mr-0.5 hidden whitespace-nowrap text-[11.5px] text-[#A3ADC2] md:inline">
+                                    {projectReady
+                                        ? `创建 ${fmtDate(projectCreatedAt)} · 更新 ${fmtDate(projectUpdatedAt)}`
+                                        : ' '}
+                                </span>
+                                {isExpert && (
+                                    <Button icon={<NodeIndexOutlined />}
+                                            onClick={() => navigate(`/projects/${pid}/documents`)}>
+                                        专家模式
+                                    </Button>
+                                )}
+                                <Button type="primary" ghost icon={<RocketOutlined />}
+                                        onClick={() => navigate(`/qa?projectId=${pid}`)}>
+                                    去问答
+                                </Button>
+                            </div>
+                        </div>
+                    </div>
                     <PipelinePanel projectId={pid} signal={pipelineSignal}
                                    onPipeStatus={handlePipeStatus}
                                    published={summary?.is_published}

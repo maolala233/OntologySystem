@@ -71,7 +71,10 @@ const BuildResultsPanel: React.FC<Props> = ({ projectId, summary, checks, publis
 
   return (
     <Card size="small"
-          title={<span className="text-base">本体构建结果</span>}
+          // 段标题字号交给外层统一控制（2026-11-16）：这里原来写死 text-base(16px)，
+          // 比另外两段（构建 / 文档）的 14px 大一号；去掉后跟随卡头样式，
+          // 在其他页面（没有本页的 .overview-stack 覆盖）仍是 antd 默认的 16px，不受影响
+          title={<span>本体构建结果</span>}
           extra={(
             <Space wrap>
               {published && (
