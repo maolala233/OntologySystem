@@ -20,6 +20,7 @@ import json
 import re
 import time
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from app.tasks.celery_app import celery_app
@@ -71,12 +72,137 @@ class _PipelineCancelled(Exception):
 
 
 def _stages_reset() -> list[dict]:
-    return [{"key": k, "label": lbl, "status": "pending", "detail": "", "task_id": None}
+    return [{"key": k, "label": lbl, "status": "pending", "detail": "", "task_id": None,
+             "started_at": None, "finished_at": None, "duration_seconds": None}
             for k, lbl in STAGE_DEFS]
 
 
 def _stage(stages: list[dict], key: str) -> dict:
     return next(s for s in stages if s["key"] == key)
+
+
+# 阶段内子步骤（前端「阶段时间线 + 单一详情区」逐条渲染进度条，2026-11-16 原型）。
+# 只描述「子任务自己写进度键」的阶段：区间是该子步骤在阶段内占的百分比范围，
+# 与 extract_tasks 里 _progress/_phase_progress 的落点一一对应；不一致时最多
+# 显示偏一点，不影响阶段主状态。
+_SUB_STEP_RANGES: dict[str, list[tuple[str, str, int, int]]] = {
+    "schema": [
+        ("read", "读取切片", 0, 5),
+        ("extract", "批次抽取", 5, 55),
+        ("assemble", "骨架装配", 55, 65),
+        ("structure", "结构映射", 65, 82),
+        ("stitch", "跨切片缝合", 82, 92),
+        ("write", "写入画布与行表", 92, 100),
+    ],
+    "instances": [
+        ("read", "读取切片", 0, 5),
+        ("extract", "批次抽取", 5, 80),
+        ("enrich", "结构展开与反向补全", 80, 85),
+        ("write", "写入画布与行表", 85, 100),
+    ],
+}
+# 静默段（无子任务、由管线自己写子进度键）：业务规则挖掘 / 能力问题评测
+_SILENT_STEPS: dict[str, list[tuple[str, str]]] = {
+    "axioms": [("scan", "公理扫描"), ("business_rules", "业务规则挖掘")],
+    "adjudicate": [("adjudicate", "AI 结果审查"), ("cq_eval", "能力问题评测")],
+}
+
+
+def _step(key: str, label: str, state: str, percent: int) -> dict:
+    return {"key": key, "label": label, "state": state,
+            "percent": max(0, min(100, int(percent)))}
+
+
+def _phase_steps(stage_key: str, current: str, state: str = "running",
+                 percent: int = 0) -> list[dict]:
+    """静默段子步骤清单：current 之前的 done，之后的 pending。"""
+    out: list[dict] = []
+    seen = False
+    for key, label in _SILENT_STEPS.get(stage_key) or []:
+        if key == current:
+            out.append(_step(key, label, state, percent))
+            seen = True
+        elif not seen:
+            out.append(_step(key, label, "done", 100))
+        else:
+            out.append(_step(key, label, "pending", 0))
+    return out
+
+
+def build_sub_steps(stage_key: str, sub: Optional[dict]) -> list[dict]:
+    """把子任务进度摊平成阶段内子步骤（API/SSE 共用，前端详情区直接渲染）。
+
+    优先用进度键里显式写的 stats.steps（静默段）；否则按阶段定义的范围
+    从 percent 反推每步状态——子任务本身不需要知道时间线长什么样。
+    """
+    sub = sub or {}
+    stats = sub.get("stats") if isinstance(sub.get("stats"), dict) else {}
+    explicit = stats.get("steps") if isinstance(stats, dict) else None
+    if isinstance(explicit, list) and explicit:
+        return explicit
+    try:
+        pct = int(sub.get("percent"))
+    except (TypeError, ValueError):
+        pct = 0
+    status = str(sub.get("status") or "running")
+    defs = _SUB_STEP_RANGES.get(stage_key)
+    if not defs:
+        label = next((lbl for k, lbl in STAGE_DEFS if k == stage_key), stage_key)
+        state = {"completed": "done", "failed": "failed",
+                 "cancelled": "cancelled"}.get(status, "running")
+        return [_step(stage_key, label, state, 100 if state == "done" else pct)]
+    steps: list[dict] = []
+    for key, label, lo, hi in defs:
+        if status == "completed" or pct >= hi:
+            steps.append(_step(key, label, "done", 100))
+        elif pct <= lo:
+            steps.append(_step(key, label, "pending", 0))
+        else:
+            state = {"failed": "failed", "cancelled": "cancelled"}.get(status, "running")
+            steps.append(_step(key, label, state,
+                               int((pct - lo) * 100 / max(1, hi - lo))))
+    if status in ("failed", "cancelled") and not any(
+            s["state"] == status for s in steps):
+        # 百分比正好落在边界（如 5%）时没有「进行中」步：把第一个未开始的标成失败/取消
+        for s in steps:
+            if s["state"] == "pending":
+                s["state"] = status
+                break
+    return steps
+
+
+def _sync_stage_times(stages: list[dict], current: Optional[str] = None) -> None:
+    """补齐每阶段 started_at/finished_at/duration_seconds（UTC ISO）。
+
+    只在进度快照前按当前 status 补一次，不要求每个状态赋值点都记得写时间：
+    running → 起跑时间；done/failed/cancelled → 收尾时间与耗时；
+    skipped/pending 没有实际执行，保持为空（前端显示「—」）。
+
+    current：管线当前阶段。有的阶段先置 done 再做收尾（公理扫描后的业务规则
+    挖掘、裁决后的能力问题评测）——只对 current 刷新收尾时间，后续阶段推进后
+    即冻结，既不丢收尾耗时也不会被心跳无限拉长。
+    """
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    for st in stages:
+        status = st.get("status")
+        if status == "running":
+            if not st.get("started_at"):
+                st["started_at"] = now
+            st["finished_at"] = None
+            st["duration_seconds"] = None
+        elif status in ("done", "failed", "cancelled"):
+            if not st.get("started_at"):
+                st["started_at"] = now
+            if not st.get("finished_at") or st.get("key") == current:
+                st["finished_at"] = now
+            if st.get("duration_seconds") is None or st.get("key") == current:
+                try:
+                    t0 = datetime.fromisoformat(str(st["started_at"]))
+                    t1 = datetime.fromisoformat(str(st["finished_at"]))
+                    st["duration_seconds"] = round(
+                        max(0.0, (t1 - t0).total_seconds()), 1)
+                except (TypeError, ValueError):
+                    pass
 
 
 def _sub_stage_message(task_id: str, stage_key: str) -> str:
@@ -89,15 +215,17 @@ def _sub_stage_message(task_id: str, stage_key: str) -> str:
 
 
 def _sub_stage_progress(task_id: str, stage_key: str, percent: int,
-                        message: str) -> None:
+                        message: str, steps: Optional[list[dict]] = None) -> None:
     """把静默段写进当前阶段的子进度键（前端「当前阶段」区域直接展示）。
 
     业务规则挖掘/能力问题评测没有独立阶段，但也不能让用户看着阶段完成文案
-    干等；写完后 SSE 会把消息带进现有子进度区，不用改前端。
+    干等；写完后 SSE 会把消息带进现有子进度区，不改前端也能看到消息。
+    steps：阶段内子步骤清单（时间线详情区逐条进度条），由 _phase_steps 生成；
+    目前前端尚未消费，仅随进度键下发（2026-11-16 按原型预留）。
     """
     try:
         set_task_progress(f"{task_id}:{stage_key}", stage_key, percent, message,
-                          {}, queue="extract")
+                          {"steps": steps} if steps else {}, queue="extract")
     except Exception:  # noqa: BLE001 —— 进度写入失败不影响管线
         pass
 
@@ -173,6 +301,7 @@ def _run_stage_task(task, stage_key: str, stages: list[dict], task_id: str,
     否则冲突检测/自检修复"一闪而过"用户根本不知道它们干了什么。"""
     sub_id = f"{task_id}:{stage_key}"
     _stage(stages, stage_key)["task_id"] = sub_id
+    _sync_stage_times(stages, current=stage_key)
     # 立即重推一份快照：上面的 task_id 只改了内存里的 stages，Redis 里停留在
     # 子任务入场前的版本（task_id=null）——cancel 端点照旧快照遍历会整段漏写
     # 本阶段的子任务取消键（2026-11-10"停止了还在跑"根因之一）。重推失败不影响阶段。
@@ -283,6 +412,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
 
     def _prog(stage_key: str, msg: str = "", pct_in_stage: float | None = None,
               status_change: bool = True) -> None:
+        _sync_stage_times(stages, current=stage_key)
         base = _stage_index[stage_key]
         frac = (pct_in_stage if pct_in_stage is not None else (1.0 if status_change else 0.0))
         percent = min(99, int((base + max(0.0, min(1.0, frac))) * 100 / len(STAGE_DEFS)))
@@ -387,6 +517,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 # 仍能保留至少到最近 60s 的耗时与 LLM 调用现场
                 if _prof is not None:
                     _prof.write_snapshot()
+                _sync_stage_times(stages)
                 set_task_progress(task_id, cur.get("stage") or "",
                                   int(cur.get("percent") or 0),
                                   cur.get("message") or "",
@@ -833,7 +964,9 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 #    界面沿用「公理扫描完成：…」那块区域展示，不新增阶段/前端组件。
                 _axiom_msg = _sub_stage_message(task_id, "axioms")
                 _br_prefix = f"{_axiom_msg}；" if _axiom_msg else ""
-                _sub_stage_progress(task_id, "axioms", 0, f"{_br_prefix}业务规则挖掘中…")
+                _sub_stage_progress(
+                    task_id, "axioms", 0, f"{_br_prefix}业务规则挖掘中…",
+                    steps=_phase_steps("axioms", "business_rules"))
                 _prog("axioms", f"{_br_prefix}业务规则挖掘中…")
                 try:
                     _fresh_read()
@@ -846,17 +979,21 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                     if rules_res.get("skipped") and not n_rules:
                         _sub_stage_progress(
                             task_id, "axioms", 100,
-                            f"{_br_prefix}业务规则挖掘结束（{str(rules_res['skipped'])[:40]}）")
+                            f"{_br_prefix}业务规则挖掘结束（{str(rules_res['skipped'])[:40]}）",
+                            steps=_phase_steps("axioms", "business_rules", "skipped", 100))
                     else:
                         st["detail"] += f"，业务规则 {n_rules} 条"
                         _sub_stage_progress(
                             task_id, "axioms", 100,
-                            f"{_br_prefix}业务规则挖掘完成：新增规则 {n_rules} 条")
+                            f"{_br_prefix}业务规则挖掘完成：新增规则 {n_rules} 条",
+                            steps=_phase_steps("axioms", "business_rules", "done", 100))
                     _prog("axioms", st["detail"])
                 except Exception as e:  # noqa: BLE001
                     summary["business_rules"] = {"rules_added": 0, "skipped": str(e)[:120]}
-                    _sub_stage_progress(task_id, "axioms", 100,
-                                        f"{_br_prefix}业务规则挖掘失败（不影响公理结果）")
+                    _sub_stage_progress(
+                        task_id, "axioms", 100,
+                        f"{_br_prefix}业务规则挖掘失败（不影响公理结果）",
+                        steps=_phase_steps("axioms", "business_rules", "failed", 100))
                     _prog("axioms", st["detail"])
                 profile_stage_end("axioms", status=st["status"], detail=st["detail"])
 
@@ -907,7 +1044,9 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             #    任一环节失败都不影响构建终态 ──
             profile_stage_begin("cq_eval", "能力问题评测", tracked=False)
             # 进度写进「AI 结果审查」的阶段子进度区（与业务规则挖掘同一展示位）
-            _sub_stage_progress(task_id, "adjudicate", 0, "能力问题评测中…")
+            _sub_stage_progress(
+                task_id, "adjudicate", 0, "能力问题评测中…",
+                steps=_phase_steps("adjudicate", "cq_eval"))
             _prog("adjudicate", "能力问题评测中…")
             cq_note = ""
             try:
@@ -945,19 +1084,23 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                                    + ("" if ok else "（部分问题暂无证据，可补充文档后重新构建）"))
                         _sub_stage_progress(
                             task_id, "adjudicate", 100,
-                            f"能力问题评测完成：通过 {ev.answerable_count}/{ev.total_cq}")
+                            f"能力问题评测完成：通过 {ev.answerable_count}/{ev.total_cq}",
+                            steps=_phase_steps("adjudicate", "cq_eval", "done", 100))
                     else:
-                        _sub_stage_progress(task_id, "adjudicate", 100,
-                                            "能力问题评测结束：无评测结果")
+                        _sub_stage_progress(
+                            task_id, "adjudicate", 100, "能力问题评测结束：无评测结果",
+                            steps=_phase_steps("adjudicate", "cq_eval", "done", 100))
                 else:
-                    _sub_stage_progress(task_id, "adjudicate", 100,
-                                        "能力问题评测结束：无能力问题清单")
+                    _sub_stage_progress(
+                        task_id, "adjudicate", 100, "能力问题评测结束：无能力问题清单",
+                        steps=_phase_steps("adjudicate", "cq_eval", "skipped", 100))
             except Exception as e:  # noqa: BLE001
                 from app.core.logging import logger
 
                 logger.warning(f"[pipeline] CQ 评测失败 project={project_id}: {e}")
-                _sub_stage_progress(task_id, "adjudicate", 100,
-                                    "能力问题评测失败（不影响构建结果）")
+                _sub_stage_progress(
+                    task_id, "adjudicate", 100, "能力问题评测失败（不影响构建结果）",
+                    steps=_phase_steps("adjudicate", "cq_eval", "failed", 100))
             _prog("adjudicate", f"能力问题评测完成{cq_note}" if cq_note else "能力问题评测结束")
             profile_stage_end("cq_eval", status="done", detail=cq_note or "完成")
 
@@ -1015,6 +1158,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
         for st in stages:
             if st["status"] == "running":
                 st["status"] = "cancelled"
+        _sync_stage_times(stages)
         if _prof is not None:
             _prof.status = "cancelled"
         finish_task_progress(task_id, "cancelled", "已取消：重新构建将从被中断的阶段继续",
@@ -1028,6 +1172,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             for st in stages:
                 if st["status"] == "running":
                     st["status"] = "cancelled"
+            _sync_stage_times(stages)
             if _prof is not None:
                 _prof.status = "cancelled"
             finish_task_progress(task_id, "cancelled", "已停止（用户取消）",
@@ -1039,6 +1184,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             if st["status"] == "running":
                 st["status"] = "failed"
                 st["detail"] = reason  # 红格子上直接写人话原因，不用点开猜
+        _sync_stage_times(stages)
         if _prof is not None:
             _prof.status = "failed"
             _prof.error = reason
@@ -1413,7 +1559,7 @@ def release_pipeline_lock(project_id: int) -> None:
         pass
 
 
-__all__ = ["STAGE_DEFS", "DEPTH_PROFILES", "run_pipeline", "dispatch_pipeline_run",
+__all__ = ["STAGE_DEFS", "DEPTH_PROFILES", "build_sub_steps", "run_pipeline", "dispatch_pipeline_run",
            "run_scheduled_pipeline", "cancel_scheduled_pipeline",
            "pipeline_scheduled_at", "pipeline_schedule_for", "pipeline_scheduled_info",
            "pipeline_running_task_id", "release_pipeline_lock",

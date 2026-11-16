@@ -16,6 +16,7 @@ from app.core.deps import get_current_user, get_db, require_project_role
 from app.core.exceptions import APIError, NotFoundError
 from app.infrastructure.database import Project, ReviewItem, User
 from app.tasks.pipeline_tasks import (
+    build_sub_steps,
     cancel_scheduled_pipeline,
     dispatch_pipeline_run,
     pipeline_last_task_id,
@@ -158,10 +159,22 @@ def pipeline_status_endpoint(
         return {"status": "idle", "task_id": None, "stages": [], "reviews": summary}
     if int((prog.get("stats") or {}).get("project_id") or -1) != project_id:
         raise NotFoundError(f"任务不存在: {tid}")  # 不泄露他项目任务
-    return {"status": prog.get("status"), "task_id": tid,
-            "stage": prog.get("stage"), "percent": prog.get("percent"),
-            "message": prog.get("message"), "stages": (prog.get("stats") or {}).get("stages") or [],
-            "stats": prog.get("stats") or {}, "reviews": summary}
+    stage = prog.get("stage")
+    sub = get_task_progress(f"{tid}:{stage}") if tid and stage else None
+    out = {"status": prog.get("status"), "task_id": tid,
+           "stage": stage, "percent": prog.get("percent"),
+           "message": prog.get("message"),
+           "stages": (prog.get("stats") or {}).get("stages") or [],
+           "stats": prog.get("stats") or {}, "reviews": summary}
+    if sub is not None:
+        # 与 SSE 帧同构（2026-11-16）：首屏直接带子阶段与子步骤，断流时详情区也不空白
+        out["sub"] = {"stage": stage,
+                      "percent": sub.get("percent"),
+                      "message": sub.get("message"),
+                      "status": sub.get("status"),
+                      "stats": sub.get("stats") or {},
+                      "steps": build_sub_steps(stage, sub)}
+    return out
 
 
 @router.get("/events")
@@ -238,7 +251,9 @@ async def pipeline_events(
                     prog = {**prog, "sub": {"stage": stage,
                                             "percent": sub.get("percent"),
                                             "message": sub.get("message"),
-                                            "stats": sub.get("stats") or {}}}
+                                            "status": sub.get("status"),
+                                            "stats": sub.get("stats") or {},
+                                            "steps": build_sub_steps(stage, sub)}}
                 line = _json.dumps(prog, ensure_ascii=False)
                 if line != last_sent:
                     last_sent = line
