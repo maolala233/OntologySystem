@@ -16,6 +16,8 @@ from app.core.deps import get_current_user, get_db, require_project_role
 from app.core.exceptions import APIError, NotFoundError
 from app.infrastructure.database import Project, ReviewItem, User
 from app.tasks.pipeline_tasks import (
+    PIPELINE_STALE_MESSAGE,
+    PIPELINE_STALE_SECONDS,
     build_sub_steps,
     cancel_scheduled_pipeline,
     dispatch_pipeline_run,
@@ -127,13 +129,18 @@ def pipeline_status_endpoint(
         if not task_id:
             release_pipeline_lock(project_id)
             tid = None
-    # 心跳死亡检测：进度键还停在 running/queued 但超过 15 分钟无更新 =
-    # worker 已死（重启/掉线）——清锁返回 idle，否则"一键构建"被死锁假状态
-    # 永久挡住、页面永远转圈（2026-11-05 项目 249 实测）
+    # 心跳死亡检测：进度键还停在 running/queued 但超过 3 分钟无更新 =
+    # worker 已死（重启/掉线）——落终态并清锁，否则"一键构建"被死锁假状态
+    # 永久挡住、页面永远转圈（2026-11-05 项目 249 实测；2026-11-16 重启实测
+    # 15 分钟阈值太长，改成 3 分钟——心跳每 60s 刷新一次，留 2 次容错）
     if prog is not None and prog.get("status") in ("running", "queued") \
-            and int(time.time()) - int(prog.get("updated_at") or 0) > 900:
+            and int(time.time()) - int(prog.get("updated_at") or 0) > PIPELINE_STALE_SECONDS:
         # 仅当死任务正是锁持有者时才清锁（显式查询更老任务不动当前运行）
         if pipeline_running_task_id(project_id) == tid:
+            try:
+                finish_task_progress(tid, "cancelled", PIPELINE_STALE_MESSAGE)
+            except Exception:  # noqa: BLE001 —— 标终态失败不阻断清锁
+                pass
             release_pipeline_lock(project_id)
         tid = None
         prog = None
@@ -146,7 +153,7 @@ def pipeline_status_endpoint(
         last_prog = get_task_progress(last_tid) if last_tid else None
         if last_prog and int((last_prog.get("stats") or {}).get("project_id") or -1) == project_id:
             stale_running = last_prog.get("status") in ("running", "queued") \
-                and int(time.time()) - int(last_prog.get("updated_at") or 0) > 900
+                and int(time.time()) - int(last_prog.get("updated_at") or 0) > PIPELINE_STALE_SECONDS
             if not stale_running:
                 tid, prog = last_tid, last_prog
     if prog is None:

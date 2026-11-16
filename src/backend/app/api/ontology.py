@@ -371,10 +371,10 @@ def get_project(project_id: int, current_user: User = Depends(get_current_user),
                          if isinstance(c, dict) and c.get("label")])
     from sqlalchemy import func as sa_func
 
-    from app.tasks.pipeline_tasks import pipeline_running_task_id, pipeline_schedule_for
+    from app.tasks.pipeline_tasks import pipeline_build_active, pipeline_schedule_for
     # 判定顺序与 /my 同口径（2026-11-09）：构建中/待构建 > 已发布 > 已构建 > 草稿
     sched_info = pipeline_schedule_for(project.id) if project.id is not None else None
-    if project.id is not None and pipeline_running_task_id(project.id):
+    if project.id is not None and pipeline_build_active(project.id):
         item.status = "building"
     elif sched_info:
         item.status = "scheduled"

@@ -130,6 +130,41 @@ def _start_schedule_poller():
 _start_schedule_poller()
 logger.info("[startup] 定时构建轮询线程已启动；开始创建 FastAPI app 并注册路由…")
 
+
+def _start_pipeline_lock_reconcile():
+    """启动自检：服务重启后核对管线运行锁与 Celery 实际任务，立刻收尾死锁。
+
+    compose 重建 backend/worker 会把正在跑的任务杀掉，但 Redis 锁还在；
+    只等 3 分钟看门狗会让页面一直显示「构建中」。这里等 worker 上线后查
+    一次 Celery active/reserved/scheduled：任务不在 → 判定死锁并收尾。
+    worker 一直没上线则放弃，交给看门狗兜底。
+    """
+    import threading as _threading
+
+    def _worker():
+        from app.tasks.pipeline_tasks import reconcile_pipeline_locks
+
+        for _ in range(6):
+            time.sleep(15)
+            try:
+                res = reconcile_pipeline_locks()
+            except Exception as e:  # noqa: BLE001 —— 自检失败不影响启动
+                logger.warning(f"[startup] 管线锁自检失败：{e}")
+                continue
+            if int(res.get("workers") or 0) > 0:
+                logger.info(
+                    "[startup] 管线锁自检完成：worker=%s，清理 %s 个，保留 %s 个",
+                    res.get("workers"), res.get("released"), res.get("kept"))
+                return
+        logger.info("[startup] 管线锁自检跳过：worker 未上线（由 3 分钟看门狗兜底）")
+
+    _threading.Thread(target=_worker, daemon=True,
+                      name="pipeline-lock-reconcile").start()
+
+
+_start_pipeline_lock_reconcile()
+logger.info("[startup] 管线锁启动自检线程已启动")
+
 app = FastAPI(title="AI 本体构建系统 API", version="1.0.0")
 
 

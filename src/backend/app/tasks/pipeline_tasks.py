@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 import uuid
@@ -42,6 +43,10 @@ _LAST_KEY = "pipeline:last:{project_id}"
 _LAST_TTL = 7 * 24 * 3600
 _SCHEDULE_KEY = "pipeline:schedule:{project_id}"   # 定时构建登记（未开跑）
 _SCHEDULE_TTL = 7 * 24 * 3600
+# 进度多久没更新视为 worker 已死：心跳每 60s 刷新一次，留 2 次容错。
+# 旧值 900s 会让服务重启后的项目在列表里继续显示「构建中」最多 15 分钟。
+PIPELINE_STALE_SECONDS = int(os.environ.get("PIPELINE_STALE_SECONDS", "180"))
+PIPELINE_STALE_MESSAGE = "构建已中断：超过 3 分钟没有进度（服务重启或 worker 掉线）"
 
 STAGE_DEFS: list[tuple[str, str]] = [
     ("parse", "解析文档"),
@@ -1418,8 +1423,16 @@ def dispatch_pipeline_run(project_id: int, trigger_user_id: Optional[int] = None
     existing = r.get(key)
     if existing:
         prog = get_task_progress(existing)
-        if prog is not None and prog.get("status") not in ("completed", "failed", "cancelled"):
+        # 锁 + 进度新鲜度：worker 崩溃/服务重启留下的 running 进度超过 3 分钟
+        # 不再挡新构建，否则项目要等 6h 锁过期或打开状态页才能重新发起
+        if _progress_alive(prog):
             return {"mode": "existing", "task_id": existing, "already_running": True}
+        # 死任务落终态：页面按最近任务回落时不会继续显示「构建中」
+        if prog is not None and prog.get("status") in ("running", "queued"):
+            try:
+                finish_task_progress(existing, "cancelled", PIPELINE_STALE_MESSAGE)
+            except Exception:  # noqa: BLE001
+                pass
         r.delete(key)  # 残留锁（worker 崩溃未清理）→ 重新发起
 
     task_id = f"pipeline-{uuid.uuid4().hex[:12]}"
@@ -1654,7 +1667,15 @@ def pipeline_active_project_ids() -> tuple[set[int], set[int]]:
         r = _redis()
         for key in r.scan_iter(match="pipeline:running:*", count=500):
             tail = str(key).rsplit(":", 1)[-1]
-            if tail.isdigit():
+            if not tail.isdigit():
+                continue
+            # 与状态端点同口径：服务重启留下的死锁不能让列表一直显示「构建中」
+            tid = r.get(key)
+            try:
+                prog = get_task_progress(tid) if tid else None
+            except Exception:  # noqa: BLE001 —— Redis 抖动：按构建中处理
+                prog = None
+            if _progress_alive(prog):
                 running.add(int(tail))
         for key in r.scan_iter(match="pipeline:schedule:*", count=500):
             # 同前缀还有 {id}:task 的携带键，只取纯数字的那一类
@@ -1674,11 +1695,109 @@ def pipeline_running_task_id(project_id: int) -> Optional[str]:
         return None
 
 
-def pipeline_build_active(project_id: int, stale_seconds: int = 900) -> bool:
+def reconcile_pipeline_locks(stale_seconds: int = PIPELINE_STALE_SECONDS) -> dict:
+    """服务启动自检：核对运行锁与 Celery 实际在跑的任务，立刻收尾死锁。
+
+    服务重启（compose 重建 backend/worker）后，被杀掉的任务不会再写心跳，
+    但 Redis 锁仍在——只靠 3 分钟看门狗会让页面持续显示「构建中」。这里
+    在启动阶段查询 Celery 的 active/reserved/scheduled：
+
+    - worker 在线且任务在其中 → 仍在跑，保留锁
+    - worker 在线但任务不在任何队列 → 死锁，标 cancelled + 释放
+    - worker 全不在线 → 无法判断是否会被重新投递，只清理心跳已超时的
+    """
+    from app.tasks.celery_app import celery_app
+
+    r = _redis()
+    guard = "pipeline:reconcile:guard"
+    try:
+        if not r.set(guard, "1", nx=True, ex=90):
+            return {"skipped": "another_instance"}
+    except Exception:  # noqa: BLE001 —— 守卫失败不阻断自检
+        pass
+    try:
+        insp = celery_app.control.inspect(timeout=2.0)
+        active = insp.active() or {}
+        reserved = insp.reserved() or {}
+        scheduled = insp.scheduled() or {}
+        workers = len(set(active) | set(reserved) | set(scheduled))
+        live: set[str] = set()
+        for mapping in (active, reserved):
+            for tasks in mapping.values():
+                for t in tasks or []:
+                    tid = t.get("id") if isinstance(t, dict) else None
+                    if tid:
+                        live.add(str(tid))
+        for tasks in scheduled.values():
+            for t in tasks or []:
+                if not isinstance(t, dict):
+                    continue
+                tid = (t.get("request") or {}).get("id") or t.get("id")
+                if tid:
+                    live.add(str(tid))
+
+        released: list[int] = []
+        kept: list[int] = []
+        unknown: list[int] = []
+        now = int(time.time())
+        for key in list(r.scan_iter("pipeline:running:*")):
+            tail = str(key).rsplit(":", 1)[-1]
+            if not tail.isdigit():
+                continue
+            pid = int(tail)
+            tid = r.get(key)
+            prog = get_task_progress(tid) if tid else None
+            status = (prog or {}).get("status")
+            if status in ("completed", "failed", "cancelled"):
+                r.delete(key)
+                released.append(pid)
+                continue
+            if tid and str(tid) in live:
+                kept.append(pid)
+                continue
+            if workers == 0:
+                idle = now - int((prog or {}).get("updated_at") or 0)
+                if idle <= stale_seconds:
+                    unknown.append(pid)  # 刚重启、worker 未上线：交给看门狗
+                    continue
+            # worker 在线但任务不在任何队列（或心跳已超时）→ 死锁
+            if tid and status in ("running", "queued"):
+                try:
+                    finish_task_progress(
+                        tid, "cancelled", "构建已中断：服务重启后任务未恢复（启动自检已清理）")
+                except Exception:  # noqa: BLE001
+                    pass
+            r.delete(key)
+            released.append(pid)
+        return {"workers": workers, "released": released, "kept": kept,
+                "unknown": unknown}
+    finally:
+        try:
+            r.delete(guard)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _progress_alive(prog: Optional[dict],
+                    stale_seconds: int = PIPELINE_STALE_SECONDS) -> bool:
+    """进度键是否代表还活着的任务（心跳 60s，默认 180s 容错）。
+
+    缺失（刚入队尚未写 / 24h 后过期）按存活处理；终态或连续 3 次心跳没更新
+    视为死亡——服务重启/worker 掉线后不能继续把项目显示成「构建中」。
+    """
+    if not prog:
+        return True
+    if prog.get("status") in ("completed", "failed", "cancelled"):
+        return False
+    return int(time.time()) - int(prog.get("updated_at") or 0) <= stale_seconds
+
+
+def pipeline_build_active(project_id: int,
+                          stale_seconds: int = PIPELINE_STALE_SECONDS) -> bool:
     """项目是否正在构建（文档上传/删除的互斥判定）。
 
     运行锁 + 进度新鲜度双重判定：只看锁会在 worker 崩溃后把项目误锁 6 小时，
-    文档接口被无辜拒绝；进度 15 分钟不更新与状态端点的看门狗同口径，视为死任务。
+    文档接口被无辜拒绝；进度 3 分钟不更新与状态端点的看门狗同口径，视为死任务。
     进度键缺失（24h 后过期）时保守按构建中处理——锁最长 6h，状态页/锁过期会清理。
     """
     tid = pipeline_running_task_id(project_id)
@@ -1688,11 +1807,7 @@ def pipeline_build_active(project_id: int, stale_seconds: int = 900) -> bool:
         prog = get_task_progress(tid)
     except Exception:  # noqa: BLE001 —— Redis 抖动：保守拒绝
         return True
-    if prog is None:
-        return True
-    if prog.get("status") in ("completed", "failed", "cancelled"):
-        return False
-    return int(time.time()) - int(prog.get("updated_at") or 0) <= stale_seconds
+    return _progress_alive(prog, stale_seconds)
 
 
 def pipeline_last_task_id(project_id: int) -> Optional[str]:
@@ -1714,4 +1829,5 @@ __all__ = ["STAGE_DEFS", "DEPTH_PROFILES", "build_sub_steps", "run_pipeline", "d
            "run_scheduled_pipeline", "cancel_scheduled_pipeline",
            "pipeline_scheduled_at", "pipeline_schedule_for", "pipeline_scheduled_info",
            "pipeline_running_task_id", "pipeline_build_active",
+           "reconcile_pipeline_locks",
            "release_pipeline_lock", "pipeline_active_project_ids"]
