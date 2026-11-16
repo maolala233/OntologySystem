@@ -1,32 +1,39 @@
 /**
- * 一键构建管线进度面板（新手简化 2026-11）：四步快速开始清单 + 七阶段实时进度。
- * - 进度只展示实时计数（解析 x/y、切片 x/y、过闸 n 条），不展示预估时间；
- * - 任务 id 存 Redis 锁 + localStorage，切页/刷新不丢（BuilderPage 常驻挂载，不随 Tab 卸载）；
+ * 一键构建管线进度面板（2026-11 新手简化；2026-11-16 按项目详情原型重排）。
+ *
+ * 展示形式收敛为一层：「阶段时间线 + 单一详情区」——
+ * - 八阶段时间线可点、可固定，默认跟随当前运行阶段；
+ * - 详情区展示该阶段主进度、阶段内子步骤（后端 build_sub_steps 下发 steps）、
+ *   实时计数与耗时；构建结束后默认落在「本次构建」汇总（各阶段耗时）；
+ * - 原来的「三步清单 + 主进度条 + 阶段格子 + 子进度框」四层表达合并掉。
+ *
+ * 数据依赖后端 8c3f0ca：stages 带 started_at/finished_at/duration_seconds，
+ * status 与 SSE 的 sub 帧带 status/steps（旧任务没有这些字段，显示「—」）。
+ * - 不展示预估时间（用户反馈估算不准反成噪音，已移除）；
+ * - 任务 id 存 Redis 锁 + localStorage，切页/刷新不丢（BuilderPage 常驻挂载）；
  * - 完成后显示「还剩 N 个高优先级结果等你确认」并直跳审核 Tab。
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { message, confirmModal } from '../../../shared/feedback';
 import InlineNotice from '../../../components/InlineNotice';
-import { Button, Card, Popconfirm, Progress, Space, Steps, Tag } from 'antd';
+import { Button, Card, Popconfirm, Space, Tag } from 'antd';
 import {
-    CheckCircleOutlined, CloseCircleOutlined, MinusCircleOutlined,
-    SyncOutlined, RetweetOutlined, PauseCircleOutlined,
-    ClockCircleOutlined, ThunderboltOutlined,
+    CheckCircleOutlined, CheckOutlined, CloseCircleOutlined, CloseOutlined,
+    MinusCircleOutlined, MinusOutlined,
+    SyncOutlined, RetweetOutlined, PauseCircleOutlined, ClockCircleOutlined,
 } from '@ant-design/icons';
 import { fmtSchedule } from '../../../shared/schedule';
 
 import { PipelineStageState, PipelineStatus, pipelineApi } from '../../../api/pipeline';
-
-const QUICK_STEPS = ['上传文档', '一键构建', '查看结果与发布'];
 
 /** 最近一次管线的 task_id（localStorage，锁过期后仍可查 24h 内历史状态） */
 const lastTaskKey = (pid: number) => `pipeline:last:${pid}`;
 
 interface Props {
     projectId: number;
-    /** 项目已发布（步骤条走到「发布」并展示版本+导出） */
+    /** 项目已发布（历史保留，当前面板不再渲染三步清单） */
     published?: boolean;
-    /** 已有构建结果（步骤条走到「查看结果」） */
+    /** 已有构建结果：决定主按钮叫「一键构建」还是「重新构建」 */
     built?: boolean;
     /** 外部触发重查（上传完成等） */
     signal?: number;
@@ -37,8 +44,8 @@ interface Props {
 }
 
 // 状态图标配色收敛到冷调（2026-11-16）：原来是 Tailwind 语义色（绿 #10b981 /
-// 红 #ef4444 / 橙 #f59e0b），饱和度比全站的其他颜色高一档，一进页面视觉重心
-// 全落在这几个圆点上。现按「品牌蓝=进行中、冷青=已完成、冷调红=失败、琥珀=中止」重排
+// 红 #ef4444 / 橙 #f59e0b），饱和度比全站的其他颜色高一档。现按「品牌蓝=进行中、
+// 冷青=已完成、冷调红=失败、琥珀=中止」重排
 const STATUS_ICON: Record<string, React.ReactNode> = {
     done: <CheckCircleOutlined style={{ color: '#1B87AD' }} />,
     failed: <CloseCircleOutlined style={{ color: '#B42318' }} />,
@@ -48,12 +55,86 @@ const STATUS_ICON: Record<string, React.ReactNode> = {
     pending: <span style={{ color: '#CBD5E5' }}>○</span>,
 };
 
-const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, published, built, onPipeStatus }) => {
+const STAGE_STATUS_TEXT: Record<string, string> = {
+    done: '完成', running: '进行中', pending: '待开始',
+    failed: '失败', skipped: '已跳过', cancelled: '已中止',
+};
+
+// 时间线圆点底色（冷调）：进行中实心蓝 + 脉冲，完成淡青，失败淡红，中止淡琥珀
+const DOT_TONE: Record<string, { bg: string; color: string }> = {
+    done: { bg: 'rgba(27,135,173,0.12)', color: '#1B87AD' },
+    running: { bg: '#5B8DEF', color: '#FFFFFF' },
+    failed: { bg: 'rgba(180,35,24,0.10)', color: '#B42318' },
+    cancelled: { bg: 'rgba(242,185,80,0.18)', color: '#B8790F' },
+    skipped: { bg: '#F3F5F9', color: '#A3ADC2' },
+    pending: { bg: '#F3F5F9', color: '#C2C7CF' },
+};
+
+const STATUS_TAG_STYLE: Record<string, React.CSSProperties> = {
+    done: { background: 'rgba(27,135,173,0.10)', color: '#1B87AD', borderColor: 'rgba(27,135,173,0.24)' },
+    running: { background: 'rgba(91,141,239,0.12)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.28)' },
+    failed: { background: 'rgba(180,35,24,0.10)', color: '#B42318', borderColor: 'rgba(180,35,24,0.22)' },
+    cancelled: { background: 'rgba(242,185,80,0.20)', color: '#B8790F', borderColor: 'rgba(242,185,80,0.45)' },
+    skipped: { background: 'rgba(15,23,42,0.05)', color: '#8A94AB', borderColor: 'rgba(15,23,42,0.08)' },
+    pending: { background: 'rgba(15,23,42,0.05)', color: '#8A94AB', borderColor: 'rgba(15,23,42,0.08)' },
+};
+
+const BAR_BG: Record<string, string> = {
+    running: 'linear-gradient(90deg,#84ACF7,#5B8DEF)',
+    done: 'linear-gradient(90deg,#6FC3CF,#1B87AD)',
+    failed: 'linear-gradient(90deg,#E88A80,#B42318)',
+    cancelled: 'linear-gradient(90deg,#F2CB87,#B8790F)',
+    skipped: '#D7DDE8',
+    pending: '#D7DDE8',
+};
+
+/** 秒 → 「3 分 12 秒」；空值「—」 */
+const fmtDuration = (sec?: number | null): string => {
+    if (typeof sec !== 'number' || !Number.isFinite(sec) || sec < 0) return '—';
+    const t = Math.round(sec);
+    if (t < 60) return `${t} 秒`;
+    const m = Math.floor(t / 60);
+    const r = t % 60;
+    if (m < 60) return r ? `${m} 分 ${String(r).padStart(2, '0')} 秒` : `${m} 分`;
+    return `${Math.floor(m / 60)} 小时 ${m % 60} 分`;
+};
+
+const tsOf = (iso?: string | null): number | null => {
+    if (!iso) return null;
+    const t = new Date(iso).getTime();
+    return Number.isNaN(t) ? null : t;
+};
+
+/** 子进度 stats → 统计胶囊（只挑用户看得懂的计数，ETA 不展示） */
+const statChips = (stats?: Record<string, any>): Array<[string, string]> => {
+    if (!stats) return [];
+    const num = (v: any): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+    const chips: Array<[string, string]> = [];
+    const done = num(stats.chunks_done);
+    const total = num(stats.chunks_total);
+    if (done != null && total != null) chips.push(['切片', `${done.toLocaleString()} / ${total.toLocaleString()}`]);
+    const batchNo = num(stats.batch_no);
+    const batches = num(stats.batches_total);
+    if (batchNo != null && batches != null) chips.push(['批次', `${batchNo} / ${batches}`]);
+    const cacheHits = num(stats.cache_hits);
+    if (cacheHits != null && cacheHits > 0) chips.push(['缓存命中', cacheHits.toLocaleString()]);
+    const phaseDone = num(stats.phase_done);
+    const phaseTotal = num(stats.phase_total);
+    if (phaseDone != null && phaseTotal != null) {
+        chips.push([stats.phase === 'coref' ? '指代消解' : '已处理', `${phaseDone} / ${phaseTotal}`]);
+    }
+    const seg = num(stats.stitch_segment);
+    const segs = num(stats.stitch_segments);
+    if (seg != null && segs != null) chips.push(['缝合', `${seg} / ${segs}`]);
+    return chips;
+};
+
+const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, built, onPipeStatus }) => {
     const [status, setStatus] = useState<PipelineStatus | null>(null);
     const [loaded, setLoaded] = useState(false);
     const [starting, setStarting] = useState(false);
-    // 完结后可收起进度展示区；只折叠不卸载——收起后卡片头保留并出现「展开」，
-    // 重新发起构建时自动展开（旧版收起=整卡移除，页面再无恢复入口——2026-11-06 实测修复）
+    // 详情区固定的阶段（null=跟随实时进度 / 构建结束后落在汇总）
+    const [pinned, setPinned] = useState<string | null>(null);
     // SSE 订阅（2026-11-07）：后端运行锁为事实源推送进度，3s 轮询降级为断流兜底
     const esRef = useRef<EventSource | null>(null);
     // 订阅代际：换票（eventsUrl）是异步的，等待期间组件可能已卸载/已重订；
@@ -95,12 +176,15 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
 
     // 项目切换（路由参数变化、组件不重挂载）时清掉上一个项目的进度快照，
     // refresh 返回前不显示旧项目的阶段/进度
-    useEffect(() => { setStatus(null); setLoaded(false); }, [projectId]);
+    useEffect(() => { setStatus(null); setLoaded(false); setPinned(null); }, [projectId]);
 
     useEffect(() => { refresh(); }, [refresh, signal]);
 
     // 状态上抛：父页面（ProjectOverviewPage）据此做跃迁刷新，免自建 5s 轮询
     useEffect(() => { onPipeStatus?.(status); }, [status, onPipeStatus]);
+
+    // 新一轮构建开始时解除固定，回到跟随实时进度
+    useEffect(() => { setPinned(null); }, [status?.task_id]);
 
     // SSE 订阅：服务端每秒看运行锁 diff 推帧、idle→running 跃迁也推——
     // 坐在页面上等构建全程零轮询；断流/超时才轮询兜底 + 8s 换票重订
@@ -221,6 +305,14 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
         return () => clearInterval(t);
     }, [refresh, runningNow, sseUp, s?.task_id]);
 
+    // 运行中每秒走一次时钟：阶段耗时由 started_at 推算，SSE 静默期（长批次）也能走动
+    const [, setTick] = useState(0);
+    useEffect(() => {
+        if (!runningNow) return;
+        const t = setInterval(() => setTick((n) => n + 1), 1000);
+        return () => clearInterval(t);
+    }, [runningNow]);
+
     const start = async (restart = false) => {
         setStarting(true);
         try {
@@ -264,12 +356,100 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
 
     const finished = s && (s.status === 'completed' || s.status === 'failed'
         || s.status === 'cancelled');
+    const hasRun = !!s?.task_id || stages.length > 0;
+    // 从未构建过：主按钮叫「一键构建」，点了直接跑（不再先弹「重新构建」确认）
+    const restartMode = !!built || hasRun;
 
-    const quickCurrent = published ? 3
-        : s?.status === 'completed' ? 2
-            : runningNow ? 1
-                : s?.status === 'failed' || s?.status === 'cancelled' ? 1
-                    : built ? 2 : 0;
+    const runningStage = stages.find((st) => st.status === 'running') || null;
+    const failedStage = stages.find((st) => st.status === 'failed') || null;
+    const cancelledStage = stages.find((st) => st.status === 'cancelled') || null;
+    const doneCount = stages.filter((st) => st.status === 'done').length;
+    const lastActionableStage = [...stages].reverse().find(
+        (st) => st.status === 'done' || st.status === 'failed' || st.status === 'cancelled') || null;
+
+    // 默认详情：运行中跟随当前阶段；失败/中止落在出问题的阶段（先看原因）；
+    // 正常结束后停在「本次构建」汇总。
+    // 阶段切换的空窗（上一阶段已 done、下一阶段还没置 running）沿用上一个有结果的阶段
+    const fallbackKey = runningNow
+        ? (runningStage?.key ?? lastActionableStage?.key ?? 'summary')
+        : s?.status === 'failed'
+            ? (failedStage?.key ?? 'summary')
+            : s?.status === 'cancelled'
+                ? (cancelledStage?.key ?? 'summary')
+                : 'summary';
+    const activeKey = pinned ?? fallbackKey;
+    const activeStage = stages.find((st) => st.key === activeKey) || null;
+
+    // 阶段快照里的 started/finished 是 UTC ISO；运行中的阶段用当前时间补终点
+    const nowMs = Date.now();
+    const stageDuration = (st?: PipelineStageState | null): number | null => {
+        if (!st) return null;
+        if (typeof st.duration_seconds === 'number') return st.duration_seconds;
+        const t0 = tsOf(st.started_at);
+        if (t0 == null) return null;
+        const t1 = tsOf(st.finished_at) ?? nowMs;
+        return Math.max(0, (t1 - t0) / 1000);
+    };
+    const totalDuration = stages.reduce(
+        (n, st) => n + (typeof st.duration_seconds === 'number' ? st.duration_seconds : 0), 0);
+    const starts = stages.map((st) => tsOf(st.started_at)).filter((t): t is number => t != null);
+    const ends = stages.map((st) => tsOf(st.finished_at)).filter((t): t is number => t != null);
+    const overallElapsed = starts.length
+        ? Math.max(0, ((runningNow ? nowMs : (ends.length ? Math.max(...ends) : nowMs))
+            - Math.min(...starts)) / 1000)
+        : null;
+
+    const overallPercent = s?.status === 'completed' ? 100
+        : typeof mainPercent === 'number' ? mainPercent
+            : finished ? 100 : 0;
+    const overallState = s?.status === 'completed' && !runningNow ? 'done'
+        : s?.status === 'failed' ? 'failed'
+            : s?.status === 'cancelled' ? 'cancelled' : 'running';
+    const overallMeta = runningNow
+        ? `已完成 ${doneCount}/${stages.length} 个阶段`
+        : s?.status === 'completed'
+            ? (totalDuration > 0 ? `本次构建用时 ${fmtDuration(totalDuration)}` : '本次构建已完成')
+            : s?.status === 'failed'
+                ? `构建未完成${failedStage ? ` · 停在「${failedStage.label}」` : ''}`
+                : s?.status === 'cancelled'
+                    ? `已中止 · 完成 ${doneCount}/${stages.length || 8} 个阶段`
+                    : '尚未构建';
+
+    // 详情区百分比：完成/跳过 100，待开始 0，运行中优先用子进度，
+    // 没有子进度键（如解析文档阶段）按全局 percent 反推阶段内进度
+    const stagePercentOf = (st: PipelineStageState): number => {
+        if (st.status === 'done' || st.status === 'skipped') return 100;
+        if (st.status === 'pending') return 0;
+        if (activeKey === st.key && subSameStage && typeof subPercent === 'number') return subPercent;
+        const idx = stages.findIndex((x) => x.key === st.key);
+        if (idx >= 0 && typeof s?.percent === 'number' && stages.length > 0) {
+            return Math.max(0, Math.min(99,
+                Math.round((s.percent * stages.length / 100 - idx) * 100)));
+        }
+        return 0;
+    };
+
+    // 段头只补充运行中的上下文：完成态的总用时已经在总进度行与汇总区表达，不再重复第三遍
+    const headSub = runningNow
+        ? `${runningStage ? `当前阶段：${runningStage.label}` : '构建进行中'} · 已用 ${fmtDuration(overallElapsed)}`
+        : '';
+
+    // 子进度（steps / 计数）只属于「当前阶段」：固定查看别的阶段时不能挂过来（2026-11-16 实测）
+    const chips = activeKey === s?.stage ? statChips(s?.sub?.stats) : [];
+    const detailSteps = activeStage && activeKey === s?.stage ? (s?.sub?.steps || []) : [];
+
+    const detailMessage = (st: PipelineStageState, shown: string): string => {
+        if (shown === 'running') return s?.sub?.message || s?.message || st.detail || '正在执行…';
+        if (shown === 'failed') return st.detail || s?.message || '阶段失败';
+        if (shown === 'cancelled') return st.detail || '已中止';
+        if (shown === 'skipped') return '本档位跳过该阶段';
+        if (shown === 'pending') return '等待前置阶段完成';
+        return st.detail || '已完成';
+    };
+
+    const summaryTagState = s?.status === 'completed' ? 'done'
+        : s?.status === 'failed' ? 'failed'
+            : s?.status === 'cancelled' ? 'cancelled' : 'running';
 
     return (
         <Card
@@ -279,9 +459,11 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
                 <Space>
                     {runningNow && <SyncOutlined spin style={{ color: '#5B8DEF' }} />}
                     <span>构建</span>
-                    <span className="hidden text-[11.5px] text-[#8A94AB] font-normal md:inline">
-                        上传 → 一键构建 → 查看结果与发布
-                    </span>
+                    {headSub && (
+                        <span className="hidden text-[11.5px] text-[#8A94AB] font-normal md:inline">
+                            {headSub}
+                        </span>
+                    )}
                 </Space>
             )}
             extra={(
@@ -302,73 +484,279 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
                     {!runningNow && (
                         <Button size="small" type="primary" loading={starting}
                                 icon={<RetweetOutlined />}
-                                onClick={() => confirmModal({
+                                onClick={() => (restartMode ? confirmModal({
                                     title: '重新构建？',
                                     content: '全部文档将重新解析，骨架与实例全部重新抽取。',
                                     okText: '重新构建', cancelText: '取消',
                                     onOk: () => start(true),
-                                })}>
-                            重新构建
+                                }) : start(false))}>
+                            {restartMode ? '重新构建' : '一键构建'}
                         </Button>
                     )}
                 </Space>
             )}
         >
-            {/* 三步快速开始清单（当前所处状态高亮，蓝色）+ 七阶段进度 + 完结提示 */}
-            <Steps
-                size="small"
-                current={quickCurrent}
-                items={QUICK_STEPS.map((t) => ({ title: t }))}
-                className="mb-3"
-            />
+            <style>{`
+                /* 阶段时间线（2026-11-16 按原型）：圆点 + 连接线，点选固定详情 */
+                .pl-tl { display: flex; align-items: flex-start; gap: 2px; padding: 4px 2px 10px; overflow-x: auto; }
+                .pl-tl-item {
+                    position: relative; flex: 1 0 92px; min-width: 92px;
+                    display: flex; flex-direction: column; align-items: center; gap: 5px;
+                    padding: 4px 0 3px; border: 0; border-radius: 8px;
+                    background: transparent; cursor: pointer; font: inherit;
+                }
+                .pl-tl-item:hover { background: #FAFBFD; }
+                .pl-tl-item::after {
+                    content: ''; position: absolute; top: 17px;
+                    left: calc(50% + 17px); right: calc(-50% + 17px);
+                    height: 2px; background: #E7EEF9; z-index: 0;
+                }
+                .pl-tl-item:last-child::after { display: none; }
+                .pl-tl-item.done::after { background: rgba(27,135,173,0.30); }
+                .pl-tl-dot {
+                    position: relative; z-index: 1; width: 26px; height: 26px;
+                    border-radius: 50%; display: flex; align-items: center;
+                    justify-content: center; font-size: 13px;
+                }
+                .pl-tl-item.running .pl-tl-dot { animation: pl-pulse 1.8s infinite; }
+                .pl-tl-label { font-size: 12px; color: #52607A; white-space: nowrap; }
+                .pl-tl-item.running .pl-tl-label { color: #2A57C6; font-weight: 600; }
+                .pl-tl-state { font-size: 11px; color: #A3ADC2; white-space: nowrap; }
+                .pl-tl-item.done .pl-tl-state { color: #1B87AD; }
+                .pl-tl-item.failed .pl-tl-state { color: #B42318; }
+                .pl-tl-item.cancelled .pl-tl-state { color: #B8790F; }
+                .pl-tl-item.running .pl-tl-state { color: #2A57C6; }
+                .pl-tl-item.selected { background: #F7FAFF; outline: 1px solid rgba(91,141,239,0.35); outline-offset: 1px; }
+                .pl-tl-item.selected .pl-tl-label { color: #2F62D8; font-weight: 600; }
+                @keyframes pl-pulse {
+                    0%, 100% { box-shadow: 0 0 0 4px rgba(91,141,239,0.16); }
+                    50% { box-shadow: 0 0 0 7px rgba(91,141,239,0.06); }
+                }
+                .pl-live-dot {
+                    width: 7px; height: 7px; border-radius: 50%; background: #5B8DEF;
+                    flex: none; animation: pl-blink 1.4s infinite;
+                }
+                @keyframes pl-blink { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+            `}</style>
 
-            {/* 总进度条（2026-11-08：只有"汉字+图标"感知不到进度，补百分比主条） */}
-            {runningNow && typeof mainPercent === 'number' && (
-                <Progress percent={mainPercent} size="small" strokeColor="#5B8DEF"
-                          className="mb-2" />
-            )}
+            {/* 总进度（阶段边界才更新的后端主键 + 子进度折算，平滑但只增不减） */}
             {stages.length > 0 && (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-1.5 mb-1">
+                <div className="mt-1 flex items-center gap-3.5">
+                    <div className="shrink-0">
+                        <div className="text-[26px] font-bold leading-none"
+                             style={{ color: overallState === 'done' ? '#1B87AD'
+                                 : overallState === 'failed' ? '#B42318'
+                                     : overallState === 'cancelled' ? '#B8790F' : '#5B8DEF' }}>
+                            {overallPercent}%
+                        </div>
+                        <div className="mt-[3px] whitespace-nowrap text-[11.5px] text-[#A3ADC2]">
+                            {overallMeta}
+                        </div>
+                    </div>
+                    <div className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-[#EEF0F3]">
+                        <div className="h-full rounded-full transition-[width] duration-500"
+                             style={{ width: `${overallPercent}%`, background: BAR_BG[overallState] || BAR_BG.running }} />
+                    </div>
+                </div>
+            )}
+
+            {/* 阶段时间线：默认跟随运行中的阶段；点任意阶段固定查看，再点取消固定 */}
+            {stages.length > 0 && (
+                <div className="pl-tl mt-2">
                     {stages.map((st) => {
                         const shown = st.status === 'running' && !runningNow ? 'cancelled' : st.status;
+                        const tone = DOT_TONE[shown] || DOT_TONE.pending;
                         return (
-                            <div key={st.key}
-                                 className={`flex items-center gap-1.5 border rounded-lg px-2 py-1 text-[13px] transition-colors ${
-                                     shown === 'running' ? 'border-[rgba(91,141,239,0.45)] bg-[rgba(91,141,239,0.10)]'
-                                         : shown === 'failed' ? 'border-[#F2C6CE] bg-[#FDF2F4]'
-                                             : shown === 'cancelled' ? 'border-[rgba(242,185,80,0.45)] bg-[rgba(242,185,80,0.12)]'
-                                                 : 'border-[#EFF3FA] bg-white'}`}>
-                                {STATUS_ICON[shown] || STATUS_ICON.pending}
-                                <span className={`whitespace-nowrap ${shown === 'running'
-                                    ? 'font-semibold text-[#2A57C6]' : 'font-medium text-[#52607A]'}`}>{st.label}</span>
-                            </div>
+                            <button type="button" key={st.key}
+                                    onClick={() => setPinned((prev) => (
+                                        prev === st.key || (!prev && st.key === fallbackKey) ? null : st.key))}
+                                    className={`pl-tl-item ${shown} ${activeKey === st.key ? 'selected' : ''}`}
+                                    title={`${st.label} · ${STAGE_STATUS_TEXT[shown] || '待开始'}`}>
+                                <span className="pl-tl-dot" style={{ background: tone.bg, color: tone.color }}>
+                                    {shown === 'running'
+                                        ? <SyncOutlined spin />
+                                        : (STATUS_ICON[shown] || STATUS_ICON.pending)}
+                                </span>
+                                <span className="pl-tl-label">{st.label}</span>
+                                <span className="pl-tl-state">{STAGE_STATUS_TEXT[shown] || '待开始'}</span>
+                            </button>
                         );
                     })}
                 </div>
             )}
 
-            {/* 当前阶段切片级进度（SSE sub 帧）：切片 x/y + 子百分比——
-                多切片慢抽时不再像卡死（2026-11-08）；子条用青色与主条品牌蓝区分层级 */}
-            {runningNow && s?.sub?.message && (
-                <div className="mt-1 rounded-lg border border-[#DCE7F7] px-2.5 py-1.5" style={{ background: 'rgba(91,141,239,0.06)' }}>
-                    <div className="text-[11.5px] text-[#2A57C6] mb-1">{s.sub.message}</div>
-                    {typeof s.sub.percent === 'number' && (
-                        <Progress percent={s.sub.percent} size="small" strokeColor="#8B5CF6"
-                                  showInfo={false} />
+            {/* 单一详情区：当前阶段明细 / 构建完成后的阶段耗时汇总 */}
+            {stages.length > 0 && (
+                <div className="rounded-[9px] border border-[rgba(91,141,239,0.26)] bg-[#F9FBFF] px-3.5 py-3">
+                    {activeKey === 'summary' || !activeStage ? (
+                        <>
+                            <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-[15px] font-semibold text-[#0F172A]">本次构建</span>
+                                <Tag style={{ ...STATUS_TAG_STYLE[summaryTagState], marginInlineEnd: 0 }}
+                                     className="!text-[11.5px]">
+                                    {STAGE_STATUS_TEXT[summaryTagState] || '进行中'}
+                                </Tag>
+                            </div>
+                            <div className="mt-2.5 grid grid-cols-2 gap-2 md:grid-cols-4">
+                                {stages.map((st) => (
+                                    <button type="button" key={st.key}
+                                            onClick={() => setPinned(st.key)}
+                                            className="rounded-lg border border-[#E7EEF9] bg-white px-2.5 py-2 text-left transition-colors hover:border-[rgba(91,141,239,0.45)]">
+                                        <div className="truncate text-[11.5px] text-[#8A94AB]">{st.label}</div>
+                                        <div className={`mt-0.5 text-[12.5px] font-semibold ${
+                                            st.status === 'skipped' || st.status === 'pending'
+                                                ? 'text-[#A3ADC2]'
+                                                : st.status === 'failed' ? 'text-[#B42318]'
+                                                    : st.status === 'cancelled' ? 'text-[#B8790F]'
+                                                        : 'text-[#1B87AD]'}`}>
+                                            {st.status === 'skipped' ? '已跳过'
+                                                : st.status === 'pending' ? '—'
+                                                    : fmtDuration(st.duration_seconds)}
+                                        </div>
+                                    </button>
+                                ))}
+                            </div>
+                            <div className="mt-2.5 text-[11.5px] text-[#A3ADC2]">
+                                点击上方任一阶段，可查看该阶段的明细
+                            </div>
+                        </>
+                    ) : (
+                        (() => {
+                            const shown = activeStage.status === 'running' && !runningNow
+                                ? 'cancelled' : activeStage.status;
+                            const pct = stagePercentOf(activeStage);
+                            const live = stageDuration(activeStage);
+                            return (
+                                <>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <span className="text-[15px] font-semibold text-[#0F172A]">
+                                            {activeStage.label}
+                                        </span>
+                                        <Tag style={{ ...STATUS_TAG_STYLE[shown], marginInlineEnd: 0 }}
+                                             className="!text-[11.5px]">
+                                            {STAGE_STATUS_TEXT[shown] || '待开始'}
+                                        </Tag>
+                                        <span className="ml-auto flex items-center gap-2 whitespace-nowrap text-[11.5px] text-[#A3ADC2]">
+                                            {pinned && (
+                                                <span>
+                                                    已固定查看 ·{' '}
+                                                    <Button type="link" size="small"
+                                                            className="!h-auto !p-0 !text-[11.5px]"
+                                                            onClick={() => setPinned(null)}>
+                                                        跟随即时进度
+                                                    </Button>
+                                                </span>
+                                            )}
+                                            <span>
+                                                用时{' '}
+                                                <b className="ml-0.5 text-[12.5px] text-[#1F2A44]">
+                                                    {shown === 'pending' ? '—' : fmtDuration(live)}
+                                                </b>
+                                            </span>
+                                        </span>
+                                    </div>
+                                    <div className="mt-2 flex items-center gap-2.5">
+                                        <div className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-[#EEF0F3]">
+                                            <div className="h-full rounded-full transition-[width] duration-500"
+                                                 style={{ width: `${pct}%`, background: BAR_BG[shown] || BAR_BG.running }} />
+                                        </div>
+                                        <span className="min-w-[38px] text-right text-[12.5px] font-semibold"
+                                              style={{ color: shown === 'failed' ? '#B42318'
+                                                  : shown === 'done' ? '#1B87AD'
+                                                      : shown === 'running' ? '#5B8DEF' : '#8A94AB' }}>
+                                            {pct}%
+                                        </span>
+                                    </div>
+
+                                    {/* 阶段内子步骤（后端 build_sub_steps）：进行中的步骤带自己的进度条 */}
+                                    {detailSteps.length > 0 && (
+                                        <div className="mt-2.5 flex flex-col gap-1.5">
+                                            {detailSteps.map((step) => {
+                                                const isRun = step.state === 'running';
+                                                const isDone = step.state === 'done';
+                                                const isFail = step.state === 'failed';
+                                                const isSkip = step.state === 'skipped' || step.state === 'cancelled';
+                                                const stepWidth = isDone ? 100 : (isSkip ? 0 : step.percent);
+                                                return (
+                                                    <div key={step.key}
+                                                         className={`grid grid-cols-[16px_120px_1fr_auto] items-center gap-2 rounded-lg border px-2 py-[6px] text-[12.5px] ${
+                                                             isRun ? 'border-[rgba(91,141,239,0.35)] bg-[#F5F9FF]'
+                                                                 : isDone ? 'border-[#E6F0F6] bg-white'
+                                                                     : 'border-[#EEF0F5] bg-white'}`}>
+                                                        <span className="text-center"
+                                                              style={{ color: isRun ? '#5B8DEF' : isDone ? '#1B87AD'
+                                                                  : isFail ? '#B42318' : '#C2C7CF' }}>
+                                                            {isRun ? <SyncOutlined spin /> : isDone ? <CheckOutlined />
+                                                                : isFail ? <CloseOutlined />
+                                                                    : isSkip ? <MinusOutlined /> : '○'}
+                                                        </span>
+                                                        <span className={`truncate ${isRun ? 'font-semibold text-[#2A57C6]'
+                                                            : isDone ? 'text-[#52607A]' : 'text-[#8A94AB]'}`}>
+                                                            {step.label}
+                                                        </span>
+                                                        <span className="h-1.5 min-w-0 overflow-hidden rounded-full bg-[#EEF0F3]">
+                                                            <span className="block h-full rounded-full transition-[width] duration-500"
+                                                                  style={{
+                                                                      width: `${stepWidth}%`,
+                                                                      background: isFail ? BAR_BG.failed
+                                                                          : isDone ? BAR_BG.done
+                                                                              : BAR_BG.running,
+                                                                  }} />
+                                                        </span>
+                                                        <span className={`text-right tabular-nums ${
+                                                            isRun ? 'font-semibold text-[#2A57C6]'
+                                                                : isDone ? 'text-[#1B87AD]'
+                                                                    : isFail ? 'text-[#B42318]' : 'text-[#C2C7CF]'}`}>
+                                                            {isRun ? `${step.percent}%`
+                                                                : isDone ? '完成'
+                                                                    : isFail ? '失败'
+                                                                        : step.state === 'cancelled' ? '已中止'
+                                                                            : step.state === 'skipped' ? '已跳过' : '待开始'}
+                                                        </span>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+
+                                    {/* 实时计数：切片 / 批次 / 缓存命中 / 指代消解 / 缝合 */}
+                                    {chips.length > 0 && (
+                                        <div className="mt-2.5 flex flex-wrap gap-1.5">
+                                            {chips.map(([k, v]) => (
+                                                <span key={k}
+                                                      className="rounded-md border border-[#E7EEF9] bg-white px-2 py-[2px] text-[11.5px] text-[#66738F]">
+                                                    {k} <b className="font-semibold text-[#1F2A44]">{v}</b>
+                                                </span>
+                                            ))}
+                                        </div>
+                                    )}
+
+                                    <div className="mt-2.5 flex items-center gap-1.5 text-[11.5px]"
+                                         style={{ color: shown === 'running' ? '#2A57C6'
+                                             : shown === 'failed' ? '#B42318'
+                                                 : shown === 'cancelled' ? '#B8790F' : '#8A94AB' }}>
+                                        {shown === 'running' && <span className="pl-live-dot" />}
+                                        <span className="min-w-0">{detailMessage(activeStage, shown)}</span>
+                                    </div>
+                                </>
+                            );
+                        })()
                     )}
-                    {(() => {
-                        const stt = (s.sub?.stats || {}) as Record<string, any>;
-                        // 预计剩余已按用户要求移除（估算不准反成噪音），保留切片计数
-                        if (typeof stt.chunks_done === 'number' && typeof stt.chunks_total === 'number') {
-                            return <div className="text-[11.5px] text-[#A3ADC2] mt-0.5">切片 {stt.chunks_done}/{stt.chunks_total}</div>;
-                        }
-                        return null;
-                    })()}
                 </div>
             )}
 
-            {/* 状态提示统一走一行式提示条：Alert 带 description 会渲染成一大块，
-                在已经很密的详情卡里过于抢眼（2026-11-13） */}
+            {/* 从未构建 / Redis 里已无明细：给一句下一步，而不是空白卡 */}
+            {stages.length === 0 && s?.status !== 'scheduled' && (
+                <div className="mt-1 rounded-lg border border-dashed border-[#E2E9F5] bg-[#FBFCFE] px-3 py-4 text-center text-[12.5px] text-[#8A94AB]">
+                    {finished
+                        ? '暂无可展示的构建明细（进度快照已过期），重新构建后可查看各阶段耗时'
+                        : restartMode
+                            ? '暂无进行中的构建，点击右上角「重新构建」重新生成'
+                            : '尚未构建：上传文档后点击右上角「一键构建」'}
+                </div>
+            )}
+
+            {/* 状态提示统一走一行式提示条（Alert 带 description 会渲染成一大块） */}
             {finished && s?.status === 'failed' && (
                 <InlineNotice tone="error" className="mt-2">
                     {`构建未完成${s.message ? `：${s.message}` : ''}`}
@@ -379,10 +767,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
                     构建已停止，点击「重新构建」将全部重新解析与抽取
                 </InlineNotice>
             )}
-            {/* 待构建（定时）：把"什么时候开始"和"取消"放在一起（2026-11-16）。
-                时间来自 /pipeline/status 的 scheduled_at（后端解析成 UTC ISO）；
-                拿不到时间时退化成一句状态说明，不显示半个时间。
-                段头原来那个孤零零的「取消定时」按钮并到这里，避免同一操作两个入口 */}
+            {/* 待构建（定时）：把"什么时候开始"和"取消"放在一起（2026-11-16） */}
             {s?.status === 'scheduled' && (
                 <InlineNotice
                     tone="warning"

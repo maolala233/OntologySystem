@@ -6,14 +6,26 @@ import apiClient, { sharedGet } from './client';
 import { authAPI } from './auth';
 
 export type PipelineStageKey = 'parse' | 'schema' | 'instances' | 'resolution'
-    | 'conflicts' | 'axioms' | 'adjudicate';
+    | 'conflicts' | 'selfcheck' | 'axioms' | 'adjudicate';
 
 export interface PipelineStageState {
     key: PipelineStageKey;
     label: string;
-    status: 'pending' | 'running' | 'done' | 'skipped' | 'failed';
+    status: 'pending' | 'running' | 'done' | 'skipped' | 'failed' | 'cancelled';
     detail: string;
     task_id: string | null;
+    /** 阶段起止时间与耗时（UTC ISO / 秒）：后端 8c3f0ca 起下发，旧任务为空 */
+    started_at?: string | null;
+    finished_at?: string | null;
+    duration_seconds?: number | null;
+}
+
+/** 阶段内子步骤（后端 build_sub_steps 摊平百分比区间得到） */
+export interface PipelineSubStep {
+    key: string;
+    label: string;
+    state: 'pending' | 'running' | 'done' | 'skipped' | 'failed' | 'cancelled';
+    percent: number;
 }
 
 export interface PipelineReviews {
@@ -41,8 +53,15 @@ export interface PipelineStatus {
     reviews: PipelineReviews;
     scheduled_at?: string;
     stats?: Record<string, any>;
-    /** SSE 注入的当前阶段子任务帧：切片级进度（chunks_done/total、ETA），防多切片慢抽像卡死 */
-    sub?: { stage?: string; percent?: number; message?: string; stats?: Record<string, any> };
+    /** SSE 注入的当前阶段子任务帧：切片级进度 + 阶段内子步骤（steps，2026-11-16） */
+    sub?: {
+        stage?: string;
+        percent?: number;
+        message?: string;
+        status?: string;
+        stats?: Record<string, any>;
+        steps?: PipelineSubStep[];
+    };
 }
 
 export interface ClassSummary {
