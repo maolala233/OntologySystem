@@ -101,9 +101,34 @@ def test_adjudicate_without_explicit_steps_keeps_cq_pending(pipeline_module):
     assert steps[1]["state"] == "pending"
 
 
+def test_resolution_has_three_steps(pipeline_module):
+    steps = _by_key(pipeline_module.build_sub_steps("resolution", _sub(20)))
+
+    assert steps["load"]["state"] == "done"
+    assert steps["detect"]["state"] == "running"
+    assert steps["detect"]["percent"] == 0
+    assert steps["merge"]["state"] == "pending"
+
+
+def test_conflicts_has_two_steps(pipeline_module):
+    steps = _by_key(pipeline_module.build_sub_steps("conflicts", _sub(55)))
+
+    assert steps["scan"]["state"] == "done"
+    assert steps["materialize"]["state"] == "running"
+    assert steps["materialize"]["percent"] == 0
+
+
+def test_selfcheck_has_three_steps(pipeline_module):
+    steps = _by_key(pipeline_module.build_sub_steps("selfcheck", _sub(30)))
+
+    assert steps["inspect"]["state"] == "done"
+    assert steps["repair"]["state"] == "running"
+    assert steps["verify"]["state"] == "pending"
+
+
 def test_unknown_stage_falls_back_to_single_step(pipeline_module):
-    steps = pipeline_module.build_sub_steps("conflicts", _sub(20))
+    steps = pipeline_module.build_sub_steps("finalize_stats", _sub(20))
 
     assert len(steps) == 1
-    assert steps[0]["key"] == "conflicts"
+    assert steps[0]["key"] == "finalize_stats"
     assert steps[0]["state"] == "running"

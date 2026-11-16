@@ -105,6 +105,20 @@ _SUB_STEP_RANGES: dict[str, list[tuple[str, str, int, int]]] = {
         ("enrich", "指代消解与结构展开", 80, 85),
         ("write", "写入画布与行表", 85, 100),
     ],
+    "resolution": [
+        ("load", "读取实体与属性键", 0, 20),
+        ("detect", "相似度聚类判定", 20, 70),
+        ("merge", "合并与待审登记", 70, 100),
+    ],
+    "conflicts": [
+        ("scan", "扫描结果与约束", 0, 55),
+        ("materialize", "检出冲突并登记待审", 55, 100),
+    ],
+    "selfcheck": [
+        ("inspect", "机检扫描", 0, 30),
+        ("repair", "AI 定向修复", 30, 90),
+        ("verify", "复检验证", 90, 100),
+    ],
 }
 # 静默段（无子任务、由管线自己写子进度键）：业务规则挖掘 / 能力问题评测
 _SILENT_STEPS: dict[str, list[tuple[str, str]]] = {
@@ -219,6 +233,18 @@ def _sync_stage_times(stages: list[dict], current: Optional[str] = None) -> None
                         max(0.0, (t1 - t0).total_seconds()), 1)
                 except (TypeError, ValueError):
                     pass
+
+
+def _init_stage_sub(task_id: str, stage_key: str, message: str = "") -> None:
+    """阶段一开始就把子步骤清单写进子进度键。
+
+    子任务启动前可能先做准备工作（如骨架抽取前的 CQ 生成，数秒到数十秒），
+    这段时间子键不存在，前端只能显示「等待本阶段子步骤进度…」（2026-11-16 实测）。
+    """
+    label = next((lbl for k, lbl in STAGE_DEFS if k == stage_key), stage_key)
+    _sub_stage_progress(
+        task_id, stage_key, 0, message or f"{label}准备中…",
+        steps=build_sub_steps(stage_key, {"percent": 0, "status": "running"}))
 
 
 def _sub_stage_progress(task_id: str, stage_key: str, percent: int,
@@ -875,6 +901,8 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             else:
                 st["status"] = "running"
                 _prog("schema", "AI 抽取骨架中…", 0.0)
+                # 骨架抽取前还有 CQ 设计（数秒到数十秒），先把分步清单写出去
+                _init_stage_sub(task_id, "schema", "准备抽取骨架…")
                 # CQ 前置（外部方法论「能力问题法」）：解析完成后、建模前先圈定
                 # "本体要能回答什么"，经 guidance 注入骨架抽取（抽取受它约束）
                 try:
@@ -925,6 +953,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             profile_stage_begin("instances", "实例抽取")
             st["status"] = "running"
             _prog("instances", "AI 抽取实例中…", 0.0)
+            _init_stage_sub(task_id, "instances", "准备抽取实例…")
             _check_stage_result(_run_stage_task(
                 tasks["instances"], "instances", stages, task_id,
                 project_id=project_id, document_ids=None,
@@ -942,6 +971,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             profile_stage_begin("resolution", "实体消解")
             st["status"] = "running"
             _prog("resolution", "实体消解中…", 0.0)
+            _init_stage_sub(task_id, "resolution", "准备消解实体…")
             _check_stage_result(_run_stage_task(
                 tasks["resolution"], "resolution", stages, task_id,
                 project_id=project_id), "resolution")
@@ -956,6 +986,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             profile_stage_begin("conflicts", "冲突检测")
             st["status"] = "running"
             _prog("conflicts", "冲突检测中…", 0.0)
+            _init_stage_sub(task_id, "conflicts", "准备检测冲突…")
             _check_stage_result(_run_stage_task(
                 tasks["conflicts"], "conflicts", stages, task_id,
                 project_id=project_id), "conflicts")
@@ -969,6 +1000,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             profile_stage_begin("selfcheck", "结构自检")
             st["status"] = "running"
             _prog("selfcheck", "本体质量自检中…", 0.0)
+            _init_stage_sub(task_id, "selfcheck", "准备质量自检…")
             _cancel_check()
             _fresh_read()
             try:
@@ -976,6 +1008,12 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
 
                 def _sc_prog(msg: str, frac: float) -> None:
                     _prog("selfcheck", msg, frac)
+                    # 自检不走子任务，但详情区同样需要分步明细（机检/修复/复检）
+                    pct = max(0, min(99, int(frac * 100)))
+                    _sub_stage_progress(
+                        task_id, "selfcheck", pct, msg,
+                        steps=build_sub_steps(
+                            "selfcheck", {"percent": pct, "status": "running"}))
 
                 sc = run_selfcheck_repair(project_id, db=db,
                                           rounds=profile["selfcheck_rounds"],
@@ -988,6 +1026,10 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 # 需人工的数量由完成消息统一交代
                 st["detail"] = "完成修复"
                 _prog("selfcheck", st["detail"])
+                _sub_stage_progress(
+                    task_id, "selfcheck", 100, st["detail"],
+                    steps=build_sub_steps(
+                        "selfcheck", {"percent": 100, "status": "completed"}))
                 profile_stage_end("selfcheck", status="done", detail=st["detail"])
             except _PipelineCancelled:
                 raise
@@ -995,6 +1037,10 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 st["status"] = "failed"
                 st["detail"] = f"自检修复失败（不影响其余结果）: {str(e)[:120]}"
                 _prog("selfcheck", st["detail"])
+                _sub_stage_progress(
+                    task_id, "selfcheck", 0, st["detail"],
+                    steps=build_sub_steps(
+                        "selfcheck", {"percent": 0, "status": "failed"}))
                 profile_stage_end("selfcheck", status="failed", detail=st["detail"])
 
             # ── 阶段 7：AI 公理扫描（深度=fast 跳过；失败/跳过不阻断收尾）──
@@ -1009,6 +1055,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             else:
                 st["status"] = "running"
                 _prog("axioms", "AI 公理扫描中…", 0.0)
+                _init_stage_sub(task_id, "axioms", "准备公理扫描…")
                 try:
                     axiom_res = _run_stage_task(tasks["axioms"], "axioms", stages, task_id,
                                                 project_id=project_id, channel="llm")
