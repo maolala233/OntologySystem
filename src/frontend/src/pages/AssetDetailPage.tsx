@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { PROJECT_STATUS, PUBLISHED_TAG } from '../shared/projectStatus';
 import { useParams, useNavigate } from 'react-router-dom';
 import { message } from '../shared/feedback';
-import { Button, Spin, Descriptions, Tag, Card, Modal, Input, Tooltip, Tree } from 'antd';
+import { Button, Spin, Tag, Modal, Input, Tooltip, Tree } from 'antd';
 import type { TreeProps } from 'antd';
 import {
     ArrowLeftOutlined, UserOutlined, InfoCircleOutlined, DatabaseOutlined,
@@ -12,6 +12,15 @@ import {
 import Navbar from '../components/Layout/Navbar';
 import { publishApi } from '../api/governance';
 import { ProjectData } from '../types/ontology';
+
+/** 资产详情返回的是「发布快照」视角，比构建器的 ProjectData 多这几个字段（2026-11-16） */
+interface AssetProjectData extends ProjectData {
+    /** 发布快照统计（类 / 实例 / 关系 / 属性） */
+    stats?: { classes?: number; instances?: number; relations?: number; properties?: number };
+    published_at?: string | null;
+    version_no?: number | null;
+    project_name?: string;
+}
 import { graphApi } from '../api/graphview';
 import D3ForceGraph from '../components/OntologyGraph/D3ForceGraph';
 import DetailDrawer from '../features/graph-explorer/DetailDrawer';
@@ -24,7 +33,7 @@ const CLASS_TYPES = new Set(['owl:Class', 'Class']);
 const AssetDetailPage: React.FC = () => {
     const { projectId } = useParams<{ projectId: string }>();
     const navigate = useNavigate();
-    const [project, setProject] = useState<ProjectData | null>(null);
+    const [project, setProject] = useState<AssetProjectData | null>(null);
     const [loading, setLoading] = useState(true);
     const [graphNodes, setGraphNodes] = useState<any[]>([]);
     const [graphEdges, setGraphEdges] = useState<any[]>([]);
@@ -64,6 +73,17 @@ const AssetDetailPage: React.FC = () => {
             setLoading(false);
         }
     };
+
+    // 发布快照自带的统计（类/实例/关系/属性）：比按节点 type 数更准，
+    // 也不用把 owl:NamedIndividual 这类术语暴露给用户（2026-11-16）
+    const assetStats = project?.stats || {};
+    // 知识域名称：资产接口给的是字符串（proj.domains），构建器的 ProjectData 里是对象。
+    // 旧代码一律取 .name，字符串上取不到 → 渲染出"只有图标没有文字"的空项（2026-11-16 修）
+    const domainLabel = (() => {
+        const d = project?.domain as unknown as string | { name?: string } | null | undefined;
+        if (!d) return '';
+        return typeof d === 'string' ? d : (d.name || '');
+    })();
 
     const classCount = graphNodes.filter((n) => CLASS_TYPES.has((n.data || {}).type)).length;
     const instanceCount = graphNodes.filter((n) => (n.data || {}).type === 'owl:NamedIndividual').length;
@@ -267,78 +287,120 @@ const AssetDetailPage: React.FC = () => {
         <div className="h-full flex flex-col app-canvas">
             <Navbar breadcrumbs={breadcrumbs} />
             <div className="flex-1 flex relative overflow-hidden">
-                {/* 左侧信息面板 - 固定宽度 */}
-                <div className="w-[420px] bg-transparent border-r border-[#E4EBF7]/70 p-6 overflow-y-auto flex-shrink-0">
-                    <div className="space-y-6">
-                        <div>
-                            <h1
-                                className="line-clamp-2 text-2xl font-bold leading-tight text-[#1F2A44] mb-2"
-                                title={project.name}
-                            >
-                                {project.name}
-                            </h1>
-                            <Tag color={PUBLISHED_TAG.color}>{PUBLISHED_TAG.text}</Tag>
-                        </div>
-                        <Card title="项目描述" size="small">
-                            <p
-                                className="line-clamp-6 text-sm leading-relaxed text-[#52607A]"
-                                title={project.description || undefined}
-                            >
-                                {project.description || '暂无描述'}
-                            </p>
-                        </Card>
-                        <Card title="统计信息" size="small">
-                            <Descriptions column={1} size="small">
-                                <Descriptions.Item label="节点数量">
-                                    <span className="font-semibold text-[#2F62D8]">{graphNodes.length}</span>
-                                </Descriptions.Item>
-                                <Descriptions.Item label="关系数量">
-                                    <span className="font-semibold text-[#6D3FD8]">{graphEdges.length}</span>
-                                </Descriptions.Item>
-                            </Descriptions>
-                        </Card>
-                        <Card title="创建者" size="small">
-                            <div className="flex items-center space-x-2">
-                                <UserOutlined className="text-[#66738F]" />
-                                <span className="text-[#3D4B66]">{project.owner?.username || '未知'}</span>
+                {/* 左侧信息面板（2026-11-16）：原来是 5 张独立 Card 竖排，在 420px 宽的列里
+                    像一叠板子；合并成一张 .surface-card 白面、内部用发丝线分段——与项目详情页
+                    同一套结构。空描述整段不渲染；OWL 术语（owl:NamedIndividual 等）不再暴露，
+                    统计改用发布快照自带的 stats */}
+                <div className="w-[400px] flex-shrink-0 overflow-y-auto p-4">
+                    <div className="surface-card">
+                        {/* 身份段：名称 + 发布状态 + 一行元信息（作者 · 知识域 · 发布时间 · 版本） */}
+                        <div className="border-b border-[#F0F4FB] px-5 pb-3.5 pt-4">
+                            <div className="flex items-start justify-between gap-2">
+                                <h1
+                                    className="line-clamp-2 text-[20px] font-semibold leading-7 text-[#0F172A]"
+                                    title={project.name}
+                                >
+                                    {project.name}
+                                </h1>
+                                <Tag
+                                    className="!m-0 shrink-0"
+                                    style={{ background: 'rgba(91,141,239,0.12)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.28)' }}
+                                >
+                                    {PUBLISHED_TAG.text}
+                                </Tag>
                             </div>
-                        </Card>
-                        {project.domain && (
-                            <Card title="知识域" size="small">
-                                <div className="flex items-start space-x-2">
-                                    <DatabaseOutlined className="text-[#5B8DEF] mt-0.5 flex-shrink-0" />
-                                    <div className="flex-1">
-                                        <div className="font-medium text-[#1F2A44]">{project.domain.name}</div>
-                                        {project.domain.description && (
-                                            <div className="text-xs text-[#66738F] mt-1">{project.domain.description}</div>
-                                        )}
-                                    </div>
-                                </div>
-                            </Card>
-                        )}
-                        {graphNodes.length > 0 && (
-                            <Card title="节点类型分布" size="small">
-                                {(() => {
-                                    const typeCount: Record<string, number> = {};
-                                    graphNodes.forEach((node: any) => {
-                                        const type = node.data?.type || 'Unknown';
-                                        typeCount[type] = (typeCount[type] || 0) + 1;
-                                    });
-                                    return (
-                                        <div className="space-y-2">
-                                            {Object.entries(typeCount).map(([type, count]) => (
-                                                <div key={type} className="flex justify-between items-center">
-                                                    <span className="text-[#52607A]">{type}</span>
-                                                    <span className="font-semibold">{count}</span>
-                                                </div>
-                                            ))}
+                            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-[#8A94AB]">
+                                {/* 资产详情接口目前不返回 owner，缺数据时整项不显示，
+                                    而不是摆一个「未知」占位（2026-11-16） */}
+                                {project.owner?.username && (
+                                    <span className="flex items-center gap-1">
+                                        <UserOutlined />{project.owner.username}
+                                    </span>
+                                )}
+                                {domainLabel && (
+                                    <span className="flex items-center gap-1">
+                                        <DatabaseOutlined />{domainLabel}
+                                    </span>
+                                )}
+                                {/* 只显示发布时间，不显示 version_no（2026-11-16）：
+                                    version_no 是"该项目第几个版本快照"（构建和发布共用计数器），
+                                    不是"第几次发布"——项目 10 显示 v5 其实只发布过 1 次，容易被误读 */}
+                                {project.published_at && (
+                                    <span>{`发布 ${new Date(project.published_at).toLocaleDateString('zh-CN')}`}</span>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* 结构概览：类 / 实例 / 关系 / 属性，取自发布快照 stats（比按节点类型数更准） */}
+                        <div className="border-b border-[#F0F4FB] px-5 py-3.5">
+                            <div className="mb-2 flex items-center justify-between">
+                                <span className="text-[13px] font-semibold text-[#1F2A44]">结构概览</span>
+                                <span className="text-[11.5px] text-[#A3ADC2]">发布快照</span>
+                            </div>
+                            <div className="grid grid-cols-4 gap-2">
+                                {[
+                                    { label: '类', value: assetStats.classes ?? classCount },
+                                    { label: '实例', value: assetStats.instances ?? instanceCount },
+                                    { label: '关系', value: assetStats.relations ?? graphEdges.length },
+                                    { label: '属性', value: assetStats.properties ?? null },
+                                ].map((k) => (
+                                    <div key={k.label}>
+                                        <div className="text-[11.5px] text-[#8A94AB]">{k.label}</div>
+                                        <div className="tk-mono text-[18px] font-semibold leading-6 text-[#0F172A]">
+                                            {k.value ?? '—'}
                                         </div>
-                                    );
-                                })()}
-                            </Card>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* 项目描述：没有描述就整段不出现，不再用一张卡表达"暂无描述" */}
+                        {project.description && (
+                            <div className="border-b border-[#F0F4FB] px-5 py-3.5">
+                                <div className="mb-1.5 text-[13px] font-semibold text-[#1F2A44]">项目描述</div>
+                                <p
+                                    className="m-0 line-clamp-6 text-[13px] leading-6 text-[#52607A]"
+                                    title={project.description}
+                                >
+                                    {project.description}
+                                </p>
+                            </div>
                         )}
-                        <div className="space-y-2">
-                            <Button block onClick={() => setExportOpen(true)} icon={<ExportOutlined />}>
+
+                        {/* 图例（2026-11-16）：原本压在画布左下角，挪进左栏——
+                            既填上左栏下半部的空白，也让"图例属于这个本体"的归属更清楚。
+                            配色与画布一致（深色主题档） */}
+                        <div className="border-b border-[#F0F4FB] px-5 py-3.5">
+                            <div className="mb-2 text-[13px] font-semibold text-[#1F2A44]">图例</div>
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[12px] text-[#52607A]">
+                                <span className="flex items-center gap-1.5">
+                                    <span className="h-[11px] w-[11px] rounded-full" style={{ background: '#B585F2', border: '2px solid #8F5BD9' }} />
+                                    类
+                                </span>
+                                <span className="flex items-center gap-1.5">
+                                    <span className="h-[11px] w-[11px] rounded-full" style={{ background: '#5B8DEF', border: '2px solid #3E6CC7' }} />
+                                    实例
+                                </span>
+                                <span className="flex items-center gap-1.5">
+                                    <span className="inline-block w-4" style={{ borderTop: '1.5px dashed #5B8DEF' }} />
+                                    类型
+                                </span>
+                                <span className="flex items-center gap-1.5">
+                                    <span className="inline-block w-4" style={{ borderTop: '1.5px solid #56679B' }} />
+                                    关系
+                                </span>
+                            </div>
+                        </div>
+
+                        {/* 导出：改成段尾的文字按钮，不再单独占一行 block 按钮 */}
+                        <div className="px-5 py-2.5">
+                            <Button
+                                type="link"
+                                size="small"
+                                icon={<ExportOutlined />}
+                                className="!h-auto !px-0 !text-[12.5px]"
+                                onClick={() => setExportOpen(true)}
+                            >
                                 导出图谱…
                             </Button>
                         </div>
@@ -473,6 +535,7 @@ const AssetDetailPage: React.FC = () => {
                                 <div className="absolute inset-0">
                                     <D3ForceGraph
                                         theme="dark"
+                                        showLegend={false}
                                         nodes={displayNodes}
                                         edges={displayEdges}
                                         onNodeClick={(node) => {

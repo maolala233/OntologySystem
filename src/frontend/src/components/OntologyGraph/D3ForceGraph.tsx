@@ -100,6 +100,8 @@ interface D3ForceGraphProps {
     /** 聚焦请求：seq 递增触发画布平移缩放定位到节点（详情页"在画布中聚焦/邻域展开"） */
     focusRequest?: { nodeId: string; seq: number } | null;
     theme?: 'light' | 'dark';
+    /** 是否在画布左下角渲染图例（资产详情页把图例放进左侧信息栏，2026-11-16） */
+    showLegend?: boolean;
 }
 
 const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
@@ -115,6 +117,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
     highlightNodeId = null,
     neighborhoodPinId = null,
     focusRequest = null,
+    showLegend = true,
     theme = 'light'
 }) => {
     const T = theme === 'dark' ? DARK_THEME : LIGHT_THEME;
@@ -1190,10 +1193,11 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                         ? { background: T.panel, border: `1px solid ${T.panelBorder}`, color: T.panelText }
                         : { background: 'rgba(255,255,255,0.9)', color: '#4b5563' }}
                 >
-                    {nodes.length} 个节点，{edges.length} 条边 {zoomLevel !== 1 && `(缩放：${Math.round(zoomLevel * 100)}%)`}
+                    当前视图：{nodes.length} 个节点，{edges.length} 条边 {zoomLevel !== 1 && `(缩放：${Math.round(zoomLevel * 100)}%)`}
                 </div>
             </div>
 
+            {showLegend && (
             <div
                 className="absolute bottom-4 left-4 rounded shadow px-3 py-2 z-10 text-xs"
                 style={theme === 'dark'
@@ -1219,6 +1223,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                     </span>
                 </div>
             </div>
+            )}
         </div>
     );
 };
