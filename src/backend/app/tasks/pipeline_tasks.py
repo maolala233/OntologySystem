@@ -1017,13 +1017,37 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             st = _stage(stages, "adjudicate")
             profile_stage_begin("adjudicate", "AI 结果审查")
             st["status"] = "running"
+            # 阶段一开始就把子步骤写出来（结果确认 running / 能力问题评测 pending）：
+            # 裁决本身没有子任务进度键，等 CQ 开始才写会导致整个裁决期间子区空白
+            _sub_stage_progress(
+                task_id, "adjudicate", 0, "结果确认中…",
+                steps=_phase_steps("adjudicate", "adjudicate"))
             _prog("adjudicate", "结果确认中…", 0.0)
             from app.services.auto_adjudication import run_auto_adjudication
 
+            # 裁决里可能带 LLM 复核遗留项，耗时不定：每 5s 报已用时
+            _adj_t0 = time.perf_counter()
+            _adj_stop = _threading.Event()
+
+            def _adj_ticker() -> None:
+                while not _adj_stop.wait(5):
+                    elapsed = int(time.perf_counter() - _adj_t0)
+                    _sub_stage_progress(
+                        task_id, "adjudicate", 0,
+                        f"结果确认中… 已 {elapsed} 秒",
+                        steps=_phase_steps("adjudicate", "adjudicate"))
+
+            _adj_thread = _threading.Thread(
+                target=_adj_ticker, name=f"adj-tick-{task_id}", daemon=True)
+            _adj_thread.start()
             # fast 档（2026-11-09 用户决策）：模型抽取结果不再 LLM 复核，默认通过；
             # 保留零成本的确定性安全检查（矛盾公理撤回/低相似度合并不执行），
             # "结果确认"阶段从分钟级缩到 10-30s
-            adj = run_auto_adjudication(project_id, db=db, level="fast")
+            try:
+                adj = run_auto_adjudication(project_id, db=db, level="fast")
+            finally:
+                _adj_stop.set()
+                _adj_thread.join(timeout=1)
             summary["adjudication"] = adj
             # 不在这里置 done：能力问题评测还在同一张阶段卡里跑（2026-11-16
             # 用户反馈——8 个阶段全打勾了，页面还挂着「能力问题评测中…」）
