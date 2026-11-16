@@ -28,6 +28,7 @@ import dayjs from 'dayjs';
 import { Segmented } from 'antd';
 import { useAuthStore } from '../shared/auth/authStore';
 import { PROJECT_STATUS, STALE_PUBLISHED_TAG, projectStatusOf as statusOf } from '../shared/projectStatus';
+import { fmtSchedule, fmtScheduleFull } from '../shared/schedule';
 import { UPLOAD_ACCEPT, UPLOAD_EXTS, MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from '../features/builder/documents/uploadFormats';
 import Navbar from '../components/Layout/Navbar';
 import TechHero, { TECH_COLORS } from '../components/TechHero';
@@ -425,21 +426,42 @@ const MyProjectsPage: React.FC = () => {
         </Space>
     );
 
-    const statusTag = (project: ProjectData, stale?: boolean) => {
-        const meta = PROJECT_STATUS[statusOf(project)] || PROJECT_STATUS.draft;
+    /** layout=stack：表格里时间另起一行；inline：卡片视图里跟在标签后面 */
+    const statusTag = (project: ProjectData, stale?: boolean, layout: 'stack' | 'inline' = 'inline') => {
+        const statusKey = statusOf(project);
+        const meta = PROJECT_STATUS[statusKey] || PROJECT_STATUS.draft;
         // 「有新版本」用角标圆点表达（双 Tag 并排会换行挤占 类/实例 列）；
         // 说明统一走外层 Tooltip——角标不再挂原生 title，避免两层提示叠着弹
         const tag = <Tag color={meta.color} style={{ marginInlineEnd: 0 }}>{meta.text}</Tag>;
+        const tagNode = (
+            <Tooltip
+                className="cursor-help"
+                title={stale
+                    ? `${meta.desc}；有新版本：重新构建过，资产中心还是旧版本，可重新发布`
+                    : meta.desc}>
+                {stale ? (
+                    <Badge dot color={STALE_PUBLISHED_TAG.color}>{tag}</Badge>
+                ) : tag}
+            </Tooltip>
+        );
+        const schedLabel = statusKey === 'scheduled' ? fmtSchedule(project.scheduled_at) : '';
+        if (!schedLabel) {
+            return <span className="inline-flex items-center">{tagNode}</span>;
+        }
+        // 时间并进同一个标签（2026-11-16）：原来是"标签 + 下一行裸文字"，
+        // 一个胶囊配一行小字，左边缘也对不齐，看着散。合成一个 pill 之后
+        // 是"待构建 · 今天 14:00"一整个信息单元，扫读时更整
         return (
             <span className="inline-flex items-center">
-                <Tooltip
-                    className="cursor-help"
-                    title={stale
-                        ? `${meta.desc}；有新版本：重新构建过，资产中心还是旧版本，可重新发布`
-                        : meta.desc}>
-                    {stale ? (
-                        <Badge dot color={STALE_PUBLISHED_TAG.color}>{tag}</Badge>
-                    ) : tag}
+                <Tooltip title={`定时构建：${fmtScheduleFull(project.scheduled_at)}`}>
+                    <Tag color={meta.color} style={{ marginInlineEnd: 0 }} className="cursor-help whitespace-nowrap">
+                        {meta.text}
+                        {/* 分隔符用中点 ·（2026-11-16）：冒号在全角下偏重，把标签切成两截；
+                            连字符又会和时间里的 `11-18` 撞（「待构建-11-18 09:30」读起来像范围）。
+                            ·还和同表「18 类 · 0 实例」的并列写法一致。字重、颜色与状态一致，
+                            两者是同一句「状态 · 时间」，不再一深一浅 */}
+                        <span>{` · ${schedLabel}`}</span>
+                    </Tag>
                 </Tooltip>
             </span>
         );
@@ -459,17 +481,19 @@ const MyProjectsPage: React.FC = () => {
             ),
         },
         {
-            title: '项目简介', dataIndex: 'description', key: 'description', width: '22%',
+            title: '项目简介', dataIndex: 'description', key: 'description', width: '19.5%',
             ellipsis: { showTitle: false },
             render: (v: string) => <EllipsisTip text={v} fallback="暂无描述" className="text-gray-500 cursor-default" />,
         },
         {
-            title: '状态', key: 'status', width: '7.5%', filters: STATUS_OPTIONS.map(s => ({ text: s.label, value: s.value })),
-            onFilter: (v, p) => statusOf(p) === v,
-            render: (_, project) => statusTag(project, project.stale_published),
+            // 这里不再挂列内筛选（2026-11-16）：工具栏的「全部状态」已经是服务端口径的
+            // 多选，列内这个 filters 只在当前页做客户端过滤，两者口径不一致；去掉后
+            // 表头也没有漏斗图标挤占，标题自然居中
+            title: '状态', key: 'status', width: '12%', align: 'center',
+            render: (_, project) => statusTag(project, project.stale_published, 'stack'),
         },
         {
-            title: '类 / 实例', key: 'stats', width: '10.5%',
+            title: '类 / 实例', key: 'stats', width: '10.5%', align: 'center',
             render: (_, project) => (
                 <span className="tk-mono text-xs text-gray-500 whitespace-nowrap">
                     <span style={{ color: TC.blue }}>{project.classes_total ?? project.graph_data?.nodes?.length ?? 0}</span> 类
@@ -478,11 +502,14 @@ const MyProjectsPage: React.FC = () => {
                 </span>
             ),
         },
-        { title: '创建日期', dataIndex: 'created_at', key: 'created_at', width: '11.5%',
+        { title: '创建日期', dataIndex: 'created_at', key: 'created_at', width: '11.5%', align: 'center',
           render: (v: string) => <span className="text-gray-500 text-xs">{fmtDate(v)}</span> },
-        { title: '修改日期', dataIndex: 'updated_at', key: 'updated_at', width: '11.5%',
+        { title: '修改日期', dataIndex: 'updated_at', key: 'updated_at', width: '11.5%', align: 'center',
           render: (v: string) => <span className="text-gray-500 text-xs">{fmtDate(v)}</span> },
-        { title: '操作', key: 'actions', width: '18.5%', render: (_, project) => actionsRenderer(project) },
+        // 状态 / 类实例 / 日期 / 操作 居中（2026-11-16）：这些都是定宽的短内容列，
+        // 左对齐会在列右侧留下一大块空白，和「项目名称 / 项目简介」两个左对齐文本列
+        // 一起看节奏是散的；居中后 5 列形成一条对称轴
+        { title: '操作', key: 'actions', width: '18%', align: 'center', render: (_, project) => actionsRenderer(project) },
     ];
 
     return (
@@ -491,6 +518,15 @@ const MyProjectsPage: React.FC = () => {
                 /* 项目卡（2026-11-13）：不再是纯白底——白到冷蓝的极轻渐变，
                    右下角一组品牌蓝同心圆环做装饰（不用图标，避免和左上角图标重复），
                    hover 时圆环更清晰 */
+                /* 选择列贴边（2026-11-16）：复选框离卡片左缘只有 8px，被"顶"在边上；
+                   补 8px 让它和表格内容有同样的呼吸（表格其它单元格左右各 12px） */
+                /* 选择器要写足层级：antd 自己的规则是带元素选择器的复合选择器
+                   （.ant-table-wrapper .ant-table-tbody > tr > td），只写
+                   .mp-table .ant-table-selection-column 优先级不够，padding 仍为 8px */
+                .mp-table .ant-table-wrapper .ant-table-thead > tr > th.ant-table-selection-column,
+                .mp-table .ant-table-wrapper .ant-table-tbody > tr > td.ant-table-selection-column {
+                    padding-left: 12px;
+                }
                 .mp-proj-card {
                     background-image: linear-gradient(158deg, #FFFFFF 0%, #F8FBFF 55%, #EEF5FE 100%);
                 }

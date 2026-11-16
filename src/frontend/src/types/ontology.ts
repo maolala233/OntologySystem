@@ -75,4 +75,8 @@ export interface ProjectData {
   instances_total?: number;
   /** 画布节点总数（列表接口 SQL 侧统计，无需拉 graph_data） */
   nodes_total?: number;
+  /** 定时构建时间（UTC ISO，后端列表/详情接口下发）：status=scheduled 时有值 */
+  scheduled_at?: string | null;
+  /** 定时构建的档位/是否重头开始/触发人（后端 cddd1dc 起下发） */
+  schedule?: { depth?: string; restart?: boolean; trigger_user_id?: number | null } | null;
 }
