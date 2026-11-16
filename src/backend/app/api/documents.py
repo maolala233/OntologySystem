@@ -36,6 +36,22 @@ def _ext_of(filename: str) -> str:
     return name.rsplit(".", 1)[1].lower()
 
 
+def _reject_if_building(project_id: int, action: str) -> None:
+    """构建进行中禁止改文档集合（2026-11-16）。
+
+    管线各阶段按阶段开头的文档/切片快照推进：运行中上传的文档只会出现在
+    后续阶段的切片查询里（骨架没见过它、实例却抽到了它的实体）；删除则会把
+    正在铺的切片凭空抽走，甚至让后续阶段直接报「没有可用的已解析切片」。
+    一律 409 拒绝，等构建结束（或先停止构建）再改。
+    """
+    from app.tasks.pipeline_tasks import pipeline_build_active
+
+    if pipeline_build_active(project_id):
+        raise APIError(
+            f"构建进行中，暂不能{action}。请等待本次构建结束，或先停止构建再操作",
+            code="PIPELINE_RUNNING", http_status=409)
+
+
 def _load_doc_or_404(project_id: int, doc_id: int, db: Session, include_deleted: bool = False) -> UploadedDocument:
     doc = db.query(UploadedDocument).filter(
         UploadedDocument.id == doc_id,
@@ -79,6 +95,7 @@ async def upload_documents(
 ):
     """多文件上传：服务端算 sha256 → 同项目命中即 409（带既有 doc，整批拒绝不落半批）→ MinIO → 记录 →（可选）parse 队列。"""
     require_project_role(project_id, "editor", current_user, db)
+    _reject_if_building(project_id, "上传文档")
     if not files:
         raise APIError("请至少上传一个文件", code="EMPTY_UPLOAD", http_status=400)
     allowed_backends = {"auto", "docling_ocr", "docling", "vl_model", "native"}
@@ -321,6 +338,7 @@ def reparse_document(
 ):
     """手动（重）解析：body 可指定 backend（auto/docling_ocr/docling/vl_model/native）与 chunk 参数（03 §7）。"""
     require_project_role(project_id, "editor", current_user, db)
+    _reject_if_building(project_id, "重新解析文档")
     doc = _load_doc_or_404(project_id, doc_id, db)
     if not doc.storage_key:
         raise NotFoundError("该文档无 MinIO 原件（历史本地文档请重新上传）")
@@ -448,6 +466,7 @@ def clear_all_documents(
 ):
     """清空项目文档（旧 ontology.py 路由收编，03 §18）：软删全部未删文档 + 清派生数据。"""
     require_project_role(project_id, "editor", current_user, db)
+    _reject_if_building(project_id, "清空文档")
     now = datetime.utcnow()
     docs = (db.query(UploadedDocument)
             .filter(UploadedDocument.project_id == project_id,
@@ -473,6 +492,7 @@ def delete_document(
 ):
     """软删：置 deleted_at；分块与向量一并清理（已抽取的图谱数据不受影响）。"""
     require_project_role(project_id, "editor", current_user, db)
+    _reject_if_building(project_id, "删除文档")
     doc = _load_doc_or_404(project_id, doc_id, db)
     purged = _purge_document_derived(db, doc)
     doc.deleted_at = datetime.utcnow()

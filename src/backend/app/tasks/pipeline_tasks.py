@@ -1558,6 +1558,27 @@ def pipeline_running_task_id(project_id: int) -> Optional[str]:
         return None
 
 
+def pipeline_build_active(project_id: int, stale_seconds: int = 900) -> bool:
+    """项目是否正在构建（文档上传/删除的互斥判定）。
+
+    运行锁 + 进度新鲜度双重判定：只看锁会在 worker 崩溃后把项目误锁 6 小时，
+    文档接口被无辜拒绝；进度 15 分钟不更新与状态端点的看门狗同口径，视为死任务。
+    进度键缺失（24h 后过期）时保守按构建中处理——锁最长 6h，状态页/锁过期会清理。
+    """
+    tid = pipeline_running_task_id(project_id)
+    if not tid:
+        return False
+    try:
+        prog = get_task_progress(tid)
+    except Exception:  # noqa: BLE001 —— Redis 抖动：保守拒绝
+        return True
+    if prog is None:
+        return True
+    if prog.get("status") in ("completed", "failed", "cancelled"):
+        return False
+    return int(time.time()) - int(prog.get("updated_at") or 0) <= stale_seconds
+
+
 def pipeline_last_task_id(project_id: int) -> Optional[str]:
     """最近一次发起的管线 task_id（7d）；无登记返回 None。"""
     try:
@@ -1576,5 +1597,5 @@ def release_pipeline_lock(project_id: int) -> None:
 __all__ = ["STAGE_DEFS", "DEPTH_PROFILES", "build_sub_steps", "run_pipeline", "dispatch_pipeline_run",
            "run_scheduled_pipeline", "cancel_scheduled_pipeline",
            "pipeline_scheduled_at", "pipeline_schedule_for", "pipeline_scheduled_info",
-           "pipeline_running_task_id", "release_pipeline_lock",
-           "pipeline_active_project_ids"]
+           "pipeline_running_task_id", "pipeline_build_active",
+           "release_pipeline_lock", "pipeline_active_project_ids"]
