@@ -5,7 +5,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { message } from '../../../shared/feedback';
-import { Button, Card, Popconfirm, Space, Spin, Table, Tag, Upload } from 'antd';
+import { Button, Card, Popconfirm, Space, Spin, Table, Tag, Tooltip, Upload } from 'antd';
 import type { UploadProps } from 'antd';
 import {
     CloudDownloadOutlined, DeleteOutlined, FileTextOutlined, UploadOutlined,
@@ -32,9 +32,18 @@ interface Props {
     /** 当前管线运行阶段（来自 PipelinePanel 上抛）：解析完成后文档状态仍是「已解析」，
      *  用它把列显示成「骨架抽取中 / 实例抽取中 …」，避免构建中看起来一直卡在已解析 */
     pipelineStage?: { key: string; label: string; status: string; message?: string } | null;
+    /** 构建进行中（running/queued）：后端拒绝改文档集合（409 PIPELINE_RUNNING），
+     *  这里同步把上传/删除置灰并给出原因（2026-11-16，配合后端 c9b9388） */
+    locked?: boolean;
 }
 
-const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage }) => {
+const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage, locked = false }) => {
+    /** 后端 409 PIPELINE_RUNNING 翻成人话，其余走后端 message（2026-11-16） */
+    const docErrorText = (e: any, fallback: string): string => {
+        const err = e?.response?.data?.error;
+        if (err?.code === 'PIPELINE_RUNNING') return '构建进行中，结束后才能修改文档';
+        return err?.message || e?.response?.data?.message || fallback;
+    };
     const [docs, setDocs] = useState<DocumentRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [uploading, setUploading] = useState(false);
@@ -108,8 +117,7 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage 
             await load();
             onChanged?.();
         } catch (e: any) {
-            const err = e?.response?.data;
-            message.error(err?.error?.message || err?.message || '上传失败，请稍后重试');
+            message.error(docErrorText(e, '上传失败，请稍后重试'));
         } finally {
             setUploading(false);
         }
@@ -155,13 +163,17 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage 
                               message.success('文档已删除');
                               load();
                               onChanged?.();
-                          } catch {
-                              message.error('删除失败');
+                          } catch (e: any) {
+                              message.error(docErrorText(e, '删除失败'));
                           }
                       }}>
-                      <Button type="link" size="small" danger icon={<DeleteOutlined />}>
-                          删除
-                      </Button>
+                      <Tooltip title={locked ? '构建进行中，结束后可修改文档' : undefined}>
+                          <span>
+                              <Button type="link" size="small" danger icon={<DeleteOutlined />} disabled={locked}>
+                                  删除
+                              </Button>
+                          </span>
+                      </Tooltip>
                   </Popconfirm>
               </Space>
           ) },
@@ -209,12 +221,18 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage 
                   </span>
               )}
               extra={(
-                  <Upload {...uploadProps}>
+                  <Upload {...uploadProps} disabled={uploading || locked}>
                       {/* 按钮文案跟状态走（2026-11-16）：已有文档时再说"上传文档"像是第一次操作，
-                          改为"继续上传"——语义是往这个列表里再加一份，不是重新上传整个项目 */}
-                      <Button size="small" icon={<UploadOutlined />} loading={uploading}>
-                          {docs.length > 0 ? '继续上传' : '上传文档'}
-                      </Button>
+                          改为"继续上传"——语义是往这个列表里再加一份，不是重新上传整个项目。
+                          构建进行中禁用（后端会 409）：Tooltip 套一层 span 才接得到事件 */}
+                      <Tooltip title={locked ? '构建进行中，结束后可修改文档' : undefined}>
+                          <span>
+                              <Button size="small" icon={<UploadOutlined />}
+                                      loading={uploading} disabled={locked}>
+                                  {docs.length > 0 ? '继续上传' : '上传文档'}
+                              </Button>
+                          </span>
+                      </Tooltip>
                   </Upload>
               )}>
             {loading ? (
@@ -236,8 +254,13 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage 
                        dataSource={docs}
                        pagination={docs.length > 8 ? { pageSize: 8, showSizeChanger: false } : false} />
             )}
-            <div className="mt-2 flex items-center gap-1 text-[11.5px] text-[#A3ADC2]">
-                <UploadOutlined /> 支持 {UPLOAD_EXTS.join(' / ')}。
+            <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-[#A3ADC2]">
+                <span className="flex items-center gap-1">
+                    <UploadOutlined /> 支持 {UPLOAD_EXTS.join(' / ')}。
+                </span>
+                {locked && (
+                    <span className="text-[#B8790F]">构建进行中，暂不能上传或删除文档</span>
+                )}
             </div>
         </Card>
     );

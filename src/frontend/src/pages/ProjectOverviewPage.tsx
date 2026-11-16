@@ -90,6 +90,10 @@ const ProjectOverviewPage: React.FC = () => {
         || (!pipeStatus && (summary?.pipeline?.status === 'running'
             || summary?.pipeline?.status === 'queued'
             || summary?.pipeline?.status === 'scheduled'));
+    // 文档集合是否锁住：后端只在真正跑构建时拒绝改文档（c9b9388，409 PIPELINE_RUNNING），
+    // 「待构建（scheduled）」不占运行锁，仍可增删（2026-11-16）
+    const docsLocked = ['running', 'queued'].includes(pipeStatus || '')
+        || (!pipeStatus && ['running', 'queued'].includes(summary?.pipeline?.status || ''));
 
     // 管线状态跃迁自动刷新（2026-11-07 SSE 版）：PipelinePanel 订阅后端事件流
     // （运行锁为事实源），状态经 onPipeStatus 上抛——页面不再自建 5s 轮询
@@ -290,7 +294,8 @@ const ProjectOverviewPage: React.FC = () => {
                                        ? (isExpert ? `/projects/${pid}/reviews` : `/projects/${pid}/result`)
                                        : `/projects/${pid}/${tab}`)} />
 
-                    <ProjectDocsCard projectId={pid} onChanged={load} pipelineStage={pipeStage} />
+                    <ProjectDocsCard projectId={pid} onChanged={load} pipelineStage={pipeStage}
+                                     locked={docsLocked} />
 
                     {!building && summary && summary.schema.classes_total > 0 && (
                         <BuildResultsPanel projectId={pid} summary={summary} checks={summary.checks}
