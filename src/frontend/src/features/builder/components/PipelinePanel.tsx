@@ -11,8 +11,9 @@ import { Button, Card, Popconfirm, Progress, Space, Steps, Tag } from 'antd';
 import {
     CheckCircleOutlined, CloseCircleOutlined, MinusCircleOutlined,
     SyncOutlined, RetweetOutlined, PauseCircleOutlined,
-    ThunderboltOutlined,
+    ClockCircleOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
+import { fmtSchedule } from '../../../shared/schedule';
 
 import { PipelineStageState, PipelineStatus, pipelineApi } from '../../../api/pipeline';
 
@@ -62,6 +63,13 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
     const subGenRef = useRef(0);
     const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [sseUp, setSseUp] = useState(false);
+
+    // 最新状态快照：SSE 的 idle 帧要据此判断"是不是正处在定时等待中"（2026-11-16）
+    const statusRef = useRef<PipelineStatus | null>(null);
+    useEffect(() => { statusRef.current = status; }, [status]);
+
+    // 定时状态复核节流：SSE 每秒都在推 idle 帧，不能每帧都打 REST
+    const schedCheckAtRef = useRef(0);
 
     const refresh = useCallback(async () => {
         try {
@@ -116,6 +124,18 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
                     // （摊平到顶层是 REST status 端点的事）——不取的话格子永远
                     // 停在挂载时的快照，消息行在动、格子不动（2026-11-08 实测）
                     const incomingStages = (data.stats && data.stats.stages) || data.stages;
+                    // SSE 的 idle 帧只看运行锁，不知道有没有定时登记（2026-11-16 实测：
+                    // 打开已定时的项目 → 首屏 REST 显示「待构建」→ 紧随其后的 idle 帧
+                    // 把状态清成 idle，提示条一闪就没）。本地认为在等定时时不吃 idle 帧，
+                    // 改为节流回 REST 复核：定时若刚被取消，REST 会返回 idle，状态随后落地。
+                    if (data.status === 'idle' && statusRef.current?.status === 'scheduled') {
+                        const now = Date.now();
+                        if (now - schedCheckAtRef.current > 10000) {
+                            schedCheckAtRef.current = now;
+                            void refresh();
+                        }
+                        return;
+                    }
                     // idle 帧不带 stages（保留旧 stages 会把 runningNow 卡在转圈）
                     setStatus((prev) => (data.status === 'idle'
                         ? { ...data, stages: [], reviews: prev?.reviews ?? noReviews }
@@ -279,11 +299,6 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
                             <Button size="small" icon={<PauseCircleOutlined />}>停止</Button>
                         </Popconfirm>
                     )}
-                    {s?.status === 'scheduled' && (
-                        <Button size="small" icon={<PauseCircleOutlined />} onClick={cancel}>
-                            取消定时
-                        </Button>
-                    )}
                     {!runningNow && (
                         <Button size="small" type="primary" loading={starting}
                                 icon={<RetweetOutlined />}
@@ -362,6 +377,27 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
             {s?.status === 'cancelled' && (
                 <InlineNotice tone="warning" className="mt-2">
                     构建已停止，点击「重新构建」将全部重新解析与抽取
+                </InlineNotice>
+            )}
+            {/* 待构建（定时）：把"什么时候开始"和"取消"放在一起（2026-11-16）。
+                时间来自 /pipeline/status 的 scheduled_at（后端解析成 UTC ISO）；
+                拿不到时间时退化成一句状态说明，不显示半个时间。
+                段头原来那个孤零零的「取消定时」按钮并到这里，避免同一操作两个入口 */}
+            {s?.status === 'scheduled' && (
+                <InlineNotice
+                    tone="warning"
+                    className="mt-2"
+                    icon={<ClockCircleOutlined />}
+                    action={(
+                        <Button type="link" size="small" className="!h-auto !px-0 !text-[12px]"
+                                onClick={cancel}>
+                            取消定时
+                        </Button>
+                    )}
+                >
+                    {s.scheduled_at
+                        ? `定时构建：${fmtSchedule(s.scheduled_at)} 自动开始`
+                        : '已登记定时构建，等待到点自动开始'}
                 </InlineNotice>
             )}
             {!runningNow && !finished && s?.reviews.pending_total ? (
