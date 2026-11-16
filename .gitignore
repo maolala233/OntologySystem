@@ -31,6 +31,8 @@ docker-compose-app-cloud.override.yml
 middleware-connection.env
 offline-bundle/
 offline-bundle.tar
+offline-bundle.tar.part*
+offline-bundle.tar.sha256
 /data/
 *.ttl
 *.log
