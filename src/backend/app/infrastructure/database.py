@@ -491,6 +491,7 @@ class QaHistory(Base):
     latency_ms = Column(Integer, nullable=True)
     confidence = Column(Numeric(4, 3), nullable=True)
     # O3-B15/B16：自修复与失败轨迹数据源（R19 e9f0a1b2c3d4）
+    retrieval_trace = Column(JSON, nullable=True)  # 检索过程卡片（历史回看）
     status = Column(Enum("ok", "repaired", "failed", name="qa_status"),
                     nullable=False, server_default="ok")
     repaired_rounds = Column(Integer, nullable=False, server_default="0")

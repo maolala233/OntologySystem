@@ -18,10 +18,19 @@ export interface QaSource {
     doc_url?: string;
 }
 
+export interface QaTraceStep {
+    stage: string;
+    what: string;
+    count: number;
+    refs: number[];
+    sample: string;
+}
+
 export interface QaDonePayload {
     answer: string;
     confidence: number;
     reasoning_path: string[];
+    retrieval_trace?: QaTraceStep[];
     model: string | null;
     latency_ms: number;
     history_id: number;
@@ -33,6 +42,7 @@ export interface QaHistoryItem {
     question: string;
     answer: string;
     sources: QaSource[];
+    retrieval_trace?: QaTraceStep[];
     model: string | null;
     latency_ms: number;
     confidence: number | null;
@@ -52,6 +62,7 @@ async function authHeaders(): Promise<HeadersInit> {
 
 export interface AskStreamHandlers {
     onMeta?: (meta: { source_count: number }) => void;
+    onTrace?: (trace: QaTraceStep[]) => void;
     onToken: (delta: string) => void;
     onSources?: (sources: QaSource[]) => void;
     onDone?: (payload: QaDonePayload) => void;
@@ -129,6 +140,7 @@ export async function askQuestionStream(
             if (event === 'token') handlers.onToken(data.delta ?? '');
             else if (event === 'meta') handlers.onMeta?.(data);
             else if (event === 'sources') handlers.onSources?.(data.sources ?? []);
+            else if (event === 'trace') handlers.onTrace?.(data);
             else if (event === 'done') handlers.onDone?.(data);
             else if (event === 'error') handlers.onError?.(data.message ?? '问答服务异常');
         }

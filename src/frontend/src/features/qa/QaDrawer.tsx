@@ -18,6 +18,7 @@ import {
     getQaHistory,
     getQaSourceDetail,
     type QaDonePayload,
+    type QaTraceStep,
     type QaHistoryItem,
     type QaSource,
 } from '../../api/qa';
@@ -25,11 +26,13 @@ import { projectsApi } from '../../api/projects';
 import type { ProjectData } from '../../types/ontology';
 import MarkdownAnswer from './MarkdownAnswer';
 import SourceCard from './SourceCard';
+import RetrievalTraceCard from './RetrievalTraceCard';
 
 interface QaTurn {
     question: string;
     answer: string;
-    sources: QaSource[];
+    trace?: QaTraceStep[];
+        sources: QaSource[];
     done?: QaDonePayload;
     error?: string;
     streaming: boolean;
@@ -118,6 +121,14 @@ export default function QaDrawer({ open, onClose, projectId: initialProjectId }:
                             const next = [...prev];
                             const cur = next[next.length - 1];
                             next[next.length - 1] = { ...cur, answer: cur.answer + delta };
+                            return next;
+                        });
+                    },
+                    onTrace: trace => {
+                        setTurns(prev => {
+                            const next = [...prev];
+                            const cur = next[next.length - 1];
+                            next[next.length - 1] = { ...cur, trace: trace ?? [] };
                             return next;
                         });
                     },
@@ -318,6 +329,13 @@ export default function QaDrawer({ open, onClose, projectId: initialProjectId }:
                                 </div>
                             ) : (
                                 <div className="px-3 py-2 rounded-2xl bg-gray-100 overflow-hidden">
+                                    {(turn.trace?.length || turn.done?.retrieval_trace?.length) ? (
+                                        <RetrievalTraceCard
+                                            trace={(turn.trace?.length ? turn.trace : turn.done?.retrieval_trace) as QaTraceStep[]}
+                                            streaming={turn.streaming && !turn.answer}
+                                        />
+                                    ) : null}
+                                    <div className={turn.trace?.length || turn.done?.retrieval_trace?.length ? 'mt-2 pt-2 border-t border-dashed border-gray-200' : ''}>
                                     {turn.answer && (
                                         <MarkdownAnswer
                                             content={turn.answer}
@@ -333,6 +351,7 @@ export default function QaDrawer({ open, onClose, projectId: initialProjectId }:
                                     ) : !turn.answer && (
                                         <div className="text-sm text-gray-800">（模型未返回内容）</div>
                                     )}
+                                    </div>
                                 </div>
                             )}
                             {turn.done && (
@@ -344,20 +363,6 @@ export default function QaDrawer({ open, onClose, projectId: initialProjectId }:
                                     )}
                                     {turn.done.model && <span>{turn.done.model}</span>}
                                     <span>{turn.done.latency_ms}ms</span>
-                                    {turn.done.reasoning_path?.length > 0 && (
-                                        <Popover
-                                            content={(
-                                                <ol className="list-decimal pl-4 text-xs max-w-xs">
-                                                    {turn.done.reasoning_path.map((s, k) => <li key={k}>{s}</li>)}
-                                                </ol>
-                                            )}
-                                            title="推理路径"
-                                        >
-                                            <Button size="small" type="link" className="!px-0 !text-[11px]">
-                                                <CaretRightOutlined />推理路径
-                                            </Button>
-                                        </Popover>
-                                    )}
                                 </div>
                             )}
                             {turn.sources.length > 0 && (

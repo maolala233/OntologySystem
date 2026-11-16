@@ -180,6 +180,7 @@ def _save_history(db: Session, project_id: int, user_id: int | None,
         question=question[:2000],
         answer=result.answer,
         sources=_sources_out(result),
+        retrieval_trace=result.retrieval_trace,
         model=result.model,
         latency_ms=result.latency_ms,
         confidence=result.confidence,
@@ -225,6 +226,8 @@ def _sse_stream(db: Session, project_id: int, user: User, question: str,
                 yield _sse("token", {"delta": payload})
             elif kind == "meta":
                 yield _sse("meta", payload)
+            elif kind == "trace":
+                yield _sse("trace", payload)
             elif kind == "error":
                 yield _sse("error", {"message": str(payload)})
             elif kind == "done":
@@ -244,6 +247,7 @@ def _sse_stream(db: Session, project_id: int, user: User, question: str,
             "answer": result.answer,
             "confidence": result.confidence,
             "reasoning_path": result.reasoning_path,
+            "retrieval_trace": result.retrieval_trace,
             "model": result.model,
             "latency_ms": int((time.time() - t0) * 1000),
             "history_id": hist.id,
@@ -363,6 +367,7 @@ def qa_history(
                 "question": r.question,
                 "answer": r.answer,
                 "sources": r.sources or [],
+                "retrieval_trace": getattr(r, "retrieval_trace", None),
                 "model": r.model,
                 "latency_ms": r.latency_ms,
                 "confidence": float(r.confidence) if r.confidence is not None else None,
@@ -471,6 +476,7 @@ def qa_conversation_detail(
                 "question": r.question,
                 "answer": r.answer,
                 "sources": r.sources or [],
+                "retrieval_trace": getattr(r, "retrieval_trace", None),
                 "model": r.model,
                 "latency_ms": r.latency_ms,
                 "confidence": float(r.confidence) if r.confidence is not None else None,

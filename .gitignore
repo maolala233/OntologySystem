@@ -101,3 +101,5 @@ dockerfile\ollama-cpu-slim.Dockerfile
 ollama-bge-small-offline/
 ollama-bge-small-offline.tar
 docs/
+# 模型长文本拨测产物（跟脚本同目录生成，不入库）
+scripts/model_probe_*

@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { message } from '../shared/feedback';
-import { Button, Input, Popconfirm, Popover, Select, Tag, Tooltip } from 'antd';
+import { Button, Input, Popconfirm, Select, Tag, Tooltip } from 'antd';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
 import { QA_LAST_PROJECT_ID_KEY } from '../shared/keys';
 import BrandMark from '../components/BrandMark';
@@ -32,17 +32,20 @@ import {
     type QaDonePayload,
     type QaModelItem,
     type QaSource,
+    type QaTraceStep,
 } from '../api/qa';
 import { projectsApi } from '../api/projects';
 import type { ProjectData } from '../types/ontology';
 import MarkdownAnswer from '../features/qa/MarkdownAnswer';
 import SourceCard from '../features/qa/SourceCard';
+import RetrievalTraceCard from '../features/qa/RetrievalTraceCard';
 import { uuid } from '../utils/uuid';
 
 interface QaTurn {
     question: string;
     answer: string;
     sources: QaSource[];
+    trace?: QaTraceStep[];
     done?: QaDonePayload;
     error?: string;
     streaming: boolean;
@@ -264,6 +267,7 @@ export default function QaPage() {
                     answer: m.answer,
                     confidence: m.confidence ?? 0,
                     reasoning_path: [],
+                    retrieval_trace: m.retrieval_trace ?? [],
                     model: m.model,
                     latency_ms: m.latency_ms ?? 0,
                     history_id: m.id,
@@ -306,7 +310,7 @@ export default function QaPage() {
         setBusy(true);
         stickBottomRef.current = true;
         clearTokenFlush();
-        setTurns(prev => [...prev, { question: q, answer: '', sources: [], streaming: true }]);
+        setTurns(prev => [...prev, { question: q, answer: '', sources: [], trace: [], streaming: true }]);
         const controller = new AbortController();
         abortRef.current = controller;
         try {
@@ -318,6 +322,14 @@ export default function QaPage() {
                         // 先入缓冲区，由 scheduleFlush 每 50ms 合并渲染一次
                         pendingTokensRef.current += delta;
                         scheduleFlush();
+                    },
+                    onTrace: trace => {
+                        setTurns(prev => {
+                            const next = [...prev];
+                            const cur = next[next.length - 1];
+                            next[next.length - 1] = { ...cur, trace: trace ?? [] };
+                            return next;
+                        });
                     },
                     onSources: sources => {
                         setTurns(prev => {
@@ -818,24 +830,31 @@ export default function QaPage() {
                                         ) : (
                                             <div className="overflow-hidden rounded-2xl border border-[#E7EEF9] bg-white shadow-[0_2px_10px_-8px_rgba(15,23,42,0.18)]">
                                                 <div className="px-4 py-3">
-                                                    {/* 流式状态统一收进卡片内的独立状态行：
-                                                        不再把 spinner 直接跟在 Markdown 块后面（块级元素后单独换行，
-                                                        贴着卡片左缘偶尔会被滚动区底部渐隐/圆角裁掉，看着像"跑出卡片"） */}
-                                                    {turn.answer && (
-                                                        <MarkdownAnswer
-                                                            content={turn.answer}
-                                                            sourceCount={turn.sources.length}
-                                                            onCite={n => handleCite(i, n)}
+                                                    {/* 检索过程先行：提问后立即逐步展示"怎么查"（流式期间最后一步进行中），
+                                                        答案在过程之下出现，溯源收尾——"一步步处理 → 得到结果 → 溯源" */}
+                                                    {(turn.trace?.length || meta?.retrieval_trace?.length) ? (
+                                                        <RetrievalTraceCard
+                                                            trace={(turn.trace?.length ? turn.trace : meta?.retrieval_trace) as QaTraceStep[]}
+                                                            streaming={turn.streaming && !turn.answer}
                                                         />
-                                                    )}
-                                                    {turn.streaming ? (
-                                                        <div className={`flex items-center gap-2 text-xs text-[#8A94AB] ${turn.answer ? 'mt-2.5' : ''}`}>
-                                                            <LoadingOutlined className="text-[#5B8DEF]" />
-                                                            <span>{turn.answer ? '正在生成…' : '正在检索本体图谱…'}</span>
-                                                        </div>
-                                                    ) : !turn.answer && (
-                                                        <div className="text-sm text-[#8A94AB]">（模型未返回内容）</div>
-                                                    )}
+                                                    ) : null}
+                                                    <div className={turn.trace?.length || meta?.retrieval_trace?.length ? 'mt-2.5 border-t border-dashed border-[#E7EEF9] pt-2.5' : ''}>
+                                                        {turn.answer && (
+                                                            <MarkdownAnswer
+                                                                content={turn.answer}
+                                                                sourceCount={turn.sources.length}
+                                                                onCite={n => handleCite(i, n)}
+                                                            />
+                                                        )}
+                                                        {turn.streaming ? (
+                                                            <div className={`flex items-center gap-2 text-xs text-[#8A94AB] ${turn.answer ? 'mt-2.5' : ''}`}>
+                                                                <LoadingOutlined className="text-[#5B8DEF]" />
+                                                                <span>{turn.answer ? '正在生成…' : (turn.trace?.length ? '正在综合检索结果…' : '正在检索本体图谱…')}</span>
+                                                            </div>
+                                                        ) : !turn.answer && (
+                                                            <div className="text-sm text-[#8A94AB]">（模型未返回内容）</div>
+                                                        )}
+                                                    </div>
                                                 </div>
                                                 {/* 元信息收进卡片底部：置信度 / 模型 / 延迟 / 推理路径
                                                     是这条回答自身的属性，不该浮在卡外和下面的溯源区抢位置。
@@ -863,18 +882,6 @@ export default function QaPage() {
                                                         )}
                                                         {meta?.model && <span>{meta.model}</span>}
                                                         {meta && <span>{meta.latency_ms}ms</span>}
-                                                        {meta && meta.reasoning_path?.length > 0 && (
-                                                            <Popover
-                                                                content={(
-                                                                    <ol className="list-decimal pl-4 text-xs max-w-xs">
-                                                                        {meta.reasoning_path.map((s, k) => <li key={k}>{s}</li>)}
-                                                                    </ol>
-                                                                )}
-                                                                title="推理路径"
-                                                            >
-                                                                <Button size="small" type="link" className="!h-auto !px-0 !text-[11px]">推理路径</Button>
-                                                            </Popover>
-                                                        )}
                                                     </div>
                                                 )}
                                             </div>

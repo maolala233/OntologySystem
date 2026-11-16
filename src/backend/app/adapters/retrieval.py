@@ -13,9 +13,10 @@ from collections.abc import Iterator
 from typing import Any
 
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.infrastructure.database import Entity, ProvenanceRecord, ReasoningResult, Relation, UploadedDocument
+from app.infrastructure.database import Entity, ProvenanceRecord, Project, ReasoningResult, Relation, UploadedDocument
 from app.infrastructure.llm_client import LLMClient
 from app.infrastructure.vector_client import VectorStoreManager
 
@@ -52,6 +53,8 @@ class QAResult(BaseModel):
     answer: str
     sources: list[RetrievedSource] = Field(default_factory=list)
     reasoning_path: list[str] = Field(default_factory=list)
+    # 检索过程卡片（前端逐步展示"怎么得到这个结果"）：每次查询动态不同
+    retrieval_trace: list[dict] = Field(default_factory=list)
     confidence: float = 0.0
     model: str | None = None
     latency_ms: int = 0
@@ -145,11 +148,76 @@ def _match_class_labels(db: Session, query: RetrievalQuery) -> list[str]:
     return [label for _s, label in scored[:2]]
 
 
+def _cls_doc_dist(gd: dict | None) -> dict[str, dict[str, int]]:
+    """graph_data 节点 → {类: {来源文件: 实例数, "__total": 总数}}。
+    通用口径：只认实例 source_quote 的文件前缀（认出处，不认业务词）——
+    MVP 直落项目行表无溯源，从这里取"每类来自哪些文档各多少"的构成素材，
+    供 QA 回答"152 个来自基线、30 个来自梳理"式的人话拆解。"""
+    out: dict[str, dict[str, int]] = {}
+    for n in (gd or {}).get("nodes") or []:
+        d = n.get("data") or {}
+        if d.get("type") != "owl:NamedIndividual":
+            continue
+        cl = str(d.get("class_label") or "").strip()
+        if not cl:
+            continue
+        bucket = out.setdefault(cl, {"__total": 0})
+        bucket["__total"] += 1
+        sq = str(d.get("source_quote") or "").strip()
+        if not sq:
+            continue
+        fn = re.split(r"[\[：:]", sq, 1)[0].strip()
+        if fn.startswith("文件"):
+            fn = fn[2:].strip()
+        if fn:
+            bucket[fn] = bucket.get(fn, 0) + 1
+    return out
+
+
+def _retrieval_trace(sources: list[RetrievedSource], question: str) -> list[dict]:
+    """检索过程卡片数据：按"查什么→拿到什么"分步组织本次引用（每次查询动态不同）。
+    步骤按检索阶段划分（通用，认 ref_type 不认业务词）；refs=引用编号（与回答 [n] 一致），
+    sample=该步代表内容（截 80 字），前端卡片逐步渲染并可定位引用。"""
+    groups: dict[str, list[int]] = {}
+    for i, s in enumerate(sources):
+        groups.setdefault(s.ref_type, []).append(i + 1)
+    step_def = [
+        ("graph_node", "查图谱 · 类与实例清单", "从本体图谱查到类锚定清单与全图分布概览"),
+        ("axiom", "查规则/公理 · 结构约束", "从本体公理查到定义域/值域/互斥等约束"),
+        ("graph_edge", "查图谱 · 关系事实", "从图谱关系边查到实例间的关联事实"),
+        ("inference", "语义推理 · 公理推导", "从公理/规则推导出的结论"),
+        ("vector_chunk", "查向量库 · 原文切片", "语义相似召回的原文切片"),
+        ("keyword_chunk", "查关键词索引 · 原文切片", "关键词命中的原文切片"),
+    ]
+    trace: list[dict] = []
+    for ref_type, stage, what in step_def:
+        ids = groups.pop(ref_type, [])
+        if not ids:
+            continue
+        sample = str(sources[ids[0] - 1].quote or "")[:80]
+        trace.append({"stage": stage, "what": what, "count": len(ids),
+                      "refs": ids, "sample": sample})
+    for rt, ids in groups.items():   # 未登记的通道兜底展示（不丢）
+        if ids:
+            trace.append({"stage": rt, "what": "其它检索通道", "count": len(ids),
+                          "refs": ids, "sample": str(sources[ids[0] - 1].quote or "")[:80]})
+    trace.append({"stage": "大模型综合", "what": "融合全部引用接地生成答案",
+                  "count": len(sources), "refs": list(range(1, len(sources) + 1)),
+                  "sample": "结论先行 + 构成拆解 + [n] 溯源标注"})
+    return trace
+
+
 def _class_inventory_sources(db: Session, query: RetrievalQuery,
                              class_labels: list[str]) -> list[RetrievedSource]:
     """类锚定枚举事实（graph_node）：列出该类全部实例（少量带属性摘要，量大只列名）。
     作为一条独立引用参与融合——LLM 拿到它才能回答"有哪些 X"。"""
     out: list[RetrievedSource] = []
+    # 逐类来源构成（通用：认实例 source_quote 的文件前缀）；行表溯源为准，graph_data 聚合兜底
+    try:
+        _proj = db.query(Project).filter(Project.id == query.project_id).first()
+        _doc_dist = _cls_doc_dist(_proj.graph_data) if _proj is not None else {}
+    except Exception:  # noqa: BLE001
+        _doc_dist = {}
     for label in class_labels[:2]:
         try:
             insts = (
@@ -176,12 +244,96 @@ def _class_inventory_sources(db: Session, query: RetrievalQuery,
             body = "；".join(items)
         else:
             body = "、".join(e.label for e in insts)
+        # 来源文档分布（provenance 有数据才带；MVP 直落项目无溯源则跳过）——
+        # 让 LLM 能解释口径构成（"152 来自基线 + 30 来自梳理"）而不只是念总数
+        doc_part = ""
+        try:
+            doc_rows = (
+                db.query(UploadedDocument.filename, func.count(ProvenanceRecord.id))
+                .join(ProvenanceRecord, ProvenanceRecord.source_document_id == UploadedDocument.id)
+                .filter(
+                    ProvenanceRecord.project_id == query.project_id,
+                    ProvenanceRecord.target_type == "entity",
+                    ProvenanceRecord.target_id.in_([e.id for e in insts]),
+                )
+                .group_by(UploadedDocument.filename)
+                .order_by(func.count(ProvenanceRecord.id).desc())
+                .limit(4)
+                .all()
+            )
+            if doc_rows:
+                doc_part = "（来源：" + "、".join(f"{fn}×{c}" for fn, c in doc_rows) + "）"
+            else:
+                # 行表溯源缺失（MVP 直落项目）：用 graph_data 逐实例文件前缀聚合兜底
+                dd = {k: v for k, v in (_doc_dist.get(label) or {}).items() if k != "__total"}
+                if dd:
+                    doc_part = "（来源：" + "、".join(f"{fn} {c} 个" for fn, c in
+                                                     sorted(dd.items(), key=lambda x: -x[1])[:4]) + "）"
+        except Exception as e:  # noqa: BLE001 —— 来源分布失败不影响清单本体
+            logger.warning(f"[retrieval] 类 {label} 来源分布查询失败：{e}")
         out.append(RetrievedSource(
             doc_file="本体图谱",
-            quote=_quote_clip(f"「{label}」类共 {len(insts)} 个实例：{body}"),
+            quote=_quote_clip(f"「{label}」类共 {len(insts)} 个实例{doc_part}：{body}"),
             ref_type="graph_node",
             score=0.95,
         ))
+    # 全图类分布概览：计数类问题的口径兜底——类名漂移（同文档不同轮抽成不同类名）
+    # 或用户口径与类名不一致时，锚定类清单覆盖不到真类；把全图实例数 top 类一次性
+    # 给到 LLM，让它自行挑选相关类并说明口径（分数低于锚定清单，名额让位）
+    if out:
+        try:
+            dist_rows = (
+                db.query(Entity.class_label, func.count(Entity.id))
+                .filter(
+                    Entity.project_id == query.project_id,
+                    Entity.is_class_node.is_(False),
+                    Entity.status != "rejected",
+                    Entity.class_label.isnot(None),
+                )
+                .group_by(Entity.class_label)
+                .order_by(func.count(Entity.id).desc())
+                .limit(12)
+                .all()
+            )
+            if dist_rows:
+                # 每类带来源构成（graph_data 聚合），LLM 才能说"152 来自基线、30 来自梳理"
+                def _lab_part(lab: str, cnt: int) -> str:
+                    dd = {k: v for k, v in (_doc_dist.get(lab) or {}).items() if k != "__total"}
+                    if not dd or len(dd) <= 1:
+                        return f"{lab} {cnt} 个"
+                    srcs = "、".join(f"{fn} {c} 个" for fn, c in sorted(dd.items(), key=lambda x: -x[1])[:3])
+                    return f"{lab} {cnt} 个（{srcs}）"
+                overview = "；".join(_lab_part(lab, cnt) for lab, cnt in dist_rows[:8])
+                shown = dist_rows[:8]
+                n_cls = (
+                    db.query(func.count(func.distinct(Entity.class_label)))
+                    .filter(
+                        Entity.project_id == query.project_id,
+                        Entity.is_class_node.is_(False),
+                        Entity.status != "rejected",
+                        Entity.class_label.isnot(None),
+                    )
+                    .scalar()
+                )
+                all_total = (
+                    db.query(func.count(Entity.id))
+                    .filter(
+                        Entity.project_id == query.project_id,
+                        Entity.is_class_node.is_(False),
+                        Entity.status != "rejected",
+                    )
+                    .scalar()
+                )
+                tail = "" if all_total == sum(c for _l, c in shown) else \
+                    f"（其余 {n_cls - len(shown)} 个类合计 {all_total - sum(c for _l, c in shown)} 个）"
+                out.append(RetrievedSource(
+                    doc_file="本体图谱",
+                    quote=_quote_clip(f"全图实例总数 {all_total} 个、共 {n_cls} 个类。主要类分布：{overview}{tail}"),
+                    ref_type="graph_node",
+                    score=0.72,
+                ))
+        except Exception as e:  # noqa: BLE001 —— 概览失败不影响锚定清单
+            logger.warning(f"[retrieval] 类分布概览生成失败：{e}")
     return out
 
 
@@ -625,9 +777,9 @@ def retrieve(query: RetrievalQuery, db: Session | None = None) -> list[Retrieved
             out.append(s)
         return out
 
-    # 类锚定实例清单有保留名额（最多 2 条，一各类一条）——枚举问题的决定性证据；
-    # 公理引用紧随其后（最多 2 条）——约束类问题的决定性证据
-    fused = (_dedup(inventory)[:2] + axiom_hits[:2] + _dedup(graph_facts)[:MAX_GRAPH_FACTS]
+    # 类锚定实例清单有保留名额（最多 3 条：锚定清单 2 条 + 全图分布概览 1 条）——
+    # 枚举问题的决定性证据；全图计数类问题（"总共有多少实例"）依赖概览入选
+    fused = (_dedup(inventory)[:3] + axiom_hits[:2] + _dedup(graph_facts)[:MAX_GRAPH_FACTS]
              + _dedup(text_hits))
     result = fused[:MAX_SOURCES]
     # 语义推理引用垫底补充（不与事实混排）：
@@ -649,11 +801,24 @@ _QA_SYSTEM_PROMPT = """你是一位专业的本体知识问答助手，基于提
 
 【回答要求】：
 1. 只根据提供的上下文回答，不要编造信息。
-2. 在回答中使用 [1][2][3] 等标号标注引用来源，标号放在相关语句的末尾。
-3. 如果上下文中没有相关信息，请如实告知用户。
-4. 来源为"语义推理"的引用是系统从本体公理/规则推导出的结论（非原文事实）：
+2. **结论先行 + 构成式人话**：计数/统计类问题按「总共 N 个，其中 X 个来自《文档A》、
+   Y 个来自《文档B》，两份文档交叉去重后共 N 个」这种人话句式回答——先给总数，
+   再用"其中/来自"拆构成，让不懂本体建模的人也能看懂数字怎么来的；
+   引用中的"来源：文档×数量"标注是构成拆解的直接依据，原样转化为自然语言。
+3. **给推理过程**：结论之后用 1-3 句说明推理或构成（如"182 = 接口基线贡献 152 +
+   功能梳理贡献 30，另有 1 个编码被归入相近类"）；引用里若有"来源：文档×数量"
+   标注，据此拆解口径构成；多个数字并存时说明各自的口径与关系。
+4. 在回答中使用 [1][2][3] 等标号标注引用来源，标号放在相关语句的末尾。
+5. 如果上下文中没有相关信息，请如实告知，并指出上下文中最接近的信息（如类分布
+   概览中相近类的数量），不要空泛拒答。
+6. 计数/统计类问题：若"类分布概览"引用中存在与问题口径相近的多个类（如同义类、
+   上下位类），须把相近各类的数量一并报出并说明口径差异，不要只挑一个类作答。
+7. 来源为"语义推理"的引用是系统从本体公理/规则推导出的结论（非原文事实）：
    可用于回答类型归属、层级关系类问题，引用时保留 [n] 标注，表述上与原文事实区分
    （如"根据语义推理"），不要说成文档记载的内容。
+8. **说业务人话，禁系统内部术语**：不要向用户暴露"实例/类节点/类清单/概览引用/
+   锚定/通道"这类实现词汇——说"登记了 182 个接口""来自两份文档"而不是
+   "「接口」类共 182 个实例"；类名可以直接用，但句式要像人在解释数据，不是系统在报账。
 
 【引用格式说明】：[1] 表示引用第 1 条参考信息，以此类推。
 """
@@ -688,9 +853,20 @@ def query_with_reasoning(query: RetrievalQuery, db: Session | None = None,
     """
     t0 = time.time()
     sources = retrieve(query, db=db)
-    reasoning: list[str] = [
-        f"向量召回 + 图扩展融合得 {len(sources)} 条引用",
-    ]
+    # 推理路径 = 真实检索过程（通道构成+锚定类），不再是泛化描述
+    inv = [s for s in sources if s.ref_type == "graph_node"]
+    axm = [s for s in sources if s.ref_type == "axiom"]
+    gef = [s for s in sources if s.ref_type == "graph_edge"]
+    txt = [s for s in sources if s.ref_type not in ("graph_node", "graph_edge", "axiom")]
+    anchored = [m.group(1) for s in inv if (m := re.match(r"「(.+?)」类共", s.quote))]
+    reasoning: list[str] = []
+    if anchored:
+        reasoning.append(f"类锚定命中：{'、'.join(anchored[:4])}（实例清单/分布概览 {len(inv)} 条）")
+    else:
+        reasoning.append("未命中类锚定，走文本通道")
+    if axm:
+        reasoning.append(f"公理约束参与 {len(axm)} 条（定义域/值域/互斥等）")
+    reasoning.append(f"图谱事实 {len(gef)} 条 | 文本切片 {len(txt)} 条 → 融合排序取 {len(sources)} 条")
     answer = ""
     model_name = None
     if sources and llm is not None:
@@ -704,7 +880,7 @@ def query_with_reasoning(query: RetrievalQuery, db: Session | None = None,
             )
             answer = (resp.get("content", "") if isinstance(resp, dict) else str(resp)).strip()
             model_name = getattr(llm, "model", None)
-            reasoning.append("LLM 依据引用生成接地答案（[n] 标注）")
+            reasoning.append("LLM 接地生成：结论先行 + 口径构成推理 + [n] 溯源标注")
         except Exception as e:
             logger.error(f"[retrieval] LLM 生成失败：{e}")
             reasoning.append(f"LLM 生成失败，回退引用聚合（{e}）")
@@ -715,6 +891,7 @@ def query_with_reasoning(query: RetrievalQuery, db: Session | None = None,
         answer=answer,
         sources=sources,
         reasoning_path=reasoning,
+        retrieval_trace=_retrieval_trace(sources, query.question),
         confidence=_confidence(sources),
         model=model_name,
         latency_ms=int((time.time() - t0) * 1000),
@@ -841,6 +1018,8 @@ def iter_answer(query: RetrievalQuery, db: Session | None = None,
     t0 = time.time()
     sources = retrieve(query, db=db)
     yield ("meta", {"source_count": len(sources)})
+    # 检索过程先行：LLM 生成前就把步骤卡发给前端（用户先看到"怎么查"，再看到答案）
+    yield ("trace", _retrieval_trace(sources, query.question))
     if not sources or llm is None:
         result = query_with_reasoning(query, db=db, llm=llm)
         result.failed = not result.sources  # O3-B16：空引用问答计失败轨迹
@@ -872,10 +1051,26 @@ def iter_answer(query: RetrievalQuery, db: Session | None = None,
                 return
             break
     answer = "".join(answer_parts).strip() or "（模型未返回内容）"
+    # 推理路径 = 真实检索过程（与 query_with_reasoning 同款细粒度）
+    inv = [s for s in sources if s.ref_type == "graph_node"]
+    axm = [s for s in sources if s.ref_type == "axiom"]
+    gef = [s for s in sources if s.ref_type == "graph_edge"]
+    txt = [s for s in sources if s.ref_type not in ("graph_node", "graph_edge", "axiom")]
+    anchored = [m.group(1) for s in inv if (m := re.match(r"「(.+?)」类共", s.quote))]
+    rp: list[str] = []
+    if anchored:
+        rp.append(f"类锚定命中：{'、'.join(anchored[:4])}（实例清单/分布概览 {len(inv)} 条）")
+    else:
+        rp.append("未命中类锚定，走文本通道")
+    if axm:
+        rp.append(f"公理约束参与 {len(axm)} 条（定义域/值域/互斥等）")
+    rp.append(f"图谱事实 {len(gef)} 条 | 文本切片 {len(txt)} 条 → 融合排序取 {len(sources)} 条")
+    rp.append("LLM 接地生成：结论先行 + 口径构成推理 + [n] 溯源标注")
     yield ("done", QAResult(
         answer=answer,
         sources=sources,
-        reasoning_path=[f"向量召回 + 图扩展融合得 {len(sources)} 条引用", "LLM 流式生成（[n] 标注）"],
+        reasoning_path=rp,
+        retrieval_trace=_retrieval_trace(sources, query.question),
         confidence=_confidence(sources),
         model=getattr(llm, "model", None),
         latency_ms=int((time.time() - t0) * 1000),
