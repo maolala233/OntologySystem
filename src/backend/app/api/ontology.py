@@ -32,7 +32,8 @@ router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 def _build_project_list_items(db: Session, rows: list[Project], *,
                               running_ids: Optional[set] = None,
-                              scheduled_ids: Optional[set] = None) -> list[ProjectBrief]:
+                              scheduled_ids: Optional[set] = None,
+                              scheduled_info: Optional[dict] = None) -> list[ProjectBrief]:
     """把 Project 行补齐为列表项（状态/类数/实例数），/my 与分页接口共用。
 
     类数/节点数走 SQL JSON_LENGTH，不把 graph_data 读进 Python；构建中/定时状态
@@ -41,7 +42,10 @@ def _build_project_list_items(db: Session, rows: list[Project], *,
     from sqlalchemy import func as sa_func
 
     from app.infrastructure.database import Entity
-    from app.tasks.pipeline_tasks import pipeline_active_project_ids
+    from app.tasks.pipeline_tasks import (
+        pipeline_active_project_ids,
+        pipeline_scheduled_info,
+    )
 
     if not rows:
         return []
@@ -49,6 +53,9 @@ def _build_project_list_items(db: Session, rows: list[Project], *,
     ids = [p.id for p in rows if p.id is not None]
     if running_ids is None or scheduled_ids is None:
         running_ids, scheduled_ids = pipeline_active_project_ids()
+    # 定时时间只在有已定时项目时才多扫一次 Redis（多数列表为空，零开销）
+    if scheduled_info is None and scheduled_ids:
+        scheduled_info = pipeline_scheduled_info()
 
     inst_counts: dict = dict(
         db.query(Entity.project_id, sa_func.count())
@@ -102,6 +109,11 @@ def _build_project_list_items(db: Session, rows: list[Project], *,
         item.classes_total = classes_total
         item.nodes_total = nodes_total
         item.instances_total = int(inst_counts.get(p.id, 0))
+        _sched = (scheduled_info or {}).get(p.id) if scheduled_info else None
+        if _sched:
+            item.scheduled_at = _sched.get("fire_at")
+            item.schedule = {k: _sched.get(k)
+                             for k in ("depth", "restart", "trigger_user_id")}
         out.append(item)
     return out
 
@@ -359,12 +371,16 @@ def get_project(project_id: int, current_user: User = Depends(get_current_user),
                          if isinstance(c, dict) and c.get("label")])
     from sqlalchemy import func as sa_func
 
-    from app.tasks.pipeline_tasks import pipeline_running_task_id, pipeline_scheduled_at
+    from app.tasks.pipeline_tasks import pipeline_running_task_id, pipeline_schedule_for
     # 判定顺序与 /my 同口径（2026-11-09）：构建中/待构建 > 已发布 > 已构建 > 草稿
+    sched_info = pipeline_schedule_for(project.id) if project.id is not None else None
     if project.id is not None and pipeline_running_task_id(project.id):
         item.status = "building"
-    elif project.id is not None and pipeline_scheduled_at(project.id):
+    elif sched_info:
         item.status = "scheduled"
+        item.scheduled_at = sched_info.get("fire_at")
+        item.schedule = {k: sched_info.get(k)
+                         for k in ("depth", "restart", "trigger_user_id")}
     elif project.is_published:
         item.status = "published"
         pub_vid = (db.query(sa_func.max(Publication.version_id))

@@ -1287,12 +1287,83 @@ def cancel_scheduled_pipeline(project_id: int) -> bool:
     return True
 
 
-def pipeline_scheduled_at(project_id: int) -> Optional[str]:
-    """已登记的定时构建时间（未开跑）；无则 None。"""
+def _parse_schedule_payload(raw) -> Optional[dict]:
+    """Redis 定时登记值 → {fire_at(UTC ISO), depth, restart, trigger_user_id}。
+
+    兼容两种历史格式：JSON {fire_at, trigger_user_id, options} 与旧版纯时间串。
+    时间统一转成带 +00:00 的 UTC ISO，前端 new Date() 自动转本地展示。
+    """
+    import datetime as _dt
+
+    txt = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw or "")
+    txt = txt.strip()
+    if not txt:
+        return None
+    fire_raw, options, trigger_user_id = txt, {}, None
     try:
-        return _redis().get(_SCHEDULE_KEY.format(project_id=project_id))
+        data = json.loads(txt)
+        if isinstance(data, dict):
+            fire_raw = str(data.get("fire_at") or "").strip() or txt
+            options = data.get("options") if isinstance(data.get("options"), dict) else {}
+            trigger_user_id = data.get("trigger_user_id")
+    except Exception:  # noqa: BLE001 —— 旧版纯时间串
+        pass
+    fire_iso = fire_raw
+    try:
+        fire = _dt.datetime.fromisoformat(fire_raw.replace("Z", "+00:00"))
+        if fire.tzinfo is None:
+            fire = fire.replace(tzinfo=_dt.datetime.now().astimezone().tzinfo)
+        fire_iso = fire.astimezone(_dt.timezone.utc).isoformat()
+    except Exception:  # noqa: BLE001 —— 解析失败原样返回，前端自行容错
+        pass
+    return {
+        "fire_at": fire_iso,
+        "depth": options.get("depth"),
+        "restart": bool(options.get("restart")),
+        "trigger_user_id": (int(trigger_user_id)
+                            if str(trigger_user_id or "").isdigit() else trigger_user_id),
+    }
+
+
+def pipeline_schedule_for(project_id: int) -> Optional[dict]:
+    """单个项目的定时登记信息（详情页用）；未登记返回 None。"""
+    try:
+        return _parse_schedule_payload(
+            _redis().get(_SCHEDULE_KEY.format(project_id=project_id)))
     except Exception:  # noqa: BLE001
         return None
+
+
+def pipeline_scheduled_info() -> dict[int, dict]:
+    """批量读取已登记的定时构建（列表页用）：{project_id: schedule_info}。
+
+    已定时的项目通常很少；Redis 抖动时返回空字典，列表退化为不显示时间。
+    """
+    out: dict[int, dict] = {}
+    try:
+        r = _redis()
+        for key in r.scan_iter(match="pipeline:schedule:*", count=500):
+            k = key.decode() if isinstance(key, bytes) else str(key)
+            tail = k.rsplit(":", 1)[-1]
+            if not tail.isdigit():
+                continue  # 跳过 :task 兼容键
+            info = _parse_schedule_payload(r.get(k))
+            if info:
+                out[int(tail)] = info
+    except Exception as e:  # noqa: BLE001
+        from app.core.logging import logger
+
+        logger.warning(f"[pipeline] 批量读取定时构建信息失败: {e}")
+    return out
+
+
+def pipeline_scheduled_at(project_id: int) -> Optional[str]:
+    """已登记的定时构建时间（UTC ISO，未开跑）；无则 None。
+
+    旧实现直接返回 Redis 原始 JSON（整段 payload），现在解析成 fire_at。
+    """
+    info = pipeline_schedule_for(project_id)
+    return info.get("fire_at") if info else None
 
 
 def pipeline_active_project_ids() -> tuple[set[int], set[int]]:
@@ -1344,5 +1415,6 @@ def release_pipeline_lock(project_id: int) -> None:
 
 __all__ = ["STAGE_DEFS", "DEPTH_PROFILES", "run_pipeline", "dispatch_pipeline_run",
            "run_scheduled_pipeline", "cancel_scheduled_pipeline",
-           "pipeline_scheduled_at", "pipeline_running_task_id", "release_pipeline_lock",
+           "pipeline_scheduled_at", "pipeline_schedule_for", "pipeline_scheduled_info",
+           "pipeline_running_task_id", "release_pipeline_lock",
            "pipeline_active_project_ids"]

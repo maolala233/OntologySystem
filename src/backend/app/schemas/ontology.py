@@ -78,6 +78,9 @@ class ProjectListItem(ProjectResponse):
     instances_total: int = 0
     # 已发布后内容又更新过（重新构建过）：前端据此显示「有新版本」标记，提示可重新发布
     stale_published: bool = False
+    # 定时构建（未到点）：scheduled_at 为 UTC ISO；schedule 含 depth/restart/trigger_user_id
+    scheduled_at: Optional[str] = None
+    schedule: Optional[dict] = None
 
 
 class ProjectBrief(ProjectBase):
@@ -100,6 +103,9 @@ class ProjectBrief(ProjectBase):
     nodes_total: int = 0
     # 已发布后内容又更新过（重新构建过）：前端据此显示「有新版本」标记，提示可重新发布
     stale_published: bool = False
+    # 定时构建（未到点）：scheduled_at 为 UTC ISO；schedule 含 depth/restart/trigger_user_id
+    scheduled_at: Optional[str] = None
+    schedule: Optional[dict] = None
 
     @field_serializer("created_at", "updated_at")
     def _ser_time(self, v: datetime | None) -> str | None:

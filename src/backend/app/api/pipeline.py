@@ -20,7 +20,7 @@ from app.tasks.pipeline_tasks import (
     dispatch_pipeline_run,
     pipeline_last_task_id,
     pipeline_running_task_id,
-    pipeline_scheduled_at,
+    pipeline_schedule_for,
     release_pipeline_lock,
 )
 from app.tasks.progress import finish_task_progress, get_task_progress
@@ -149,10 +149,12 @@ def pipeline_status_endpoint(
             if not stale_running:
                 tid, prog = last_tid, last_prog
     if prog is None:
-        sched = pipeline_scheduled_at(project_id)
+        sched = pipeline_schedule_for(project_id)
         if sched:
+            # schedule 带档位/是否重头开始/触发人，前端无需再解析原始 Redis payload
             return {"status": "scheduled", "task_id": None, "stages": [],
-                    "scheduled_at": sched, "reviews": summary}
+                    "scheduled_at": sched.get("fire_at"), "schedule": sched,
+                    "reviews": summary}
         return {"status": "idle", "task_id": None, "stages": [], "reviews": summary}
     if int((prog.get("stats") or {}).get("project_id") or -1) != project_id:
         raise NotFoundError(f"任务不存在: {tid}")  # 不泄露他项目任务
