@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     # 全后端 chat-completion 调用并发上限（跨进程 Redis 信号量；Redis 不可用回落进程内）。
     # 唯一并发开关：抽取/缝合等并行阶段的线程预算也统一取该值，不再有独立并行度配置。
     LLM_MAX_CONCURRENCY: int = 16
+    # 发起速率上限（次/60 秒，0=关闭；与并发上限叠加生效）。对齐模型服务的
+    # RPM 配额用：只限在途数时，短调用会以远高于配额的速度打过去。
+    LLM_MAX_RPM: int = 0
 
     VLLM_API_KEY: str = "EMPTY"
     VLLM_BASE_URL: str = "http://localhost:9080/v1/chat/completions"

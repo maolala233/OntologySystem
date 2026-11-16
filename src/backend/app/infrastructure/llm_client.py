@@ -7,6 +7,7 @@ import contextlib
 import random
 import threading
 import uuid
+from collections import deque
 import httpx
 from typing import Dict, Any, Iterator, Optional
 from openai import OpenAI, AsyncOpenAI
@@ -48,11 +49,35 @@ end
 return 0
 """
 
+# ── 发起速率闸（LLM_MAX_RPM 次/60 秒）────────────────────────────────────
+# 与并发闸叠加：并发限「同时在途」，速率限「每分钟发起」。调用耗时短于
+# 窗口时，只限并发会让实际 RPM 远高于配额；这里用滑动窗口按发起时刻计数。
+_LLM_RATE_REDIS_KEY = "llm:rate:requests"
+_LLM_RATE_WINDOW_SECONDS = 60
+_LLM_RATE_ACQUIRE_LUA = """
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local window_ms = tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
+local token = ARGV[4]
+redis.call('ZREMRANGEBYSCORE', key, '-inf', now - window_ms)
+if redis.call('ZCARD', key) < limit then
+  redis.call('ZADD', key, now, token)
+  redis.call('PEXPIRE', key, window_ms * 2)
+  return 1
+end
+return 0
+"""
+
 
 class _LLMConcurrencyLimiter:
     def __init__(self) -> None:
         self._limit = max(1, int(getattr(settings, "LLM_MAX_CONCURRENCY", 16) or 16))
         self._local = threading.BoundedSemaphore(self._limit)
+        # 发起速率上限（0=关闭）：跨进程 Redis 滑动窗口，回落进程内时间队列
+        self._rpm = max(0, int(getattr(settings, "LLM_MAX_RPM", 0) or 0))
+        self._rate_q: deque[float] = deque()
+        self._rate_lock = threading.Lock()
         self._tls = threading.local()
         self._redis = None
         self._redis_checked = False
@@ -77,7 +102,8 @@ class _LLMConcurrencyLimiter:
                     socket_connect_timeout=1, socket_timeout=2)
                 client.ping()
                 self._redis = client
-                logger.info(f"[LLM] 并发闸已启用：limit={self._limit}（Redis 跨进程）")
+                logger.info(f"[LLM] 并发闸已启用：limit={self._limit}（Redis 跨进程）"
+                            + (f"，速率闸 {self._rpm}/60s" if self._rpm else ""))
             except Exception as e:  # noqa: BLE001 —— 可用性优先，回落进程内
                 self._redis = None
                 logger.warning(f"[LLM] Redis 并发闸不可用，回落进程内信号量：{e}")
@@ -101,12 +127,60 @@ class _LLMConcurrencyLimiter:
                 last_log = time.monotonic()
             time.sleep(0.15 + 0.15 * random.random())
 
+    def _wait_rate_redis(self, client, token: str) -> bool:
+        """Redis 滑动窗口取速率令牌；返回 False 表示 Redis 不可用（回落本地）。"""
+        window_ms = _LLM_RATE_WINDOW_SECONDS * 1000
+        last_log = 0.0
+        while True:
+            now_ms = int(time.time() * 1000)
+            try:
+                ok = client.eval(_LLM_RATE_ACQUIRE_LUA, 1, _LLM_RATE_REDIS_KEY,
+                                 now_ms, window_ms, self._rpm, token)
+            except Exception as e:  # noqa: BLE001 —— 可用性优先
+                logger.warning(f"[LLM] Redis 速率闸异常，本次回落进程内：{e}")
+                return False
+            if int(ok) == 1:
+                return True
+            if time.monotonic() - last_log > 10:
+                logger.info(f"[LLM] 速率闸已满（{self._rpm}/60s），等待窗口释放...")
+                last_log = time.monotonic()
+            time.sleep(0.5 + 0.5 * random.random())
+
+    def _wait_rate_local(self) -> None:
+        """进程内滑动窗口兜底（Redis 不可用）：按单调时钟记发起时刻。"""
+        while True:
+            with self._rate_lock:
+                now = time.monotonic()
+                while self._rate_q and \
+                        self._rate_q[0] <= now - _LLM_RATE_WINDOW_SECONDS:
+                    self._rate_q.popleft()
+                if len(self._rate_q) < self._rpm:
+                    self._rate_q.append(now)
+                    return
+                wait = self._rate_q[0] + _LLM_RATE_WINDOW_SECONDS - now
+            time.sleep(max(0.2, min(wait, 1.0)))
+
+    def _wait_rate(self, client, token: str) -> None:
+        if self._rpm <= 0:
+            return
+        started = time.monotonic()
+        if client is None or not self._wait_rate_redis(client, token):
+            self._wait_rate_local()
+        waited = time.monotonic() - started
+        if waited >= 2:
+            logger.info(f"[LLM] 速率闸等待 {waited:.1f}s 后获得令牌"
+                        f"（limit={self._rpm}/60s）")
+
     @contextlib.contextmanager
     def slot(self):
         depth = getattr(self._tls, "depth", 0)
-        if depth:  # 同线程嵌套：续写等不再额外占槽
+        if depth:  # 同线程嵌套：续写等不再额外占并发槽；速率仍按真实请求计
             self._tls.depth = depth + 1
             try:
+                if self._rpm > 0:
+                    tok = (f"{os.getpid()}:{threading.get_ident()}:"
+                           f"nested:{uuid.uuid4().hex}")
+                    self._wait_rate(self._client(), tok)
                 yield
             finally:
                 self._tls.depth = depth
@@ -114,10 +188,9 @@ class _LLMConcurrencyLimiter:
 
         started = time.monotonic()
         client = self._client()
-        token = None
+        token = f"{os.getpid()}:{threading.get_ident()}:{uuid.uuid4().hex}"
         mode = "local"
         if client is not None:
-            token = f"{os.getpid()}:{threading.get_ident()}:{uuid.uuid4().hex}"
             if self._acquire_redis(client, token):
                 mode = "redis"
             else:
@@ -125,9 +198,15 @@ class _LLMConcurrencyLimiter:
         if mode == "local":
             self._local.acquire()
 
+        # 并发槽拿到后再取速率令牌：放行即发请求，不会先领令牌再排队，
+        # 避免「令牌已计入窗口、请求还没发出去」导致窗口内实际 RPM 失真。
+        self._wait_rate(client if mode == "redis" else None, token)
+
         waited = time.monotonic() - started
         if waited >= 2:
-            logger.info(f"[LLM] 并发闸等待 {waited:.1f}s 后获得槽位（limit={self._limit}）")
+            logger.info(f"[LLM] 限流等待 {waited:.1f}s 后放行"
+                        f"（并发 {self._limit}"
+                        + (f"，速率 {self._rpm}/60s" if self._rpm else "") + "）")
 
         self._tls.depth = 1
         try:
