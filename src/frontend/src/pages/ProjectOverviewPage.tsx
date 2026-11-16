@@ -179,6 +179,32 @@ const ProjectOverviewPage: React.FC = () => {
                 .overview-stack > .ant-card > .ant-card-body {
                     padding: 10px 20px 16px;
                 }
+                /* 段头按钮统一规格（2026-11-16）：重新构建 / 继续上传 / 发布到资产中心
+                   原来都是 antd small（24px 高、14px 字），在 44px 段头里既小又偏大字号；
+                   统一 28px 高、12.5px 字，主次只靠 primary / default 区分 */
+                .overview-stack > .ant-card > .ant-card-head .ant-btn {
+                    height: 28px;
+                    padding-inline: 12px;
+                    font-size: 12.5px;
+                }
+                /* 表格内的链接按钮（下载 / 删除）：字号跟表格收到 12.5px；
+                   删除用冷调红——antd 默认 #ff4d4f 在这套冷色里过艳 */
+                .overview-stack .ant-table .ant-btn-link {
+                    height: 24px;
+                    padding-inline: 0;
+                    font-size: 12.5px;
+                }
+                .overview-stack .ant-table .ant-btn-link.ant-btn-dangerous { color: #B42318; }
+                .overview-stack .ant-table .ant-btn-link.ant-btn-dangerous:hover { color: #8E1B12; }
+                /* 卡内字号三档（2026-11-16）：段标题 14/600（上面已设）· 正文 13 · 辅助 11.5。
+                   antd 表格默认 14px 正文、表头也跟着 14，比卡内其他正文大一档；
+                   标签统一收到 11.5，避免同一屏里出现 11 / 12 / 13 / 14 四种字号 */
+                .overview-stack .ant-table { font-size: 13px; }
+                /* 单元格要单独写：antd 把字号挂在 .ant-table-cell 上，
+                   只改 .ant-table 不会传到 td（实测仍是 14px） */
+                .overview-stack .ant-table-cell { font-size: 13px; }
+                .overview-stack .ant-table-thead > tr > th { font-size: 12.5px; }
+                .overview-stack .ant-tag { font-size: 11.5px; }
                 /* 项目名与描述的截断改用 Tailwind 的 truncate 直接写在元素上
                    （2026-11-16 随页头并入卡内），这里不再需要 .overview-head 的兜底 */
             `}</style>
@@ -194,7 +220,10 @@ const ProjectOverviewPage: React.FC = () => {
                 {/* 主体：构建 / 文档 / 结果原本是三张独立白卡，堆在一起像三块板子；
                     现在收进同一张白面，用发丝线分段。子组件自身的 Card 由 .overview-stack
                     压平（只影响本页，专家模式 Tab 里的用法不变） */}
-                <div className="overview-stack mb-4 overflow-hidden rounded-xl border border-[#E7EEF9] bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04),0_12px_26px_-22px_rgba(15,23,42,0.28)]">
+                {/* 卡面走全站统一的 .surface-card 材质（2026-11-16）：冷白渐变 + 顶部内高光 +
+                   底部内阴影 + 圆角 14，与系统配置五页 / 知识域管理 / MCP 一致。
+                   原来手写的纯白 + rounded-xl + 自绘阴影在浅蓝画布上像一张贴纸 */}
+                <div className="overview-stack surface-card mb-4">
                     {/* 卡内第 0 段：项目身份（2026-11-16）。原来是挂在页面上的 PageHeader，
                         浮在画布上另起一段，和下面白卡割裂；名称/状态/领域/时间/主操作本质都是
                         "这个项目的属性"，与构建、文档、结果同属一张白面，因此并进卡里当第一段。

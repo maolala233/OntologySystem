@@ -35,13 +35,16 @@ interface Props {
     onPipeStatus?: (status: PipelineStatus | null) => void;
 }
 
+// 状态图标配色收敛到冷调（2026-11-16）：原来是 Tailwind 语义色（绿 #10b981 /
+// 红 #ef4444 / 橙 #f59e0b），饱和度比全站的其他颜色高一档，一进页面视觉重心
+// 全落在这几个圆点上。现按「品牌蓝=进行中、冷青=已完成、冷调红=失败、琥珀=中止」重排
 const STATUS_ICON: Record<string, React.ReactNode> = {
-    done: <CheckCircleOutlined style={{ color: '#10b981' }} />,
-    failed: <CloseCircleOutlined style={{ color: '#ef4444' }} />,
+    done: <CheckCircleOutlined style={{ color: '#1B87AD' }} />,
+    failed: <CloseCircleOutlined style={{ color: '#B42318' }} />,
     running: <SyncOutlined spin style={{ color: '#5B8DEF' }} />,
-    skipped: <MinusCircleOutlined style={{ color: '#9ca3af' }} />,
-    cancelled: <PauseCircleOutlined style={{ color: '#f59e0b' }} />,
-    pending: <span style={{ color: '#d1d5db' }}>○</span>,
+    skipped: <MinusCircleOutlined style={{ color: '#A3ADC2' }} />,
+    cancelled: <PauseCircleOutlined style={{ color: '#B8790F' }} />,
+    pending: <span style={{ color: '#CBD5E5' }}>○</span>,
 };
 
 const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, published, built, onPipeStatus }) => {
@@ -256,7 +259,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
                 <Space>
                     {runningNow && <SyncOutlined spin style={{ color: '#5B8DEF' }} />}
                     <span>构建</span>
-                    <span className="hidden text-[12px] text-[#8A94AB] font-normal md:inline">
+                    <span className="hidden text-[11.5px] text-[#8A94AB] font-normal md:inline">
                         上传 → 一键构建 → 查看结果与发布
                     </span>
                 </Space>
@@ -266,7 +269,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
                     {runningNow && (
                         <Popconfirm title="停止当前构建？"
                                     description={(
-                                        <div className="max-w-[260px] text-xs">
+                                        <div className="max-w-[260px] text-[13px]">
                                             立即终止本次构建（含挂起中的 AI 调用）；
                                             已完成的阶段结果保留。
                                         </div>
@@ -315,7 +318,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
                         const shown = st.status === 'running' && !runningNow ? 'cancelled' : st.status;
                         return (
                             <div key={st.key}
-                                 className={`flex items-center gap-1.5 border rounded-lg px-2 py-1 text-xs transition-colors ${
+                                 className={`flex items-center gap-1.5 border rounded-lg px-2 py-1 text-[13px] transition-colors ${
                                      shown === 'running' ? 'border-[rgba(91,141,239,0.45)] bg-[rgba(91,141,239,0.10)]'
                                          : shown === 'failed' ? 'border-[#F2C6CE] bg-[#FDF2F4]'
                                              : shown === 'cancelled' ? 'border-[rgba(242,185,80,0.45)] bg-[rgba(242,185,80,0.12)]'
@@ -342,7 +345,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, pub
                         const stt = (s.sub?.stats || {}) as Record<string, any>;
                         // 预计剩余已按用户要求移除（估算不准反成噪音），保留切片计数
                         if (typeof stt.chunks_done === 'number' && typeof stt.chunks_total === 'number') {
-                            return <div className="text-[11px] text-[#A3ADC2] mt-0.5">切片 {stt.chunks_done}/{stt.chunks_total}</div>;
+                            return <div className="text-[11.5px] text-[#A3ADC2] mt-0.5">切片 {stt.chunks_done}/{stt.chunks_total}</div>;
                         }
                         return null;
                     })()}

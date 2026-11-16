@@ -138,7 +138,9 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage 
           } },
         { title: '操作', key: 'ops', width: 190, align: 'center' as const,
           render: (_, d) => (
-              <Space size={0}>
+              // 两个链接按钮之间留 8px（2026-11-16）：原来 size={0}，图标几乎贴在一起，
+              // 点击热区容易误触
+              <Space size={8}>
                   <Button type="link" size="small" icon={<CloudDownloadOutlined />}
                           onClick={() => documentsApi.download(projectId, d.id, d.filename)}>
                       下载
@@ -197,7 +199,7 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage 
                               style={pipelineStage.status === 'running'
                                   ? { background: 'rgba(91,141,239,0.12)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.28)' }
                                   : { background: 'rgba(15,23,42,0.05)', color: '#8A94AB', borderColor: 'rgba(15,23,42,0.08)' }}
-                              className="!mr-0 !text-[11px]"
+                              className="!mr-0 !text-[11.5px]"
                           >
                               {pipelineStage.status === 'running'
                                   ? `构建中 · ${pipelineStage.label}`
@@ -234,7 +236,7 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage 
                        dataSource={docs}
                        pagination={docs.length > 8 ? { pageSize: 8, showSizeChanger: false } : false} />
             )}
-            <div className="mt-2 flex items-center gap-1 text-[11px] text-[#A3ADC2]">
+            <div className="mt-2 flex items-center gap-1 text-[11.5px] text-[#A3ADC2]">
                 <UploadOutlined /> 支持 {UPLOAD_EXTS.join(' / ')}。
             </div>
         </Card>

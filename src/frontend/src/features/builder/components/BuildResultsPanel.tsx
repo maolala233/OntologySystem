@@ -103,7 +103,7 @@ const BuildResultsPanel: React.FC<Props> = ({ projectId, summary, checks, publis
               style={{ background: 'linear-gradient(135deg, rgba(91,141,239,0.06) 0%, #FFFFFF 70%)' }}
             >
               <Statistic
-                title={<span className="text-[12px] text-[#66738F]">{st.title}</span>}
+                title={<span className="text-[11.5px] text-[#66738F]">{st.title}</span>}
                 value={st.value}
                 prefix={<span style={{ color: '#5B8DEF', marginRight: 6, fontSize: 16 }}>{st.icon}</span>}
                 valueStyle={{ color: '#0F172A', fontSize: 24, fontWeight: 700, fontFamily: "'JetBrains Mono', Consolas, monospace" }}
