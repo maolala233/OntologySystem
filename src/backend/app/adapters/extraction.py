@@ -1889,6 +1889,7 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
                       llm_call: Optional[Callable] = None,
                       progress_cb: Optional[Callable] = None,
                       cancel_cb: Optional[Callable] = None,
+                      phase_cb: Optional[Callable] = None,
                       coref_enabled: bool = False,
                       pattern_enabled: bool = False) -> ExtractionResult:
     """ABox 抽取（04 §4）：分块并行 → 严格闸门（apply_gate）→ 统计。
@@ -1899,6 +1900,8 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
     model_config_id：显式指定 model_configs 行（用户个人选择，API 层已校验可见性）。
     coref_enabled：O2-B10 指代消解 L0（闸门前按 chunk 合并代词/简称提及，可关闭）。
     pattern_enabled：O2-B11 pattern 层（结构化属性直抽补全 + LLM 值校准，可关闭）。
+    phase_cb：抽取批次完成后的后处理进度 (phase, done, total)
+        phase=coref（指代消解 x/y）/ postprocess（闸门校验与结构整理）；不传则不报。
     """
     from app.adapters.schema_gate import PromotePolicy, apply_gate
 
@@ -2007,15 +2010,23 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
     if coref_enabled and raw_entities:
         from app.adapters.coref import apply_coref, run_coref_ll0
 
+        def _coref_progress(done: int, total: int) -> None:
+            if phase_cb is not None:
+                phase_cb("coref", done, total)
+
         mapping, cstats = run_coref_ll0(
             chunks, raw_entities, raw_relations, llm_call, cancel_cb=cancel_cb,
             use_cache=use_cache,
             cache_key_fn=lambda _m, s, u: _cache_key(model_name, s, u),
-            cache_get=_cache_get, cache_put=_cache_put)
+            cache_get=_cache_get, cache_put=_cache_put,
+            progress_cb=_coref_progress)
         raw_entities, raw_relations, _relabeled = apply_coref(
             raw_entities, raw_relations, mapping)
         result.coref_stats = cstats
     _phases["coref_seconds"] = round(time.perf_counter() - _t_coref, 6)
+    if phase_cb is not None:
+        # 指代消解结束（或关闭）→ 闸门/结构映射这段也比较安静，先落到「整理结果」
+        phase_cb("postprocess", 0, 1)
 
     # O2-B11 pattern 层：结构化属性直抽补全 + LLM 值校准（毫秒级正则，零 LLM 成本）
     _t_pattern = time.perf_counter()

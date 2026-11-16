@@ -89,16 +89,31 @@ def apply_coref(entities: list, relations: list,
     return entities, relations, relabeled
 
 
+def _coref_max_workers() -> int:
+    """指代消解并发度：与主抽取同源（全局模型并发闸），默认 4 兜底。"""
+    try:
+        from app.core.config import settings
+
+        return max(1, int(getattr(settings, "LLM_MAX_CONCURRENCY", 16) or 16))
+    except Exception:  # noqa: BLE001
+        return 4
+
+
 def run_coref_ll0(chunks: list, entities: list, relations: list,
                   llm_call: Callable, cancel_cb: Optional[Callable] = None,
                   use_cache: bool = True,
                   cache_key_fn: Optional[Callable] = None,
                   cache_get: Optional[Callable] = None,
-                  cache_put: Optional[Callable] = None) -> tuple[dict[int, dict[str, str]], dict]:
+                  cache_put: Optional[Callable] = None,
+                  progress_cb: Optional[Callable[[int, int], None]] = None
+                  ) -> tuple[dict[int, dict[str, str]], dict]:
     """按 chunk 跑指代消解（L0）：每 chunk 一次 LLM 调用（仅当 chunk 内 ≥2 实体）。
 
     chunks：[{"index": i, "text": str, ...}]；entities：抽取产物（看 chunk_index）。
     返回 (mapping_by_chunk, stats)；单 chunk 失败只记 warnings，不阻断。
+
+    并发（2026-11-16）：此前串行——16 切片实测 coref 119s，占实例阶段 62%。
+    改为线程池并发（上限同全局 LLM 并发闸），完成一个回调一次 progress_cb(done, total)。
     """
     labels_by_chunk: dict[int, list[str]] = {}
     for e in entities:
@@ -111,56 +126,87 @@ def run_coref_ll0(chunks: list, entities: list, relations: list,
             if label not in bucket:
                 bucket.append(label)
 
-    mapping_by_chunk: dict[int, dict[str, str]] = {}
-    stats = {"chunks_scanned": 0, "llm_calls": 0, "mentions": 0, "failures": 0}
+    # 先筛出真正需要消解的切片（≥2 实体且有文本），总数确定后才能报 x/y
+    targets: list[tuple[int, str, list[str]]] = []
+    text_by_chunk = {c.get("index"): str(c.get("text") or "") for c in chunks}
     for chunk in sorted(labels_by_chunk):
         labels = labels_by_chunk[chunk]
         if len(labels) < 2:
             continue  # 单实体 chunk 无指代消解空间
-        text = next((str(c.get("text") or "") for c in chunks
-                     if c.get("index") == chunk), "")
-        if not text:
-            continue
-        stats["chunks_scanned"] += 1
+        text = text_by_chunk.get(chunk) or ""
+        if text:
+            targets.append((chunk, text, labels))
+
+    mapping_by_chunk: dict[int, dict[str, str]] = {}
+    stats = {"chunks_scanned": len(targets), "llm_calls": 0,
+             "mentions": 0, "failures": 0}
+    total = len(targets)
+    if total == 0:
+        return mapping_by_chunk, stats
+    if progress_cb is not None:
+        progress_cb(0, total)
+
+    def _one(chunk: int, text: str, labels: list[str]):
         if cancel_cb is not None:
             cancel_cb()
-        payload = None
         key = None
+        payload = None
         if use_cache and cache_key_fn is not None and cache_get is not None:
             key = cache_key_fn("coref", COREF_SYSTEM_PROMPT,
                                coref_user_prompt(text, labels, chunk))
             payload = cache_get(key)
+        hit = payload is not None
         if payload is None:
-            stats["llm_calls"] += 1
             try:
                 raw = llm_call(COREF_SYSTEM_PROMPT,
                                coref_user_prompt(text, labels, chunk),
                                COREF_PROMPT_JSON_SCHEMA)
-            except Exception:  # noqa: BLE001 —— L0 失败静默跳过
-                stats["failures"] += 1
-                continue
+            except Exception as e:  # noqa: BLE001 —— L0 失败静默跳过
+                return chunk, labels, None, False, str(e) or "llm_error"
             payload = raw if isinstance(raw, dict) else None
             if payload is not None and use_cache and key is not None \
                     and cache_put is not None:
                 cache_put(key, payload)
-        if not isinstance(payload, dict):
-            stats["failures"] += 1
-            continue
-        label_set = set(labels)
-        mapping: dict[str, str] = {}
-        for m in payload.get("mentions") or []:
-            if not isinstance(m, dict):
+        return chunk, labels, payload, hit, None
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    done = 0
+    with ThreadPoolExecutor(max_workers=min(total, _coref_max_workers())) as pool:
+        futures = [pool.submit(_one, c, t, l) for c, t, l in targets]
+        for fut in as_completed(futures):
+            if cancel_cb is not None:
+                cancel_cb()  # 取消立即传导，不再处理后续结果
+            done += 1
+            try:
+                chunk, labels, payload, hit, err = fut.result()
+            except Exception:  # noqa: BLE001 —— 线程内异常按失败跳过
+                stats["failures"] += 1
+                if progress_cb is not None:
+                    progress_cb(done, total)
                 continue
-            alias = str(m.get("alias") or "").strip()
-            canonical = str(m.get("canonical") or "").strip()
-            # alias 通常是抽取产物里的代词/简称实体（在 label_set 里很正常），
-            # 只拒绝：canonical 不在清单（发明实体）、自映射、重复 alias
-            if alias and canonical in label_set and alias != canonical \
-                    and alias not in mapping:
-                mapping[alias] = canonical
-        if mapping:
-            mapping_by_chunk[chunk] = mapping
-            stats["mentions"] += len(mapping)
+            if not hit:
+                stats["llm_calls"] += 1
+            if err or not isinstance(payload, dict):
+                stats["failures"] += 1
+            else:
+                label_set = set(labels)
+                mapping: dict[str, str] = {}
+                for m in payload.get("mentions") or []:
+                    if not isinstance(m, dict):
+                        continue
+                    alias = str(m.get("alias") or "").strip()
+                    canonical = str(m.get("canonical") or "").strip()
+                    # alias 通常是抽取产物里的代词/简称实体（在 label_set 里很正常），
+                    # 只拒绝：canonical 不在清单（发明实体）、自映射、重复 alias
+                    if alias and canonical in label_set and alias != canonical \
+                            and alias not in mapping:
+                        mapping[alias] = canonical
+                if mapping:
+                    mapping_by_chunk[chunk] = mapping
+                    stats["mentions"] += len(mapping)
+            if progress_cb is not None:
+                progress_cb(done, total)
     return mapping_by_chunk, stats
 
 

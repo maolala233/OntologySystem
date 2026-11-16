@@ -97,7 +97,7 @@ _SUB_STEP_RANGES: dict[str, list[tuple[str, str, int, int]]] = {
     "instances": [
         ("read", "读取切片", 0, 5),
         ("extract", "批次抽取", 5, 80),
-        ("enrich", "结构展开与反向补全", 80, 85),
+        ("enrich", "指代消解与结构展开", 80, 85),
         ("write", "写入画布与行表", 85, 100),
     ],
 }

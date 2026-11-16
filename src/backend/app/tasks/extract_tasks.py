@@ -637,6 +637,23 @@ def run_instance_extraction(self, project_id: int,
                      "eta_seconds": eta_s},
                     queue="extract")
 
+            def _phase_progress(phase: str, done: int, total: int) -> None:
+                """批次抽取之后的安静期（2026-11-16）：coref 逐切片报 x/y，
+                闸门/结构整理报一次——否则最后一片就显示「16/16」，看起来像卡死。"""
+                _cancel_check()
+                if phase == "coref":
+                    pct = 80 + int(4 * done / max(total, 1))
+                    msg = (f"指代消解 {done}/{total}（合并代词与简称）"
+                           if total else "指代消解：正在准备…")
+                else:
+                    pct = 84
+                    msg = "整理抽取结果（闸门校验与结构映射）…"
+                set_task_progress(
+                    task_id, phase, pct, msg,
+                    {"project_id": project_id, "phase": phase,
+                     "phase_done": done, "phase_total": total},
+                    queue="extract")
+
             from app.core.config import settings as app_settings
 
             result = extract_instances(
@@ -644,6 +661,7 @@ def run_instance_extraction(self, project_id: int,
                 strict_gate=strict_gate, promote_policy=promote_policy,
                 request_interval=request_interval,
                 progress_cb=_progress, cancel_cb=_cancel_check,
+                phase_cb=_phase_progress,
                 model_config_id=model_config_id,
                 coref_enabled=bool(app_settings.COREF_ENABLED),
                 pattern_enabled=bool(app_settings.PATTERN_LAYER_ENABLED))
