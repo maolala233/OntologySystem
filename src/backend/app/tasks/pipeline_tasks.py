@@ -563,6 +563,25 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             st = _stage(stages, "parse")
             st["status"] = "running"
             profile_stage_begin("parse", "解析文档")
+
+            def _parse_steps(inspect_state: str = "running",
+                             resync_state: str = "pending", resync_pct: int = 0,
+                             parse_state: str = "pending", parse_pct: int = 0) -> list[dict]:
+                """解析阶段的子步骤：检查复用 → 补写向量 → 逐份解析。
+
+                前端时间线详情区按 steps 逐条渲染；没有这一步时，解析阶段整个
+                期间子区为空，会表现为「从 0 直接跳到骨架抽取」（2026-11-16）。
+                """
+                return [
+                    _step("inspect", "检查已解析文档", inspect_state,
+                          100 if inspect_state == "done" else 0),
+                    _step("resync", "补写向量", resync_state, resync_pct),
+                    _step("parse", "逐份解析", parse_state, parse_pct),
+                ]
+
+            _sub_stage_progress(
+                task_id, "parse", 0, "检查已解析文档与切片…",
+                steps=_parse_steps(inspect_state="running"))
             _prog("parse", "检查已解析文档与切片…", 0.0)
             # 所有未删除文档都参与判定：uploaded/failed 必解析；parsing 在途的
             # 等它结束（否则骨架阶段读到 0 切片直接失败）；parsed 的按指纹决定
@@ -579,9 +598,12 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 st["detail"] = f"等待 {len(parsing_ids)} 个解析中的文档…"
                 st["task_id"] = ",".join(f"{task_id}:parse:{i}" for i in parsing_ids[:3])
                 _prog("parse", st["detail"], 0.0)
+                _sub_stage_progress(
+                    task_id, "parse", 0, st["detail"],
+                    steps=_parse_steps(inspect_state="running"))
                 import time as _time
 
-                for _ in range(180):
+                for _i in range(180):
                     _cancel_check()
                     _time.sleep(10)
                     # commit 刷新 REPEATABLE READ 快照——只 expire_all 看不到子任务
@@ -597,6 +619,10 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                              .count())
                     if not still:
                         break
+                    _sub_stage_progress(
+                        task_id, "parse", 0,
+                        f"等待 {still} 个解析中的文档…（已 {(_i + 1) * 10} 秒）",
+                        steps=_parse_steps(inspect_state="running"))
                 db.expire_all()
                 docs = (db.query(UploadedDocument)
                         .filter(UploadedDocument.project_id == project_id,
@@ -635,15 +661,31 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                     else:
                         reused += 1
 
+            _sub_stage_progress(
+                task_id, "parse", 5,
+                f"判定完成：待解析 {len(todo)} 个、补写向量 {len(resync)} 个、复用 {reused} 个",
+                steps=_parse_steps(
+                    inspect_state="done",
+                    resync_state="running" if resync else "skipped",
+                    parse_state="running" if todo else "skipped"))
+
             if not todo and not resync:
                 if docs:  # 在途解析已全部结束 / 已解析文档全部命中复用
                     st["status"] = "done"
                     st["detail"] = (f"{reused} 个已解析文档直接复用（未重复解析）"
                                     if reused else f"{len(docs)} 个文档已就绪")
+                    _sub_stage_progress(
+                        task_id, "parse", 100, st["detail"],
+                        steps=_parse_steps(inspect_state="done", resync_state="skipped",
+                                           parse_state="skipped"))
                     _prog("parse", st["detail"])
                 else:
                     st["status"] = "skipped"
                     st["detail"] = "没有待解析文档"
+                    _sub_stage_progress(
+                        task_id, "parse", 100, st["detail"],
+                        steps=_parse_steps(inspect_state="skipped", resync_state="skipped",
+                                           parse_state="skipped"))
                     _prog("parse", "没有待解析文档")
             else:
                 parse_failed: list[str] = []
@@ -657,6 +699,13 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                     st["detail"] = f"补写向量 {i + 1}/{len(resync)}"
                     _prog("parse", f"补写向量 {i + 1}/{len(resync)}：{d.filename}",
                           done_idx / total_work)
+                    _sub_stage_progress(
+                        task_id, "parse", int(100 * done_idx / total_work),
+                        f"补写向量 {i + 1}/{len(resync)}：{d.filename}",
+                        steps=_parse_steps(
+                            inspect_state="done", resync_state="running",
+                            resync_pct=int(100 * i / max(1, len(resync))),
+                            parse_state="running" if todo else "skipped"))
                     _doc_t0 = time.perf_counter()
                     try:
                         _n = resync_document_vectors(d, db, vector_fp)
@@ -681,6 +730,15 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                     st["detail"] = f"{i + 1}/{len(todo)}"
                     _prog("parse", f"解析中 {i + 1}/{len(todo)}：{d.filename}",
                           done_idx / total_work)
+                    _sub_stage_progress(
+                        task_id, "parse", int(100 * done_idx / total_work),
+                        f"解析中 {i + 1}/{len(todo)}：{d.filename}",
+                        steps=_parse_steps(
+                            inspect_state="done",
+                            resync_state="done" if resync else "skipped",
+                            resync_pct=100,
+                            parse_state="running",
+                            parse_pct=int(100 * i / max(1, len(todo)))))
                     done_idx += 1
                     _doc_t0 = time.perf_counter()
                     _parse_res: dict = {}
@@ -705,6 +763,13 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 if todo and len(parse_failed) == len(todo):
                     st["status"] = "failed"
                     st["detail"] = f"全部 {len(todo)} 个文档解析失败"
+                    _sub_stage_progress(
+                        task_id, "parse", int(100 * done_idx / total_work),
+                        st["detail"],
+                        steps=_parse_steps(
+                            inspect_state="done",
+                            resync_state="done" if resync else "skipped", resync_pct=100,
+                            parse_state="failed", parse_pct=100))
                     profile_stage_end("parse", status="failed", detail=st["detail"])
                     raise RuntimeError("全部文档解析失败，首因：" + parse_failed[0])
                 st["status"] = "done"
@@ -721,6 +786,12 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                     st["detail"] += f"（{len(parse_failed)} 个解析失败）"
                 summary["parse"] = {"total": len(todo), "failed": parse_failed,
                                     "reused": reused, "vector_resync": len(resync)}
+                _sub_stage_progress(
+                    task_id, "parse", 100, f"解析完成（{st['detail']}）",
+                    steps=_parse_steps(
+                        inspect_state="done",
+                        resync_state="done" if resync else "skipped", resync_pct=100,
+                        parse_state="done" if todo else "skipped", parse_pct=100))
                 _prog("parse", f"解析完成（{st['detail']}）")
             profile_stage_end("parse", status=st["status"], detail=st["detail"])
 
