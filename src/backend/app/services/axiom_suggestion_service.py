@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import os
+import threading
+import time
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
@@ -152,13 +154,35 @@ def run_axiom_suggestions(db: Session, project_id: int,
     llm_candidates: list[dict] = []
     llm_stats: dict | None = None
     if channel in ("llm", "all"):
-        _prog(35, f"统计通道完成 {len(stat_candidates)} 条候选；AI 通道生成中"
-                  "（单次调用约 3-10 分钟，可取消）…")
+        # 不再写死「3-10 分钟」：那是 glm-5-3-flash 时期的经验值，
+        # 当前默认模型实测 38s。这里只报状态 + 每 10s 的已用时，
+        # 用户能看出调用还活着（2026-11-16 用户反馈）。
+        _prog(35, f"统计通道完成 {len(stat_candidates)} 条候选；"
+                  "AI 通道生成中…（可取消）")
         if _cancelled():
             return {"candidates": 0, "review_created": 0, "deduped": 0,
                     "cancelled": True}
-        llm_candidates, llm_stats = _llm_candidates(db, project_id, schema,
-                                                    ent_dicts, rel_dicts, llm)
+        _llm_t0 = time.monotonic()
+        _llm_stop = threading.Event()
+
+        def _llm_ticker() -> None:
+            while not _llm_stop.wait(10):
+                elapsed = int(time.monotonic() - _llm_t0)
+                _prog(35, f"统计通道完成 {len(stat_candidates)} 条候选；"
+                          f"AI 通道生成中… 已 {elapsed} 秒（可取消）")
+
+        _llm_thread = None
+        if progress_cb is not None:
+            _llm_thread = threading.Thread(
+                target=_llm_ticker, name="axiom-llm-tick", daemon=True)
+            _llm_thread.start()
+        try:
+            llm_candidates, llm_stats = _llm_candidates(db, project_id, schema,
+                                                        ent_dicts, rel_dicts, llm)
+        finally:
+            _llm_stop.set()
+            if _llm_thread is not None:
+                _llm_thread.join(timeout=1)
         _prog(70, f"AI 通道返回 {len(llm_candidates)} 条候选；合并与机检守门中…")
         if _cancelled():
             return {"candidates": 0, "review_created": 0, "deduped": 0,
