@@ -781,6 +781,35 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                             resync_pct=100,
                             parse_state="running",
                             parse_pct=int(100 * i / max(1, len(todo)))))
+                    # 单文档解析要几十秒、内部有 5/30/55/70/88% 的真实进度
+                    # （run_parse 写在 {sub_id} 键里）；不折进主进度的话，第一份
+                    # 文档解析全程总进度都停在 0%（2026-11-16 用户反馈）
+                    _doc_base = max(0, done_idx - 1)
+                    _doc_i, _doc_n, _doc_name = i, len(todo), d.filename
+                    _doc_stop = _threading.Event()
+
+                    def _doc_ticker(_sid=sub_id, _base=_doc_base, _i=_doc_i,
+                                    _n=_doc_n, _name=_doc_name) -> None:
+                        while not _doc_stop.wait(2):
+                            p = get_task_progress(_sid) or {}
+                            try:
+                                dp = int(p.get("percent") or 0)
+                            except (TypeError, ValueError):
+                                dp = 0
+                            frac = min(1.0, (_base + dp / 100) / total_work)
+                            msg = f"解析中 {_i + 1}/{_n}：{_name}"
+                            _prog("parse", msg, frac)
+                            _sub_stage_progress(
+                                task_id, "parse", int(100 * frac), msg,
+                                steps=_parse_steps(
+                                    inspect_state="done",
+                                    resync_state="done" if resync else "skipped",
+                                    resync_pct=100,
+                                    parse_state="running", parse_pct=dp))
+
+                    _doc_thread = _threading.Thread(
+                        target=_doc_ticker, name=f"parse-tick-{task_id}", daemon=True)
+                    _doc_thread.start()
                     done_idx += 1
                     _doc_t0 = time.perf_counter()
                     _parse_res: dict = {}
@@ -790,6 +819,9 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                     except Exception as e:  # noqa: BLE001 —— 单文档失败继续其余
                         _doc_ok, _doc_err = False, str(e)[:300]
                         parse_failed.append(f"{d.filename}: {str(e)[:120]}")
+                    finally:
+                        _doc_stop.set()
+                        _doc_thread.join(timeout=1)
                     parse_doc_times.append({
                         "document_id": d.id,
                         "filename": d.filename,
