@@ -24,10 +24,37 @@ import {
 } from '@ant-design/icons';
 import { fmtSchedule } from '../../../shared/schedule';
 
-import { PipelineStageState, PipelineStatus, pipelineApi } from '../../../api/pipeline';
+import { PipelineStageState, PipelineSubStep, PipelineStatus, pipelineApi } from '../../../api/pipeline';
 
 /** 最近一次管线的 task_id（localStorage，锁过期后仍可查 24h 内历史状态） */
 const lastTaskKey = (pid: number) => `pipeline:last:${pid}`;
+
+/**
+ * 最后一轮构建快照（2026-11-16）：服务端进度键 24h 过期后，阶段时间线仍要能展示。
+ * 只持久化阶段快照本身，审核统计等实时数据仍以接口为准。
+ */
+const snapKey = (pid: number) => `pipeline:snap:${pid}`;
+
+interface PipelineSnap {
+    status: string;
+    task_id: string;
+    stage?: string;
+    percent?: number;
+    message?: string;
+    stages: PipelineStageState[];
+    saved_at: number;
+}
+
+const readSnap = (pid: number): PipelineSnap | null => {
+    try {
+        const raw = localStorage.getItem(snapKey(pid));
+        if (!raw) return null;
+        const snap = JSON.parse(raw);
+        return snap && Array.isArray(snap.stages) && snap.stages.length ? snap : null;
+    } catch {
+        return null;
+    }
+};
 
 interface Props {
     projectId: number;
@@ -86,6 +113,95 @@ const BAR_BG: Record<string, string> = {
     cancelled: 'linear-gradient(90deg,#F2CB87,#B8790F)',
     skipped: '#D7DDE8',
     pending: '#D7DDE8',
+};
+
+/**
+ * 每个阶段的工作项清单（2026-11-16）：详情区一次性把本阶段要做的活全部列出来，
+ * 不再等后端一步步行进才逐个出现，也让「构建完成后点开某个阶段」能看到完整工作内容。
+ *
+ * - 后端给出一套真实分步（steps >= 2 条）时一律以后端为准：schema / instances /
+ *   parse 全程有子进度，axioms / adjudicate 在业务规则挖掘、能力问题评测阶段有；
+ *   前端不维护第二份说法；
+ * - 剩余阶段（resolution / conflicts / selfcheck，以及 axioms / adjudicate 的
+ *   前段）后端只报阶段级进度。这里按后端实现（tasks/services）列出工作项，但
+ *   **不按百分比猜「当前走到哪一步」**：进行中一律显示待开始，阶段结束才整列标成
+ *   完成/跳过——猜出来的位置会和真实执行错位（2026-11-16 用户确认不要假进度）。
+ */
+const STAGE_STEP_DEFS: Record<string, Array<{ key: string; label: string }>> = {
+    parse: [
+        { key: 'inspect', label: '检查已解析文档' },
+        { key: 'resync', label: '补写向量' },
+        { key: 'parse', label: '逐份解析' },
+    ],
+    schema: [
+        { key: 'read', label: '读取切片' },
+        { key: 'extract', label: '批次抽取' },
+        { key: 'assemble', label: '骨架装配' },
+        { key: 'structure', label: '结构映射' },
+        { key: 'stitch', label: '跨切片缝合' },
+        { key: 'write', label: '写入画布与行表' },
+    ],
+    instances: [
+        { key: 'read', label: '读取切片' },
+        { key: 'extract', label: '批次抽取' },
+        { key: 'enrich', label: '结构展开与反向补全' },
+        { key: 'write', label: '写入画布与行表' },
+    ],
+    resolution: [
+        { key: 'attr', label: '属性键合并' },
+        { key: 'block', label: '分块与拼音归并' },
+        { key: 'vector', label: '向量相似度聚类' },
+        { key: 'merge', label: '自动合并与待审物化' },
+    ],
+    conflicts: [
+        { key: 'value', label: '值冲突检测' },
+        { key: 'type', label: '类型冲突检测' },
+        { key: 'relation', label: '关系冲突检测' },
+        { key: 'axiom', label: '公理冲突检测' },
+        { key: 'logical', label: '逻辑冲突检测' },
+    ],
+    selfcheck: [
+        { key: 'check', label: '结构机检（层次 / 引用 / 基数）' },
+        { key: 'repair', label: 'LLM 定向修复' },
+        { key: 'recheck', label: '修复后复检' },
+        { key: 'review', label: '剩余问题转审核' },
+    ],
+    axioms: [
+        { key: 'scan', label: '公理扫描' },
+        { key: 'business_rules', label: '业务规则挖掘' },
+    ],
+    adjudicate: [
+        { key: 'adjudicate', label: 'AI 结果审查' },
+        { key: 'cq_eval', label: '能力问题评测' },
+    ],
+};
+
+/**
+ * 生成某阶段的完整子步骤列表：后端有真实子进度时按 key 合并，否则只按阶段终态着色。
+ * 阶段已结束（done/skipped）时全部标成对应终态——构建完成后点开阶段也能看到全部工作项。
+ */
+const buildStageSteps = (
+    stageKey: string,
+    stageState: string,
+    backendSteps?: PipelineSubStep[],
+): PipelineSubStep[] => {
+    const defs = STAGE_STEP_DEFS[stageKey] || [];
+    const provided = backendSteps || [];
+    // 后端给出了本阶段的分步（>=2 步；只有 1 步是它对不分步阶段的兜底）：直接以后端为准，
+    // 步骤名、顺序、状态都跟任务实际写出的走，前端清单只做兜底（2026-11-16：解析阶段
+    // 后端新增 inspect/resync/parse 三步后，前端无需再维护一份自己的说法）
+    if (provided.length > 1) {
+        return provided.map((s) => ({
+            key: s.key, label: s.label || s.key, state: s.state, percent: s.percent,
+        }));
+    }
+    if (!defs.length) return provided;
+    return defs.map((d) => {
+        if (stageState === 'done') return { key: d.key, label: d.label, state: 'done' as const, percent: 100 };
+        if (stageState === 'skipped') return { key: d.key, label: d.label, state: 'skipped' as const, percent: 0 };
+        // 进行中/失败/中止且后端没有分步状态：不推算位置，统一按“待开始”列出
+        return { key: d.key, label: d.label, state: 'pending' as const, percent: 0 };
+    });
 };
 
 /** 秒 → 「3 分 12 秒」；空值「—」 */
@@ -151,6 +267,10 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
 
     // 定时状态复核节流：SSE 每秒都在推 idle 帧，不能每帧都打 REST
     const schedCheckAtRef = useRef(0);
+    // 运行锁释放后的 idle 帧复核节流（同上面，只在本地仍显示运行时复核）
+    const idleCheckAtRef = useRef(0);
+    // 快照落盘节流：运行中最多 5s 写一次 localStorage
+    const snapAtRef = useRef(0);
 
     const refresh = useCallback(async () => {
         try {
@@ -162,6 +282,22 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
             if (s.status === 'idle') {
                 const lastTask = localStorage.getItem(lastTaskKey(projectId)) || undefined;
                 if (lastTask) s = await pipelineApi.status(projectId, lastTask);
+            }
+            // 服务端进度键 24h 过期 / 换了浏览器：用本机最后一次终态快照兜底，
+            // 构建结束后阶段时间线也保留（用户要求「步骤条永远不消失」，2026-11-16）
+            if (s.status === 'idle' && !(s.stages || []).length) {
+                const snap = readSnap(projectId);
+                if (snap && snap.status !== 'running' && snap.status !== 'queued') {
+                    s = {
+                        ...s,
+                        status: snap.status as PipelineStatus['status'],
+                        task_id: snap.task_id,
+                        stage: snap.stage,
+                        percent: snap.percent,
+                        message: snap.message,
+                        stages: snap.stages,
+                    };
+                }
             }
             setStatus(s);
             if (s.task_id && s.status !== 'idle') {
@@ -185,6 +321,25 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
 
     // 新一轮构建开始时解除固定，回到跟随实时进度
     useEffect(() => { setPinned(null); }, [status?.task_id]);
+
+    // 落一份阶段快照：终态立即写，运行中最多 5s 写一次（阶段时间线的兜底数据源）
+    useEffect(() => {
+        const st = status;
+        if (!st?.task_id || !st.stages?.length) return;
+        const terminal = st.status === 'completed' || st.status === 'failed' || st.status === 'cancelled';
+        const now = Date.now();
+        if (!terminal && now - snapAtRef.current < 5000) return;
+        snapAtRef.current = now;
+        try {
+            localStorage.setItem(snapKey(projectId), JSON.stringify({
+                status: st.status, task_id: st.task_id, stage: st.stage || '',
+                percent: st.percent || 0, message: st.message || '',
+                stages: st.stages, saved_at: now,
+            }));
+        } catch {
+            /* 配额满 / 隐私模式：忽略，下次刷新再试 */
+        }
+    }, [status, projectId]);
 
     // SSE 订阅：服务端每秒看运行锁 diff 推帧、idle→running 跃迁也推——
     // 坐在页面上等构建全程零轮询；断流/超时才轮询兜底 + 8s 换票重订
@@ -217,6 +372,26 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                         if (now - schedCheckAtRef.current > 10000) {
                             schedCheckAtRef.current = now;
                             void refresh();
+                        }
+                        return;
+                    }
+                    // 构建结束、运行锁释放后，SSE 只会推不带 stages 的 idle 帧。
+                    // 本地已有上一轮任务（刚完成 / 首屏读到的历史终态）时不吃这些帧，
+                    // 否则阶段时间线与详情区会在构建完成的一瞬间被清空（2026-11-16 实测：
+                    // 用户反馈「构建到最后步骤条全消失」）。判断同时看状态快照与
+                    // localStorage 里登记的任务 id——帧间隔可能短于一次 re-render，
+                    // 状态 ref 还没追上时，任务 id 已经在收到终态帧时同步落盘。
+                    // 本地还停在运行中时（没收到终态帧）回 REST 复核——worker 死亡的
+                    // 清锁判定在服务端。
+                    if (data.status === 'idle'
+                        && (statusRef.current?.task_id || localStorage.getItem(lastTaskKey(projectId)))) {
+                        const local = statusRef.current?.status;
+                        if (local === 'running' || local === 'queued') {
+                            const now = Date.now();
+                            if (now - idleCheckAtRef.current > 10000) {
+                                idleCheckAtRef.current = now;
+                                void refresh();
+                            }
                         }
                         return;
                     }
@@ -434,9 +609,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
         ? `${runningStage ? `当前阶段：${runningStage.label}` : '构建进行中'} · 已用 ${fmtDuration(overallElapsed)}`
         : '';
 
-    // 子进度（steps / 计数）只属于「当前阶段」：固定查看别的阶段时不能挂过来（2026-11-16 实测）
     const chips = activeKey === s?.stage ? statChips(s?.sub?.stats) : [];
-    const detailSteps = activeStage && activeKey === s?.stage ? (s?.sub?.steps || []) : [];
 
     const detailMessage = (st: PipelineStageState, shown: string): string => {
         if (shown === 'running') return s?.sub?.message || s?.message || st.detail || '正在执行…';
@@ -498,23 +671,45 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
         >
             <style>{`
                 /* 阶段时间线（2026-11-16 按原型）：圆点 + 连接线，点选固定详情 */
-                .pl-tl { display: flex; align-items: flex-start; gap: 2px; padding: 4px 2px 10px; overflow-x: auto; }
+                .pl-tl { display: flex; align-items: flex-start; gap: 2px; padding: 4px 2px 10px; overflow-x: auto; overflow-y: hidden; }
                 .pl-tl-item {
-                    position: relative; flex: 1 0 92px; min-width: 92px;
-                    display: flex; flex-direction: column; align-items: center; gap: 5px;
-                    padding: 4px 0 3px; border: 0; border-radius: 8px;
+                    /* basis 0 + min-width：宽屏按等分撑满、不因分数宽度多出 1px 触发滚动条
+                       （原来 basis 92px 在 1440 宽下八等分出现 .5px 溢出，底部会冒横条） */
+                    position: relative; flex: 1 1 0; min-width: 92px;
+                    display: flex; padding: 0; border: 0;
                     background: transparent; cursor: pointer; font: inherit;
                 }
-                .pl-tl-item:hover { background: #FAFBFD; }
+                /* hover/选中底色放在内层：连接线是 ::after（定位层），必须压在内层底色之上，
+                   否则后一个格子的 hover 底色会盖住前一段线（2026-11-16 实测） */
+                .pl-tl-inner {
+                    display: flex; flex-direction: column; align-items: center; gap: 5px;
+                    width: 100%; padding: 4px 2px 3px; border-radius: 8px;
+                }
+                .pl-tl-item:hover .pl-tl-inner { background: #F3F7FF; }
+                .pl-tl-item:hover .pl-tl-label { color: #2F62D8; }
+                /* 未走到的阶段不可点：不响应 hover，标签压暗 */
+                .pl-tl-item:disabled { cursor: default; }
+                .pl-tl-item:disabled:hover .pl-tl-inner { background: transparent; }
+                .pl-tl-item:disabled:hover .pl-tl-label { color: #8A94AB; }
+                .pl-tl-item.pending .pl-tl-label { color: #8A94AB; }
+                .pl-tl-item.selected .pl-tl-inner {
+                    background: #F7FAFF;
+                    box-shadow: inset 0 0 0 1px rgba(91,141,239,0.35);
+                }
+                /* 连接线用正的 z-index：阶段格子是定位元素（position: relative），
+                   它内部的一切（含 hover/选中底色）都会在"定位层"按其树序绘制，
+                   仅靠把底色放内层仍会盖住前一个格子的线（2026-11-16 实测：左侧
+                   那段线还是被遮）。线抬到内容之上、圆点再压在线上，
+                   线本身只占圆点之间的空隙，不会压到文字 */
                 .pl-tl-item::after {
                     content: ''; position: absolute; top: 17px;
                     left: calc(50% + 17px); right: calc(-50% + 17px);
-                    height: 2px; background: #E7EEF9; z-index: 0;
+                    height: 2px; background: #E7EEF9; z-index: 2;
                 }
                 .pl-tl-item:last-child::after { display: none; }
                 .pl-tl-item.done::after { background: rgba(27,135,173,0.30); }
                 .pl-tl-dot {
-                    position: relative; z-index: 1; width: 26px; height: 26px;
+                    position: relative; z-index: 3; width: 26px; height: 26px;
                     border-radius: 50%; display: flex; align-items: center;
                     justify-content: center; font-size: 13px;
                 }
@@ -526,7 +721,6 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                 .pl-tl-item.failed .pl-tl-state { color: #B42318; }
                 .pl-tl-item.cancelled .pl-tl-state { color: #B8790F; }
                 .pl-tl-item.running .pl-tl-state { color: #2A57C6; }
-                .pl-tl-item.selected { background: #F7FAFF; outline: 1px solid rgba(91,141,239,0.35); outline-offset: 1px; }
                 .pl-tl-item.selected .pl-tl-label { color: #2F62D8; font-weight: 600; }
                 @keyframes pl-pulse {
                     0%, 100% { box-shadow: 0 0 0 4px rgba(91,141,239,0.16); }
@@ -568,17 +762,22 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                         const tone = DOT_TONE[shown] || DOT_TONE.pending;
                         return (
                             <button type="button" key={st.key}
+                                    /* 未走到的阶段不可点（2026-11-16）：还没开始就没有明细可看，
+                                       点开只会是空的「等待前置阶段完成」，徒增困惑 */
+                                    disabled={st.status === 'pending'}
                                     onClick={() => setPinned((prev) => (
                                         prev === st.key || (!prev && st.key === fallbackKey) ? null : st.key))}
                                     className={`pl-tl-item ${shown} ${activeKey === st.key ? 'selected' : ''}`}
                                     title={`${st.label} · ${STAGE_STATUS_TEXT[shown] || '待开始'}`}>
-                                <span className="pl-tl-dot" style={{ background: tone.bg, color: tone.color }}>
-                                    {shown === 'running'
-                                        ? <SyncOutlined spin />
-                                        : (STATUS_ICON[shown] || STATUS_ICON.pending)}
+                                <span className="pl-tl-inner">
+                                    <span className="pl-tl-dot" style={{ background: tone.bg, color: tone.color }}>
+                                        {shown === 'running'
+                                            ? <SyncOutlined spin />
+                                            : (STATUS_ICON[shown] || STATUS_ICON.pending)}
+                                    </span>
+                                    <span className="pl-tl-label">{st.label}</span>
+                                    <span className="pl-tl-state">{STAGE_STATUS_TEXT[shown] || '待开始'}</span>
                                 </span>
-                                <span className="pl-tl-label">{st.label}</span>
-                                <span className="pl-tl-state">{STAGE_STATUS_TEXT[shown] || '待开始'}</span>
                             </button>
                         );
                     })}
@@ -626,6 +825,13 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                 ? 'cancelled' : activeStage.status;
                             const pct = stagePercentOf(activeStage);
                             const live = stageDuration(activeStage);
+                            // 完整子步骤清单一次性展示：后端有真实子进度时按 key 合并，
+                            // 没有时按阶段状态摊平（构建完成后点开也列出全部工作项）。
+                            // 子进度只属于当前阶段——固定查看别的阶段时不能把它挂过来
+                            const detailSteps = buildStageSteps(
+                                activeStage.key, shown,
+                                activeKey === s?.stage ? s?.sub?.steps : undefined,
+                            );
                             return (
                                 <>
                                     <div className="flex flex-wrap items-center gap-2">
@@ -657,7 +863,10 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                     </div>
                                     <div className="mt-2 flex items-center gap-2.5">
                                         <div className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-[#EEF0F3]">
-                                            <div className="h-full rounded-full transition-[width] duration-500"
+                                            {/* key=阶段：切阶段时重建，避免宽度从上一阶段的 100%
+                                                动画收缩到 0（看起来像进度条"闪没了"，2026-11-16） */}
+                                            <div key={activeStage.key}
+                                                 className="h-full rounded-full transition-[width] duration-500"
                                                  style={{ width: `${pct}%`, background: BAR_BG[shown] || BAR_BG.running }} />
                                         </div>
                                         <span className="min-w-[38px] text-right text-[12.5px] font-semibold"
@@ -679,7 +888,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                                 const stepWidth = isDone ? 100 : (isSkip ? 0 : step.percent);
                                                 return (
                                                     <div key={step.key}
-                                                         className={`grid grid-cols-[16px_120px_1fr_auto] items-center gap-2 rounded-lg border px-2 py-[6px] text-[12.5px] ${
+                                                         className={`grid grid-cols-[16px_160px_1fr_auto] items-center gap-2 rounded-lg border px-2 py-[6px] text-[12.5px] ${
                                                              isRun ? 'border-[rgba(91,141,239,0.35)] bg-[#F5F9FF]'
                                                                  : isDone ? 'border-[#E6F0F6] bg-white'
                                                                      : 'border-[#EEF0F5] bg-white'}`}>
@@ -691,7 +900,8 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                                                     : isSkip ? <MinusOutlined /> : '○'}
                                                         </span>
                                                         <span className={`truncate ${isRun ? 'font-semibold text-[#2A57C6]'
-                                                            : isDone ? 'text-[#52607A]' : 'text-[#8A94AB]'}`}>
+                                                            : isDone ? 'text-[#52607A]' : 'text-[#8A94AB]'}`}
+                                                              title={step.label}>
                                                             {step.label}
                                                         </span>
                                                         <span className="h-1.5 min-w-0 overflow-hidden rounded-full bg-[#EEF0F3]">
