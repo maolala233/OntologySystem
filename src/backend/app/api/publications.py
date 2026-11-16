@@ -289,6 +289,9 @@ def asset_detail(project_id: int,
                         "node_count": len(graph_data.get("nodes") or []),
                         "edge_count": len(graph_data.get("edges") or [])}
     return {**_serialize_pub(pub, proj), "readonly": True,
+            # 资产详情页要展示项目描述与创建者；原先只由「我的项目」接口提供（2026-11-16）
+            "description": proj.description,
+            "owner": {"username": proj.owner.username} if proj.owner else None,
             "version_no": ver.version_no if ver else None,
             "stats": ver.stats if ver else None, "snapshot": snapshot,
             # 发布版本快照的图谱（非活图谱）：重新抽取不影响已发布展示，
