@@ -785,10 +785,13 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 for i, d in enumerate(resync):
                     _cancel_check()
                     st["detail"] = f"补写向量 {i + 1}/{len(resync)}"
+                    # 检查已解析文档固定占阶段前 5%，其余 95% 按工作量折算；
+                    # 直接拿工作量当阶段进度会让「逐份解析」与阶段总进度相等
+                    _parse_frac = 0.05 + 0.95 * (done_idx / total_work)
                     _prog("parse", f"补写向量 {i + 1}/{len(resync)}：{d.filename}",
-                          max(0.05, done_idx / total_work))
+                          _parse_frac)
                     _sub_stage_progress(
-                        task_id, "parse", max(5, int(100 * done_idx / total_work)),
+                        task_id, "parse", int(100 * _parse_frac),
                         f"补写向量 {i + 1}/{len(resync)}：{d.filename}",
                         steps=_parse_steps(
                             inspect_state="done", resync_state="running",
@@ -816,10 +819,11 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                     sub_id = f"{task_id}:parse:{d.id}"
                     st["task_id"] = sub_id
                     st["detail"] = f"{i + 1}/{len(todo)}"
+                    _parse_frac = 0.05 + 0.95 * (done_idx / total_work)
                     _prog("parse", f"解析中 {i + 1}/{len(todo)}：{d.filename}",
-                          max(0.05, done_idx / total_work))
+                          _parse_frac)
                     _sub_stage_progress(
-                        task_id, "parse", max(5, int(100 * done_idx / total_work)),
+                        task_id, "parse", int(100 * _parse_frac),
                         f"解析中 {i + 1}/{len(todo)}：{d.filename}",
                         steps=_parse_steps(
                             inspect_state="done",
@@ -842,7 +846,8 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                                 dp = int(p.get("percent") or 0)
                             except (TypeError, ValueError):
                                 dp = 0
-                            frac = max(0.05, min(1.0, (_base + dp / 100) / total_work))
+                            frac = 0.05 + 0.95 * min(
+                                1.0, (_base + dp / 100) / total_work)
                             msg = f"解析中 {_i + 1}/{_n}：{_name}"
                             _prog("parse", msg, frac)
                             _sub_stage_progress(
