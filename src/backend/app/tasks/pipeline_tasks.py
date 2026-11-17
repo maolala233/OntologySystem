@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import time
@@ -791,7 +792,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                     _prog("parse", f"补写向量 {i + 1}/{len(resync)}：{d.filename}",
                           _parse_frac)
                     _sub_stage_progress(
-                        task_id, "parse", int(100 * _parse_frac),
+                        task_id, "parse", min(99, math.ceil(100 * _parse_frac)),
                         f"补写向量 {i + 1}/{len(resync)}：{d.filename}",
                         steps=_parse_steps(
                             inspect_state="done", resync_state="running",
@@ -823,7 +824,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                     _prog("parse", f"解析中 {i + 1}/{len(todo)}：{d.filename}",
                           _parse_frac)
                     _sub_stage_progress(
-                        task_id, "parse", int(100 * _parse_frac),
+                        task_id, "parse", min(99, math.ceil(100 * _parse_frac)),
                         f"解析中 {i + 1}/{len(todo)}：{d.filename}",
                         steps=_parse_steps(
                             inspect_state="done",
@@ -851,7 +852,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                             msg = f"解析中 {_i + 1}/{_n}：{_name}"
                             _prog("parse", msg, frac)
                             _sub_stage_progress(
-                                task_id, "parse", int(100 * frac), msg,
+                                task_id, "parse", min(99, math.ceil(100 * frac)), msg,
                                 steps=_parse_steps(
                                     inspect_state="done",
                                     resync_state="done" if resync else "skipped",
