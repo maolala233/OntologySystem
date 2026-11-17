@@ -192,10 +192,13 @@ const fmtClock = (sec?: number | null): string => {
         : `${m}:${String(s).padStart(2, '0')}`;
 };
 
-/** 阶段用时：常规阶段走计时器写法；冲突检测 / 结构自检常不足 1 秒，保留两位小数（"1.24s"） */
+/** 阶段用时：常规阶段走计时器写法；冲突检测 / 结构自检常不足 1 秒，保留两位小数（"0:00.43"） */
 const fmtStageTime = (sec?: number | null, precise = false): string => {
     if (typeof sec !== 'number' || !Number.isFinite(sec) || sec < 0) return '—';
-    if (precise && sec < 60) return `${Number(sec.toFixed(2))}s`;
+    if (precise && sec < 60) {
+        // 与 fmtClock 同一时钟写法，避免出现「0.43s」和「0:12」单位混用
+        return `0:${sec < 10 ? '0' : ''}${sec.toFixed(2)}`;
+    }
     return fmtClock(sec);
 };
 
