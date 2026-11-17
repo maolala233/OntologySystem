@@ -34,6 +34,23 @@ const LIGHT_COLORS = {
 
 export type HeroTone = 'light' | 'dark';
 
+/**
+ * 大尺寸（工作台）专用的浅色底。
+ * 同一个 135° 渐变铺在 1370×190 的横幅上会被拉薄：终点色落在最右侧的一条窄边里，
+ * 内容区几乎还是纯白，和下面那张冷蓝面板放在一起就成了「上轻下重」。
+ * 这里把终点色提前到 78%，并让末端收在蓝上（0.16 而不是紫）——
+ * 它下面紧挨着的是冷蓝面板，右缘从紫过渡到蓝紫，两张大面才接得顺；
+ * 紧凑版（我的项目 / 资产中心）几何比例本来就合适，仍用 LIGHT_COLORS.bg。
+ */
+const LIGHT_BG_WIDE =
+    'linear-gradient(135deg, rgba(255,255,255,0.84) 0%, rgba(252,253,255,0.55) 40%, rgba(139,92,246,0.10) 78%, rgba(91,141,239,0.16) 100%), ' +
+    'linear-gradient(140deg, rgba(255,255,255,0.93) 0%, rgba(249,251,255,0.82) 55%, rgba(237,244,255,0.88) 100%)';
+
+/** 大尺寸的柔光：紧凑版那两团按比例放大并加深，否则在大横幅里缩成两个小点 */
+const LIGHT_WASH_WIDE =
+    'radial-gradient(760px 400px at 96% -16%, rgba(91,141,239,0.18), transparent 70%), ' +
+    'radial-gradient(660px 340px at 0% 122%, rgba(139,92,246,0.13), transparent 72%)';
+
 /** 深色档色板：底色用偏蓝的深海军蓝渐变（比原 #0F1420 略抬一档），
  *  配合 1px 内描边 + 大扩散柔阴影，让它像一张"浮起的深色横幅"而不是黑洞。
  *  中深靛蓝（#2E4C86 一带）试过：大块中等明度的色面反而最别扭，已回退。 */
@@ -103,7 +120,7 @@ const TechHero: React.FC<TechHeroProps> = ({
         <div
             className={`relative overflow-hidden rounded-2xl mb-6 sm:mb-8 ${className}`}
             style={{
-                background: C.bg,
+                background: isDark || compact ? C.bg : LIGHT_BG_WIDE,
                 border: `1px solid ${C.border}`,
                 // 深色档也补一层大扩散柔阴影：和下方白卡共用同一套"浮起"语言，
                 // 只是材质相反，避免它看起来像贴在画布上的一个黑块
@@ -144,7 +161,10 @@ const TechHero: React.FC<TechHeroProps> = ({
                     <div className="absolute top-10 left-0 h-px w-40 tk-scan" />
                 </>
             ) : (
-                <div className="absolute inset-0 tk-wash" />
+                <div
+                    className={`absolute inset-0 ${compact ? 'tk-wash' : ''}`}
+                    style={compact ? undefined : { background: LIGHT_WASH_WIDE }}
+                />
             )}
 
             {/* 光带：与全屏背景同一种"带子"语言——宽、浅、模糊，不做网格线 */}
@@ -195,9 +215,9 @@ const TechHero: React.FC<TechHeroProps> = ({
                 紧凑版单独用更矮的尺寸和裁切后的 viewBox，避免在矮卡片里被上下截断 */}
             {showConstellation && (
                 <svg
-                    className={`absolute right-3 lg:right-12 top-1/2 -translate-y-1/2 hidden md:block ${compact ? 'opacity-60' : ''}`}
-                    width={compact ? 160 : 300}
-                    height={compact ? 100 : 216}
+                    className={`absolute top-1/2 -translate-y-1/2 hidden lg:block ${compact ? 'right-3 opacity-60' : '-right-4 lg:-right-6'}`}
+                    width={compact ? 160 : 330}
+                    height={compact ? 100 : 230}
                     viewBox={compact ? '20 30 320 200' : '0 0 360 260'}
                     fill="none"
                     aria-hidden
@@ -209,41 +229,54 @@ const TechHero: React.FC<TechHeroProps> = ({
                         </radialGradient>
                     </defs>
 
-                    {/* 核心柔光 + 虚线轨道 */}
-                    <circle cx="190" cy="130" r="112" fill={`url(#hero-core-${uid})`} />
+                    {/* 核心柔光 */}
+                    <circle cx="196" cy="130" r="112" fill={`url(#hero-core-${uid})`} />
+
+                    {/* 虚线弧：16% 在浅底上等于没画，提到 24% 才算一层 */}
                     <circle
-                        cx="190" cy="130" r="118"
-                        stroke={isDark ? 'rgba(201,212,255,0.22)' : '#D5E1F2'}
-                        strokeDasharray="2 8"
+                        cx="200" cy="126" r="108"
+                        stroke={isDark ? 'rgba(201,212,255,0.26)' : 'rgba(139,92,246,0.24)'}
+                        strokeWidth={compact ? 1.6 : 1}
+                        strokeDasharray="3 9"
+                        fill="none"
                     />
 
-                    {/* 双层六边形 + 辐条 */}
-                    <g stroke={isDark ? 'rgba(201,212,255,0.22)' : '#D3DFF0'} strokeWidth="1">
-                        <polygon points="280,130 235,208 145,208 100,130 145,52 235,52" />
-                        <polygon points="236,130 213,170 167,170 144,130 167,90 213,90" />
-                        <path d="M280 130 L236 130 M235 208 L213 170 M145 208 L167 170 M100 130 L144 130 M145 52 L167 90 M235 52 L213 90" />
+                    {/* 连线分两档：主节点发出的三条更实，外围的退一档——
+                        眼睛先抓主节点，再顺着线往外走，图才有读法 */}
+                    <g
+                        stroke={isDark ? 'rgba(201,212,255,0.34)' : 'rgba(91,141,239,0.34)'}
+                        strokeWidth={compact ? 2.4 : 1.5}
+                        fill="none"
+                    >
+                        <path d="M272 108 L 168 62 M272 108 L 326 150 M272 108 L 250 196" />
+                    </g>
+                    <g
+                        stroke={isDark ? 'rgba(201,212,255,0.18)' : 'rgba(91,141,239,0.18)'}
+                        strokeWidth={compact ? 1.6 : 1}
+                        fill="none"
+                    >
+                        {/* compact 只留一条外围线：160×100 里再多就糊成一团 */}
+                        {compact
+                            ? <path d="M168 62 L 128 118" />
+                            : <path d="M272 108 L 300 52 M272 108 L 206 118 M168 62 L 128 118 M128 118 L 180 168 M180 168 L 250 196 M206 118 L 180 168" />}
                     </g>
 
-                    {/* 外层节点 */}
-                    <g>
-                        <circle cx="280" cy="130" r="3" fill={C.blue} opacity="0.9" />
-                        <circle cx="235" cy="208" r="2.5" fill={C.cyan} opacity="0.85" />
-                        <circle cx="145" cy="208" r="2.5" fill={C.purple} opacity="0.85" />
-                        <circle cx="100" cy="130" r="3" fill={C.amber} opacity="0.8" />
-                        <circle cx="145" cy="52" r="2.5" fill={C.blue} opacity="0.85" />
-                        <circle cx="235" cy="52" r="2.5" fill={C.cyan} opacity="0.85" />
-                    </g>
+                    {/* 主节点：光晕 + 最大半径，整张图的视觉重心 */}
+                    <circle cx="272" cy="108" r={compact ? 30 : 20} fill={isDark ? 'rgba(181,133,242,0.16)' : 'rgba(139,92,246,0.13)'} />
+                    <circle cx="272" cy="108" r={compact ? 10.5 : 7} fill={C.blue} opacity="0.92" />
 
-                    {/* 内层节点 + 核心 */}
-                    <g fill={isDark ? 'rgba(201,212,255,0.55)' : '#9FB0CB'}>
-                        <circle cx="236" cy="130" r="1.5" />
-                        <circle cx="213" cy="170" r="1.5" />
-                        <circle cx="167" cy="170" r="1.5" />
-                        <circle cx="144" cy="130" r="1.5" />
-                        <circle cx="167" cy="90" r="1.5" />
-                        <circle cx="213" cy="90" r="1.5" />
-                    </g>
-                    <circle cx="190" cy="130" r="4.5" fill={isDark ? '#C9D4FF' : '#5B8DEF'} />
+                    {/* 卫星节点：半径从 4.5 到 2.5 拉开差距，别做成一样大 */}
+                    <circle cx="168" cy="62" r={compact ? 6.8 : 4.5} fill={C.cyan} opacity="0.88" />
+                    <circle cx="326" cy="150" r={compact ? 5.3 : 3.5} fill={C.amber} opacity="0.85" />
+                    <circle cx="250" cy="196" r={compact ? 6 : 4} fill={C.blue} opacity="0.80" />
+                    <circle cx="128" cy="118" r={compact ? 4.5 : 3} fill={C.purple} opacity="0.80" />
+                    {!compact && (
+                        <>
+                            <circle cx="300" cy="52" r="3" fill={C.cyan} opacity="0.80" />
+                            <circle cx="180" cy="168" r="3" fill={C.purple} opacity="0.70" />
+                            <circle cx="206" cy="118" r="2.5" fill={isDark ? 'rgba(201,212,255,0.55)' : '#A9B8D0'} />
+                        </>
+                    )}
                 </svg>
             )}
 
@@ -297,7 +330,7 @@ const TechHero: React.FC<TechHeroProps> = ({
                     <p
                         // 只有下面还有按钮时才留下边距；否则这段 margin 会和卡片底部内边距叠加，
                         // 让卡片"上紧下松"（我的项目/资产中心都没有 actions，表现最明显）
-                        className={`${actions ? 'mb-3.5 sm:mb-4' : ''} ${compact ? 'max-w-2xl text-sm leading-[1.6]' : 'max-w-xl text-sm sm:text-base leading-[1.7]'} [text-wrap:balance]`}
+                        className={`${actions ? 'mb-3.5 sm:mb-4' : ''} ${compact ? 'max-w-2xl text-sm leading-[1.6]' : 'max-w-2xl text-sm sm:text-base leading-[1.7]'} [text-wrap:balance]`}
                         style={{ color: C.textSub }}
                     >
                         {subtitle}
