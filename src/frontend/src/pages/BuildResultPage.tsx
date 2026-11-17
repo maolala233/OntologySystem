@@ -2,36 +2,58 @@
  * 本体图谱查看页（2026-11-05 改版）：`/projects/:id/result` —— 只读图谱。
  * 构建结果明细（类/关系/实例/公理）已在项目详情页直接展示，本页专注图谱呈现：
  * D3 力导图（类常显、右键类节点展开实例、点击节点/边看详情）。
- * 头部：全站 Navbar（面包屑承载层级）+ 二级工具条（机检与自检标签 / 专家精修 / 取消发布 / 发布到资产中心）。
+ *
+ * 2026-11-17 视觉对齐资产中心「已发布本体详情」：
+ *   浅色外壳 + 内缩深色台面（.asset-workspace）→ 左栏深色信息面板（.asset-panel：
+ *   身份 / 结构概览 / 质量自检 / 图例 / 操作）→ 右侧占位工具条 + 类实例列表 + 画布。
+ *   原来「白卡头部 + bg-gray-900 圆角块 + 浮在画布中央的工具条」那套是旧版拼装：
+ *   头部白卡和深色画布硬切、工具条压在列表头上、列表树箭头和圆点不共线。
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { message } from '../shared/feedback';
-import { Button, Input, Modal, Space, Spin, Tag, Tooltip, Tree } from 'antd';
+import { Button, Input, Modal, Spin, Tag, Tooltip, Tree } from 'antd';
 import type { TreeProps } from 'antd/es/tree';
 import {
-    CloudUploadOutlined, EditOutlined, ExpandOutlined,
-    LeftOutlined, SearchOutlined, ShrinkOutlined, UnorderedListOutlined,
+    ArrowLeftOutlined, DatabaseOutlined,
+    ExpandOutlined, SearchOutlined, ShrinkOutlined, UnorderedListOutlined,
 } from '@ant-design/icons';
 
 import { pipelineApi } from '../api/pipeline';
 import { projectsApi } from '../api/projects';
-import { useAuthStore } from '../shared/auth/authStore';
+import { PROJECT_STATUS } from '../shared/projectStatus';
 import { useBuilderStore } from '../features/builder/store';
-import QualityCheckTag from '../features/builder/components/QualityCheckTag';
-import D3ForceGraph from '../components/OntologyGraph/D3ForceGraph';
+import D3ForceGraph, { spacingLabel } from '../components/OntologyGraph/D3ForceGraph';
 import DetailDrawer from '../features/graph-explorer/DetailDrawer';
 import Navbar from '../components/Layout/Navbar';
 
 const CLASS_TYPES = new Set(['owl:Class', 'Class']);
 
+/** 深色面板内部的分隔线：和画布的 #1A2233 同一档（与资产详情页同一个常量语义） */
+const AP_DIV = 'rgba(255,255,255,0.07)';
+
+/** 结构概览四个指标各自的色：直接取画布节点/关系的配色（类紫、实例蓝、关系青、属性琥珀），
+ *  数字用同色相的浅一档——深底上淡彩数字立得住 */
+const AP_STATS = [
+    { key: 'classes', label: '类', color: '#B585F2', ink: '#C9AEF8' },
+    { key: 'instances', label: '实例', color: '#5B8DEF', ink: '#9BC0F7' },
+    { key: 'relations', label: '关系', color: '#5AC8FA', ink: '#8BDCF2' },
+    { key: 'properties', label: '属性', color: '#F2B950', ink: '#F5D08C' },
+] as const;
+
+const fmtDate = (v?: string | null) =>
+    v ? new Date(v).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }) : '';
+
 const BuildResultPage: React.FC = () => {
     const { projectId } = useParams<{ projectId: string }>();
     const navigate = useNavigate();
     const pid = Number(projectId);
-    const { projectId: storeProjectId, projectName } = useBuilderStore();
-    const { hasModule } = useAuthStore();
-    const isExpert = hasModule('builder_pro');
+    const {
+        projectId: storeProjectId, projectName, projectStatus, domainName,
+        projectDescription, projectUpdatedAt, loadProject,
+    } = useBuilderStore();
+    // 元数据属于"当前 pid"才算就绪：切换项目后 fetch 回来之前先显示占位而不是上一个项目的名字
+    const projectReady = storeProjectId === pid;
 
     const [summary, setSummary] = useState<import('../api/pipeline').BuildSummary | null>(null);
     const [loading, setLoading] = useState(true);
@@ -46,6 +68,8 @@ const BuildResultPage: React.FC = () => {
     const [isLeftPanelExpanded, setIsLeftPanelExpanded] = useState(false);
     const [treeSearchValue, setTreeSearchValue] = useState('');
     const [manualExpandedKeys, setManualExpandedKeys] = useState<Set<string>>(new Set());
+    // 节点间距（0–100）：控件摆在工具条里，值由页面持有再传给画布（受控模式）
+    const [nodeSpacing, setNodeSpacing] = useState(50);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -64,6 +88,8 @@ const BuildResultPage: React.FC = () => {
     }, [pid]);
 
     useEffect(() => { load(); }, [load]);
+    // 左栏身份段（知识域 / 更新时间）走共享 store，和项目详情页同一份元数据
+    useEffect(() => { loadProject(pid); }, [pid, loadProject]);
 
     // 切到别的项目时先清掉上一个项目的摘要与图谱，避免路由参数直切时短暂显示旧数据
     useEffect(() => {
@@ -158,12 +184,18 @@ const BuildResultPage: React.FC = () => {
                 return {
                     title: inst?.data?.label || '未命名实例',
                     key: iid,
-                    icon: <span className="inline-block w-3 h-3 rounded-full mr-2" style={{ background: '#5B8DEF' }} />,
+                    icon: <span className="inline-block w-3 h-3 rounded-full" style={{ background: '#5B8DEF' }} />,
                     isLeaf: true,
                     searchableTitle: inst?.data?.label || '未命名实例',
                 };
             });
-            return { title, key: classNode.id, icon: <span className="inline-block w-3 h-3 rounded-full mr-2" style={{ background: '#B585F2' }} />, children, searchableTitle: title };
+            return {
+                title,
+                key: classNode.id,
+                icon: <span className="inline-block w-3 h-3 rounded-full" style={{ background: '#B585F2' }} />,
+                children,
+                searchableTitle: title,
+            };
         });
         if (!q) return nodes;
         return nodes
@@ -203,7 +235,7 @@ const BuildResultPage: React.FC = () => {
         { title: '首页', path: '/' },
         { title: '我的项目', path: '/my-projects' },
         {
-            title: storeProjectId === pid && projectName ? projectName : '项目详情',
+            title: projectReady && projectName ? projectName : '项目详情',
             path: `/projects/${pid}`,
         },
         { title: '本体图谱' },
@@ -221,231 +253,661 @@ const BuildResultPage: React.FC = () => {
         );
     }
 
-    const sc = summary.pipeline?.selfcheck;
+    const sc = (summary.pipeline?.selfcheck || null) as null | {
+        rounds?: number; fixed?: number; remaining?: number;
+    };
+    const checks = summary.checks;
+    const checkPassed = !checks || checks.error_count === 0;
+    const statusMeta = PROJECT_STATUS[projectStatus] || PROJECT_STATUS.ready;
+
+    // 结构概览：优先用构建摘要（口径与详情页一致），图谱没加载出来时不会掉成 0
+    const statValue = (key: typeof AP_STATS[number]['key']) => {
+        switch (key) {
+            case 'classes': return summary.schema?.classes_total ?? 0;
+            case 'instances': return summary.instances?.total ?? 0;
+            case 'relations': return summary.relations_total ?? graphEdges.length;
+            case 'properties':
+                return (summary.schema?.object_properties_total ?? 0)
+                    + (summary.schema?.datatype_properties_total ?? 0);
+            default: return 0;
+        }
+    };
+    const classCount = summary.schema?.classes_total ?? 0;
+    const instanceCount = summary.instances?.total ?? 0;
 
     return (
         <div className="h-full flex flex-col app-canvas">
             <Navbar breadcrumbs={breadcrumbs} />
-            {/* 头部卡：与详情页同款——名称/状态标签/操作收进卡片，不再裸放在画布上 */}
-            <div className="shrink-0 px-3 pt-3">
-                <div className="bg-white border border-[#E6EBF5] rounded-xl shadow-sm px-5 py-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-                    <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-x-2 gap-y-1 flex-wrap">
-                            <h1 className="text-base font-semibold text-gray-800 truncate max-w-full">
-                                {storeProjectId === pid && projectName ? projectName : '项目详情'}
-                            </h1>
-                            <span className="text-xs text-gray-400">本体图谱 · 只读视图</span>
-                            {summary.checks && <QualityCheckTag checks={summary.checks} />}
-                            {sc && (
-                                <Tag color="geekblue" className="mr-0">
-                                    自检修复 {sc.rounds} 轮 · 修复 {sc.fixed} 处
-                                    {sc.remaining > 0 ? ` · 剩余 ${sc.remaining} 硬伤` : ''}
+            <div className="asset-workspace flex-1 flex relative overflow-hidden m-4 sm:m-5 min-h-0">
+                <style>{`
+                    /* ── 外壳：与资产详情页完全同一套 ──
+                       内容区不整屏铺深色（会和浅色侧栏/顶栏硬切一刀），而是四边内缩、
+                       做成一块圆角深色"台面"压在浅色底图上 */
+                    .asset-workspace {
+                        border-radius: 16px;
+                        background: #0F1420;
+                        border: 1px solid rgba(15, 23, 42, 0.22);
+                        box-shadow:
+                            0 28px 60px -34px rgba(15, 23, 42, 0.62),
+                            0 8px 18px -12px rgba(15, 23, 42, 0.28),
+                            inset 0 1px 0 rgba(255, 255, 255, 0.06);
+                    }
+                    /* 左栏信息面板：画布里浮起的一层——比画布抬一档的冷海军蓝 +
+                       左上蓝 / 右下紫两团柔光。不用点阵一类的颗粒肌理（深底上一密就显脏） */
+                    .asset-panel {
+                        border-radius: 16px;
+                        border: 1px solid rgba(255, 255, 255, 0.085);
+                        background-image:
+                            radial-gradient(460px 280px at -10% -8%, rgba(91, 141, 239, 0.28), transparent 70%),
+                            radial-gradient(460px 320px at 112% 116%, rgba(139, 92, 246, 0.20), transparent 72%),
+                            linear-gradient(165deg, #1E2740 0%, #182035 55%, #151D2F 100%);
+                        box-shadow:
+                            inset 0 1px 0 rgba(255, 255, 255, 0.10),
+                            0 26px 50px -32px rgba(0, 0, 0, 0.85),
+                            0 2px 6px rgba(0, 0, 0, 0.35);
+                        overflow: hidden;
+                    }
+                    /* 段落标题前的短彩条（面板装饰语言：彩条 + 发光圆点 + 彩色等宽数字） */
+                    .ap-mark {
+                        width: 3px;
+                        height: 13px;
+                        border-radius: 999px;
+                        background: linear-gradient(180deg, #5B8DEF 0%, #8B5CF6 100%);
+                        flex-shrink: 0;
+                    }
+                    /* 工具条按钮统一成「深色玻璃」：
+                       透明底 + 冷灰描边 + 浅灰字，hover 才亮到品牌蓝 */
+                    .ap-ghost.ant-btn,
+                    .ap-tool.ant-btn {
+                        display: inline-flex;
+                        align-items: center;
+                        gap: 6px;
+                        border-radius: 8px;
+                        background: rgba(19, 26, 42, 0.55) !important;
+                        border-color: #24304A !important;
+                        color: #C6CEDF !important;
+                        font-size: 12.5px;
+                    }
+                    .ap-ghost.ant-btn { height: 32px; padding: 0 12px; }
+                    .ap-tool.ant-btn { height: 30px; padding: 0 10px; }
+                    .ap-ghost.ant-btn:hover,
+                    .ap-tool.ant-btn:hover,
+                    .ap-ghost.ant-btn:focus-visible,
+                    .ap-tool.ant-btn:focus-visible {
+                        background: rgba(91, 141, 239, 0.14) !important;
+                        border-color: rgba(91, 141, 239, 0.55) !important;
+                        color: #E6EAF2 !important;
+                    }
+                    /* 「列表」开着时保持选中态——纯开关看不出开没开 */
+                    .ap-tool-on.ant-btn,
+                    .ap-tool-on.ant-btn:hover {
+                        background: rgba(91, 141, 239, 0.20) !important;
+                        border-color: rgba(91, 141, 239, 0.50) !important;
+                        color: #C9D8FF !important;
+                    }
+                    /* 列表头部两个图标按钮 */
+                    .ap-icon-btn.ant-btn { color: #8B94AB !important; }
+                    .ap-icon-btn.ant-btn:hover,
+                    .ap-icon-btn.ant-btn:focus-visible {
+                        color: #C9D8FF !important;
+                        background: rgba(91, 141, 239, 0.14) !important;
+                    }
+                    /* 搜索框：默认白底输入框压在深色列表头上太跳，换成半透明冷色 */
+                    .asset-inst-search.ant-input-affix-wrapper {
+                        background: rgba(255, 255, 255, 0.05) !important;
+                        border-color: rgba(255, 255, 255, 0.10) !important;
+                        border-radius: 8px;
+                    }
+                    .asset-inst-search.ant-input-affix-wrapper:hover,
+                    .asset-inst-search.ant-input-affix-wrapper-focused {
+                        background: rgba(255, 255, 255, 0.07) !important;
+                        border-color: rgba(91, 141, 239, 0.55) !important;
+                        box-shadow: none !important;
+                    }
+                    .asset-inst-search .ant-input { background: transparent !important; color: #E6EAF2 !important; }
+                    .asset-inst-search .ant-input::placeholder { color: #6E7B99 !important; }
+                    .asset-inst-search .ant-input-clear-icon { color: #6E7B99; }
+                    /* 工具条里的节点间距滑杆：4px 轨道 + 12px 亮面滑钮。
+                       1) 选择器写成 input[type="range"].ap-range——index.css 里全局
+                          input[type="range"]{width:100%;height:8px} 特异性更高，只用 .ap-range 会被压掉；
+                       2) 元素本身 16px 高、轨道 4px：元素盒子太矮时滑钮会被压到偏低的位置；
+                       3) 轨道"已填充"的渐变由行内 CSS 变量 --ap-range-fill 传进来 */
+                    input[type="range"].ap-range {
+                        width: 116px;
+                        height: 16px;
+                        background: transparent;
+                        -webkit-appearance: none;
+                        appearance: none;
+                        outline: none;
+                        cursor: pointer;
+                    }
+                    input[type="range"].ap-range::-webkit-slider-runnable-track {
+                        height: 4px;
+                        border-radius: 999px;
+                        background: var(--ap-range-fill, #24304A);
+                    }
+                    input[type="range"].ap-range::-moz-range-track {
+                        height: 4px;
+                        border-radius: 999px;
+                        background: var(--ap-range-fill, #24304A);
+                    }
+                    input[type="range"].ap-range::-webkit-slider-thumb {
+                        -webkit-appearance: none;
+                        appearance: none;
+                        box-sizing: border-box;
+                        width: 12px;
+                        height: 12px;
+                        /* (12 - 4) / -2 = -4：让滑钮正好压在轨道中线上 */
+                        margin-top: -4px;
+                        border-radius: 50%;
+                        background: linear-gradient(150deg, #7FB2FF 0%, #8B5CF6 100%);
+                        border: 1.5px solid #0F1420;
+                        box-shadow:
+                            0 0 0 1px rgba(139, 92, 246, 0.55),
+                            0 0 9px rgba(91, 141, 239, 0.70),
+                            inset 0 1px 1px rgba(255, 255, 255, 0.55);
+                        cursor: pointer;
+                        transition: box-shadow 0.18s ease, transform 0.18s ease;
+                    }
+                    input[type="range"].ap-range::-webkit-slider-thumb:hover {
+                        transform: scale(1.08);
+                        box-shadow:
+                            0 0 0 1px rgba(139, 92, 246, 0.85),
+                            0 0 13px rgba(91, 141, 239, 0.90),
+                            inset 0 1px 1px rgba(255, 255, 255, 0.55);
+                    }
+                    input[type="range"].ap-range::-moz-range-thumb {
+                        box-sizing: border-box;
+                        width: 12px;
+                        height: 12px;
+                        border-radius: 50%;
+                        background: linear-gradient(150deg, #7FB2FF 0%, #8B5CF6 100%);
+                        border: 1.5px solid #0F1420;
+                        box-shadow:
+                            0 0 0 1px rgba(139, 92, 246, 0.55),
+                            0 0 9px rgba(91, 141, 239, 0.70),
+                            inset 0 1px 1px rgba(255, 255, 255, 0.55);
+                        cursor: pointer;
+                    }
+                    /* ── 列表树（逐项对齐 antd v5 的默认值）──
+                       1) treenode 是 align-items: flex-start —— 箭头贴在行顶；
+                       2) 图标容器固定 24×24、vertical-align: top —— 12px 圆点被顶高、还和文字拉开距离；
+                       3) hover / 选中态的文字色取 colorText（近黑）—— 深底上等于把字擦掉 */
+                    .asset-inst-tree, .asset-inst-tree .ant-tree-list, .asset-inst-tree .ant-tree-list-holder,
+                    .asset-inst-tree .ant-tree-list-holder-inner { background: transparent !important; }
+                    .asset-inst-tree .ant-tree-treenode { align-items: center; padding: 2px 0; color: #E6EAF2; }
+                    .asset-inst-tree .ant-tree-switcher {
+                        width: 18px;
+                        height: auto;
+                        align-self: stretch;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        margin-inline-end: 0;
+                        color: #6E7B99;
+                    }
+                    .asset-inst-tree .ant-tree-node-content-wrapper {
+                        display: flex;
+                        align-items: center;
+                        gap: 6px;
+                        min-height: 26px;
+                        padding: 2px 6px;
+                        line-height: 20px;
+                        color: #E6EAF2;
+                        min-width: 0;
+                    }
+                    .asset-inst-tree .ant-tree-node-content-wrapper:hover {
+                        background: rgba(91, 141, 239, 0.15) !important;
+                        color: #E6EAF2 !important;
+                        border-radius: 6px;
+                    }
+                    .asset-inst-tree .ant-tree-node-content-wrapper-selected,
+                    .asset-inst-tree .ant-tree-node-selected {
+                        background: rgba(91, 141, 239, 0.28) !important;
+                        color: #E6EAF2 !important;
+                    }
+                    .asset-inst-tree .ant-tree-node-content-wrapper .ant-tree-iconEle {
+                        width: 12px !important;
+                        height: 12px !important;
+                        line-height: 12px !important;
+                        display: flex !important;
+                        align-items: center;
+                        justify-content: center;
+                        vertical-align: middle;
+                        flex: none;
+                    }
+                    .asset-inst-tree .ant-tree-iconEle > span { margin-right: 0 !important; }
+                    .asset-inst-tree .ant-tree-title {
+                        flex: 1 1 auto;
+                        min-width: 0;
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                        white-space: nowrap;
+                    }
+                `}</style>
+
+                {/* ── 左栏：项目身份 + 结构概览 + 质量自检 + 图例 + 操作 ──
+                    原来这些（除了图例）挤在页面顶部一张白卡里，和深色画布硬切成两块；
+                    并进深色面板后，整页只剩"一块台面"这一个材质 */}
+                <div
+                    className="w-[360px] 2xl:w-[400px] flex-shrink-0 overflow-y-auto p-4"
+                    style={{ borderRight: '1px solid #1A2233' }}
+                >
+                    <div className="asset-panel">
+                        {/* 身份段：名称 + 状态 + 一行元信息（知识域 · 更新时间） */}
+                        <div className="border-b px-5 pb-3.5 pt-4" style={{ borderColor: AP_DIV }}>
+                            <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                    <h1
+                                        className="line-clamp-2 text-[19px] font-semibold leading-7 text-[#F2F6FF]"
+                                        title={projectReady ? projectName : undefined}
+                                    >
+                                        {projectReady && projectName ? projectName : '加载中…'}
+                                    </h1>
+                                    <div className="mt-1 text-[11.5px] text-[#8B94AB]">本体图谱 · 只读视图</div>
+                                </div>
+                                <Tag
+                                    className="!m-0 shrink-0"
+                                    style={{
+                                        background: 'rgba(91,141,239,0.18)',
+                                        color: '#9EC1FF',
+                                        borderColor: 'rgba(91,141,239,0.36)',
+                                    }}
+                                >
+                                    {statusMeta.text}
                                 </Tag>
-                            )}
+                            </div>
+                            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-[#8B94AB]">
+                                {projectReady && domainName && (
+                                    <span className="flex items-center gap-1">
+                                        <DatabaseOutlined style={{ color: '#6E7B99' }} />{domainName}
+                                    </span>
+                                )}
+                                {projectReady && projectUpdatedAt && (
+                                    <span>{`更新 ${fmtDate(projectUpdatedAt)}`}</span>
+                                )}
+                            </div>
                         </div>
-                    </div>
-                    <div className="shrink-0">
-                        <Space>
-                            {isExpert && (
-                                <Button icon={<EditOutlined />}
-                                        onClick={() => navigate(`/projects/${pid}/schema`)}>
-                                    专家精修
-                                </Button>
-                            )}
-                            {summary.is_published && (
-                                <Button onClick={async () => {
-                                    try {
-                                        await projectsApi.unpublishProject(pid);
-                                        message.success('已取消发布（资产中心不再展示）');
-                                        load();
-                                    } catch (e: any) {
-                                        message.error(e.response?.data?.error?.message || '取消发布失败');
-                                    }
-                                }}>
-                                    取消发布
-                                </Button>
-                            )}
-                            <Button type="primary" icon={<CloudUploadOutlined />}
-                                    onClick={() => navigate(`/projects/${pid}?stage=publish`)}>
-                                发布到资产中心
-                            </Button>
-                        </Space>
+
+                        {/* 结构概览：类 / 实例 / 关系 / 属性。四项之间走竖向发丝线分列，
+                            每项一枚同色小光点 + 浅一档的彩色等宽数字 */}
+                        <div className="border-b px-5 py-3.5" style={{ borderColor: AP_DIV }}>
+                            <div className="mb-2.5 flex items-center justify-between">
+                                <span className="flex items-center gap-2 text-[13px] font-semibold text-[#E6EAF2]">
+                                    <span className="ap-mark" aria-hidden />
+                                    结构概览
+                                </span>
+                                <span className="tk-mono text-[10px] uppercase tracking-[0.16em] text-[#6E7B99]">graph</span>
+                            </div>
+                            <div className="grid grid-cols-4">
+                                {AP_STATS.map((k, i) => (
+                                    <div
+                                        key={k.key}
+                                        className={i > 0 ? 'border-l pl-3' : ''}
+                                        style={i > 0 ? { borderColor: AP_DIV } : undefined}
+                                    >
+                                        <div className="flex items-center gap-1.5 text-[11px] text-[#8B94AB]">
+                                            <span
+                                                className="h-[5px] w-[5px] shrink-0 rounded-full"
+                                                style={{ background: k.color, boxShadow: `0 0 6px ${k.color}` }}
+                                            />
+                                            {k.label}
+                                        </div>
+                                        <div className="tk-mono mt-1 text-[20px] font-semibold leading-6" style={{ color: k.ink }}>
+                                            {statValue(k.key)}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* 项目描述：有才渲染，没有就整段不出现（不摆"暂无描述"占位） */}
+                        {projectReady && projectDescription && (
+                            <div className="border-b px-5 py-3.5" style={{ borderColor: AP_DIV }}>
+                                <div className="mb-1.5 flex items-center gap-2 text-[13px] font-semibold text-[#E6EAF2]">
+                                    <span className="ap-mark" aria-hidden />
+                                    项目描述
+                                </div>
+                                <p
+                                    className="m-0 line-clamp-6 text-[13px] leading-6 text-[#A9B7D9]"
+                                    title={projectDescription}
+                                >
+                                    {projectDescription}
+                                </p>
+                            </div>
+                        )}
+
+                        {/* 质量自检（原头部卡里的两个标签）：状态点 + 说明，
+                            比 antd 预设色标签（浅绿/浅红底）压在深色面板上更贴这套材质 */}
+                        {(checks || sc) && (
+                            <div className="border-b px-5 py-3.5" style={{ borderColor: AP_DIV }}>
+                                <div className="mb-2 flex items-center gap-2 text-[13px] font-semibold text-[#E6EAF2]">
+                                    <span className="ap-mark" aria-hidden />
+                                    质量自检
+                                </div>
+                                {checks && (
+                                    <div className="flex items-center gap-2 text-[12.5px]">
+                                        <span
+                                            className="h-2 w-2 shrink-0 rounded-full"
+                                            style={{
+                                                background: checkPassed ? '#34C3A4' : '#F2685C',
+                                                boxShadow: `0 0 8px ${checkPassed ? 'rgba(52,195,164,0.75)' : 'rgba(242,104,92,0.75)'}`,
+                                            }}
+                                        />
+                                        <span style={{ color: checkPassed ? '#8BE8CF' : '#FFB4AC' }}>
+                                            {checkPassed ? '机检通过，无硬伤' : `机检 ${checks.error_count} 处硬伤`}
+                                        </span>
+                                    </div>
+                                )}
+                                {sc && (
+                                    <div className="mt-1.5 text-[12px] leading-5 text-[#A9B7D9]">
+                                        自检修复 {sc.rounds ?? 0} 轮 · 修复 {sc.fixed ?? 0} 处
+                                        {(sc.remaining ?? 0) > 0 && (
+                                            <span style={{ color: '#F5D08C' }}> · 剩余 {sc.remaining} 硬伤</span>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* 图例：配色与画布一致（深色主题档），圆点上带一层同色荧光。
+                            面板最后一段，所以不画下边线（否则面板底部会多一条悬空的发丝线） */}
+                        <div className="px-5 py-3.5">
+                            <div className="mb-2 flex items-center gap-2 text-[13px] font-semibold text-[#E6EAF2]">
+                                <span className="ap-mark" aria-hidden />
+                                图例
+                            </div>
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[12px] text-[#C6CEDF]">
+                                <span className="flex items-center gap-1.5">
+                                    <span
+                                        className="h-[11px] w-[11px] rounded-full"
+                                        style={{ background: '#B585F2', border: '2px solid #8F5BD9', boxShadow: '0 0 8px rgba(181,133,242,0.55)' }}
+                                    />
+                                    类
+                                </span>
+                                <span className="flex items-center gap-1.5">
+                                    <span
+                                        className="h-[11px] w-[11px] rounded-full"
+                                        style={{ background: '#5B8DEF', border: '2px solid #3E6CC7', boxShadow: '0 0 8px rgba(91,141,239,0.55)' }}
+                                    />
+                                    实例
+                                </span>
+                                <span className="flex items-center gap-1.5">
+                                    <span className="inline-block w-4" style={{ borderTop: '1.5px dashed #5B8DEF' }} />
+                                    类型
+                                </span>
+                                <span className="flex items-center gap-1.5">
+                                    <span className="inline-block w-4" style={{ borderTop: '1.5px solid #6E80B0' }} />
+                                    关系
+                                </span>
+                            </div>
+                        </div>
                     </div>
                 </div>
-            </div>
 
-            <div className="flex-1 min-h-0 p-3 overflow-y-auto scrollbar-stable">
-                <div className="bg-gray-900 rounded-lg relative flex overflow-hidden h-full" style={{ minHeight: 480 }}>
-                    {/* 左侧类/实例列表（与资产中心同款，可收起） */}
+                {/* ── 右侧：工具条 + 类实例列表 + 画布 ── */}
+                <div className="flex-1 flex flex-col min-w-0 relative h-full" style={{ background: '#0F1420' }}>
+                    {/* 顶部工具条（占位，不再是浮在画布上的两个簇）：左返回、右操作 */}
                     <div
-                        className={`transition-all duration-300 ease-in-out flex-shrink-0 relative ${
-                            isLeftPanelExpanded ? 'w-[340px] shadow-lg' : 'w-0'
-                        }`}
-                        style={{
-                            background: '#131A2A',
-                            boxShadow: isLeftPanelExpanded ? '4px 0 12px rgba(0, 0, 0, 0.35)' : 'none',
-                            borderRight: isLeftPanelExpanded ? '1px solid #1A2233' : 'none',
-                        }}
+                        className="flex h-12 items-center gap-2 px-3 flex-shrink-0"
+                        style={{ borderBottom: '1px solid #1A2233' }}
                     >
-                        {isLeftPanelExpanded && (
-                            <button
-                                className="absolute top-1/2 -translate-y-1/2 z-[100] shadow-md rounded-r-lg p-2 transition-all duration-300"
-                                style={{ right: '-32px', background: '#1A2233', color: '#E6EAF2', border: '1px solid #2A3550', borderLeft: 'none' }}
-                                onClick={() => setIsLeftPanelExpanded(false)}
-                                title="收起列表"
-                            >
-                                <LeftOutlined />
-                            </button>
-                        )}
-                        <div className="h-full flex flex-col overflow-hidden" style={{ minWidth: isLeftPanelExpanded ? '340px' : '0' }}>
-                            <div className="p-3 border-b flex-shrink-0" style={{ borderColor: '#1A2233' }}>
-                                <div className="flex items-center justify-between mb-2">
-                                    <h3 className="font-semibold flex items-center text-sm" style={{ color: '#E6EAF2' }}>
-                                        <UnorderedListOutlined className="mr-2" style={{ color: '#8B94AB' }} />
-                                        类与实例列表
-                                    </h3>
-                                    <div className="flex items-center gap-1">
-                                        <Tooltip title="全部展开">
-                                            <Button type="text" size="small" icon={<ExpandOutlined />}
-                                                    onClick={() => setManualExpandedKeys(new Set(buildTreeData().map((n: any) => n.key)))}
-                                                    style={{ color: '#C6CEDF' }} />
-                                        </Tooltip>
-                                        <Tooltip title="全部收起">
-                                            <Button type="text" size="small" icon={<ShrinkOutlined />}
-                                                    onClick={() => setManualExpandedKeys(new Set())}
-                                                    style={{ color: '#C6CEDF' }} />
-                                        </Tooltip>
-                                    </div>
-                                </div>
-                                <Input
-                                    placeholder="搜索类或实例..."
-                                    size="small"
-                                    value={treeSearchValue}
-                                    onChange={(e) => setTreeSearchValue(e.target.value)}
-                                    allowClear
-                                    prefix={<SearchOutlined className="text-gray-500" />}
+                        <Button
+                            icon={<ArrowLeftOutlined />}
+                            onClick={() => navigate(`/projects/${pid}`)}
+                            className="ap-ghost"
+                        >
+                            返回项目详情
+                        </Button>
+                        <div className="ml-auto flex items-center gap-3">
+                            {/* 节点间距常显滑杆；窄屏整组隐藏，图仍可缩放/拖拽 */}
+                            <label className="hidden xl:flex shrink-0 items-center gap-2">
+                                <span className="whitespace-nowrap text-[11.5px] text-[#8B94AB]">节点间距</span>
+                                <input
+                                    type="range"
+                                    min={0}
+                                    max={100}
+                                    value={nodeSpacing}
+                                    onChange={(e) => setNodeSpacing(Number(e.target.value))}
+                                    className="ap-range shrink-0"
+                                    aria-label="节点间距"
+                                    style={{
+                                        '--ap-range-fill': `linear-gradient(90deg, #5B8DEF 0%, #8B5CF6 ${nodeSpacing}%, #24304A ${nodeSpacing}%, #24304A 100%)`,
+                                    } as React.CSSProperties}
                                 />
-                            </div>
-                            <div className="flex-1 overflow-auto p-2">
-                                <style>{`
-                                    .result-inst-tree, .result-inst-tree .ant-tree-list, .result-inst-tree .ant-tree-list-holder,
-                                    .result-inst-tree .ant-tree-list-holder-inner { background: transparent !important; }
-                                    .result-inst-tree .ant-tree-treenode { padding: 2px 0; color: #E6EAF2; }
-                                    .result-inst-tree .ant-tree-node-content-wrapper { padding: 2px 8px; min-height: 24px; line-height: 20px; color: #E6EAF2; }
-                                    .result-inst-tree .ant-tree-node-content-wrapper:hover { background: rgba(91, 141, 239, 0.15) !important; border-radius: 4px; }
-                                    .result-inst-tree .ant-tree-node-content-wrapper-selected { background: rgba(91, 141, 239, 0.28) !important; }
-                                    .result-inst-tree .ant-tree-switcher { width: 20px; height: 24px; line-height: 24px; }
-                                `}</style>
-                                <Tree
-                                    showIcon
-                                    expandedKeys={Array.from(manualExpandedKeys)}
-                                    onExpand={(keys) => setManualExpandedKeys(new Set(keys as string[]))}
-                                    selectedKeys={selectedNode ? [selectedNode.id] : []}
-                                    onSelect={onTreeSelect}
-                                    treeData={buildTreeData() as any}
-                                    blockNode
-                                    className="result-inst-tree"
-                                />
-                            </div>
-                            <div className="p-3 border-t flex-shrink-0" style={{ borderColor: '#1A2233', background: 'rgba(15, 20, 32, 0.6)' }}>
-                                <div className="flex items-center justify-between text-xs" style={{ color: '#8B94AB' }}>
-                                    <span className="flex items-center">
-                                        <span className="inline-block w-2 h-2 rounded-full mr-1.5" style={{ background: '#B585F2' }} />
-                                        类：{summary.schema.classes_total}
-                                    </span>
-                                    <span className="flex items-center">
-                                        <span className="inline-block w-2 h-2 rounded-full mr-1.5" style={{ background: '#5B8DEF' }} />
-                                        实例：{summary.instances.total}
-                                    </span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* 画布区 */}
-                    <div className="flex-1 relative min-w-0">
-                        {/* 悬浮工具条：展开/收起所有实例 + 列表 */}
-                        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20">
-                            <div className="flex items-center gap-1 px-2 py-1.5 rounded-lg border"
-                                 style={{ background: 'rgba(19, 26, 42, 0.92)', borderColor: '#1A2233', backdropFilter: 'blur(6px)' }}>
+                                <span className="tk-mono w-[30px] shrink-0 whitespace-nowrap text-[11.5px]" style={{ color: '#9BC0F7' }}>
+                                    {spacingLabel(nodeSpacing)}
+                                </span>
+                            </label>
+                            <span className="hidden xl:block h-5 w-px" style={{ background: '#1A2233' }} aria-hidden />
+                            <div className="flex items-center gap-1.5">
                                 <Tooltip title={Array.from(expandedNodeIds).length > 0 ? '收起所有实例' : '展开所有实例'}>
-                                    <Button size="small" type="primary" ghost
-                                            icon={Array.from(expandedNodeIds).length > 0 ? <ShrinkOutlined /> : <ExpandOutlined />}
-                                            onClick={Array.from(expandedNodeIds).length > 0 ? collapseAllInstances : expandAllInstances}>
+                                    <Button
+                                        icon={Array.from(expandedNodeIds).length > 0 ? <ShrinkOutlined /> : <ExpandOutlined />}
+                                        onClick={Array.from(expandedNodeIds).length > 0 ? collapseAllInstances : expandAllInstances}
+                                        className="ap-tool"
+                                    >
                                         展开/收起实例
                                     </Button>
                                 </Tooltip>
                                 <Tooltip title="类与实例列表">
-                                    <Button size="small" type="primary" ghost icon={<UnorderedListOutlined />}
-                                            onClick={() => setIsLeftPanelExpanded((v) => !v)}>
+                                    <Button
+                                        icon={<UnorderedListOutlined />}
+                                        onClick={() => setIsLeftPanelExpanded((v) => !v)}
+                                        className={`ap-tool ${isLeftPanelExpanded ? 'ap-tool-on' : ''}`}
+                                    >
                                         列表
                                     </Button>
                                 </Tooltip>
                             </div>
                         </div>
-                        <div className="absolute inset-0">
-                        <D3ForceGraph
-                            theme="dark"
-                            nodes={displayNodes}
-                            edges={displayEdges}
-                            onNodeClick={(node: any) => {
-                                setSelectedEdge(null);
-                                setSelectedNode(node ? { type: 'node', id: node.id } : null);
-                            }}
-                            onEdgeClick={(edge: any) => {
-                                setSelectedNode(null);
-                                setSelectedEdge(edge);
-                            }}
-                            onNodeRightClick={(node: any) => {
-                                if (!node) return;
-                                const nid = String(node.id);
-                                setExpandedNodeIds((prev) => {
-                                    const next = new Set(prev);
-                                    if (next.has(nid)) {
-                                        next.delete(nid);
-                                    } else {
-                                        next.add(nid);
-                                    }
-                                    return next;
-                                });
-                            }}
-                        />
-                    <div className="absolute bottom-3 left-3 text-xs text-gray-400 bg-gray-800/80 rounded px-2 py-1 pointer-events-none">
-                        只读 · 右键类节点展开/收起实例 · 点击节点查看详情
                     </div>
-                    <DetailDrawer
-                        projectId={pid}
-                        selection={selectedNode}
-                        onClose={() => setSelectedNode(null)}
-                        onNavigateNode={(nid: string) => setSelectedNode({ type: 'node', id: nid })}
-                        onExpandNode={(nid: string) => {
-                            setExpandedNodeIds((prev) => {
-                                const next = new Set(prev);
-                                next.add(String(nid));
-                                return next;
-                            });
-                        }}
-                    />
-                    {selectedEdge && (
-                        <Modal
-                            title={`关系 - ${selectedEdge.data?.label || selectedEdge.data?.relation || '未命名'}`}
-                            open onCancel={() => setSelectedEdge(null)}
-                            footer={<Button onClick={() => setSelectedEdge(null)}>关闭</Button>}
+
+                    <div className="flex-1 flex overflow-hidden">
+                        {/* 左侧列表：内层固定宽度、外层 overflow-hidden——收放时是"滑出/滑入"
+                            而不是"挤扁"，否则树里的长标题会在动画中途折成两行 */}
+                        <div
+                            className={`transition-all duration-300 ease-in-out flex-shrink-0 relative overflow-hidden ${
+                                isLeftPanelExpanded ? 'w-[240px] 2xl:w-[280px]' : 'w-0'
+                            }`}
+                            style={{
+                                background: '#131A2A',
+                                boxShadow: isLeftPanelExpanded ? '4px 0 12px rgba(0, 0, 0, 0.35)' : 'none',
+                                borderRight: isLeftPanelExpanded ? '1px solid #1A2233' : 'none',
+                            }}
                         >
-                            <div className="text-sm space-y-1">
-                                <div>起点：{graphNodes.find((n) => n.id === selectedEdge.source)?.data?.label || selectedEdge.source}</div>
-                                <div>终点：{graphNodes.find((n) => n.id === selectedEdge.target)?.data?.label || selectedEdge.target}</div>
-                                {selectedEdge.data?.source_quote && (
-                                    <div className="text-xs text-gray-500">证据：{selectedEdge.data.source_quote}</div>
-                                )}
+                            <div className="h-full flex flex-col overflow-hidden min-w-[240px] 2xl:min-w-[280px]">
+                                <div className="p-3 border-b flex-shrink-0" style={{ borderColor: '#1A2233' }}>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <h3 className="flex items-center gap-2 text-[13px] font-semibold" style={{ color: '#E6EAF2' }}>
+                                            <span className="ap-mark" aria-hidden />
+                                            类与实例列表
+                                        </h3>
+                                        <div className="flex items-center gap-0.5">
+                                            <Tooltip title="全部展开">
+                                                <Button type="text" size="small" className="ap-icon-btn" icon={<ExpandOutlined />}
+                                                    onClick={() => setManualExpandedKeys(new Set(buildTreeData().map((n: any) => n.key)))} />
+                                            </Tooltip>
+                                            <Tooltip title="全部收起">
+                                                <Button type="text" size="small" className="ap-icon-btn" icon={<ShrinkOutlined />}
+                                                    onClick={() => setManualExpandedKeys(new Set())} />
+                                            </Tooltip>
+                                        </div>
+                                    </div>
+                                    <Input
+                                        className="asset-inst-search"
+                                        placeholder="搜索类或实例…"
+                                        size="small"
+                                        value={treeSearchValue}
+                                        onChange={(e) => setTreeSearchValue(e.target.value)}
+                                        allowClear
+                                        prefix={<SearchOutlined style={{ color: '#6E7B99' }} />}
+                                    />
+                                </div>
+                                <div className="flex-1 overflow-auto p-2">
+                                    <Tree
+                                        showIcon
+                                        expandedKeys={Array.from(manualExpandedKeys)}
+                                        onExpand={(keys) => setManualExpandedKeys(new Set(keys as string[]))}
+                                        selectedKeys={selectedNode ? [selectedNode.id] : []}
+                                        onSelect={onTreeSelect}
+                                        treeData={buildTreeData() as any}
+                                        blockNode
+                                        className="asset-inst-tree"
+                                    />
+                                </div>
+                                <div className="p-3 border-t flex-shrink-0" style={{ borderColor: '#1A2233', background: 'rgba(15, 20, 32, 0.6)' }}>
+                                    <div className="flex items-center justify-between text-xs" style={{ color: '#8B94AB' }}>
+                                        <span className="flex items-center">
+                                            <span className="inline-block w-2 h-2 rounded-full mr-1.5" style={{ background: '#B585F2', boxShadow: '0 0 6px rgba(181,133,242,0.7)' }} />
+                                            类：<span className="tk-mono ml-1" style={{ color: '#C9AEF8' }}>{classCount}</span>
+                                        </span>
+                                        <span className="flex items-center">
+                                            <span className="inline-block w-2 h-2 rounded-full mr-1.5" style={{ background: '#5B8DEF', boxShadow: '0 0 6px rgba(91,141,239,0.7)' }} />
+                                            实例：<span className="tk-mono ml-1" style={{ color: '#9BC0F7' }}>{instanceCount}</span>
+                                        </span>
+                                    </div>
+                                </div>
                             </div>
-                        </Modal>
-                    )}
+                        </div>
+
+                        {/* 画布 */}
+                        <div className="flex-1 flex flex-col min-w-0 relative h-full">
+                            <div className="flex-1 relative min-h-0">
+                                <div className="absolute inset-0">
+                                    <D3ForceGraph
+                                        theme="dark"
+                                        showLegend={false}
+                                        spacingControl="none"
+                                        spacing={nodeSpacing}
+                                        onSpacingChange={setNodeSpacing}
+                                        nodes={displayNodes}
+                                        edges={displayEdges}
+                                        onNodeClick={(node: any) => {
+                                            setSelectedEdge(null);
+                                            setSelectedNode(node ? { type: 'node', id: node.id } : null);
+                                        }}
+                                        onEdgeClick={(edge: any) => {
+                                            setSelectedNode(null);
+                                            setSelectedEdge(edge);
+                                        }}
+                                        onNodeRightClick={(node: any) => {
+                                            if (!node) return;
+                                            const nid = String(node.id);
+                                            setExpandedNodeIds((prev) => {
+                                                const next = new Set(prev);
+                                                if (next.has(nid)) {
+                                                    next.delete(nid);
+                                                } else {
+                                                    next.add(nid);
+                                                }
+                                                return next;
+                                            });
+                                        }}
+                                    />
+                                </div>
+                                {/* 操作提示：深色玻璃胶囊，压在画布左下角。
+                                    放左边是因为右下角已被画布自带的「当前视图 N 个节点」占着，
+                                    两个都居中/居右在窄画布上会叠到一起 */}
+                                <div
+                                    className="pointer-events-none absolute bottom-3 left-3 whitespace-nowrap rounded-full px-3 py-1 text-[11.5px]"
+                                    style={{
+                                        background: 'rgba(19, 26, 42, 0.85)',
+                                        border: '1px solid #1A2233',
+                                        color: '#8B94AB',
+                                        backdropFilter: 'blur(6px)',
+                                    }}
+                                >
+                                    只读 · 右键类节点展开/收起实例 · 点击节点查看详情
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
 
+            {/* 节点详情：与实例探索一致的 DetailDrawer（只读展示） */}
+            <DetailDrawer
+                projectId={pid}
+                selection={selectedNode}
+                onClose={() => setSelectedNode(null)}
+                onNavigateNode={(nid: string) => setSelectedNode({ type: 'node', id: nid })}
+                onExpandNode={(nid: string) => {
+                    setExpandedNodeIds((prev) => {
+                        const next = new Set(prev);
+                        next.add(String(nid));
+                        return next;
+                    });
+                }}
+            />
+
+            {/* 边详情：轻量弹窗。与详情抽屉同一套语言——冷蓝底 + 彩条标题 + 细线行 + 等宽 id，
+                不再是白底黑字的三行纯文本（padding 归零：.ant-modal-content 自带一圈内边距） */}
+            {selectedEdge && (
+                <Modal
+                    open
+                    onCancel={() => setSelectedEdge(null)}
+                    footer={null}
+                    width={440}
+                    title={
+                        <span className="flex items-center gap-2 text-[15px] font-semibold text-[#0F172A]">
+                            <span className="ap-mark" aria-hidden />
+                            关系详情
+                        </span>
+                    }
+                    styles={{
+                        content: { background: 'linear-gradient(165deg, #EDF3FE 0%, #E2ECFC 52%, #E9F1FE 100%)', padding: 0 },
+                        header: { background: 'transparent', borderBottom: '1px solid #E1EAF8', marginBottom: 0, padding: '12px 18px' },
+                        body: { padding: '14px 18px 16px' },
+                    }}
+                >
+                    <div className="mb-2 flex items-center gap-2">
+                        <Tag
+                            className="!m-0"
+                            style={{ background: 'rgba(139,92,246,0.12)', color: '#6D3FD8', borderColor: 'rgba(139,92,246,0.30)' }}
+                        >
+                            {selectedEdge.data?.label || selectedEdge.data?.relation || '未命名关系'}
+                        </Tag>
+                        {selectedEdge.data?.confidence != null && (
+                            <span className="tk-mono text-[11.5px] text-[#66738F]">
+                                置信 {Number(selectedEdge.data.confidence).toFixed(2)}
+                            </span>
+                        )}
+                    </div>
+                    {[
+                        {
+                            label: '起点',
+                            value: graphNodes.find((n) => n.id === selectedEdge.source)?.data?.label
+                                || String(selectedEdge.source),
+                        },
+                        {
+                            label: '终点',
+                            value: graphNodes.find((n) => n.id === selectedEdge.target)?.data?.label
+                                || String(selectedEdge.target),
+                        },
+                    ].map((r) => (
+                        <div
+                            key={r.label}
+                            className="flex items-baseline gap-3 py-1.5 text-[13px]"
+                            style={{ borderTop: '1px solid rgba(47, 98, 216, 0.10)' }}
+                        >
+                            <span className="w-[52px] shrink-0 text-[#66738F]">{r.label}</span>
+                            <span className="min-w-0 break-all text-[#1F2A44]" style={{ fontSize: 12 }}>
+                                {r.value}
+                            </span>
+                        </div>
+                    ))}
+                    {selectedEdge.data?.source_quote && (
+                        <div
+                            className="mt-2 rounded-lg px-3 py-2 text-[12px] leading-[1.7] text-[#41506F]"
+                            style={{ background: 'rgba(255,255,255,0.55)', borderLeft: '3px solid #F2B950' }}
+                        >
+                            <div className="mb-0.5 text-[11px] text-[#8B94AB]">证据</div>
+                            {selectedEdge.data.source_quote}
+                        </div>
+                    )}
+                </Modal>
+            )}
         </div>
     );
 };

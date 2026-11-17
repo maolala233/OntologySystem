@@ -111,7 +111,7 @@ function EvidenceCards({ rows, projectId }: { projectId: number; rows: ProvRow[]
     return (
         <div className="space-y-2">
             {rows.map((p) => (
-                <div key={p.id} className="border border-amber-200/70 bg-amber-50/40 rounded px-3 py-2">
+                <div key={p.id} className="dd-evidence">
                     <div className="flex items-center gap-2 flex-wrap mb-1 text-xs text-gray-500">
                         <Text strong className="text-gray-700">{p.document_name || '未知文档'}</Text>
                         {p.chunk_index != null &&
@@ -156,13 +156,14 @@ function EvidenceCards({ rows, projectId }: { projectId: number; rows: ProvRow[]
 
 function Section({ title, extra, children }: { title: React.ReactNode; extra?: React.ReactNode; children: React.ReactNode }) {
     return (
-        <div className="mb-4">
-            <div className="flex items-center justify-between mb-2">
-                <Text strong className="text-sm text-gray-700">{title}</Text>
-                {extra}
+        <section className="mb-5">
+            <div className="dd-section-head">
+                <span className="dd-mark" aria-hidden />
+                <Text strong className="text-[13px] text-[#1F2A44]">{title}</Text>
+                {extra && <span className="ml-auto">{extra}</span>}
             </div>
             {children}
-        </div>
+        </section>
     );
 }
 
@@ -205,6 +206,90 @@ interface Props {
     reloadKey?: number;
 }
 
+/**
+ * 详情抽屉的局部样式（2026-11-17）：把 antd 默认的「灰色带框表格 + 加粗黑标题」
+ * 换成全站同一套语言——细线分段、彩条小标题、冷白底，和说明板 / 信息面板一致。
+ * 抽屉本质是阅读面板，跟着浅色外壳走，不跟着深色画布走。
+ */
+const DETAIL_CSS = `
+    .dd-mark {
+        width: 3px; height: 13px; border-radius: 999px; flex-shrink: 0;
+        background: linear-gradient(180deg, #5B8DEF 0%, #8B5CF6 100%);
+    }
+    .dd-section-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    /* 描述列表：去掉 antd 的表格边框，改成"标签列 + 细线行"，并且一律透底 */
+    .dd-desc .ant-descriptions-view { border: 0 !important; background: transparent !important; }
+    .dd-desc .ant-descriptions-view > table { border: 0 !important; background: transparent !important; }
+    .dd-desc .ant-descriptions-row > th,
+    .dd-desc .ant-descriptions-row > td {
+        border-bottom: 1px solid rgba(47, 98, 216, 0.10) !important;
+        background: transparent !important;
+        padding: 7px 0 !important;
+    }
+    .dd-desc .ant-descriptions-item-label { width: 88px; color: #66738F !important; font-weight: 400 !important; }
+    .dd-desc .ant-descriptions-item-content { color: #1F2A44; }
+    /* 溯源证据：不再是一张张白卡片，改成带琥珀竖线的引用块——证据本来就是"原文引用"，
+       引用块的形态最贴切，也不会在冷蓝底上戳出一排白方块 */
+    .dd-evidence {
+        background: transparent;
+        border: 0;
+        border-left: 3px solid #F2B950;
+        border-radius: 0;
+        padding: 2px 0 2px 12px;
+    }
+    /* 抽屉头部两个操作按钮（在画布中聚焦 / 邻域展开）：
+       默认的 antd 白底按钮在冷蓝底上同样显白，统一成"半透明白描边 + 主按钮走品牌渐变" */
+    .dd-action.ant-btn {
+        background: rgba(255, 255, 255, 0.62);
+        border-color: rgba(91, 141, 239, 0.30);
+        color: #2A57C6;
+        border-radius: 8px;
+    }
+    .dd-action.ant-btn:hover,
+    .dd-action.ant-btn:focus-visible {
+        background: #FFFFFF;
+        border-color: rgba(91, 141, 239, 0.55) !important;
+        color: #1F4FB3 !important;
+    }
+    .dd-action-primary.ant-btn {
+        background: linear-gradient(95deg, #5B8DEF 0%, #8B5CF6 100%);
+        border: 0;
+        color: #FFFFFF;
+        box-shadow: 0 6px 14px -10px rgba(91, 141, 239, 0.85);
+    }
+    .dd-action-primary.ant-btn:hover,
+    .dd-action-primary.ant-btn:focus-visible {
+        background: linear-gradient(95deg, #5B8DEF 0%, #8B5CF6 100%) !important;
+        color: #FFFFFF !important;
+        filter: brightness(1.06);
+    }
+    /* 表格：透底 + 表头淡蓝、行间细线，不再是一块白格子 */
+    .dd-table .ant-table { background: transparent; }
+    .dd-table .ant-table-thead > tr > th {
+        background: rgba(91, 141, 239, 0.08) !important;
+        color: #66738F !important;
+        font-weight: 600;
+        border-bottom: 1px solid rgba(47, 98, 216, 0.12) !important;
+    }
+    .dd-table .ant-table-tbody > tr > td {
+        background: transparent !important;
+        border-bottom: 1px solid rgba(47, 98, 216, 0.08) !important;
+    }
+    .dd-table .ant-table-tbody > tr:last-child > td { border-bottom: 0 !important; }
+    .dd-table .ant-pagination { background: transparent; }
+    .dd-icon-btn.ant-btn { color: #8A94AB !important; }
+    .dd-icon-btn.ant-btn:hover { color: #2A57C6 !important; background: rgba(91, 141, 239, 0.10) !important; }
+    /* 关闭按钮挪到右侧：antd Drawer 默认放左边，和全站 Modal 的关闭位置不一致 */
+    .dd-drawer .ant-drawer-header-title { flex-direction: row-reverse; }
+    .dd-drawer .ant-drawer-close { margin-inline: 0 0; }
+    .dd-raw summary { color: #8A94AB; cursor: pointer; font-size: 12px; }
+    .dd-raw pre {
+        margin: 6px 0 0; padding: 8px; background: rgba(255, 255, 255, 0.72);
+        border: 1px solid rgba(47, 98, 216, 0.12); border-radius: 6px;
+        font-size: 10.5px; line-height: 1.6; max-height: 128px; overflow: auto;
+    }
+`;
+
 const DetailDrawer: React.FC<Props> = ({ projectId, selection, onClose, onNavigateNode, onExpandNode, extraNodeActions, reloadKey }) => {
     const [edgeDetail, setEdgeDetail] = useState<EdgeDetail | null>(null);
 
@@ -222,11 +307,26 @@ const DetailDrawer: React.FC<Props> = ({ projectId, selection, onClose, onNaviga
     }, [projectId, selection]);
 
     return (
+        <>
+        <style>{DETAIL_CSS}</style>
         <Drawer
             open={!!selection}
             onClose={onClose}
             width={560}
-            title={selection?.type === 'edge' ? '关系详情' : '节点详情'}
+            rootClassName="dd-drawer"
+            title={
+                <span className="flex items-center gap-2 text-[15px] font-semibold text-[#0F172A]">
+                    <span className="dd-mark" aria-hidden />
+                    {selection?.type === 'edge' ? '关系详情' : '节点详情'}
+                </span>
+            }
+            styles={{
+                // 抽屉整体走冷蓝底（和工作台说明板同族），不再是白纸：
+                // content 铺渐变，header / body 透明，内部表格和描述行一律透底
+                content: { background: 'linear-gradient(165deg, #EDF3FE 0%, #E2ECFC 52%, #E9F1FE 100%)' },
+                header: { padding: '12px 20px', borderBottom: '1px solid #E1EAF8', marginBottom: 0, background: 'transparent' },
+                body: { padding: '16px 20px 24px', background: 'transparent' },
+            }}
         >
             {!selection && <Empty description="选择节点或关系查看详情" />}
             {selection?.type === 'node' && (
@@ -239,9 +339,9 @@ const DetailDrawer: React.FC<Props> = ({ projectId, selection, onClose, onNaviga
                     headerActions={selection ? (
                         <Space wrap size={4}>
                             {extraNodeActions?.(selection.id)}
-                            {onExpandNode && <Button size="small" icon={<SendOutlined />}
+                            {onExpandNode && <Button size="small" className="dd-action" icon={<SendOutlined />}
                                                      onClick={() => onExpandNode(selection.id)}>在画布中聚焦</Button>}
-                            {onExpandNode && <Button size="small" type="primary" ghost icon={<ExpandOutlined />}
+                            {onExpandNode && <Button size="small" className="dd-action dd-action-primary" icon={<ExpandOutlined />}
                                                      onClick={() => onExpandNode(selection.id, { expand: true })}>邻域展开</Button>}
                         </Space>
                     ) : undefined}
@@ -250,7 +350,7 @@ const DetailDrawer: React.FC<Props> = ({ projectId, selection, onClose, onNaviga
             {selection?.type === 'edge' && edgeDetail && (
                 <div>
                     <Section title="关系">
-                        <Descriptions size="small" column={1} bordered>
+                        <Descriptions size="small" column={1} className="dd-desc">
                             <Descriptions.Item label={<Term t="谓词" />}><Tag color="purple">{edgeDetail.edge.label}</Tag></Descriptions.Item>
                             <Descriptions.Item label="主体">
                                 {edgeDetail.subject ? (
@@ -285,6 +385,7 @@ const DetailDrawer: React.FC<Props> = ({ projectId, selection, onClose, onNaviga
                 </div>
             )}
         </Drawer>
+        </>
     );
 };
 
@@ -334,17 +435,20 @@ export const NodeDetailContent: React.FC<{
     if (!nodeDetail) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={unsavedHint || "详情加载失败或节点不存在"} />;
     return (
                 <div>
+                    {/* 标题行：名字 + 刷新（刷新原来单独占一行、孤零零挂在右上，合并进标题行） */}
                     <div className="mb-3">
-                        <Paragraph strong className="!mb-1" style={{ fontSize: 16, lineHeight: 1.5, wordBreak: 'break-word' }}>
-                            {nodeDetail.node.label || '未命名节点'}
-                        </Paragraph>
+                        <div className="flex items-start justify-between gap-3">
+                            <Paragraph strong className="!mb-0" style={{ fontSize: 17, lineHeight: 1.45, wordBreak: 'break-word', color: '#0F172A' }}>
+                                {nodeDetail.node.label || '未命名节点'}
+                            </Paragraph>
+                            <Tooltip title="刷新详情">
+                                <Button size="small" type="text" icon={<ReloadOutlined />} className="dd-icon-btn shrink-0"
+                                        onClick={() => setRefreshKey((k) => k + 1)} />
+                            </Tooltip>
+                        </div>
                         {headerActions && <div className="mt-2">{headerActions}</div>}
                     </div>
-    <div className="flex justify-end mb-1">
-        <Button size="small" type="text" icon={<ReloadOutlined />}
-                onClick={() => setRefreshKey((k) => k + 1)} />
-    </div>
-                    <Space wrap className="mb-3">
+                    <Space wrap className="mb-4">
                         <Tag color={nodeDetail.node.kind.startsWith('class') ? 'purple' : 'blue'}>
                             {KIND_LABEL[nodeDetail.node.kind] || nodeDetail.node.kind}
                         </Tag>
@@ -356,7 +460,7 @@ export const NodeDetailContent: React.FC<{
                     </Space>
 
                     <Section title="基本信息">
-                        <Descriptions size="small" column={1} bordered>
+                        <Descriptions size="small" column={1} className="dd-desc">
                             <Descriptions.Item label="URI"><Text code copyable style={{ fontSize: 11 }}>{nodeDetail.entity.uri}</Text></Descriptions.Item>
                             <Descriptions.Item label={<Term t="规范名" />}>{nodeDetail.entity.label}</Descriptions.Item>
                             <Descriptions.Item label={<Term t="归一化" />}>{nodeDetail.entity.label_normalized}</Descriptions.Item>
@@ -374,6 +478,7 @@ export const NodeDetailContent: React.FC<{
                             ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="无属性" />
                             : (
                                 <Table
+                                    className="dd-table"
                                     size="small" pagination={false} rowKey={(r) => String(r.name)}
                                     dataSource={Object.entries(nodeDetail.properties).map(([name, value]) => ({ name, value }))}
                                     columns={[
@@ -383,9 +488,9 @@ export const NodeDetailContent: React.FC<{
                                 />
                             )}
                         {Object.keys(nodeDetail.raw_props).length > 0 && (
-                            <details className="mt-2">
-                                <summary className="text-xs text-gray-500 cursor-pointer">内部字段（{Object.keys(nodeDetail.raw_props).length}）</summary>
-                                <pre className="text-[10px] bg-gray-50 p-2 rounded overflow-auto max-h-32">
+                            <details className="dd-raw mt-2">
+                                <summary>内部字段（{Object.keys(nodeDetail.raw_props).length}）</summary>
+                                <pre>
                                     {JSON.stringify(nodeDetail.raw_props, null, 2)}
                                 </pre>
                             </details>
@@ -398,6 +503,7 @@ export const NodeDetailContent: React.FC<{
 
                     <Section title={`关系（${nodeDetail.relations.length}）`}>
                         <Table
+                            className="dd-table"
                             size="small" pagination={{ pageSize: 8 }} rowKey="id"
                             dataSource={nodeDetail.relations}
                             columns={[
@@ -453,7 +559,7 @@ export const NodeDetailContent: React.FC<{
 
                     {(nodeDetail.timeline.valid_from || nodeDetail.timeline.valid_until) && (
                         <Section title="时间线">
-                            <Descriptions size="small" column={2} bordered>
+                            <Descriptions size="small" column={2} className="dd-desc">
                                 <Descriptions.Item label="生效起">{nodeDetail.timeline.valid_from || '—'}</Descriptions.Item>
                                 <Descriptions.Item label="生效止">{nodeDetail.timeline.valid_until || '—'}</Descriptions.Item>
                             </Descriptions>
