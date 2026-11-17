@@ -203,23 +203,9 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage,
 
     return (
         <Card size="small"
-              title={(
-                  <span className="inline-flex items-center gap-2">
-                      <span>文档（{docs.length}）</span>
-                      {pipelineStage && (
-                          <Tag
-                              style={pipelineStage.status === 'running'
-                                  ? { background: 'rgba(91,141,239,0.12)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.28)' }
-                                  : { background: 'rgba(15,23,42,0.05)', color: '#8A94AB', borderColor: 'rgba(15,23,42,0.08)' }}
-                              className="!mr-0 !text-[11.5px]"
-                          >
-                              {pipelineStage.status === 'running'
-                                  ? `构建中 · ${pipelineStage.label}`
-                                  : `${pipelineStage.label}待开始`}
-                          </Tag>
-                      )}
-                  </span>
-              )}
+              // 段标题不再挂实时阶段标签（2026-11-17 用户要求）：构建板块已经常驻显示
+              // 「当前阶段：实体消解 · 用时」，这里再来一个「构建中 · 实体消解」是同一句话的第二遍
+              title={<span>文档（{docs.length}）</span>}
               extra={(
                   <Upload {...uploadProps} disabled={uploading || locked}>
                       {/* 按钮文案跟状态走（2026-11-16）：已有文档时再说"上传文档"像是第一次操作，
@@ -227,7 +213,9 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage,
                           构建进行中禁用（后端会 409）：Tooltip 套一层 span 才接得到事件 */}
                       <Tooltip title={locked ? '构建进行中，结束后可修改文档' : undefined}>
                           <span>
-                              <Button size="small" icon={<UploadOutlined />}
+                              {/* 上传是这个段的次要主操作（2026-11-17）：白底灰边压在冷蓝纸面上太素，
+                                  改成和「查看图谱」同一枚淡蓝软底按钮——整页只留「发布」是实心蓝 */}
+                              <Button size="small" type="primary" ghost icon={<UploadOutlined />}
                                       loading={uploading} disabled={locked}>
                                   {docs.length > 0 ? '继续上传' : '上传文档'}
                               </Button>
@@ -256,7 +244,11 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage,
             )}
             <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-[#A3ADC2]">
                 <span className="flex items-center gap-1">
-                    <UploadOutlined /> 支持 {UPLOAD_EXTS.join(' / ')}。
+                    <UploadOutlined />
+                    <span>支持</span>
+                    {/* 扩展名走等宽字形（2026-11-17）：一长串小写字母用比例字体看成一团，
+                        等宽后能按「/」一眼数出支持哪些格式 */}
+                    <span className="tk-mono text-[11px] text-[#8A94AB]">{UPLOAD_EXTS.join(' / ')}</span>
                 </span>
                 {locked && (
                     <span className="text-[#B8790F]">构建进行中，暂不能上传或删除文档</span>

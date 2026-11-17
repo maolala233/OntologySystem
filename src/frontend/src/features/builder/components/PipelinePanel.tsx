@@ -16,10 +16,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { message, confirmModal } from '../../../shared/feedback';
 import InlineNotice from '../../../components/InlineNotice';
+import DecoConstellation from '../../../components/DecoConstellation';
 import { Button, Card, Popconfirm, Space, Tag } from 'antd';
 import {
     CheckCircleOutlined, CloseCircleOutlined,
-    MinusCircleOutlined,
+    MinusCircleOutlined, NodeIndexOutlined,
     SyncOutlined, RetweetOutlined, PauseCircleOutlined, ClockCircleOutlined,
 } from '@ant-design/icons';
 import { fmtSchedule } from '../../../shared/schedule';
@@ -108,6 +109,17 @@ const STATUS_TAG_STYLE: Record<string, React.CSSProperties> = {
     pending: { background: 'rgba(15,23,42,0.05)', color: '#8A94AB', borderColor: 'rgba(15,23,42,0.08)' },
 };
 
+// 阶段汇总格的圆点色（2026-11-17）：与时间线同源，浅底上取深一档的颜色，
+// 外圈用同色相 12% 的柔光——和资产详情 / 图谱页「标签前荧光小圆点」同一套装饰件
+const STAGE_TONE: Record<string, { c: string; t: string }> = {
+    done: { c: '#1B87AD', t: 'rgba(27,135,173,0.14)' },
+    running: { c: '#5B8DEF', t: 'rgba(91,141,239,0.16)' },
+    failed: { c: '#B42318', t: 'rgba(180,35,24,0.12)' },
+    cancelled: { c: '#B8790F', t: 'rgba(242,185,80,0.22)' },
+    skipped: { c: '#C2C7CF', t: 'rgba(15,23,42,0.04)' },
+    pending: { c: '#CBD5E5', t: 'rgba(15,23,42,0.04)' },
+};
+
 const BAR_BG: Record<string, string> = {
     running: 'linear-gradient(90deg,#84ACF7,#5B8DEF)',
     done: 'linear-gradient(90deg,#6FC3CF,#1B87AD)',
@@ -165,6 +177,26 @@ const fmtDuration = (sec?: number | null, precise = false): string => {
     const r = t % 60;
     if (m < 60) return r ? `${m} 分 ${String(r).padStart(2, '0')} 秒` : `${m} 分`;
     return `${Math.floor(m / 60)} 小时 ${m % 60} 分`;
+};
+
+/** 秒 → 「3:12 / 1:02:05」计时器写法（2026-11-17）：构建中的用时每秒都在走，
+ *  用「3 分 12 秒」这种长句读起来又长又跳；等宽计时器数字宽度稳定，扫一眼就知道走了多久 */
+const fmtClock = (sec?: number | null): string => {
+    if (typeof sec !== 'number' || !Number.isFinite(sec) || sec < 0) return '';
+    const t = Math.floor(sec);
+    const h = Math.floor(t / 3600);
+    const m = Math.floor((t % 3600) / 60);
+    const s = t % 60;
+    return h > 0
+        ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+        : `${m}:${String(s).padStart(2, '0')}`;
+};
+
+/** 阶段用时：常规阶段走计时器写法；冲突检测 / 结构自检常不足 1 秒，保留两位小数（"1.24s"） */
+const fmtStageTime = (sec?: number | null, precise = false): string => {
+    if (typeof sec !== 'number' || !Number.isFinite(sec) || sec < 0) return '—';
+    if (precise && sec < 60) return `${Number(sec.toFixed(2))}s`;
+    return fmtClock(sec);
 };
 
 const tsOf = (iso?: string | null): number | null => {
@@ -622,9 +654,14 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
         return null;
     };
 
-    // 段头只补充运行中的上下文：完成态的总用时已经在总进度行与汇总区表达，不再重复第三遍
+    // 段头只补充运行中的上下文：完成态的总用时已经在总进度行与汇总区表达，不再重复第三遍。
+    // 「已用」拿不到起点时（旧任务没有 started_at）整段略去，不显示「已用 —」；
+    // 计时同样走 3:12 的计时器写法（2026-11-17），与阶段头部那枚计时药丸同一套
     const headSub = runningNow
-        ? `${runningStage ? `当前阶段：${runningStage.label}` : '构建进行中'} · 已用 ${fmtDuration(overallElapsed)}`
+        ? [
+            runningStage ? `当前阶段：${runningStage.label}` : '构建进行中',
+            overallElapsed != null ? `已用 ${fmtClock(overallElapsed)}` : '',
+        ].filter(Boolean).join(' · ')
         : '';
 
     const chips = activeKey === s?.stage ? statChips(s?.sub?.stats) : [];
@@ -701,7 +738,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                    否则后一个格子的 hover 底色会盖住前一段线（2026-11-16 实测） */
                 .pl-tl-inner {
                     display: flex; flex-direction: column; align-items: center; gap: 5px;
-                    width: 100%; padding: 4px 2px 3px; border-radius: 8px;
+                    width: 100%; padding: 7px 2px 3px; border-radius: 8px;
                 }
                 .pl-tl-item:hover .pl-tl-inner { background: #F3F7FF; }
                 .pl-tl-item:hover .pl-tl-label { color: #2F62D8; }
@@ -720,12 +757,12 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                    那段线还是被遮）。线抬到内容之上、圆点再压在线上，
                    线本身只占圆点之间的空隙，不会压到文字 */
                 .pl-tl-item::after {
-                    content: ''; position: absolute; top: 17px;
+                    content: ''; position: absolute; top: 20px;
                     left: calc(50% + 17px); right: calc(-50% + 17px);
-                    height: 2px; background: #E7EEF9; z-index: 2;
+                    height: 2px; background: #E4ECF8; z-index: 2;
                 }
                 .pl-tl-item:last-child::after { display: none; }
-                .pl-tl-item.done::after { background: rgba(27,135,173,0.30); }
+                .pl-tl-item.done::after { background: rgba(27,135,173,0.34); }
                 .pl-tl-dot {
                     position: relative; z-index: 3; width: 26px; height: 26px;
                     border-radius: 50%; display: flex; align-items: center;
@@ -742,13 +779,20 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                 .pl-tl-item.selected .pl-tl-label { color: #2F62D8; font-weight: 600; }
                 @keyframes pl-pulse {
                     0%, 100% { box-shadow: 0 0 0 4px rgba(91,141,239,0.16); }
-                    50% { box-shadow: 0 0 0 7px rgba(91,141,239,0.06); }
+                    50% { box-shadow: 0 0 0 6px rgba(91,141,239,0.06); }
                 }
                 .pl-live-dot {
                     width: 7px; height: 7px; border-radius: 50%; background: #5B8DEF;
                     flex: none; animation: pl-blink 1.4s infinite;
                 }
                 @keyframes pl-blink { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+                /* 段落标题前的品牌彩条（2026-11-17）：与图谱页 / 资产详情的 .ap-mark 同一枚，
+                   用来给「本次构建」「当前阶段」这类小标题一个明确起点 */
+                .pl-mark {
+                    display: inline-block; flex: none; width: 3px; height: 13px;
+                    border-radius: 2px; margin-right: 8px;
+                    background: linear-gradient(180deg, #5B8DEF, #8B5CF6);
+                }
                 /* 后端还没给阶段内百分比时的「不确定态」：一条往返的细条，不显示具体数字 */
                 .pl-ind {
                     position: absolute; top: 0; bottom: 0; width: 35%;
@@ -759,31 +803,39 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                 @keyframes pl-ind { 0% { left: -35%; } 100% { left: 100%; } }
             `}</style>
 
-            {/* 总进度（阶段边界才更新的后端主键 + 子进度折算，平滑但只增不减） */}
+            {/* 总进度（阶段边界才更新的后端主键 + 子进度折算，平滑但只增不减）。
+                2026-11-17 版式二：百分比 + 进度条一行，状态说明（本次构建用时 / 已完成 N/M 个阶段）
+                单独成行放在条子下面——上一版把说明塞在条子右端，结果它和下面那条阶段时间线
+                几乎贴在一起，两条"条状物"上下挤成一坨。百分比给固定宽度，
+                数字位数变化时条子起点不跟着跳 */}
             {stages.length > 0 && (
-                <div className="mt-1 flex items-center gap-3.5">
-                    <div className="shrink-0">
-                        <div className="text-[26px] font-bold leading-none"
+                <>
+                    <div className="mt-1 flex items-center gap-4">
+                        {/* 宽度只保证装得下「100%」（2026-11-17）：26px 等宽下 100% 约 56px，
+                            原来留 86px 左边空出一大块；64px 够用，条子起点仍固定 */}
+                        <div className="tk-mono w-[64px] shrink-0 text-[26px] font-semibold leading-none"
                              style={{ color: overallState === 'done' ? '#1B87AD'
                                  : overallState === 'failed' ? '#B42318'
                                      : overallState === 'cancelled' ? '#B8790F' : '#5B8DEF' }}>
-                            {overallPercent}%
+                            {overallPercent}<span className="ml-[1px] text-[15px] font-medium">%</span>
                         </div>
-                        <div className="mt-[3px] whitespace-nowrap text-[11.5px] text-[#A3ADC2]">
-                            {overallMeta}
+                        <div className="h-[7px] min-w-0 flex-1 overflow-hidden rounded-full bg-[#EDF1F8]"
+                             style={{ boxShadow: 'inset 0 1px 2px rgba(15,23,42,0.06)' }}>
+                            <div className="h-full rounded-full transition-[width] duration-500"
+                                 style={{ width: `${overallPercent}%`, background: BAR_BG[overallState] || BAR_BG.running }} />
                         </div>
                     </div>
-                    <div className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-[#EEF0F3]">
-                        <div className="h-full rounded-full transition-[width] duration-500"
-                             style={{ width: `${overallPercent}%`, background: BAR_BG[overallState] || BAR_BG.running }} />
+                    <div className="mt-2 text-[11.5px] text-[#8A94AB]">
+                        {overallMeta}
                     </div>
-                </div>
+                </>
             )}
 
             {/* 阶段时间线：默认跟随运行中的阶段；点已完成阶段只是临时看一眼，
-                运行阶段推进后自动回到实时（纯跟随，无固定） */}
+                运行阶段推进后自动回到实时（纯跟随，无固定）。
+                2026-11-17：与上方进度条拉开距离（mt-4），不然两条横条上下贴在一起 */}
             {stages.length > 0 && (
-                <div className="pl-tl mt-2">
+                <div className="pl-tl mt-4">
                     {stages.map((st) => {
                         const shown = st.status === 'running' && !runningNow ? 'cancelled' : st.status;
                         const tone = DOT_TONE[shown] || DOT_TONE.pending;
@@ -820,43 +872,82 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                 </div>
             )}
 
-            {/* 单一详情区：当前阶段明细 / 构建完成后的阶段耗时汇总 */}
+            {/* 单一详情区：当前阶段明细 / 构建完成后的阶段耗时汇总。
+                2026-11-17：底子从一块浅蓝白改成「冷蓝渐变 + 柔光 + 节点线稿」，
+                和卡面本身的白纸区分开——原来是白底压在冷蓝卡上，整段显得没做过设计 */}
             {stages.length > 0 && (
-                <div className="rounded-[9px] border border-[rgba(91,141,239,0.26)] bg-[#F9FBFF] px-3.5 py-3">
+                <div
+                    className="relative overflow-hidden rounded-[10px] border border-[rgba(91,141,239,0.18)] px-3.5 py-3"
+                    style={{
+                        background:
+                            'radial-gradient(520px 200px at 100% 0%, rgba(91,141,239,0.16), transparent 72%),'
+                            + 'radial-gradient(420px 220px at 0% 100%, rgba(139,92,246,0.09), transparent 74%),'
+                            + 'linear-gradient(156deg, #FBFDFF 0%, #F2F7FF 58%, #EDF3FE 100%)',
+                    }}
+                >
+                    <DecoConstellation id="pl-detail"
+                                       className="pointer-events-none absolute -bottom-4 -right-6 h-[150px] w-[400px] opacity-70"
+                                       style={{ transform: 'scaleY(-1)' }} />
+                    <div className="relative">
                     {activeKey === 'summary' || !activeStage ? (
                         <>
                             <div className="flex flex-wrap items-center gap-2">
-                                <span className="text-[15px] font-semibold text-[#0F172A]">本次构建</span>
+                                <span className="pl-mark" aria-hidden />
+                                <span className="text-[14px] font-semibold text-[#0F172A]">本次构建</span>
                                 <Tag style={{ ...STATUS_TAG_STYLE[summaryTagState], marginInlineEnd: 0 }}
                                      className="!text-[11.5px]">
                                     {STAGE_STATUS_TEXT[summaryTagState] || '进行中'}
                                 </Tag>
+                                {/* 等宽小标签（2026-11-17）：与图谱页的 SNAPSHOT / GRAPH 同一枚装饰件，
+                                    补一点科技感，不承载信息 */}
+                                <span className="tk-mono ml-auto text-[9.5px] uppercase tracking-[0.18em] text-[#A9B5CC]">
+                                    build summary
+                                </span>
                             </div>
-                            <div className="mt-2.5 grid grid-cols-2 gap-2 md:grid-cols-4">
-                                {stages.map((st) => (
-                                    <button type="button" key={st.key}
-                                            onClick={() => {
-                                                setPeekKey((prev) => (prev === st.key ? null : st.key));
-                                                peekLiveKeyRef.current = status?.stage || null;
-                                            }}
-                                            className="rounded-lg border border-[#E7EEF9] bg-white px-2.5 py-2 text-left transition-colors hover:border-[rgba(91,141,239,0.45)]">
-                                        <div className="truncate text-[11.5px] text-[#8A94AB]">{st.label}</div>
-                                        <div className={`mt-0.5 text-[12.5px] font-semibold ${
-                                            st.status === 'skipped' || st.status === 'pending'
-                                                ? 'text-[#A3ADC2]'
-                                                : st.status === 'failed' ? 'text-[#B42318]'
-                                                    : st.status === 'cancelled' ? 'text-[#B8790F]'
-                                                        : 'text-[#1B87AD]'}`}>
-                                            {st.status === 'skipped' ? '已跳过'
-                                                : st.status === 'pending' ? '—'
-                                                    : fmtDuration(st.duration_seconds,
-                                                        st.key === 'conflicts' || st.key === 'selfcheck')}
-                                        </div>
-                                    </button>
-                                ))}
+                            {/* 八阶段耗时（2026-11-17）：原来是一格一格的小白卡，叠在浅蓝明细区里
+                                "碎"成八块；改成发丝线分列的表格——标签前一枚状态圆点、右侧等宽数字，
+                                与资产详情左栏的指标行同一套排版 */}
+                            <div className="mt-2.5 overflow-hidden rounded-[10px] border border-[rgba(91,141,239,0.12)] bg-[rgba(91,141,239,0.10)]">
+                                <div className="grid grid-cols-2 gap-px md:grid-cols-4">
+                                    {stages.map((st) => {
+                                        const tone = STAGE_TONE[st.status] || STAGE_TONE.pending;
+                                        // 未开始的阶段不可点（2026-11-17 用户反馈）：上方时间线早就
+                                        // 禁掉了 pending，下面这张汇总表却还能点开一个空的「等待前置阶段完成」。
+                                        // 两处口径统一：只放行已经走过（完成/跳过）或出过状况的阶段
+                                        const peekable = st.status !== 'pending';
+                                        return (
+                                            <button type="button" key={st.key}
+                                                    title={peekable
+                                                        ? `查看「${st.label}」明细`
+                                                        : `「${st.label}」尚未开始`}
+                                                    disabled={!peekable}
+                                                    onClick={() => {
+                                                        setPeekKey((prev) => (prev === st.key ? null : st.key));
+                                                        peekLiveKeyRef.current = status?.stage || null;
+                                                    }}
+                                                    className={`flex items-center gap-2 bg-[rgba(255,255,255,0.55)] px-3 py-[9px] text-left transition-colors ${
+                                                        peekable
+                                                            ? 'cursor-pointer hover:bg-[rgba(91,141,239,0.10)]'
+                                                            : 'cursor-default'}`}>
+                                                <span className="h-[6px] w-[6px] flex-none rounded-full"
+                                                      style={{ background: tone.c, boxShadow: `0 0 0 3px ${tone.t}` }} />
+                                                <span className="min-w-0 truncate text-[11.5px] text-[#8A94AB]">
+                                                    {st.label}
+                                                </span>
+                                                <span className="tk-mono ml-auto whitespace-nowrap text-[12.5px] font-semibold"
+                                                      style={{ color: st.status === 'running' ? '#2A57C6' : tone.c }}>
+                                                    {st.status === 'skipped' ? '已跳过'
+                                                        : st.status === 'pending' ? '—'
+                                                            : fmtStageTime(st.duration_seconds,
+                                                                st.key === 'conflicts' || st.key === 'selfcheck')}
+                                                </span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
                             </div>
                             <div className="mt-2.5 text-[11.5px] text-[#A3ADC2]">
-                                点击上方任一阶段，可查看该阶段的明细
+                                点击已开始的阶段，可查看该阶段的明细
                             </div>
                         </>
                     ) : (
@@ -907,7 +998,8 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                         </div>
                                     )}
                                     <div className="flex flex-wrap items-center gap-2">
-                                        <span className="text-[15px] font-semibold text-[#0F172A]">
+                                        <span className="pl-mark" aria-hidden />
+                                        <span className="text-[14px] font-semibold text-[#0F172A]">
                                             {activeStage.label}
                                         </span>
                                         <Tag style={{ ...STATUS_TAG_STYLE[shown], marginInlineEnd: 0 }}
@@ -927,92 +1019,154 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                                     </Button>
                                                 </span>
                                             )}
-                                            <span>
-                                                用时{' '}
-                                                <b className="ml-0.5 text-[12.5px] text-[#1F2A44]">
-                                                    {shown === 'pending' ? '—'
-                                                        : fmtDuration(live,
+                                            {/* 阶段用时（2026-11-17 改计时器药丸）：原来是一行
+                                                「用时 3 分 12 秒」裸文字，运行中每秒跳动、字宽也在变；
+                                                改成「时钟图标 + 等宽计时」，和右侧的临时查看入口同一行不打架。
+                                                冲突检测 / 结构自检常不足 1 秒，这两项保留小数秒写法 */}
+                                            {shown !== 'pending' && (
+                                                <span
+                                                    className="inline-flex items-center gap-1 rounded-full border px-2 py-[2px]"
+                                                    title="本阶段用时"
+                                                    style={{
+                                                        background: 'rgba(255,255,255,0.66)',
+                                                        borderColor: shown === 'running'
+                                                            ? 'rgba(91,141,239,0.28)' : 'rgba(91,141,239,0.16)',
+                                                    }}
+                                                >
+                                                    <ClockCircleOutlined
+                                                        style={{
+                                                            fontSize: 11,
+                                                            color: shown === 'running' ? '#5B8DEF' : '#9AA8C7',
+                                                        }} />
+                                                    <span
+                                                        className={`tk-mono text-[12px] font-medium ${
+                                                            shown === 'running' ? 'text-[#2A57C6]' : 'text-[#33415C]'}`}
+                                                    >
+                                                        {fmtStageTime(live,
                                                             activeStage.key === 'conflicts'
                                                             || activeStage.key === 'selfcheck')}
-                                                </b>
-                                            </span>
-                                        </span>
-                                    </div>
-                                    {/* 方案八（feat_simplify_tsz_08）：环形总进度 + 一句当前步骤，
-                                        不再画横条；数据全部来自后端 */}
-                                    <div className="mt-2 flex items-center gap-3">
-                                        <PctRing percent={pct} color={ringColor} label={ringLabel} />
-                                        <div className="min-w-0 flex-1 text-[11.5px] leading-5 text-[#8A94AB]">
-                                            {shown === 'running' ? (
-                                                visibleSteps.length > 0 ? (
-                                                    runStep ? (
-                                                        <>
-                                                            当前：
-                                                            <span className="font-semibold text-[#2A57C6]">
-                                                                {runStep.label} {runStep.percent}%
-                                                            </span>
-                                                            <span className="text-[#A3ADC2]">
-                                                                （第 {runStepIdx + 1}/{visibleSteps.length} 步）
-                                                            </span>
-                                                            {doneStepCount > 0 && (
-                                                                <span className="text-[#A3ADC2]"> · 已完成 {doneStepCount} 步</span>
-                                                            )}
-                                                        </>
-                                                    ) : (
-                                                        <span className="text-[#A3ADC2]">
-                                                            本阶段步骤已完成 {doneStepCount}/{visibleSteps.length}
-                                                        </span>
-                                                    )
-                                                ) : (
-                                                    <span className="text-[#A3ADC2]">等待本阶段子步骤进度…</span>
-                                                )
-                                            ) : (
-                                                <span className="text-[#A3ADC2]">
-                                                    {shown === 'done' ? '本阶段已完成'
-                                                        : shown === 'skipped' ? '本档位跳过该阶段'
-                                                            : shown === 'failed' ? '阶段失败'
-                                                                : shown === 'cancelled' ? '已中止' : '等待前置阶段完成'}
+                                                    </span>
                                                 </span>
                                             )}
-                                        </div>
+                                        </span>
                                     </div>
+                                    {/* 方案八（feat_simplify_tsz_08）：环形总进度 + 一句当前步骤，不画横条。
+                                        2026-11-17：当前步骤 / 实时计数 / 状态说明收成环形右侧的一列，
+                                        把整块宽度用起来——原来三行各自占满一整行，右侧空出一大半 */}
+                                    <div className="mt-2.5 flex items-start gap-3.5">
+                                        <PctRing percent={pct} color={ringColor} label={ringLabel} />
+                                        <div className="min-w-0 flex-1">
+                                            <div className="text-[12px] leading-5 text-[#8A94AB]">
+                                                {shown === 'running' ? (
+                                                    visibleSteps.length > 0 ? (
+                                                        runStep ? (
+                                                            <>
+                                                                当前：
+                                                                {/* 百分比只在左侧圆环里留一处（2026-11-17）：
+                                                                    这里再写一遍 38% 和环里是同一个数，读起来重复 */}
+                                                                <span className="font-semibold text-[#2A57C6]">
+                                                                    {runStep.label}
+                                                                </span>
+                                                                <span className="text-[#A3ADC2]">
+                                                                    （第 {runStepIdx + 1}/{visibleSteps.length} 步）
+                                                                </span>
+                                                                {doneStepCount > 0 && (
+                                                                    <span className="text-[#A3ADC2]"> · 已完成 {doneStepCount} 步</span>
+                                                                )}
+                                                            </>
+                                                        ) : (
+                                                            <span className="text-[#A3ADC2]">
+                                                                本阶段步骤已完成 {doneStepCount}/{visibleSteps.length}
+                                                            </span>
+                                                        )
+                                                    ) : (
+                                                        <span className="text-[#A3ADC2]">等待本阶段子步骤进度…</span>
+                                                    )
+                                                ) : (
+                                                    <span className="text-[#A3ADC2]">
+                                                        {shown === 'done' ? '本阶段已完成'
+                                                            : shown === 'skipped' ? '本档位跳过该阶段'
+                                                                : shown === 'failed' ? '阶段失败'
+                                                                    : shown === 'cancelled' ? '已中止' : '等待前置阶段完成'}
+                                                    </span>
+                                                )}
+                                            </div>
 
-                                    {/* 实时计数：切片 / 批次 / 缓存命中 / 指代消解 / 缝合 */}
-                                    {chips.length > 0 && (
-                                        <div className="mt-2.5 flex flex-wrap gap-1.5">
-                                            {chips.map(([k, v]) => (
-                                                <span key={k}
-                                                      className="rounded-md border border-[#E7EEF9] bg-white px-2 py-[2px] text-[11.5px] text-[#66738F]">
-                                                    {k} <b className="font-semibold text-[#1F2A44]">{v}</b>
-                                                </span>
-                                            ))}
+                                            {/* 实时计数：切片 / 批次 / 缓存命中 / 指代消解 / 缝合 */}
+                                            {chips.length > 0 && (
+                                                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                                    {chips.map(([k, v]) => (
+                                                        <span key={k}
+                                                              className="rounded-md border border-[#E4ECF8] bg-[rgba(255,255,255,0.72)] px-2 py-[1px] text-[11.5px] text-[#8A94AB]">
+                                                            {k}{' '}
+                                                            <b className="tk-mono font-semibold text-[#2A57C6]">{v}</b>
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            )}
+
+                                            <div className="mt-1.5 flex items-start gap-1.5 text-[11.5px]"
+                                                 style={{ color: shown === 'running' ? '#2A57C6'
+                                                     : shown === 'failed' ? '#B42318'
+                                                         : shown === 'cancelled' ? '#B8790F' : '#8A94AB' }}>
+                                                {shown === 'running' && <span className="pl-live-dot mt-[5px]" />}
+                                                <span className="min-w-0 leading-5">{detailMessage(activeStage, shown)}</span>
+                                            </div>
                                         </div>
-                                    )}
-
-                                    <div className="mt-2.5 flex items-center gap-1.5 text-[11.5px]"
-                                         style={{ color: shown === 'running' ? '#2A57C6'
-                                             : shown === 'failed' ? '#B42318'
-                                                 : shown === 'cancelled' ? '#B8790F' : '#8A94AB' }}>
-                                        {shown === 'running' && <span className="pl-live-dot" />}
-                                        <span className="min-w-0">{detailMessage(activeStage, shown)}</span>
                                     </div>
                                 </>
                             );
                         })()
                     )}
+                    </div>
                 </div>
             )}
 
-            {/* 从未构建 / Redis 里已无明细：给一句下一步，而不是空白卡 */}
-            {stages.length === 0 && s?.status !== 'scheduled' && (
-                <div className="mt-1 rounded-lg border border-dashed border-[#E2E9F5] bg-[#FBFCFE] px-3 py-4 text-center text-[12.5px] text-[#8A94AB]">
-                    {finished
-                        ? '暂无可展示的构建明细（进度快照已过期），重新构建后可查看各阶段耗时'
-                        : restartMode
-                            ? '暂无进行中的构建，点击右上角「重新构建」重新生成'
-                            : '尚未构建：上传文档后点击右上角「一键构建」'}
-                </div>
-            )}
+            {/* 从未构建 / 快照已过期：给一块带图标和下一步的空状态（2026-11-17），
+                原来是一行居中灰字压在虚线框里，像一条报错 */}
+            {stages.length === 0 && s?.status !== 'scheduled' && (() => {
+                const empty = finished
+                    ? {
+                        icon: <ClockCircleOutlined />,
+                        title: '暂无构建明细',
+                        hint: '进度快照超过 24 小时已过期。重新构建后可查看各阶段耗时与明细。',
+                    }
+                    : restartMode
+                        ? {
+                            icon: <RetweetOutlined />,
+                            title: '没有进行中的构建',
+                            hint: '点右上角「重新构建」，按现有文档重新解析、重新抽取。',
+                        }
+                        : {
+                            icon: <NodeIndexOutlined />,
+                            title: '尚未构建本体',
+                            hint: '上传文档后点右上角「一键构建」：解析 → AI 抽取 → 自动审查，完成后这里显示各阶段耗时。',
+                        };
+                return (
+                    <div
+                        className="relative mt-1 overflow-hidden rounded-[12px] border border-dashed border-[rgba(91,141,239,0.24)]"
+                        style={{
+                            background:
+                                'radial-gradient(380px 140px at 100% 0%, rgba(91,141,239,0.12), transparent 72%),'
+                                + 'linear-gradient(150deg, rgba(255,255,255,0.78) 0%, rgba(237,244,255,0.72) 100%)',
+                        }}
+                    >
+                        <DecoConstellation id="pl-empty"
+                                           className="pointer-events-none absolute -bottom-6 -right-4 h-[120px] w-[340px] opacity-60"
+                                           style={{ transform: 'scaleY(-1)' }} />
+                        <div className="relative flex items-start gap-3 px-4 py-4">
+                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] text-[16px] text-[#2F62D8]"
+                                  style={{ background: 'linear-gradient(135deg, rgba(91,141,239,0.16), rgba(139,92,246,0.10))' }}>
+                                {empty.icon}
+                            </span>
+                            <div className="min-w-0">
+                                <div className="text-[13px] font-medium text-[#1F2A44]">{empty.title}</div>
+                                <div className="mt-1 text-[11.5px] leading-5 text-[#8A94AB]">{empty.hint}</div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
 
             {/* 状态提示统一走一行式提示条（Alert 带 description 会渲染成一大块） */}
             {finished && s?.status === 'failed' && (

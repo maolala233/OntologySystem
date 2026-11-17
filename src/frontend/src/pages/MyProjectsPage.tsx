@@ -27,7 +27,7 @@ import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import { Segmented } from 'antd';
 import { useAuthStore } from '../shared/auth/authStore';
-import { PROJECT_STATUS, STALE_PUBLISHED_TAG, projectStatusOf as statusOf } from '../shared/projectStatus';
+import { PROJECT_STATUS, STALE_PUBLISHED_TAG, projectStatusOf as statusOf, statusChip } from '../shared/projectStatus';
 import { fmtSchedule, fmtScheduleFull } from '../shared/schedule';
 import { UPLOAD_ACCEPT, UPLOAD_EXTS, MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from '../features/builder/documents/uploadFormats';
 import Navbar from '../components/Layout/Navbar';
@@ -60,11 +60,11 @@ const STATUS_OPTIONS = [
     { value: 'published', label: '已发布' },
 ];
 
-/** 状态统计卡主色（与列表 Tag 同源）：顶部高光条/数字/角标图标统一取色 */
-const STATUS_ACCENT: Record<string, string> = {
-    draft: '#8c8c8c', scheduled: '#faad14', building: '#5B8DEF',
-    ready: '#52c41a', published: '#722ed1',
-};
+/** 状态统计卡主色（2026-11-17 改取共享徽标的文字色）：数字 / 角标图标 / 顶部高光条
+ *  与列表状态胶囊同一份配色，不再各写一套 antd 预设色（绿 #52c41a / 紫 #722ed1） */
+const STATUS_ACCENT: Record<string, string> = Object.fromEntries(
+    Object.keys(PROJECT_STATUS).map((k) => [k, statusChip(k).color]),
+);
 
 const STATUS_ICON: Record<string, React.ReactNode> = {
     draft: <EditOutlined />,
@@ -430,9 +430,12 @@ const MyProjectsPage: React.FC = () => {
     const statusTag = (project: ProjectData, stale?: boolean, layout: 'stack' | 'inline' = 'inline') => {
         const statusKey = statusOf(project);
         const meta = PROJECT_STATUS[statusKey] || PROJECT_STATUS.draft;
+        // 状态胶囊走共享的冷调配色（2026-11-17）：与项目详情页身份段、文档状态、阶段状态同一套，
+        // 不再是 antd 预设的淡绿 / 淡紫
+        const chip = statusChip(statusKey);
         // 「有新版本」用角标圆点表达（双 Tag 并排会换行挤占 类/实例 列）；
         // 说明统一走外层 Tooltip——角标不再挂原生 title，避免两层提示叠着弹
-        const tag = <Tag color={meta.color} style={{ marginInlineEnd: 0 }}>{meta.text}</Tag>;
+        const tag = <Tag style={{ ...chip, marginInlineEnd: 0 }}>{meta.text}</Tag>;
         const tagNode = (
             <Tooltip
                 className="cursor-help"
@@ -454,7 +457,7 @@ const MyProjectsPage: React.FC = () => {
         return (
             <span className="inline-flex items-center">
                 <Tooltip title={`定时构建：${fmtScheduleFull(project.scheduled_at)}`}>
-                    <Tag color={meta.color} style={{ marginInlineEnd: 0 }} className="cursor-help whitespace-nowrap">
+                    <Tag style={{ ...chip, marginInlineEnd: 0 }} className="cursor-help whitespace-nowrap">
                         {meta.text}
                         {/* 分隔符用中点 ·（2026-11-16）：冒号在全角下偏重，把标签切成两截；
                             连字符又会和时间里的 `11-18` 撞（「待构建-11-18 09:30」读起来像范围）。

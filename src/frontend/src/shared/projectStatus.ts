@@ -25,6 +25,27 @@ export const PROJECT_STATUS: Record<string, { color: string; text: string; desc:
 };
 
 /**
+ * 冷调状态徽标配色（2026-11-17）：项目列表和详情页的状态胶囊共用这一份。
+ * 原来直接用 antd 预设色 Tag（success 淡绿 / purple 淡紫 / gold 琥珀），
+ * 和全站自定义的冷调标签（文档解析状态、构建阶段、知识域）放在一起像两套语言，
+ * 尤其详情页里状态和蓝色的「知识域」标签紧挨着时最明显。
+ * 这里按「底色 / 文字 / 描边」三件套统一，饱和度比预设色低一档，文字取深一档。
+ * failed / cancelled 不是后端生命周期状态，但界面按最近一次管线终态覆盖显示，一并给出。
+ */
+export const STATUS_CHIP: Record<string, { background: string; color: string; borderColor: string }> = {
+    draft: { background: 'rgba(15,23,42,0.05)', color: '#8A94AB', borderColor: 'rgba(15,23,42,0.08)' },
+    scheduled: { background: 'rgba(242,185,80,0.18)', color: '#B8790F', borderColor: 'rgba(242,185,80,0.45)' },
+    building: { background: 'rgba(91,141,239,0.12)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.28)' },
+    ready: { background: 'rgba(27,135,173,0.10)', color: '#1B87AD', borderColor: 'rgba(27,135,173,0.24)' },
+    published: { background: 'rgba(139,92,246,0.14)', color: '#6D3FD8', borderColor: 'rgba(139,92,246,0.30)' },
+    failed: { background: 'rgba(180,35,24,0.10)', color: '#B42318', borderColor: 'rgba(180,35,24,0.22)' },
+    cancelled: { background: 'rgba(242,185,80,0.18)', color: '#B8790F', borderColor: 'rgba(242,185,80,0.45)' },
+};
+
+/** 取状态徽标配色（未知状态回落到草稿） */
+export const statusChip = (key?: string | null) => STATUS_CHIP[key || 'draft'] || STATUS_CHIP.draft;
+
+/**
  * 项目状态归一：后端 /api/projects/my 直接下发 status（draft/scheduled/building/ready/published）；
  * 旧数据没有 status 时按 is_published 回退。所有展示状态的地方都走这里，避免「已构建」被当成「草稿」。
  */
@@ -47,5 +68,6 @@ export const AXIOM_ORIGIN: Record<string, { color: string; text: string }> = {
     manual: { color: 'default', text: '人工声明' },
 };
 
-/** 「有新版本」叠加标记（已发布后重新构建过：资产中心还是旧版，可重新发布） */
-export const STALE_PUBLISHED_TAG = { color: 'orange', text: '有新版本' };
+/** 「有新版本」叠加标记（已发布后重新构建过：资产中心还是旧版，可重新发布）。
+ *  角标色 2026-11-17 跟状态徽标一起收到冷调琥珀，不再用 antd 的 orange 关键字 */
+export const STALE_PUBLISHED_TAG = { color: '#B8790F', text: '有新版本' };

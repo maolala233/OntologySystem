@@ -4,11 +4,9 @@
  * 专家模式（多 Tab 工作台）需 builder_pro 模块授权，未授权不显示入口。
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { message } from '../shared/feedback';
-import { Button, Col, Row, Space, Spin, Statistic, Tag, Typography } from 'antd';
-
-const { Text } = Typography;
+import { Button, Tag } from 'antd';
 
 const fmtDate = (v?: string | null) =>
     v ? new Date(v).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
@@ -16,14 +14,11 @@ import { NodeIndexOutlined, RocketOutlined } from '@ant-design/icons';
 
 import { BuildSummary, pipelineApi } from '../api/pipeline';
 import type { PipelineStatus } from '../api/pipeline';
-import { EXPORT_FORMAT_EXT, ExportFormatId } from '../api/projects';
-import { projectsApi } from '../api/projects';
 import { versionsApi, VersionRow } from '../api/governance';
 import { useAuthStore } from '../shared/auth/authStore';
-import { PROJECT_STATUS } from '../shared/projectStatus';
+import { PROJECT_STATUS, statusChip } from '../shared/projectStatus';
 import PipelinePanel from '../features/builder/components/PipelinePanel';
 import ProjectDocsCard from '../features/builder/components/ProjectDocsCard';
-import QualityCheckTag from '../features/builder/components/QualityCheckTag';
 import BuildResultsPanel from '../features/builder/components/BuildResultsPanel';
 import { useBuilderStore } from '../features/builder/store';
 import Navbar from '../components/Layout/Navbar';
@@ -78,13 +73,18 @@ const ProjectOverviewPage: React.FC = () => {
     // 生命周期状态只分 draft/building/ready/published，没有「中止/失败」——
     // 构建被中止或失败后只要已产出骨架，后端仍标 ready（已构建），语义上会误导。
     // 这里以最近一次管线终态覆盖显示：已发布优先，其次中止/失败。
-    const statusMeta = projectStatus === 'published'
-        ? PROJECT_STATUS.published
+    const statusKey = projectStatus === 'published'
+        ? 'published'
         : pipeStatus === 'cancelled'
-            ? { color: 'warning', text: '已中止', desc: '最近一次构建被中止，已完成阶段的成果保留' }
+            ? 'cancelled'
             : pipeStatus === 'failed'
-                ? { color: 'error', text: '构建失败', desc: '最近一次构建失败' }
-                : PROJECT_STATUS[projectStatus] || PROJECT_STATUS.draft;
+                ? 'failed'
+                : (PROJECT_STATUS[projectStatus] ? projectStatus : 'draft');
+    const statusMeta = statusKey === 'failed'
+        ? { color: 'error', text: '构建失败', desc: '最近一次构建失败' }
+        : statusKey === 'cancelled'
+            ? { color: 'warning', text: '已中止', desc: '最近一次构建被中止，已完成阶段的成果保留' }
+            : PROJECT_STATUS[statusKey] || PROJECT_STATUS.draft;
     // 构建中判定以轮询到的实时状态为准（摘要里的 last_pipeline 可能滞后一拍）
     const building = ['running', 'queued', 'scheduled'].includes(pipeStatus || '')
         || (!pipeStatus && (summary?.pipeline?.status === 'running'
@@ -160,7 +160,23 @@ const ProjectOverviewPage: React.FC = () => {
                     box-shadow: none;
                 }
                 .overview-stack > .ant-card + .ant-card {
-                    border-top: 1px solid #F0F4FB;
+                    border-top: 1px solid rgba(91, 141, 239, 0.10);
+                }
+                /* 卡面材质（2026-11-17）：不再是一张纯白纸——冷白底 + 左上蓝光 + 右下紫光，
+                   与工作台说明板同源（只保留"渐变 + 大号柔光"，不加深色颗粒肌理）。
+                   里面每一段保持半透明白，形成"冷蓝纸 → 白卡片"的层次；
+                   原来纯白卡在浅蓝画布上像一张贴纸，和 Hero 的冷调也对不上 */
+                .overview-stack.surface-card {
+                    background:
+                        radial-gradient(760px 460px at -6% -10%, rgba(91, 141, 239, 0.18), transparent 68%),
+                        radial-gradient(680px 520px at 106% 112%, rgba(139, 92, 246, 0.12), transparent 70%),
+                        linear-gradient(160deg, #F6FAFF 0%, #EDF4FE 55%, #F3F8FF 100%);
+                    border-color: #DFE8F6;
+                    box-shadow:
+                        inset 0 1px 0 rgba(255, 255, 255, 0.92),
+                        inset 0 -1px 0 rgba(210, 222, 240, 0.55),
+                        0 14px 34px -22px rgba(15, 23, 42, 0.28),
+                        0 2px 5px rgba(15, 23, 42, 0.04);
                 }
                 /* 段头留白（2026-11-16）：
                    ① 段头 6px 上留白 + min-height 44 → 段标题距上方分隔线约 14px。
@@ -176,20 +192,95 @@ const ProjectOverviewPage: React.FC = () => {
                     background: transparent;
                 }
                 .overview-stack > .ant-card > .ant-card-head .ant-card-head-title {
+                    display: flex;
+                    align-items: center;
+                    min-width: 0;
                     font-size: 14px;
                     font-weight: 600;
                     color: #1F2A44;
                 }
+                /* 段标题前的品牌彩条（2026-11-17）：与资产详情 / 图谱页同一枚装饰件，
+                   让三段标题在整张白面里有明确的起点；用伪元素挂上去，不改子组件结构 */
+                .overview-stack > .ant-card > .ant-card-head .ant-card-head-title::before {
+                    content: '';
+                    flex: none;
+                    width: 3px;
+                    height: 13px;
+                    margin-right: 8px;
+                    border-radius: 2px;
+                    background: linear-gradient(180deg, #5B8DEF, #8B5CF6);
+                }
+                .overview-stack > .ant-card > .ant-card-head .ant-card-head-title > span {
+                    min-width: 0;
+                }
                 .overview-stack > .ant-card > .ant-card-body {
                     padding: 10px 20px 16px;
                 }
-                /* 段头按钮统一规格（2026-11-16）：重新构建 / 继续上传 / 发布到资产中心
-                   原来都是 antd small（24px 高、14px 字），在 44px 段头里既小又偏大字号；
-                   统一 28px 高、12.5px 字，主次只靠 primary / default 区分 */
+                /* 段头按钮统一规格（2026-11-17）：重新构建 / 继续上传 / 查询图谱 / 发布，
+                   统一 30px 高、12.5px 字——和身份段的两个按钮同高，主次只靠 primary / default 区分 */
                 .overview-stack > .ant-card > .ant-card-head .ant-btn {
-                    height: 28px;
-                    padding-inline: 12px;
+                    height: 30px;
+                    padding-inline: 13px;
                     font-size: 12.5px;
+                }
+                /* 身份段右上角按钮（专家模式 / 去问答）：与段头按钮同规格 */
+                .ov-head-btn.ant-btn {
+                    height: 30px;
+                    padding-inline: 14px;
+                    font-size: 12.5px;
+                }
+                /* 按钮材质（2026-11-17）：默认 antd 的纯色蓝 / 灰边白底压在冷蓝纸面上像外挂控件。
+                   ① 主按钮（重新构建 / 发布到资产中心）：蓝到深蓝的轻渐变 + 内高光 + 近距投影，
+                      比纯色 #5B8DEF 更"实"，也压得住卡面；
+                   ② 幽灵主按钮（去问答 / 查看图谱）：白底蓝边太飘，改成淡蓝实底的软按钮；
+                   ③ 次要按钮（专家模式 / 继续上传 / 取消发布）：半透明白 + 品牌发丝边，
+                      文字保持深墨蓝——一屏里只有两个蓝按钮，层级才清楚 */
+                .overview-stack .ant-btn-primary:not(.ant-btn-background-ghost):not(:disabled) {
+                    background: linear-gradient(180deg, #5B8DEF 0%, #3F6FD8 100%);
+                    border-color: transparent;
+                    box-shadow: 0 8px 18px -12px rgba(47, 98, 216, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+                }
+                .overview-stack .ant-btn-primary:not(.ant-btn-background-ghost):not(:disabled):hover {
+                    background: linear-gradient(180deg, #5486EC 0%, #3865CE 100%);
+                }
+                .overview-stack .ant-btn-primary:not(.ant-btn-background-ghost):not(:disabled):active {
+                    background: linear-gradient(180deg, #4E7FE4 0%, #335DC0 100%);
+                }
+                .overview-stack .ant-btn-primary.ant-btn-background-ghost:not(:disabled) {
+                    color: #2A57C6;
+                    background: rgba(91, 141, 239, 0.10);
+                    border-color: rgba(91, 141, 239, 0.26);
+                    box-shadow: none;
+                }
+                .overview-stack .ant-btn-primary.ant-btn-background-ghost:not(:disabled):hover {
+                    color: #2A57C6 !important;
+                    background: rgba(91, 141, 239, 0.16);
+                    border-color: rgba(91, 141, 239, 0.42);
+                }
+                .overview-stack .ant-btn-default:not(:disabled) {
+                    color: #33415C;
+                    background: rgba(255, 255, 255, 0.68);
+                    border-color: rgba(91, 141, 239, 0.22);
+                    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+                }
+                .overview-stack .ant-btn-default:not(:disabled):hover {
+                    color: #1F2A44 !important;
+                    background: #FFFFFF;
+                    border-color: rgba(91, 141, 239, 0.40);
+                }
+                /* 身份段底纹去掉（2026-11-17）：卡面本身已经是冷蓝纸，页头再叠一层品牌淡底
+                   只是把左上那圈柔光又压平一次；现在让纸面的光自然透到标题后面 */
+                /* 表格融进卡面（2026-11-17）：表头色带换成品牌淡蓝、行背景透明——
+                   原来行是实白，压在一张冷蓝纸上会横切出一条白色带子 */
+                .overview-stack .ant-table-thead > tr > th {
+                    background: rgba(91, 141, 239, 0.06) !important;
+                }
+                .overview-stack .ant-table-tbody > tr > td {
+                    background: transparent;
+                }
+                .overview-stack .ant-table-tbody > tr.ant-table-row:hover > td,
+                .overview-stack .ant-table-tbody > tr > td.ant-table-cell-row-hover {
+                    background: rgba(91, 141, 239, 0.055) !important;
                 }
                 /* 表格内的链接按钮（下载 / 删除）：字号跟表格收到 12.5px；
                    删除用冷调红——antd 默认 #ff4d4f 在这套冷色里过艳 */
@@ -233,18 +324,21 @@ const ProjectOverviewPage: React.FC = () => {
                         "这个项目的属性"，与构建、文档、结果同属一张白面，因此并进卡里当第一段。
                         图标块去掉：层级已由面包屑「我的项目 / 项目名」表达，卡内再来一个图标是重复。
                         内边距 16 / 14 / 20（上/下/左右）：顶部试过 24，整块反而显空，已回退 */}
-                    <div className="border-b border-[#F0F4FB] px-5 pb-3.5 pt-4">
+                    <div className="border-b border-[rgba(91,141,239,0.10)] px-5 pb-3.5 pt-4">
                         <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
                             <div className="min-w-0 flex-1">
                                 <div className="flex min-w-0 items-center gap-2">
                                     <h1
-                                        className="m-0 max-w-[240px] min-w-0 truncate text-[18px] font-semibold leading-7 text-[#0F172A]"
+                                        className="m-0 max-w-[280px] min-w-0 truncate text-[18px] font-semibold leading-7 text-[#0F172A]"
                                         title={projectReady ? projectName : undefined}
                                     >
                                         {projectReady ? projectName : '加载中…'}
                                     </h1>
                                     {projectReady && (
-                                        <Tag color={statusMeta.color} className="!m-0 shrink-0">
+                                        <Tag
+                                            className="!m-0 shrink-0"
+                                            style={{ ...statusChip(statusKey), marginInlineEnd: 0 }}
+                                        >
                                             {statusMeta.text}
                                         </Tag>
                                     )}
@@ -252,7 +346,7 @@ const ProjectOverviewPage: React.FC = () => {
                                         <Tag
                                             className="!m-0 shrink-0 max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap"
                                             title={domainName}
-                                            style={{ background: 'rgba(91,141,239,0.12)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.28)' }}
+                                            style={{ background: 'rgba(91,141,239,0.10)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.24)', marginInlineEnd: 0 }}
                                         >
                                             {domainName}
                                         </Tag>
@@ -260,7 +354,7 @@ const ProjectOverviewPage: React.FC = () => {
                                 </div>
                                 {projectReady && projectDescription && (
                                     <p
-                                        className="m-0 mt-1 max-w-[440px] truncate text-[12.5px] leading-5 text-[#66738F]"
+                                        className="m-0 mt-1 truncate text-[12.5px] leading-5 text-[#66738F]"
                                         title={projectDescription}
                                     >
                                         {projectDescription}
@@ -268,18 +362,19 @@ const ProjectOverviewPage: React.FC = () => {
                                 )}
                             </div>
                             <div className="flex shrink-0 items-center gap-2.5">
-                                <span className="mr-0.5 hidden whitespace-nowrap text-[11.5px] text-[#A3ADC2] md:inline">
+                                <span className="hidden whitespace-nowrap text-[11.5px] text-[#A3ADC2] md:inline">
                                     {projectReady
                                         ? `创建 ${fmtDate(projectCreatedAt)} · 更新 ${fmtDate(projectUpdatedAt)}`
                                         : ' '}
                                 </span>
+                                <span className="hidden h-4 w-px shrink-0 bg-[#E7EEF9] md:inline-block" />
                                 {isExpert && (
-                                    <Button icon={<NodeIndexOutlined />}
+                                    <Button className="ov-head-btn" icon={<NodeIndexOutlined />}
                                             onClick={() => navigate(`/projects/${pid}/documents`)}>
                                         专家模式
                                     </Button>
                                 )}
-                                <Button type="primary" ghost icon={<RocketOutlined />}
+                                <Button className="ov-head-btn" type="primary" ghost icon={<RocketOutlined />}
                                         onClick={() => navigate(`/qa?projectId=${pid}`)}>
                                     去问答
                                 </Button>
