@@ -487,7 +487,10 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
         _sync_stage_times(stages, current=stage_key)
         base = _stage_index[stage_key]
         frac = (pct_in_stage if pct_in_stage is not None else (1.0 if status_change else 0.0))
-        percent = min(99, int((base + max(0.0, min(1.0, frac))) * 100 / len(STAGE_DEFS)))
+        # round 而非 int：解析阶段第一步只占全程 0.6%，int 会截成 0%，
+        # 看起来像「子步骤都完成了总进度还没动」（2026-11-17 用户反馈）
+        percent = min(99, round((base + max(0.0, min(1.0, frac)))
+                                * 100 / len(STAGE_DEFS)))
         set_task_progress(task_id, stage_key, percent, msg,
                           {"project_id": project_id, "pipeline": True,
                            "stages": stages},
@@ -742,13 +745,17 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                     else:
                         reused += 1
 
+            _parse_judge_msg = (f"判定完成：待解析 {len(todo)} 个、"
+                                f"补写向量 {len(resync)} 个、复用 {reused} 个")
             _sub_stage_progress(
-                task_id, "parse", 5,
-                f"判定完成：待解析 {len(todo)} 个、补写向量 {len(resync)} 个、复用 {reused} 个",
+                task_id, "parse", 5, _parse_judge_msg,
                 steps=_parse_steps(
                     inspect_state="done",
                     resync_state="running" if resync else "skipped",
                     parse_state="running" if todo else "skipped"))
+            # 第一步（检查已解析文档）已结束，主进度必须跟着走；否则后面
+            # 还没开始解析时总进度一直停在 0%（2026-11-17 用户反馈）
+            _prog("parse", _parse_judge_msg, 0.05)
 
             if not todo and not resync:
                 if docs:  # 在途解析已全部结束 / 已解析文档全部命中复用
@@ -779,9 +786,9 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                     _cancel_check()
                     st["detail"] = f"补写向量 {i + 1}/{len(resync)}"
                     _prog("parse", f"补写向量 {i + 1}/{len(resync)}：{d.filename}",
-                          done_idx / total_work)
+                          max(0.05, done_idx / total_work))
                     _sub_stage_progress(
-                        task_id, "parse", int(100 * done_idx / total_work),
+                        task_id, "parse", max(5, int(100 * done_idx / total_work)),
                         f"补写向量 {i + 1}/{len(resync)}：{d.filename}",
                         steps=_parse_steps(
                             inspect_state="done", resync_state="running",
@@ -810,9 +817,9 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                     st["task_id"] = sub_id
                     st["detail"] = f"{i + 1}/{len(todo)}"
                     _prog("parse", f"解析中 {i + 1}/{len(todo)}：{d.filename}",
-                          done_idx / total_work)
+                          max(0.05, done_idx / total_work))
                     _sub_stage_progress(
-                        task_id, "parse", int(100 * done_idx / total_work),
+                        task_id, "parse", max(5, int(100 * done_idx / total_work)),
                         f"解析中 {i + 1}/{len(todo)}：{d.filename}",
                         steps=_parse_steps(
                             inspect_state="done",
@@ -835,7 +842,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                                 dp = int(p.get("percent") or 0)
                             except (TypeError, ValueError):
                                 dp = 0
-                            frac = min(1.0, (_base + dp / 100) / total_work)
+                            frac = max(0.05, min(1.0, (_base + dp / 100) / total_work))
                             msg = f"解析中 {_i + 1}/{_n}：{_name}"
                             _prog("parse", msg, frac)
                             _sub_stage_progress(
