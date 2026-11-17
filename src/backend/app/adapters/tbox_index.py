@@ -27,8 +27,16 @@ def _class_text(c: dict) -> str:
     desc = str((c or {}).get("definition") or "").strip()
     if desc:
         parts.append(desc)
-    prop_names = [str((p or {}).get("name") or "").strip()
-                  for p in (c or {}).get("properties") or [] if str((p or {}).get("name") or "").strip()]
+    # properties 三形态兼容：list[{name}] / list[str]（平台管线产出）/ dict{名:类型}（MVP 直落）
+    _props = (c or {}).get("properties") or []
+    prop_names: list[str] = []
+    if isinstance(_props, dict):
+        prop_names = [str(k).strip() for k in _props.keys() if str(k).strip()]
+    else:
+        for p in _props:
+            n = str((p or {}).get("name") or "").strip() if isinstance(p, dict) else str(p or "").strip()
+            if n:
+                prop_names.append(n)
     if prop_names:
         parts.append(f"属性：{'、'.join(prop_names)}")
     return "。".join(parts)
