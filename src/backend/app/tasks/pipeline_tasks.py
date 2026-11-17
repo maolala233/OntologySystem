@@ -835,7 +835,9 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                     # 单文档解析要几十秒、内部有 5/30/55/70/88% 的真实进度
                     # （run_parse 写在 {sub_id} 键里）；不折进主进度的话，第一份
                     # 文档解析全程总进度都停在 0%（2026-11-16 用户反馈）
-                    _doc_base = max(0, done_idx - 1)
+                    # done_idx 此时尚未 +1，就是「当前文档之前已完成的工作数」；
+                    # 之前多减 1 会让第 2 份文档起阶段进度回退到接近 5%
+                    _doc_base = done_idx
                     _doc_i, _doc_n, _doc_name = i, len(todo), d.filename
                     _doc_stop = _threading.Event()
 
@@ -851,13 +853,16 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                                 1.0, (_base + dp / 100) / total_work)
                             msg = f"解析中 {_i + 1}/{_n}：{_name}"
                             _prog("parse", msg, frac)
+                            # 「逐份解析」子步骤用跨文档累计进度；直接写文档内
+                            # dp 会让第 2 份文档开始时从 0/5% 重新开始
+                            parse_pct = int(100 * (_i + dp / 100) / max(1, _n))
                             _sub_stage_progress(
                                 task_id, "parse", min(99, math.ceil(100 * frac)), msg,
                                 steps=_parse_steps(
                                     inspect_state="done",
                                     resync_state="done" if resync else "skipped",
                                     resync_pct=100,
-                                    parse_state="running", parse_pct=dp))
+                                    parse_state="running", parse_pct=parse_pct))
 
                     _doc_thread = _threading.Thread(
                         target=_doc_ticker, name=f"parse-tick-{task_id}", daemon=True)
@@ -890,7 +895,9 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                     st["status"] = "failed"
                     st["detail"] = f"全部 {len(todo)} 个文档解析失败"
                     _sub_stage_progress(
-                        task_id, "parse", int(100 * done_idx / total_work),
+                        task_id, "parse",
+                        min(99, math.ceil(100 * (0.05 + 0.95
+                                                 * (done_idx / total_work)))),
                         st["detail"],
                         steps=_parse_steps(
                             inspect_state="done",
