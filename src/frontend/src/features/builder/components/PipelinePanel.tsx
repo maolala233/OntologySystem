@@ -278,6 +278,25 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
         stepsCacheRef.current = next;
         setStepsByStage(next);
     }, []);
+    /**
+     * 后端按阶段回放子步骤（2026-11-17 stage_subs）：定时构建晚进入、刷新、换浏览器时，
+     * 早期阶段的 SSE 帧前端从来没收到过。这里一次性补进缓存——只补缓存里还没有的阶段，
+     * 在线期间真实收到过的帧更新（不要被首屏快照覆盖回旧值）。
+     */
+    const applyStageSubs = useCallback((subs?: PipelineStatus['stage_subs']) => {
+        if (!subs) return;
+        const cache = stepsCacheRef.current;
+        let next: Record<string, PipelineSubStep[]> | null = null;
+        for (const [key, v] of Object.entries(subs)) {
+            if (cache[key] || !v?.steps?.length) continue;
+            next = next || { ...cache };
+            next[key] = v.steps;
+        }
+        if (next) {
+            stepsCacheRef.current = next;
+            setStepsByStage(next);
+        }
+    }, []);
 
     const refresh = useCallback(async () => {
         try {
@@ -313,6 +332,8 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                 stepsCacheRef.current = snap.stepsByStage;
                 setStepsByStage(snap.stepsByStage);
             }
+            // 后端回放各阶段子步骤（2026-11-17）：晚进入的定时构建也能看到早期阶段的明细
+            applyStageSubs(s.stage_subs);
             if (s.stage && s.sub?.steps?.length) rememberSteps(s.stage, s.sub.steps);
             setStatus(s);
             if (s.task_id && s.status !== 'idle') {
@@ -323,7 +344,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
         } finally {
             setLoaded(true);
         }
-    }, [projectId, rememberSteps]);
+    }, [projectId, rememberSteps, applyStageSubs]);
 
     // 项目切换（路由参数变化、组件不重挂载）时清掉上一个项目的进度快照，
     // refresh 返回前不显示旧项目的阶段/进度
@@ -339,16 +360,19 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
     // 状态上抛：父页面（ProjectOverviewPage）据此做跃迁刷新，免自建 5s 轮询
     useEffect(() => { onPipeStatus?.(status); }, [status, onPipeStatus]);
 
-    // 换了新一轮构建：收回临时查看，并清掉上一轮的步骤缓存（同一任务的首屏加载不清）
+    // 换了新一轮构建：收回临时查看，并清掉上一轮的步骤缓存（同一任务的首屏加载不清）。
+    // 清空后立刻把新任务自带的后端回放（stage_subs）补回来——定时构建开跑时
+    // status 首帧就带着早期阶段的明细，不能因为这次清缓存又丢一拍
     useEffect(() => {
         const tid = status?.task_id || null;
         if (lastTaskSeenRef.current && tid && tid !== lastTaskSeenRef.current) {
             setPeekKey(null);
             stepsCacheRef.current = {};
             setStepsByStage({});
+            applyStageSubs(status?.stage_subs);
         }
         lastTaskSeenRef.current = tid;
-    }, [status?.task_id]);
+    }, [status?.task_id, applyStageSubs]);
 
     // 纯跟随：临时查看只在打开时的那个阶段内有效——后端阶段推进（status.stage 变化）
     // 就自动回到实时；构建结束（完成/失败/中止）也收回，回到「本次构建」汇总
@@ -1112,6 +1136,36 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                                 {shown === 'running' && <span className="pl-live-dot mt-[5px]" />}
                                                 <span className="min-w-0 leading-5">{detailMessage(activeStage, shown)}</span>
                                             </div>
+
+                                            {/* 分步明细（2026-11-17）：阶段结束 / 失败 / 中止后留一行步骤名。
+                                                定时构建晚进入、刷新、换浏览器时，早期阶段没有本机帧缓存，
+                                                数据来自后端 status 的 stage_subs 回放——否则点进来只剩一句
+                                                「本阶段已完成」，看不出这一段到底做了哪几步 */}
+                                            {shown !== 'running' && detailSteps.length > 1 && (
+                                                <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px]">
+                                                    <span className="text-[#A3ADC2]">步骤</span>
+                                                    {detailSteps.map((step) => {
+                                                        const tone = step.state === 'failed' ? '#B42318'
+                                                            : step.state === 'cancelled' ? '#B8790F'
+                                                                : step.state === 'skipped' ? '#C2C7CF'
+                                                                    : step.state === 'done' ? '#1B87AD' : '#CFD6E4';
+                                                        const ink = step.state === 'failed' ? '#B42318'
+                                                            : step.state === 'cancelled' ? '#B8790F'
+                                                                : step.state === 'pending' || step.state === 'skipped'
+                                                                    ? '#A3ADC2' : '#66738F';
+                                                        return (
+                                                            <span key={step.key} className="inline-flex items-center gap-1">
+                                                                <span className="h-[5px] w-[5px] flex-none rounded-full"
+                                                                      style={{ background: tone }} />
+                                                                <span style={{ color: ink }}
+                                                                      className={step.state === 'skipped' ? 'line-through' : ''}>
+                                                                    {step.label}
+                                                                </span>
+                                                            </span>
+                                                        );
+                                                    })}
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                 </>

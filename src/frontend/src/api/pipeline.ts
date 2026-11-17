@@ -62,6 +62,17 @@ export interface PipelineStatus {
         stats?: Record<string, any>;
         steps?: PipelineSubStep[];
     };
+    /**
+     * 各阶段子步骤回放（后端 2026-11-17 方案 A）：status 一次性把每个阶段的
+     * 子进度键读出来下发。定时构建晚进入 / 刷新 / 换浏览器时，前端缓存里
+     * 没有早期阶段在线收到过的帧，靠这份回放补上。
+     */
+    stage_subs?: Record<string, {
+        percent?: number | null;
+        status?: string;
+        message?: string;
+        steps: PipelineSubStep[];
+    }>;
 }
 
 export interface ClassSummary {

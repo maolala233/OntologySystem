@@ -695,7 +695,11 @@ export default function QaPage() {
                                         placeholder="选择项目"
                                         showSearch
                                         optionFilterProp="label"
-                                        className={projectId == null ? 'qa-select-warn' : undefined}
+                                        /* 项目列表还在加载时不要挂警告色（2026-11-17）：
+                                           进页面瞬间 projectId 还是 null，选择器会先闪一下
+                                           琥珀底（.qa-select-warn），列表回来后自动选中第一个
+                                           又变回白色。只有"加载完了确实没选中"才提示 */
+                                        className={!projectsLoading && projectId == null ? 'qa-select-warn' : undefined}
                                         style={{ width: 'auto', minWidth: 200, maxWidth: 270 }}
                                         options={projects.map(p => ({ value: p.id, label: p.name }))}
                                     />
