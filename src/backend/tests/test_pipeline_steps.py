@@ -126,6 +126,36 @@ def test_selfcheck_has_three_steps(pipeline_module):
     assert steps["verify"]["state"] == "pending"
 
 
+def test_silent_overall_maps_segment_weight(pipeline_module):
+    # 公理扫描占阶段 35%，段内 50% → 阶段整体 17%；业务规则段内 50% → 67%
+    assert pipeline_module._silent_overall("axioms", "scan", 50) == 17
+    assert pipeline_module._silent_overall("axioms", "business_rules", 50) == 67
+    # 审查占 40%，段内 50% → 20%；CQ 段内 50% → 70%
+    assert pipeline_module._silent_overall("adjudicate", "adjudicate", 50) == 20
+    assert pipeline_module._silent_overall("adjudicate", "cq_eval", 50) == 70
+
+
+def test_display_percent_maps_axiom_scan_phase(pipeline_module):
+    # 公理扫描子任务只写段内 percent、不带显式 steps → 展示值折算成阶段整体
+    assert pipeline_module.display_sub_percent("axioms", _sub(50)) == 17
+    # 业务规则段由管线写显式 steps + 已折算的整体 percent → 原样返回
+    explicit = [{"key": "scan", "label": "公理扫描", "state": "done", "percent": 100},
+                {"key": "business_rules", "label": "业务规则挖掘",
+                 "state": "running", "percent": 30}]
+    assert pipeline_module.display_sub_percent("axioms", _sub(55, steps=explicit)) == 55
+    # 非静默段不受影响
+    assert pipeline_module.display_sub_percent("schema", _sub(50)) == 50
+    assert pipeline_module.display_sub_percent("axioms", None) is None
+
+
+def test_axioms_scan_step_keeps_segment_percent(pipeline_module):
+    # 子步骤自身仍显示段内百分比（50%），阶段主进度另行折算（17%）
+    steps = _by_key(pipeline_module.build_sub_steps("axioms", _sub(50)))
+
+    assert steps["scan"]["percent"] == 50
+    assert steps["business_rules"]["state"] == "pending"
+
+
 def test_unknown_stage_falls_back_to_single_step(pipeline_module):
     steps = pipeline_module.build_sub_steps("finalize_stats", _sub(20))
 

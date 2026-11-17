@@ -20,6 +20,7 @@ from app.tasks.pipeline_tasks import (
     PIPELINE_STALE_SECONDS,
     build_sub_steps,
     cancel_scheduled_pipeline,
+    display_sub_percent,
     dispatch_pipeline_run,
     pipeline_last_task_id,
     pipeline_running_task_id,
@@ -176,7 +177,7 @@ def pipeline_status_endpoint(
     if sub is not None:
         # 与 SSE 帧同构（2026-11-16）：首屏直接带子阶段与子步骤，断流时详情区也不空白
         out["sub"] = {"stage": stage,
-                      "percent": sub.get("percent"),
+                      "percent": display_sub_percent(stage, sub),
                       "message": sub.get("message"),
                       "status": sub.get("status"),
                       "stats": sub.get("stats") or {},
@@ -256,7 +257,7 @@ async def pipeline_events(
                 sub = get_task_progress(f"{tid}:{stage}") if tid and stage else None
                 if sub is not None:
                     prog = {**prog, "sub": {"stage": stage,
-                                            "percent": sub.get("percent"),
+                                            "percent": display_sub_percent(stage, sub),
                                             "message": sub.get("message"),
                                             "status": sub.get("status"),
                                             "stats": sub.get("stats") or {},
