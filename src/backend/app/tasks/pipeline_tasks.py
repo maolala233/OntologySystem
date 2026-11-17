@@ -252,7 +252,8 @@ def _sync_stage_times(stages: list[dict], current: Optional[str] = None) -> None
     挖掘、裁决后的能力问题评测）——只对 current 刷新收尾时间，后续阶段推进后
     即冻结，既不丢收尾耗时也不会被心跳无限拉长。
     """
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    # 毫秒精度：冲突检测/结构自检常不足 1 秒，秒级时间戳会算成 0 秒
+    now = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
     for st in stages:
         status = st.get("status")
         if status == "running":
@@ -270,7 +271,7 @@ def _sync_stage_times(stages: list[dict], current: Optional[str] = None) -> None
                     t0 = datetime.fromisoformat(str(st["started_at"]))
                     t1 = datetime.fromisoformat(str(st["finished_at"]))
                     st["duration_seconds"] = round(
-                        max(0.0, (t1 - t0).total_seconds()), 1)
+                        max(0.0, (t1 - t0).total_seconds()), 2)
                 except (TypeError, ValueError):
                     pass
 

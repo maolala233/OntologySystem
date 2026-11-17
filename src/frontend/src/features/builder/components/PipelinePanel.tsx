@@ -127,8 +127,10 @@ const BAR_BG: Record<string, string> = {
  */
 
 /** 秒 → 「3 分 12 秒」；空值「—」 */
-const fmtDuration = (sec?: number | null): string => {
+const fmtDuration = (sec?: number | null, precise = false): string => {
     if (typeof sec !== 'number' || !Number.isFinite(sec) || sec < 0) return '—';
+    // 冲突检测/结构自检常不足 1 秒，整秒显示会变成 0 秒
+    if (precise && sec < 60) return `${Number(sec.toFixed(2))} 秒`;
     const t = Math.round(sec);
     if (t < 60) return `${t} 秒`;
     const m = Math.floor(t / 60);
@@ -819,7 +821,8 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                                         : 'text-[#1B87AD]'}`}>
                                             {st.status === 'skipped' ? '已跳过'
                                                 : st.status === 'pending' ? '—'
-                                                    : fmtDuration(st.duration_seconds)}
+                                                    : fmtDuration(st.duration_seconds,
+                                                        st.key === 'conflicts' || st.key === 'selfcheck')}
                                         </div>
                                     </button>
                                 ))}
@@ -886,7 +889,10 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                             <span>
                                                 用时{' '}
                                                 <b className="ml-0.5 text-[12.5px] text-[#1F2A44]">
-                                                    {shown === 'pending' ? '—' : fmtDuration(live)}
+                                                    {shown === 'pending' ? '—'
+                                                        : fmtDuration(live,
+                                                            activeStage.key === 'conflicts'
+                                                            || activeStage.key === 'selfcheck')}
                                                 </b>
                                             </span>
                                         </span>
