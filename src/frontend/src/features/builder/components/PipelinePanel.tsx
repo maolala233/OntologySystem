@@ -117,6 +117,34 @@ const BAR_BG: Record<string, string> = {
     pending: '#D7DDE8',
 };
 
+/** 方案八（feat_simplify_tsz_08）：52px 环形百分比；percent 为空时环内显示状态文字 */
+const PctRing: React.FC<{ percent: number | null; color: string; label: string }> = ({
+    percent, color, label,
+}) => {
+    const r = 22;
+    const c = 2 * Math.PI * r;
+    const frac = percent == null ? 0 : Math.max(0, Math.min(100, percent)) / 100;
+    return (
+        <svg width="52" height="52" viewBox="0 0 52 52" className="shrink-0">
+            <circle cx="26" cy="26" r={r} fill="none" stroke="#EEF0F3" strokeWidth="5" />
+            {percent != null && (
+                <circle cx="26" cy="26" r={r} fill="none" stroke={color} strokeWidth="5"
+                        strokeLinecap="round"
+                        strokeDasharray={`${c}`}
+                        strokeDashoffset={`${c * (1 - frac)}`}
+                        transform="rotate(-90 26 26)"
+                        style={{ transition: 'stroke-dashoffset .5s' }} />
+            )}
+            <text x="26" y="30" textAnchor="middle"
+                  fontSize={percent != null ? 12.5 : 10.5}
+                  fontWeight={600}
+                  fill={percent != null ? color : '#8A94AB'}>
+                {percent != null ? `${percent}%` : label}
+            </text>
+        </svg>
+    );
+};
+
 /**
  * 阶段子步骤只认后端数据（2026-11-16 用户要求：前端不写死）。
  *
@@ -852,6 +880,15 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                             // 灰段只会让这一行"缺一块"，直接不展示（2026-11-17 反馈）。
                             // pending 仍保留：那是后面真会执行的步骤，灰着表示还没轮到
                             const visibleSteps = detailSteps.filter((s) => s.state !== 'skipped');
+                            // 方案八的一句话摘要用：当前步骤、步序、已完成步数（全部后端数据）
+                            const runStepIdx = visibleSteps.findIndex((s) => s.state === 'running');
+                            const runStep = runStepIdx >= 0 ? visibleSteps[runStepIdx] : null;
+                            const doneStepCount = visibleSteps.filter((s) => s.state === 'done').length;
+                            const ringColor = shown === 'failed' ? '#B42318'
+                                : shown === 'done' ? '#1B87AD'
+                                    : shown === 'cancelled' ? '#B8790F'
+                                        : shown === 'running' ? '#5B8DEF' : '#C2C7CF';
+                            const ringLabel = STAGE_STATUS_TEXT[shown] || '—';
                             return (
                                 <>
                                     {/* 临时查看与实时进度不一致时给出说明：这只是看一眼，
@@ -901,73 +938,44 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                             </span>
                                         </span>
                                     </div>
-                                    <div className="mt-2 flex items-center gap-2.5">
-                                        <div className="relative h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-[#EEF0F3]">
-                                            {/* 有后端百分比才画实际宽度；拿不到就显示不确定态/
-                                                终态底色，不编一个数字（2026-11-16） */}
-                                            {pct != null && (
-                                                /* key=阶段：切阶段时重建，避免宽度从上一阶段的 100%
-                                                   动画收缩到 0（看起来像进度条"闪没了"） */
-                                                <div key={activeStage.key}
-                                                     className="h-full rounded-full transition-[width] duration-500"
-                                                     style={{
-                                                         width: `${Math.max(0, Math.min(100, pct))}%`,
-                                                         background: BAR_BG[shown] || BAR_BG.running,
-                                                     }} />
-                                            )}
-                                            {pct == null && shown === 'running' && <i className="pl-ind" />}
-                                            {pct == null && shown === 'skipped' && (
-                                                <div className="h-full w-full rounded-full"
-                                                     style={{ background: BAR_BG.skipped }} />
+                                    {/* 方案八（feat_simplify_tsz_08）：环形总进度 + 一句当前步骤，
+                                        不再画横条；数据全部来自后端 */}
+                                    <div className="mt-2 flex items-center gap-3">
+                                        <PctRing percent={pct} color={ringColor} label={ringLabel} />
+                                        <div className="min-w-0 flex-1 text-[11.5px] leading-5 text-[#8A94AB]">
+                                            {shown === 'running' ? (
+                                                visibleSteps.length > 0 ? (
+                                                    runStep ? (
+                                                        <>
+                                                            当前：
+                                                            <span className="font-semibold text-[#2A57C6]">
+                                                                {runStep.label} {runStep.percent}%
+                                                            </span>
+                                                            <span className="text-[#A3ADC2]">
+                                                                （第 {runStepIdx + 1}/{visibleSteps.length} 步）
+                                                            </span>
+                                                            {doneStepCount > 0 && (
+                                                                <span className="text-[#A3ADC2]"> · 已完成 {doneStepCount} 步</span>
+                                                            )}
+                                                        </>
+                                                    ) : (
+                                                        <span className="text-[#A3ADC2]">
+                                                            本阶段步骤已完成 {doneStepCount}/{visibleSteps.length}
+                                                        </span>
+                                                    )
+                                                ) : (
+                                                    <span className="text-[#A3ADC2]">等待本阶段子步骤进度…</span>
+                                                )
+                                            ) : (
+                                                <span className="text-[#A3ADC2]">
+                                                    {shown === 'done' ? '本阶段已完成'
+                                                        : shown === 'skipped' ? '本档位跳过该阶段'
+                                                            : shown === 'failed' ? '阶段失败'
+                                                                : shown === 'cancelled' ? '已中止' : '等待前置阶段完成'}
+                                                </span>
                                             )}
                                         </div>
-                                        <span className="min-w-[38px] text-right text-[12.5px] font-semibold"
-                                              style={{ color: shown === 'failed' ? '#B42318'
-                                                  : shown === 'done' ? '#1B87AD'
-                                                      : shown === 'running' ? '#5B8DEF' : '#8A94AB' }}>
-                                            {pct != null
-                                                ? `${pct}%`
-                                                : (shown === 'skipped' ? '已跳过'
-                                                    : STAGE_STATUS_TEXT[shown] || '—')}
-                                        </span>
                                     </div>
-
-                                    {/* 阶段内子步骤：只在进行中展示，压缩成一行分段进度（2026-11-16）。
-                                        每段一个步骤：完成整段青色、进行中按后端百分比填充、其余灰色；
-                                        标签一行排开，进行中的那步高亮并带百分比 */}
-                                    {shown === 'running' && visibleSteps.length > 0 && (
-                                        <div className="pl-steps mt-2.5 flex items-start gap-1.5">
-                                            {visibleSteps.map((step) => {
-                                                const isRun = step.state === 'running';
-                                                const isDone = step.state === 'done';
-                                                const isFail = step.state === 'failed';
-                                                const isSkip = step.state === 'skipped' || step.state === 'cancelled';
-                                                const stepPct = isDone ? 100 : (isSkip ? 0 : step.percent);
-                                                return (
-                                                    <div key={step.key} className="min-w-0 flex-1"
-                                                         title={`${step.label}${isRun ? ` · ${step.percent}%` : ''}`}>
-                                                        <div className="h-[3px] overflow-hidden rounded-full bg-[#EEF0F3]">
-                                                            <div className="h-full rounded-full transition-[width] duration-500"
-                                                                 style={{
-                                                                     width: `${Math.max(0, Math.min(100, stepPct))}%`,
-                                                                     background: isFail ? BAR_BG.failed
-                                                                         : isDone ? BAR_BG.done : BAR_BG.running,
-                                                                 }} />
-                                                        </div>
-                                                        <div className={`mt-1 truncate text-[10.5px] leading-4 ${
-                                                            isRun ? 'font-semibold text-[#2A57C6]'
-                                                                : isDone ? 'text-[#8A94AB]'
-                                                                    : isFail ? 'text-[#B42318]' : 'text-[#C2C7CF]'}`}>
-                                                            {step.label}{isRun ? ` ${step.percent}%` : ''}
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    )}
-                                    {shown === 'running' && detailSteps.length === 0 && (
-                                        <div className="mt-2.5 text-[11.5px] text-[#A3ADC2]">等待本阶段子步骤进度…</div>
-                                    )}
 
                                     {/* 实时计数：切片 / 批次 / 缓存命中 / 指代消解 / 缝合 */}
                                     {chips.length > 0 && (
