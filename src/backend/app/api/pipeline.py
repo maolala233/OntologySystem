@@ -18,6 +18,7 @@ from app.infrastructure.database import Project, ReviewItem, User
 from app.tasks.pipeline_tasks import (
     PIPELINE_STALE_MESSAGE,
     PIPELINE_STALE_SECONDS,
+    build_stage_subs,
     build_sub_steps,
     cancel_scheduled_pipeline,
     display_sub_percent,
@@ -174,6 +175,9 @@ def pipeline_status_endpoint(
            "message": prog.get("message"),
            "stages": (prog.get("stats") or {}).get("stages") or [],
            "stats": prog.get("stats") or {}, "reviews": summary}
+    # 各阶段子步骤回放（方案 A，2026-11-17）：定时构建晚进入、刷新、换浏览器
+    # 时，前端没有早期阶段的帧缓存；这里一次性下发，前端可直接渲染。
+    out["stage_subs"] = build_stage_subs(tid, out["stages"])
     if sub is not None:
         # 与 SSE 帧同构（2026-11-16）：首屏直接带子阶段与子步骤，断流时详情区也不空白
         out["sub"] = {"stage": stage,

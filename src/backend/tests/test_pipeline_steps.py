@@ -162,3 +162,30 @@ def test_unknown_stage_falls_back_to_single_step(pipeline_module):
     assert len(steps) == 1
     assert steps[0]["key"] == "finalize_stats"
     assert steps[0]["state"] == "running"
+
+
+def test_build_stage_subs_replays_all_stages(pipeline_module, progress_state):
+    tid = "pipeline-test"
+    progress_state[f"{tid}:parse"] = {
+        "percent": 100, "status": "completed", "message": "解析完成",
+        "stats": {"steps": [
+            {"key": "inspect", "label": "检查已解析文档", "state": "done", "percent": 100},
+            {"key": "resync", "label": "补写向量", "state": "skipped", "percent": 0},
+            {"key": "parse", "label": "逐份解析", "state": "done", "percent": 100},
+        ]},
+    }
+    progress_state[f"{tid}:schema"] = {"percent": 55, "status": "running",
+                                       "message": "骨架装配中", "stats": {}}
+    stages = [{"key": "parse", "status": "done"},
+              {"key": "schema", "status": "running"},
+              {"key": "instances", "status": "pending"}]
+
+    subs = pipeline_module.build_stage_subs(tid, stages)
+
+    assert set(subs) == {"parse", "schema"}
+    assert subs["parse"]["percent"] == 100
+    assert len(subs["parse"]["steps"]) == 3
+    # 无显式 steps 的阶段按区间生成（55% → 骨架装配刚开始）
+    assert subs["schema"]["steps"][2]["key"] == "assemble"
+    assert subs["schema"]["steps"][2]["state"] == "running"
+    assert "instances" not in subs

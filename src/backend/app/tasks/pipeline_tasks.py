@@ -188,6 +188,38 @@ def display_sub_percent(stage_key: str, sub: Optional[dict]) -> Optional[int]:
     return pct
 
 
+def build_stage_subs(task_id: str, stages: Optional[list[dict]]) -> dict[str, dict]:
+    """按阶段回放子步骤明细（status 首屏用）。
+
+    前端只缓存「在线期间收到过」的帧；定时构建晚进入/刷新/换浏览器时，
+    早期阶段永远收不到 → 详情区显示「后端未下发该阶段的分步明细」。
+    status 接口一次性把每个阶段的子进度键读出来，前端可直接回放。
+    """
+    out: dict[str, dict] = {}
+    if not task_id:
+        return out
+    for st in stages or []:
+        key = st.get("key") if isinstance(st, dict) else None
+        if not key:
+            continue
+        try:
+            sub = get_task_progress(f"{task_id}:{key}")
+        except Exception:  # noqa: BLE001 —— 单阶段读取失败不影响整个 status
+            continue
+        if not isinstance(sub, dict):
+            continue
+        steps = build_sub_steps(key, sub)
+        if not steps:
+            continue
+        out[key] = {
+            "percent": display_sub_percent(key, sub),
+            "status": sub.get("status"),
+            "message": sub.get("message"),
+            "steps": steps,
+        }
+    return out
+
+
 def build_sub_steps(stage_key: str, sub: Optional[dict]) -> list[dict]:
     """把子任务进度摊平成阶段内子步骤（API/SSE 共用，前端详情区直接渲染）。
 
@@ -2017,8 +2049,8 @@ def release_pipeline_lock(project_id: int) -> None:
         pass
 
 
-__all__ = ["STAGE_DEFS", "DEPTH_PROFILES", "build_sub_steps", "display_sub_percent",
-           "run_pipeline", "dispatch_pipeline_run",
+__all__ = ["STAGE_DEFS", "DEPTH_PROFILES", "build_sub_steps", "build_stage_subs",
+           "display_sub_percent", "run_pipeline", "dispatch_pipeline_run",
            "run_scheduled_pipeline", "cancel_scheduled_pipeline",
            "pipeline_scheduled_at", "pipeline_schedule_for", "pipeline_scheduled_info",
            "pipeline_running_task_id", "pipeline_build_active",
