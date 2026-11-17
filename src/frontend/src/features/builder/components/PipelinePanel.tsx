@@ -18,8 +18,8 @@ import { message, confirmModal } from '../../../shared/feedback';
 import InlineNotice from '../../../components/InlineNotice';
 import { Button, Card, Popconfirm, Space, Tag } from 'antd';
 import {
-    CheckCircleOutlined, CheckOutlined, CloseCircleOutlined, CloseOutlined,
-    MinusCircleOutlined, MinusOutlined,
+    CheckCircleOutlined, CloseCircleOutlined,
+    MinusCircleOutlined,
     SyncOutlined, RetweetOutlined, PauseCircleOutlined, ClockCircleOutlined,
 } from '@ant-design/icons';
 import { fmtSchedule } from '../../../shared/schedule';
@@ -848,6 +848,10 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                     : shown === 'skipped' ? { ...st, state: 'skipped' as const, percent: 0 }
                                         : st
                             ));
+                            // 后端标了 skipped 的步骤（如解析阶段不需要补写向量）不会再执行，
+                            // 灰段只会让这一行"缺一块"，直接不展示（2026-11-17 反馈）。
+                            // pending 仍保留：那是后面真会执行的步骤，灰着表示还没轮到
+                            const visibleSteps = detailSteps.filter((s) => s.state !== 'skipped');
                             return (
                                 <>
                                     {/* 临时查看与实时进度不一致时给出说明：这只是看一眼，
@@ -928,63 +932,41 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                         </span>
                                     </div>
 
-                                    {/* 阶段内子步骤（后端 build_sub_steps）：进行中的步骤带自己的进度条 */}
-                                    {detailSteps.length > 0 && (
-                                        <div className="mt-2.5 flex flex-col gap-1.5">
-                                            {detailSteps.map((step) => {
+                                    {/* 阶段内子步骤：只在进行中展示，压缩成一行分段进度（2026-11-16）。
+                                        每段一个步骤：完成整段青色、进行中按后端百分比填充、其余灰色；
+                                        标签一行排开，进行中的那步高亮并带百分比 */}
+                                    {shown === 'running' && visibleSteps.length > 0 && (
+                                        <div className="pl-steps mt-2.5 flex items-start gap-1.5">
+                                            {visibleSteps.map((step) => {
                                                 const isRun = step.state === 'running';
                                                 const isDone = step.state === 'done';
                                                 const isFail = step.state === 'failed';
                                                 const isSkip = step.state === 'skipped' || step.state === 'cancelled';
-                                                const stepWidth = isDone ? 100 : (isSkip ? 0 : step.percent);
+                                                const stepPct = isDone ? 100 : (isSkip ? 0 : step.percent);
                                                 return (
-                                                    <div key={step.key}
-                                                         className={`grid grid-cols-[16px_160px_1fr_auto] items-center gap-2 rounded-lg border px-2 py-[6px] text-[12.5px] ${
-                                                             isRun ? 'border-[rgba(91,141,239,0.35)] bg-[#F5F9FF]'
-                                                                 : isDone ? 'border-[#E6F0F6] bg-white'
-                                                                     : 'border-[#EEF0F5] bg-white'}`}>
-                                                        <span className="text-center"
-                                                              style={{ color: isRun ? '#5B8DEF' : isDone ? '#1B87AD'
-                                                                  : isFail ? '#B42318' : '#C2C7CF' }}>
-                                                            {isRun ? <SyncOutlined spin /> : isDone ? <CheckOutlined />
-                                                                : isFail ? <CloseOutlined />
-                                                                    : isSkip ? <MinusOutlined /> : '○'}
-                                                        </span>
-                                                        <span className={`truncate ${isRun ? 'font-semibold text-[#2A57C6]'
-                                                            : isDone ? 'text-[#52607A]' : 'text-[#8A94AB]'}`}
-                                                              title={step.label}>
-                                                            {step.label}
-                                                        </span>
-                                                        <span className="h-1.5 min-w-0 overflow-hidden rounded-full bg-[#EEF0F3]">
-                                                            <span className="block h-full rounded-full transition-[width] duration-500"
-                                                                  style={{
-                                                                      width: `${stepWidth}%`,
-                                                                      background: isFail ? BAR_BG.failed
-                                                                          : isDone ? BAR_BG.done
-                                                                              : BAR_BG.running,
-                                                                  }} />
-                                                        </span>
-                                                        <span className={`text-right tabular-nums ${
+                                                    <div key={step.key} className="min-w-0 flex-1"
+                                                         title={`${step.label}${isRun ? ` · ${step.percent}%` : ''}`}>
+                                                        <div className="h-[3px] overflow-hidden rounded-full bg-[#EEF0F3]">
+                                                            <div className="h-full rounded-full transition-[width] duration-500"
+                                                                 style={{
+                                                                     width: `${Math.max(0, Math.min(100, stepPct))}%`,
+                                                                     background: isFail ? BAR_BG.failed
+                                                                         : isDone ? BAR_BG.done : BAR_BG.running,
+                                                                 }} />
+                                                        </div>
+                                                        <div className={`mt-1 truncate text-[10.5px] leading-4 ${
                                                             isRun ? 'font-semibold text-[#2A57C6]'
-                                                                : isDone ? 'text-[#1B87AD]'
+                                                                : isDone ? 'text-[#8A94AB]'
                                                                     : isFail ? 'text-[#B42318]' : 'text-[#C2C7CF]'}`}>
-                                                            {isRun ? `${step.percent}%`
-                                                                : isDone ? '完成'
-                                                                    : isFail ? '失败'
-                                                                        : step.state === 'cancelled' ? '已中止'
-                                                                            : step.state === 'skipped' ? '已跳过' : '待开始'}
-                                                        </span>
+                                                            {step.label}{isRun ? ` ${step.percent}%` : ''}
+                                                        </div>
                                                     </div>
                                                 );
                                             })}
                                         </div>
                                     )}
-                                    {detailSteps.length === 0 && (
-                                        <div className="mt-2.5 text-[11.5px] text-[#A3ADC2]">
-                                            {shown === 'running'
-                                                ? '等待本阶段子步骤进度…'
-                                                : '后端未下发该阶段的分步明细'}
-                                        </div>
+                                    {shown === 'running' && detailSteps.length === 0 && (
+                                        <div className="mt-2.5 text-[11.5px] text-[#A3ADC2]">等待本阶段子步骤进度…</div>
                                     )}
 
                                     {/* 实时计数：切片 / 批次 / 缓存命中 / 指代消解 / 缝合 */}
