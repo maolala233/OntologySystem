@@ -401,6 +401,8 @@ const ProjectOverviewPage: React.FC = () => {
                     {!building && summary && summary.schema.classes_total > 0 && (
                         <BuildResultsPanel projectId={pid} summary={summary} checks={summary.checks}
                                            publishedVersionNo={publishedVersion?.version_no ?? null}
+                                           // 项目元数据还没回来时传 undefined：退回探测逻辑，避免误弹选择器
+                                           hasDomain={projectReady ? !!domainName : undefined}
                                            onPublishedChange={() => { load(); loadProject(pid); }} />
                     )}
                 </div>

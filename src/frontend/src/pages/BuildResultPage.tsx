@@ -74,22 +74,30 @@ const BuildResultPage: React.FC = () => {
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            setSummary(await pipelineApi.buildSummary(pid));
-        } catch (e: any) {
-            message.error(e.response?.data?.error?.message || '加载构建结果失败');
+            // 一次 getProject 同时喂「只读图谱」和顶部元数据：store 复用同一份，
+            // 不再各自 GET 一次（原来同一 URL 会打两次，2026-11-19）
+            const [project, summaryData] = await Promise.all([
+                projectsApi.getProject(pid).catch(() => null),
+                pipelineApi.buildSummary(pid).catch((e: any) => {
+                    message.error(e?.response?.data?.error?.message || '加载构建结果失败');
+                    return null;
+                }),
+            ]);
+            if (project) {
+                setGraphNodes(project.graph_data?.nodes || []);
+                setGraphEdges(project.graph_data?.edges || []);
+                void loadProject(pid, project);
+            } else {
+                void loadProject(pid);   // 兜底：失败也让 store 记录 loadError（左栏提示）
+            }
+            if (summaryData) setSummary(summaryData);
         } finally {
             setLoading(false);
         }
-        try {
-            const data = await projectsApi.getProject(pid);
-            setGraphNodes(data.graph_data?.nodes || []);
-            setGraphEdges(data.graph_data?.edges || []);
-        } catch { /* 图谱数据失败不阻塞 */ }
-    }, [pid]);
+    }, [pid, loadProject]);
 
     useEffect(() => { load(); }, [load]);
-    // 左栏身份段（知识域 / 更新时间）走共享 store，和项目详情页同一份元数据
-    useEffect(() => { loadProject(pid); }, [pid, loadProject]);
+    // 左栏身份段（知识域 / 更新时间）走共享 store：由上面的 load() 用同一份 getProject 填充
 
     // 切到别的项目时先清掉上一个项目的摘要与图谱，避免路由参数直切时短暂显示旧数据
     useEffect(() => {

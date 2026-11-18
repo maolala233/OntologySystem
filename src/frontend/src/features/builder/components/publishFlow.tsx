@@ -3,6 +3,14 @@
  * 点发布直接发；项目无知识域被后端 DOMAIN_REQUIRED 拦下时弹选择器
  * （可选已有或输入新名称创建），确认后带域重发——选域+发布一步完成。
  * 已设域的项目发布体验不变（一次点击直发）。
+ *
+ * 2026-11-19：
+ *  - 调用方已知项目没有知识域时（hasDomain === false）直接弹选择器，
+ *    不再先发一个注定 400 的探测请求；
+ *  - 选择面板改用合并状态：antd 在同一 tick 内先后回调 onChange /
+ *    onDomainNameChange，旧写法会用闭包里的另一份旧值回写，
+ *    domain_id 永远被覆盖成 undefined（只剩名字），带域重发因此可能一直 400；
+ *  - 弹窗内发布失败不自动关闭，提示后端信息后可直接重试。
  */
 import React from 'react';
 import { message, confirmModal } from '../../../shared/feedback';
@@ -19,14 +27,23 @@ export interface PublishResult {
 /** 弹窗内联选择面板：内部持有选中态并接回 value——不接的话 onChange 虽触发、
  * 输入框永远显示占位符（"选了没反应"的另一半根因），选中后即时回填 */
 const DomainPickPane: React.FC<{ onPick: (id?: number, name?: string) => void }> = ({ onPick }) => {
-    const [id, setId] = React.useState<number | undefined>(undefined);
-    const [name, setName] = React.useState<string | undefined>(undefined);
+    // 选中一个域时，KnowledgeDomainSelector 会在同一 tick 内先后回调
+    // onChange(id) 与 onDomainNameChange(name)；用 ref 合并两份值，
+    // 避免后一次回调拿旧闭包把前一次的结果覆盖成 undefined
+    const pickedRef = React.useRef<{ id?: number; name?: string }>({});
+    const [picked, setPicked] = React.useState<{ id?: number; name?: string }>({});
+    const emit = (patch: { id?: number; name?: string }) => {
+        const next = { ...pickedRef.current, ...patch };
+        pickedRef.current = next;
+        setPicked(next);
+        onPick(next.id, next.name);
+    };
     return (
         <KnowledgeDomainSelector
-            value={id}
-            onChange={(v) => { setId(v); onPick(v, name); }}
-            domainName={name}
-            onDomainNameChange={(n) => { setName(n); onPick(id, n); }}
+            value={picked.id}
+            onChange={(v) => emit({ id: v })}
+            domainName={picked.name}
+            onDomainNameChange={(n) => emit({ name: n })}
         />
     );
 };
@@ -36,12 +53,18 @@ const DomainPickPane: React.FC<{ onPick: (id?: number, name?: string) => void }>
  * 返回发布结果；用户取消/发布失败返回 null；其他错误（门控未过等）原样抛出，
  * 由调用方的既有错误处理展示。
  */
-export async function publishWithDomain(projectId: number): Promise<PublishResult | null> {
-    try {
-        return await publishApi.publish(projectId, {});
-    } catch (e: any) {
-        const code = e?.response?.data?.error?.code;
-        if (code !== 'DOMAIN_REQUIRED') throw e;
+export async function publishWithDomain(
+    projectId: number,
+    opts?: { hasDomain?: boolean },
+): Promise<PublishResult | null> {
+    // hasDomain === false：调用方已经知道项目没有知识域，别再发一次注定 400 的探测
+    if (opts?.hasDomain !== false) {
+        try {
+            return await publishApi.publish(projectId, {});
+        } catch (e: any) {
+            const code = e?.response?.data?.error?.code;
+            if (code !== 'DOMAIN_REQUIRED') throw e;
+        }
     }
 
     let domainId: number | undefined;
@@ -81,7 +104,7 @@ export async function publishWithDomain(projectId: number): Promise<PublishResul
                 } catch (e: any) {
                     const err = e?.response?.data?.error || e?.response?.data;
                     message.error(err?.message || '发布失败');
-                    resolve(null);
+                    return Promise.reject(); // 保持弹窗打开：改选/重试即可，不必回页面再点一次
                 }
             },
             onCancel: () => resolve(null),

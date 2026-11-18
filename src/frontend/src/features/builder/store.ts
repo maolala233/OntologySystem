@@ -5,6 +5,7 @@
 import { create } from 'zustand';
 
 import { projectsApi } from '../../api/projects';
+import type { ProjectData } from '../../types/ontology';
 
 export type BuilderTab = 'documents' | 'schema' | 'graph' | 'timeline';
 
@@ -20,7 +21,8 @@ interface BuilderState {
     projectUpdatedAt?: string;
     loading: boolean;
     loadError: boolean;
-    loadProject: (projectId: number) => Promise<void>;
+    /** preloaded：调用方已经取回同一份 project 时直接喂进来，避免重复 GET /api/projects/{id} */
+    loadProject: (projectId: number, preloaded?: ProjectData) => Promise<void>;
     reset: () => void;
 }
 
@@ -35,7 +37,7 @@ export const useBuilderStore = create<BuilderState>((set) => ({
     projectUpdatedAt: undefined,
     loading: false,
     loadError: false,
-    loadProject: async (projectId: number) => {
+    loadProject: async (projectId: number, preloaded?: ProjectData) => {
         // 切到别的项目时先清掉上一个项目的元数据：否则从 A 返回、再进 B 的瞬间，
         // 顶部标题/状态徽标/知识域会先显示 A 的内容，fetch 回来才被纠正（2026-11-12 实测）。
         // projectId 故意不在这里更新——它最后一次被赋值即"当前数据属于哪个项目"，
@@ -54,7 +56,7 @@ export const useBuilderStore = create<BuilderState>((set) => ({
             }),
         }));
         try {
-            const p = await projectsApi.getProject(projectId);
+            const p = preloaded ?? await projectsApi.getProject(projectId);
             set({
                 projectId,
                 projectName: p.name || '',

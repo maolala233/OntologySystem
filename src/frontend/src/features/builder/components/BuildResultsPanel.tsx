@@ -25,10 +25,12 @@ interface Props {
   checks?: BuildSummary['checks'];
   /** 已发布时的版本号（展示"已发布 vN"标签） */
   publishedVersionNo?: number | null;
+  /** 项目是否已有知识域：false 时直接弹选择器，不再发一次注定 400 的探测请求 */
+  hasDomain?: boolean;
   onPublishedChange?: () => void;
 }
 
-const BuildResultsPanel: React.FC<Props> = ({ projectId, summary, checks, publishedVersionNo, onPublishedChange }) => {
+const BuildResultsPanel: React.FC<Props> = ({ projectId, summary, checks, publishedVersionNo, hasDomain, onPublishedChange }) => {
   const navigate = useNavigate();
   const [publishing, setPublishing] = useState(false);
   // 发布状态以后端 is_published 为准；版本号仅取自 publication 快照供展示
@@ -39,7 +41,7 @@ const BuildResultsPanel: React.FC<Props> = ({ projectId, summary, checks, publis
     setPublishing(true);
     try {
       // 无知识域时弹选择器带域发布（2026-11-07：选域从构建期移到发布期）
-      const r = await publishWithDomain(projectId);
+      const r = await publishWithDomain(projectId, { hasDomain });
       if (r) {
         message.success(`发布完成：v${r.version_no} 已进入资产中心`);
         onPublishedChange?.();
