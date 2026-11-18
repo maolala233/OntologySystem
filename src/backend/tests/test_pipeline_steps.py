@@ -164,6 +164,24 @@ def test_unknown_stage_falls_back_to_single_step(pipeline_module):
     assert steps[0]["state"] == "running"
 
 
+def test_failed_step_label_uses_current_substep(pipeline_module):
+    # schema 30% 失败 → 正在跑「批次抽取」，报错文案应准确到子步骤
+    assert pipeline_module._failed_step_label("schema", _sub(30, "failed")) == "批次抽取"
+    # instances 82% 失败 → 「指代消解与结构展开」
+    assert (pipeline_module._failed_step_label("instances", _sub(82, "failed"))
+            == "指代消解与结构展开")
+    # 没有子进度可判断 → 空串，调用方回退阶段中文名
+    assert pipeline_module._failed_step_label("schema", None) == ""
+    assert pipeline_module._failed_step_label("schema", {}) == ""
+
+
+def test_stage_failed_message_prefers_substep(pipeline_module):
+    err = pipeline_module._StageFailed("schema", "无法连接模型服务", "批次抽取")
+    assert str(err) == "批次抽取失败：无法连接模型服务"
+    fallback = pipeline_module._StageFailed("schema", "无法连接模型服务")
+    assert str(fallback) == "骨架抽取失败：无法连接模型服务"
+
+
 def test_build_stage_subs_replays_all_stages(pipeline_module, progress_state):
     tid = "pipeline-test"
     progress_state[f"{tid}:parse"] = {

@@ -415,12 +415,29 @@ class _StageFailed(RuntimeError):
     自带阶段名（「骨架抽取失败：无法连接模型服务…」），外层收尾时不得再走一次
     _friendly_error——那会把前缀洗掉（429/鉴权等分支只返回通用文案），用户就又
     不知道是哪一步挂了。stage_key 留给收尾逻辑定位红格子。
+    step_label：失败时正在跑的子步骤名（「批次抽取失败：…」），比只报阶段名
+    更能定位问题；拿不到时回退阶段中文名。
     """
 
-    def __init__(self, stage_key: str, reason: str):
+    def __init__(self, stage_key: str, reason: str, step_label: str = ""):
         self.stage_key = stage_key
         self.reason = reason
-        super().__init__(f"{_stage_label(stage_key)}失败：{reason}")
+        super().__init__(f"{step_label or _stage_label(stage_key)}失败：{reason}")
+
+
+def _failed_step_label(stage_key: str, sub: Optional[dict]) -> str:
+    """失败时当前子步骤的中文名（如「批次抽取」）；无法判断返回空串。"""
+    if not isinstance(sub, dict) or not sub:
+        return ""
+    try:
+        steps = build_sub_steps(stage_key, sub)
+        cur = next((s for s in steps if s.get("state") == "failed"), None) \
+            or next((s for s in steps if s.get("state") == "running"), None)
+        if cur:
+            return str(cur.get("label") or "")
+    except Exception:  # noqa: BLE001 —— 文案增强失败不影响原始错误
+        pass
+    return ""
 
 
 def _run_stage_task(task, stage_key: str, stages: list[dict], task_id: str,
@@ -448,7 +465,12 @@ def _run_stage_task(task, stage_key: str, stages: list[dict], task_id: str,
     if res.failed():
         err = res.result
         msg = str(getattr(err, "message", None) or err)[:300]
-        raise _StageFailed(stage_key, _friendly_error(msg))
+        try:
+            sub = get_task_progress(sub_id)
+        except Exception:  # noqa: BLE001
+            sub = None
+        raise _StageFailed(stage_key, _friendly_error(msg),
+                           _failed_step_label(stage_key, sub))
     try:
         sub_prog = get_task_progress(sub_id)
         if sub_prog and sub_prog.get("message"):
@@ -624,7 +646,8 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 sub = None
             raw = str((sub or {}).get("message") or res.get("reason") or "未知原因")
             reason = _friendly_error(raw)
-            failed = _StageFailed(stage_key, reason)
+            failed = _StageFailed(stage_key, reason,
+                                  _failed_step_label(stage_key, sub))
             st = _stage(stages, stage_key)
             st["status"] = "failed"
             st["detail"] = str(failed)
