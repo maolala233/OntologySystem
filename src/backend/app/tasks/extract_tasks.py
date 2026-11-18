@@ -86,29 +86,43 @@ def is_cancelled(task_id: str) -> bool:
 # inline 的 task_id 形如 inline-<hex>，作为 celery task.apply 的 task_id 传入，
 # 任务体内的 self.request.id 与之对齐 → 进度键/取消键/SSE 与 Celery 模式完全一致。
 
-def _extract_worker_alive(timeout: float = 2.0) -> bool:
+# worker 存活探测缓存（2026-11-18）：
+# Celery 广播 ping 在 Windows 本地要 ~2.9s、active_queues 再 ~1.2s，每次「一键构建 /
+# 重新构建」都同步等这两趟往返，就是按钮 loading 3~4 秒的主因。改为只查一次
+# active_queues（同时证明 worker 在线 + 消费哪个队列）并缓存：健康时 15s 内直接复用，
+# 不健康只缓存 2s，worker 起来后能立刻切回 Celery 模式。
+_ALIVE_CACHE_TTL_OK = 15.0
+_ALIVE_CACHE_TTL_MISS = 2.0
+_alive_cache: tuple[float, bool] | None = None
+
+
+def _extract_worker_alive(timeout: float = 1.0) -> bool:
     """探测是否有 Celery worker 在线且消费 extract 队列。
 
     返回 False 表示：无任何 worker / broker 不可达 / 无消费 extract 队列的 worker——
     调用方应降级为进程内执行，避免任务投进队列后无人消费。
     """
+    global _alive_cache
+    now = time.monotonic()
+    if _alive_cache is not None:
+        cached_at, cached_ok = _alive_cache
+        ttl = _ALIVE_CACHE_TTL_OK if cached_ok else _ALIVE_CACHE_TTL_MISS
+        if now - cached_at < ttl:
+            return cached_ok
+
     from app.core.logging import logger
 
     try:
-        pong = celery_app.control.ping(timeout=timeout)  # {worker: {'ok': 'pong'}}
-        if not pong:
-            return False
-    except Exception as e:  # noqa: BLE001 —— broker 不可达
+        queues = celery_app.control.inspect(timeout=timeout).active_queues() or {}
+        alive = any(
+            any(str(q.get("name")) == "extract" for q in worker_queues)
+            for worker_queues in queues.values()
+        )
+    except Exception as e:  # noqa: BLE001 —— broker 不可达 / 探测异常按无 worker 处理
         logger.warning(f"[extract dispatch] worker 探测失败（broker 不可达？）: {e}")
-        return False
-    try:
-        queues = celery_app.control.inspect().active_queues() or {}
-    except Exception:  # noqa: BLE001 —— 探测异常按无 worker 处理
-        queues = {}
-    for worker_queues in queues.values():
-        if any(str(q.get("name")) == "extract" for q in worker_queues):
-            return True
-    return False
+        alive = False
+    _alive_cache = (now, alive)
+    return alive
 
 
 def _dispatch(task, args: tuple, kwargs: dict, project_id: int) -> dict:
