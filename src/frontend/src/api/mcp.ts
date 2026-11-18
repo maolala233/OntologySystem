@@ -1,5 +1,5 @@
 // src/api/mcp.ts - MCP 控制台（R8）：令牌管理 + 真实 JSON-RPC 调用（POST /mcp 网关）
-import apiClient, { API_BASE_URL, forceLogout } from './client';
+import apiClient, { API_BASE_URL } from './client';
 
 // ───────────────────────── 令牌管理（admin 端 /api/admin/mcp-tokens + 自助端 /api/mcp-tokens，
 // ───────────────────────── 明文仅签发时返回一次）
@@ -61,6 +61,42 @@ export async function revokeMyMcpToken(tokenId: number): Promise<void> {
 // ───────────────────────── MCP 端点（默认按页面地址自动推导；可被 localStorage 覆盖，
 // ───────────────────────── 适配容器化/反代部署：端口映射改变或同域代理时在控制台改一次即可）
 
+// ─────── 明文令牌（后端只存 SHA-256，明文仅在签发时返回一次）
+// 存 sessionStorage：只活在当前标签页生命周期内，关掉标签页即消失。
+// 不用 localStorage——它对任何 XSS 都是全暴露的，而明文等价于该项目的 MCP 访问权；
+// 旧版本残留的 localStorage 副本在读写时顺手清掉（2026-11-18）。
+const plainKey = (tokenId: number) => `mcp_plain_${tokenId}`;
+
+export function savePlainToken(tokenId: number, plain: string): void {
+    try {
+        sessionStorage.setItem(plainKey(tokenId), plain);
+        localStorage.removeItem(plainKey(tokenId)); // 迁移旧数据
+    } catch { /* 隐私模式等存储不可用：退化为本页不可恢复明文 */ }
+}
+
+export function getPlainToken(tokenId: number): string {
+    try {
+        const current = sessionStorage.getItem(plainKey(tokenId));
+        if (current) return current;
+        // 旧版本把明文存在 localStorage：读到就搬进 sessionStorage 并删掉旧副本
+        const legacy = localStorage.getItem(plainKey(tokenId));
+        if (legacy) {
+            sessionStorage.setItem(plainKey(tokenId), legacy);
+            localStorage.removeItem(plainKey(tokenId));
+            return legacy;
+        }
+        return '';
+    } catch {
+        return '';
+    }
+}
+
+export function dropPlainToken(tokenId: number): void {
+    try {
+        sessionStorage.removeItem(plainKey(tokenId));
+        localStorage.removeItem(plainKey(tokenId));
+    } catch { /* ignore */ }
+}
 export const MCP_ENDPOINT_KEY = 'mcp_endpoint';
 
 /** 默认端点：host 随浏览器地址栏（部署 IP/域名）。同域部署时 API_BASE_URL 为空，
@@ -115,25 +151,38 @@ export interface McpToolSpec {
 
 let rpcIdCounter = 1;
 
-/** 调用 MCP 网关（initialize / ping / tools/list / tools/call / resources/list）。 */
+/** 调用 MCP 网关（initialize / ping / tools/list / tools/call / resources/list）。
+ *  超时：网关无响应时 20s 中止，避免连接按钮一直挂着。
+ *  401 的语义：网关只认 sk-mcp-* 令牌，401 表示**这个 MCP 令牌**无效/过期/被撤销，
+ *  与平台登录态无关——不能 forceLogout，否则令牌一过期整站被踢到登录页（2026-11-18）。
+ *  错误按 JSON-RPC 的 error 原样抛出，由调用方展示。 */
 export async function mcpRpc(
     bearerToken: string,
     method: string,
     params?: Record<string, unknown>,
     endpoint?: string,
+    timeoutMs = 20_000,
 ): Promise<RpcResponse['result']> {
-    const resp = await fetch(endpoint ?? getMcpEndpoint(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bearerToken}` },
-        body: JSON.stringify({ jsonrpc: '2.0', id: rpcIdCounter++, method, params: params ?? {} }),
-    });
-    if (resp.status === 401) {
-        forceLogout();
-        throw new McpRpcError(-32000, '登录态失效，请重新登录');
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let resp: Response;
+    try {
+        resp = await fetch(endpoint ?? getMcpEndpoint(), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bearerToken}` },
+            body: JSON.stringify({ jsonrpc: '2.0', id: rpcIdCounter++, method, params: params ?? {} }),
+            signal: controller.signal,
+        });
+    } catch (e: any) {
+        if (e?.name === 'AbortError') throw new McpRpcError(-32000, `网关 ${Math.round(timeoutMs / 1000)}s 内无响应`);
+        throw new McpRpcError(-32000, `无法连接 MCP 网关：${e?.message || e}`);
+    } finally {
+        clearTimeout(timer);
     }
     const data = await resp.json().catch(() => null);
     if (!data) throw new McpRpcError(-32700, `网关响应不是合法 JSON（HTTP ${resp.status}）`);
     if (data.error) throw new McpRpcError(data.error.code, data.error.message, data.error.data);
+    if (!resp.ok) throw new McpRpcError(-32000, `网关返回 HTTP ${resp.status}`);
     return data.result ?? {};
 }
 

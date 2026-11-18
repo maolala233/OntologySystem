@@ -128,22 +128,45 @@ apiClient.interceptors.response.use(
     }
 );
 
-// ---- 并发 GET 合并 ----
-// React StrictMode（仅开发模式）会把挂载 effects 跑两遍，首屏列表接口因此成双。
-// 这里把「同时进行中」的同 URL+参数 GET 合并成一次，请求结束立即释放——不做结果缓存，
-// 后续重新进入页面仍然现取最新数据。
-const inflightGets = new Map<string, Promise<unknown>>();
+// ---- 并发 GET 合并（统一入口）----
+// 同一份数据经常被两处同时要：React StrictMode（仅开发模式）会把挂载 effect 跑两遍，
+// 一个页面里的两个组件也可能各取一次。以前只有少数接口走 sharedGet，其余照样双发
+// （2026-11-18：资产中心进页面 3 个请求，/api/domains 两次）。
+// 现在直接在 axios 实例的 get 上合并：同 URL + 同参数、且在极短窗口内（同一轮挂载，
+// 250ms）同时在飞的请求只发一次。不做结果缓存——请求结束即释放，之后再来照常回源，
+// 删除/修改后的刷新不会被先前的旧响应污染。
+const INFLIGHT_WINDOW_MS = 250;
+const inflightGets = new Map<string, { at: number; p: Promise<unknown> }>();
+const rawGet = apiClient.get.bind(apiClient) as typeof apiClient.get;
 
-export function sharedGet<T = unknown>(url: string, config?: { params?: unknown }): Promise<T> {
-    const key = `${url}?${JSON.stringify(config?.params ?? null)}`;
+apiClient.get = ((url: string, config?: Parameters<typeof rawGet>[1]) => {
+    // 带取消信号的 GET 不合并：合并后一方 abort 会连带取消另一方的请求
+    if (config?.signal) return rawGet(url, config);
+    // 一次性票据不合并：两个 EventSource 必须各拿各的 ticket
+    if (url.includes('/api/auth/sse-ticket')) return rawGet(url, config);
+    let paramsKey: string;
+    try {
+        paramsKey = JSON.stringify(config?.params ?? null);
+    } catch {
+        return rawGet(url, config); // 参数不可序列化（循环引用等）：不参与合并
+    }
+    const key = `${url}?${paramsKey}#${config?.responseType ?? ''}`;
     const hit = inflightGets.get(key);
-    if (hit) return hit as Promise<T>;
-    const p = apiClient
-        .get<T>(url, config as any)
-        .then((r) => r.data)
-        .finally(() => { inflightGets.delete(key); });
-    inflightGets.set(key, p);
+    if (hit && Date.now() - hit.at < INFLIGHT_WINDOW_MS) return hit.p;
+    const p = rawGet(url, config);
+    const entry = { at: Date.now(), p: p as Promise<unknown> };
+    inflightGets.set(key, entry);
+    // 成功/失败都释放：失败不会被后续调用粘住
+    const release = () => {
+        if (inflightGets.get(key) === entry) inflightGets.delete(key);
+    };
+    p.then(release, release);
     return p;
+}) as typeof apiClient.get;
+
+/** 取响应体（同样享受并发合并）：等价于 apiClient.get(...).then(r => r.data) */
+export function sharedGet<T = unknown>(url: string, config?: { params?: unknown }): Promise<T> {
+    return apiClient.get<T>(url, config as any).then((r) => r.data);
 }
 
 export { refreshAccessToken, forceLogout, API_BASE_URL };

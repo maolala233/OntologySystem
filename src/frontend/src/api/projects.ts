@@ -215,22 +215,16 @@ export const projectsApi = {
     },
 
     // 统一导出下载（semantica 适配层）：6 种 RDF 序列化 + 平台 JSON（可导回）
+    // 文件名以响应头 Content-Disposition 为准——后端每个导出响应都带它（含中文名，
+    // RDF/JSON/含推理三分支都设置），所以不必为了"兜底文件名"先取一次 /api/projects/{id}：
+    // 那次请求既挡在下载前面（串行多一个往返），又把整份 graph_data 白拉一遍（2026-11-18）
     exportProject: async (projectId: number, format: ExportFormatId): Promise<void> => {
-        // 先获取项目信息，用于下载失败时的兜底文件名
-        let projectName = `project_${projectId}`;
-        try {
-            const projectInfo = await apiClient.get(`/api/projects/${projectId}`);
-            projectName = projectInfo.data?.name || `project_${projectId}`;
-        } catch (e) {
-            console.error('[exportProject] 获取项目信息失败:', e);
-        }
-
         const response = await apiClient.get(`/api/projects/${projectId}/export`, {
             params: { format },
             responseType: 'blob',
         });
 
-        const fallback = `ontology_${projectName}.${EXPORT_FORMAT_EXT[format]}`;
+        const fallback = `ontology_project_${projectId}.${EXPORT_FORMAT_EXT[format]}`;
         const filename = resolveFilenameFromDisposition(response.headers['content-disposition'], fallback);
         triggerBlobDownload(new Blob([response.data]), filename);
     },

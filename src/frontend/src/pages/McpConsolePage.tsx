@@ -14,7 +14,7 @@ import {
 } from '@ant-design/icons';
 import {
     McpRpcError, createMcpToken, createMyMcpToken, getDefaultMcpEndpoint,
-    getMcpEndpoint, listMcpTokens, listMyMcpTokens,
+    getMcpEndpoint, listMcpTokens, listMyMcpTokens, getPlainToken, savePlainToken, dropPlainToken,
     mcpRpc, revokeMcpToken, revokeMyMcpToken, textFromCallResult,
     MCP_ENDPOINT_KEY,
     type McpTokenItem, type McpToolSpec,
@@ -164,10 +164,13 @@ export default function McpConsolePage() {
     const [tokens, setTokens] = useState<McpTokenItem[]>([]);
     const [selectedTokenId, setSelectedTokenId] = useState<number | null>(null);
     const bearer = useMemo(
-        () => (selectedTokenId != null ? localStorage.getItem(`mcp_plain_${selectedTokenId}`) ?? '' : ''),
+        () => (selectedTokenId != null ? getPlainToken(selectedTokenId) : ''),
         [selectedTokenId],
     );
     const [connected, setConnected] = useState(false);
+    // 连接/重连进行中：握手是两次串行往返（initialize → tools/list），
+    // 不给按钮 loading 的话连点会叠出两轮握手（2026-11-18）
+    const [connecting, setConnecting] = useState(false);
     const [serverInfo, setServerInfo] = useState<{ name?: string; version?: string } | null>(null);
     const [protocolVersion, setProtocolVersion] = useState<string | null>(null);
 
@@ -225,19 +228,34 @@ export default function McpConsolePage() {
         }
     }, [isAdmin]);
 
+    // 进页面只拉令牌列表（页面主体）。签发弹窗里的「持有人 / 项目」下拉按需加载：
+    // 以前一进页面就白拉一次 /api/projects/my（实测 750ms+，admin 还要再拉用户与公共项目），
+    // 而多数人根本不签发令牌（2026-11-18）
+    const pickerLoadedRef = useRef(false);
+    const [pickerLoading, setPickerLoading] = useState(false);
     useEffect(() => {
-        loadTokens();
+        if (!issueOpen || pickerLoadedRef.current) return;
+        pickerLoadedRef.current = true;
+        setPickerLoading(true);
         (async () => {
             try {
-                if (isAdmin) setUsers(await adminApi.listUsers()); // 仅 admin 需要持有人下拉
-                // 自助签发要求项目成员身份（后端 _require_project_member）：非 admin 只列自己的项目，
-                // 否则选了公共资产后点签发会 403「仅项目成员可为该项目签发令牌」；admin 走管理端接口不受限
-                setProjects(isAdmin
-                    ? await projectsApi.getSelectableProjects()
-                    : await projectsApi.getMyProjects());
-            } catch { /* 下拉留空 */ }
+                const [u, p] = await Promise.all([
+                    isAdmin ? adminApi.listUsers() : Promise.resolve<AdminUser[]>([]),
+                    isAdmin ? projectsApi.getSelectableProjects() : projectsApi.getMyProjects(),
+                ]);
+                if (isAdmin) setUsers(u); // 仅 admin 需要持有人下拉
+                setProjects(p);
+            } catch {
+                pickerLoadedRef.current = false; // 失败允许下次打开弹窗重试
+            } finally {
+                setPickerLoading(false);
+            }
         })();
-    }, [loadTokens, isAdmin]);
+    }, [issueOpen, isAdmin]);
+
+    useEffect(() => {
+        loadTokens();
+    }, [loadTokens]);
 
     const disconnect = useCallback(() => {
         setConnected(false);
@@ -284,6 +302,8 @@ export default function McpConsolePage() {
             message.warning('请先选择或签发令牌（明文仅签发时可见，已存本页内存）');
             return;
         }
+        if (connecting) return;
+        setConnecting(true);
         disconnect();
         try {
             const init = await rpc('initialize', { protocolVersion: '2024-11-05', capabilities: {} });
@@ -299,8 +319,10 @@ export default function McpConsolePage() {
             setConnected(false);
             const msg = e instanceof McpRpcError ? `RPC ${e.code}: ${e.message}` : String(e);
             message.error(`连接失败：${msg}`);
+        } finally {
+            setConnecting(false);
         }
-    }, [bearer, rpc, disconnect]);
+    }, [bearer, rpc, disconnect, connecting]);
 
     const listTools = useCallback(async () => {
         try {
@@ -395,7 +417,7 @@ export default function McpConsolePage() {
                     name: issueForm.name.trim(), can_write: issueForm.can_write,
                     expires_days: issueForm.expires_days || null,
                 });
-            localStorage.setItem(`mcp_plain_${created.id}`, created.token); // 仅本页内存，明文不落库
+            savePlainToken(created.id, created.token); // 仅当前标签页（sessionStorage），不落 localStorage
             setIssuedPlain(created.token);
             await loadTokens();
             setSelectedTokenId(created.id);
@@ -407,7 +429,7 @@ export default function McpConsolePage() {
     const doRevoke = useCallback(async (id: number) => {
         try {
             if (isAdmin) await revokeMcpToken(id); else await revokeMyMcpToken(id);
-            localStorage.removeItem(`mcp_plain_${id}`);
+            dropPlainToken(id);
             if (selectedTokenId === id) { setSelectedTokenId(null); disconnect(); }
             loadTokens();
         } catch {
@@ -637,12 +659,12 @@ export default function McpConsolePage() {
                         <section className="pt-1">
                             <div className="flex gap-2">
                                 {!connected ? (
-                                    <Button type="primary" block icon={<PlayCircleOutlined />} onClick={connect} disabled={!bearer}>
+                                    <Button type="primary" block icon={<PlayCircleOutlined />} onClick={connect} loading={connecting} disabled={!bearer || connecting}>
                                         连接
                                     </Button>
                                 ) : (
                                     <>
-                                        <Button block className="tk-soft-btn" icon={<ReloadOutlined />} onClick={connect}>重连</Button>
+                                        <Button block className="tk-soft-btn" icon={<ReloadOutlined />} onClick={connect} loading={connecting} disabled={connecting}>重连</Button>
                                         <Button
                                             block
                                             icon={<DisconnectOutlined />}
@@ -655,7 +677,11 @@ export default function McpConsolePage() {
                                 )}
                             </div>
                             {!bearer && (
-                                <div className="mt-1.5 text-[11px] text-[#8A94AB]">先选择或签发令牌后才能连接</div>
+                                <div className="mt-1.5 text-[11px] text-[#8A94AB]">
+                                    {selectedTokenId != null
+                                        ? '该令牌的明文不在本标签页（明文只在签发时显示一次），请重新签发一个令牌'
+                                        : '先选择或签发令牌后才能连接'}
+                                </div>
                             )}
                         </section>
 
@@ -1238,7 +1264,7 @@ export default function McpConsolePage() {
                         {isAdmin && (
                             <div>
                                 <div className="text-xs text-[#66738F] mb-1">持有人</div>
-                                <Select className="w-full" placeholder="选择用户"
+                                <Select className="w-full" placeholder="选择用户" loading={pickerLoading}
                                     value={issueForm.user_id ?? undefined}
                                     onChange={v => setIssueForm(f => ({ ...f, user_id: v }))}
                                     options={users.map(u => ({ value: u.id, label: `${u.username}${u.role === 'admin' ? '（管理员）' : ''}` }))} />
@@ -1251,7 +1277,7 @@ export default function McpConsolePage() {
                         )}
                         <div>
                             <div className="text-xs text-[#66738F] mb-1">绑定项目（令牌仅能访问该项目数据）</div>
-                            <Select className="w-full" placeholder="选择项目"
+                            <Select className="w-full" placeholder="选择项目" loading={pickerLoading}
                                 value={issueForm.project_id ?? undefined}
                                 onChange={v => setIssueForm(f => ({ ...f, project_id: v }))}
                                 options={projects.map(p => ({ value: p.id, label: p.name }))} />

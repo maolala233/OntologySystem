@@ -24,7 +24,7 @@ const PURPOSES = [
 ] as const;
 
 const ModelConfigsPage: React.FC = () => {
-    const { user } = useAuthStore();
+    const { user, loaded: authLoaded } = useAuthStore();
     const isAdmin = user?.role === 'admin';
     const [rows, setRows] = useState<ModelConfigRow[]>([]);
     const [providers, setProviders] = useState<ProviderMeta[]>([]);
@@ -38,12 +38,19 @@ const ModelConfigsPage: React.FC = () => {
     const [providerSel, setProviderSel] = useState<string>('openai_compatible');
 
     // 普通用户可管理的项目（owner）；admin 不需要
+    // projectsReady：load() 依赖这份列表，没到手之前先不 load——
+    // 否则会先发一轮「空项目」的请求，等列表回来再整套重跑一次（双发，2026-11-18）
+    const [projectsReady, setProjectsReady] = useState(false);
     useEffect(() => {
-        if (isAdmin) return;
+        if (!authLoaded) return;        // 登录态还没 hydrate 完：先别判断角色、也别拉项目
+        if (isAdmin) { setProjectsReady(true); return; }
+        let alive = true;
         projectsApi.getMyProjects()
-            .then((ps) => setMyProjects(ps))
-            .catch(() => setMyProjects([]));
-    }, [isAdmin]);
+            .then((ps) => { if (alive) setMyProjects(ps); })
+            .catch(() => { if (alive) setMyProjects([]); })
+            .finally(() => { if (alive) setProjectsReady(true); });
+        return () => { alive = false; };
+    }, [authLoaded, isAdmin]);
 
     const load = async () => {
         setLoading(true);
@@ -76,7 +83,7 @@ const ModelConfigsPage: React.FC = () => {
         }
     };
 
-    useEffect(() => { load(); }, [activePurpose, isAdmin, myProjects.length]);
+    useEffect(() => { if (projectsReady) void load(); }, [activePurpose, isAdmin, myProjects, projectsReady]);
 
     // 权限判定：该行当前用户是否可管理（编辑/设默认/删除）
     const canManage = (row: ModelConfigRow) =>

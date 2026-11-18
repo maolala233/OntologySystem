@@ -142,13 +142,17 @@ export default function CopilotWidget() {
         if (Number.isFinite(routePid) && routePid > 0) setProjectId(routePid);
     }, [routePid]);
 
+    // 小窗只在构建器五 Tab 里存在（见下方 isBuilderRoute 门控）：
+    // 组件为了保住会话状态始终挂载，但数据请求必须跟着门控走——
+    // 否则每进一个页面（工作台/我的项目/资产中心…）都会白拉 2 个接口（2026-11-18）
     useEffect(() => {
+        if (!isBuilderRoute) return;
         (async () => {
             try {
                 setProjects(await projectsApi.getSelectableProjects());
             } catch { /* 项目列表失败不阻断小窗 */ }
         })();
-    }, []);
+    }, [isBuilderRoute]);
 
     // 工具栏按钮开合（BuilderPage 头部 CopilotToggle 派发；悬浮球已取消——
     // 用户反馈固定悬浮在页角与布局不搭，入口收进构建器顶栏）
@@ -163,6 +167,8 @@ export default function CopilotWidget() {
     }, []);
 
     useEffect(() => {
+        // 同上：非构建页不取模型/会话——这时小窗根本不渲染，两条请求纯属浪费
+        if (!isBuilderRoute) return;
         if (projectId == null) { setModels([]); setSessions([]); setMsgs([]); setSessionId(null); return; }
         (async () => {
             try {
@@ -176,7 +182,7 @@ export default function CopilotWidget() {
         setSessionId(null);
         setStage('');
         refreshSessions(projectId);
-    }, [projectId, refreshSessions]);
+    }, [projectId, refreshSessions, isBuilderRoute]);
 
     useEffect(() => {
         bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: 'smooth' });
