@@ -1798,6 +1798,31 @@ try:
     _set_prog(_tid, "adjudicate", 100, "脚本构建完成（MVP）",
               {"project_id": pid, "pipeline": True, "stages": _stages},
               queue="extract", status="completed")
+    # 各阶段子步骤：页面详情区读 {tid}:{stage} 的 stats.steps。脚本没有子任务
+    # 写这些键，必须补上，否则每个阶段都显示「后端未下发该阶段的分步明细」。
+    _sub_steps = {
+        "parse": [("inspect", "检查已解析文档"), ("resync", "补写向量"), ("parse", "逐份解析")],
+        "schema": [("read", "读取切片"), ("extract", "批次抽取"), ("assemble", "骨架装配"),
+                   ("structure", "结构映射"), ("stitch", "跨切片缝合"),
+                   ("write", "写入画布与行表")],
+        "instances": [("read", "读取切片"), ("extract", "批次抽取"),
+                      ("enrich", "指代消解与结构展开"), ("write", "写入画布与行表")],
+        "resolution": [("load", "读取实体与属性键"), ("detect", "相似度聚类判定"),
+                       ("merge", "合并与待审登记")],
+        "conflicts": [("scan", "扫描结果与约束"), ("materialize", "检出冲突并登记待审")],
+        "selfcheck": [("inspect", "机检扫描"), ("repair", "AI 定向修复"), ("verify", "复检验证")],
+        "axioms": [("scan", "公理扫描"), ("business_rules", "业务规则挖掘")],
+        "adjudicate": [("adjudicate", "AI 结果审查"), ("cq_eval", "能力问题评测")],
+    }
+    for _st in _stages:
+        # 脚本没有冲突检测这一步：标 skipped，避免把未执行的步骤显示成已完成
+        _state = "skipped" if _st["key"] == "conflicts" else "done"
+        _steps = [{"key": _k, "label": _l, "state": _state,
+                   "percent": 100 if _state == "done" else 0}
+                  for _k, _l in _sub_steps.get(_st["key"], [])]
+        _set_prog(f"{_tid}:{_st['key']}", _st["key"],
+                  100 if _state == "done" else 0, _st["detail"],
+                  {"steps": _steps}, queue="extract", status="completed")
     _pipeline_redis().set(_LAST_KEY.format(project_id=pid), _tid, ex=7 * 24 * 3600)
     print(f"[H 落地] 构建记录已写入（页面时间线可用，task={_tid}）")
 except Exception as _e:  # noqa: BLE001
