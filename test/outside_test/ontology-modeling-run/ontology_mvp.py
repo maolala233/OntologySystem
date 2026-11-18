@@ -1701,6 +1701,18 @@ os.chdir(BK)
 from sqlalchemy.orm.attributes import flag_modified
 from app.infrastructure.database import SessionLocal, Project
 from app.infrastructure.neo4j_client import neo4j_client
+# 容器内固定使用 compose 服务名（2026-11-18 用户要求写死）：平台配置若回退到
+# localhost，容器里的 localhost 指向容器自身，必然 Connection refused。
+from neo4j import GraphDatabase as _GraphDatabase
+if neo4j_client.uri != "bolt://neo4j:7687":
+    if neo4j_client.driver:
+        try:
+            neo4j_client.driver.close()
+        except Exception:  # noqa: BLE001
+            pass
+    neo4j_client.uri = "bolt://neo4j:7687"
+    neo4j_client.driver = _GraphDatabase.driver(
+        neo4j_client.uri, auth=(neo4j_client.username, neo4j_client.password))
 db = SessionLocal()
 proj = db.query(Project).filter(Project.id == pid).first()
 proj.graph_data = gd; flag_modified(proj, "graph_data"); db.commit()
