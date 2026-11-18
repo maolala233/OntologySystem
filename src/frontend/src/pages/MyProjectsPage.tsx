@@ -655,17 +655,21 @@ const MyProjectsPage: React.FC = () => {
                     color: #1F2A44;
                 }
                 /* 查询条样式走全站 .tk-query-bar（冷蓝纸面 + 控件去边框 + 占位符加深） */
-                /* 新建项目（2026-11-13）：antd 默认主色 #5B8DEF 在整页浅色里是最亮的一块，
-                   抢过上方 Hero；主操作改用深一档品牌蓝，投影收小，层级降到"重要但不用喊" */
+                /* 新建项目（2026-11-13 首版纯色 #3F6FD8；2026-11-18 起与项目概览页对齐）：
+                   页面级主按钮统一成「上亮下深的品牌竖向渐变」，
+                   平均色仍是原来的深一档，不抢上方 Hero，但和全站主按钮同一套语言 */
                 .mp-new-btn.ant-btn-primary {
-                    background: #3F6FD8 !important;
-                    box-shadow: 0 6px 16px -12px rgba(47, 98, 216, 0.55) !important;
+                    background: linear-gradient(180deg, #5B8DEF 0%, #3F6FD8 100%) !important;
+                    border-color: transparent !important;
+                    box-shadow:
+                        0 8px 18px -12px rgba(47, 98, 216, 0.65),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.22) !important;
                 }
                 .mp-new-btn.ant-btn-primary:not(:disabled):hover {
-                    background: #3562C8 !important;
+                    background: linear-gradient(180deg, #5486EC 0%, #3865CE 100%) !important;
                 }
                 .mp-new-btn.ant-btn-primary:not(:disabled):active {
-                    background: #2F58B8 !important;
+                    background: linear-gradient(180deg, #4E7FE4 0%, #335DC0 100%) !important;
                 }
                 /* 空状态「清除筛选」：默认按钮在浅色画布上太素，改成品牌蓝描边 + 白底，
                    hover 时底色和描边一起加深（与 Hero 的幽灵按钮同一套语言） */

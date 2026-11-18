@@ -464,6 +464,23 @@ export default function QaPage() {
                     background-color: rgba(240, 178, 122, 0.12) !important;
                     border-color: rgba(240, 178, 122, 0.55) !important;
                 }
+                /* 空对话的示例问题卡：和表单字段同一支浅冷蓝，不再用半透明白 */
+                .qa-sample-btn {
+                    border-color: var(--field-border);
+                    background: var(--field-bg);
+                    color: #3D4B66;
+                }
+                .qa-sample-btn:not(:disabled):hover {
+                    border-color: var(--field-border-focus);
+                    background: var(--field-bg-hover);
+                    color: #2A57C6;
+                }
+                .qa-sample-btn:disabled {
+                    cursor: not-allowed;
+                    border-color: var(--field-disabled-border);
+                    background: var(--field-disabled-bg);
+                    color: #B7C1D4;
+                }
                 @property --qa-orbit-angle {
                     syntax: '<angle>';
                     inherits: false;
@@ -752,7 +769,8 @@ export default function QaPage() {
                                 )}
 
                                 {/* 示例问题：空状态下唯一能一键开始的动作，做成竖排卡片，
-                                    比原来三个长短不一的灰胶囊更容易点中 */}
+                                    比原来三个长短不一的灰胶囊更容易点中；
+                                    底色跟表单字段统一成浅冷蓝，不再用半透明白 */}
                                 <div className="mt-5 w-full max-w-lg text-left">
                                     <div className="mb-2 flex items-center gap-1.5 text-[12px] text-[#8A94AB]">
                                         <BulbOutlined className="text-[#5B8DEF]" />
@@ -770,18 +788,14 @@ export default function QaPage() {
                                                         setQuestion(q);
                                                         requestAnimationFrame(() => inputRef.current?.focus());
                                                     }}
-                                                    className={`group flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left text-[12.5px] transition-colors ${
-                                                        disabled
-                                                            ? 'cursor-not-allowed border-[#EDF1F8] bg-white/40 text-[#B7C1D4]'
-                                                            : 'border-[#E7EEF9] bg-white/70 text-[#3D4B66] hover:border-[#5B8DEF] hover:bg-white hover:text-[#2A57C6]'
-                                                    }`}
+                                                    className="qa-sample-btn group flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left text-[12.5px] transition-colors"
                                                 >
                                                     <span className="truncate">{q}</span>
                                                     <ArrowRightOutlined
                                                         className={`shrink-0 text-[10px] ${
                                                             disabled
                                                                 ? 'opacity-40'
-                                                                : 'text-[#B7C1D4] transition-all duration-200 group-hover:translate-x-0.5 group-hover:text-[#5B8DEF]'
+                                                                : 'text-[#9DB4D8] transition-all duration-200 group-hover:translate-x-0.5 group-hover:text-[#5B8DEF]'
                                                         }`}
                                                     />
                                                 </button>

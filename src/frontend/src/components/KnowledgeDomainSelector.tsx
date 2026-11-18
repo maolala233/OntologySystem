@@ -159,9 +159,9 @@ const KnowledgeDomainSelector: React.FC<KnowledgeDomainSelectorProps> = ({
                             {allowCreate && (
                                 <div style={{ padding: '8px 12px', borderTop: '1px solid #E4ECF8' }}>
                                     <Button
-                                        type="dashed"
                                         block
                                         icon={<PlusOutlined />}
+                                        className="tk-soft-btn tk-soft-btn-dashed"
                                         onClick={() => setIsCreateModalOpen(true)}
                                     >
                                         新建知识域

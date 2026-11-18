@@ -452,23 +452,87 @@ export default function McpConsolePage() {
     const effEndpoint = endpoint.trim() || defaultEndpoint;
 
     return (
-        <div className="h-full flex flex-col app-canvas mcp-surface">
+        <div className="h-full flex flex-col app-canvas">
             <style>{`
                 /* 内容卡片比外壳实、但不做实心白（2026-11-13）：
                    0.96 → 0.90，让底图的冷蓝透进来一丝，卡和外壳之间不再是一堵白墙。
                    再往下压（0.7 以下）卡片就和画布同色了，输入框、表单项会失去依托 */
                 .mcp-surface .surface-card {
-                    background: linear-gradient(180deg, rgba(255, 255, 255, 0.90) 0%, rgba(250, 252, 255, 0.86) 100%);
+                    background: linear-gradient(180deg, rgba(253, 254, 255, 0.94) 0%, rgba(246, 250, 255, 0.90) 100%);
                 }
-                /* 标签压薄（2026-11-13）：默认 Tag 是实心 #F1F4FA，一屏十几个小块
-                   叠在白卡上会显出一层层的"白补丁" */
+                /* 控制台里的裸控件不在 antd Form 内，补一套和表单一致的冷蓝皮肤 */
+                .mcp-surface .ant-input,
+                .mcp-surface .ant-input-affix-wrapper,
+                .mcp-surface .ant-input-number,
+                .mcp-surface .ant-picker,
+                .mcp-surface .ant-select:not(.ant-select-customize-input) .ant-select-selector {
+                    background: var(--field-bg) !important;
+                    border-color: var(--field-border) !important;
+                    color: #1F2A44 !important;
+                    box-shadow: none !important;
+                }
+                .mcp-surface .ant-input-affix-wrapper > input.ant-input,
+                .mcp-surface .ant-input-number-input,
+                .mcp-surface .ant-select-selection-search-input,
+                .mcp-surface .ant-picker input {
+                    background: transparent !important;
+                }
+                .mcp-surface .ant-input::placeholder,
+                .mcp-surface .ant-select-selection-placeholder,
+                .mcp-surface .ant-picker-input > input::placeholder {
+                    color: var(--field-placeholder) !important;
+                }
+                .mcp-surface .ant-input:not(:disabled):hover,
+                .mcp-surface .ant-input-affix-wrapper:not(.ant-input-affix-wrapper-disabled):hover,
+                .mcp-surface .ant-input-number:not(.ant-input-number-disabled):hover,
+                .mcp-surface .ant-picker:not(.ant-picker-disabled):hover,
+                .mcp-surface .ant-select:not(.ant-select-disabled):not(.ant-select-customize-input):hover .ant-select-selector {
+                    background: var(--field-bg-hover) !important;
+                    border-color: var(--field-border-hover) !important;
+                }
+                .mcp-surface .ant-input:focus,
+                .mcp-surface .ant-input-affix-wrapper:focus-within,
+                .mcp-surface .ant-input-number-focused,
+                .mcp-surface .ant-picker-focused,
+                .mcp-surface .ant-select-focused .ant-select-selector {
+                    background: var(--field-bg-focus) !important;
+                    border-color: var(--field-border-focus) !important;
+                    box-shadow: var(--field-ring) !important;
+                }
+                /* 结果 JSON 盒不再用纯白，跟卡片同一支冷白 */
+                .mcp-surface .bg-white {
+                    background-color: #FBFDFF !important;
+                }
+                /* 标签（HTTP Streamable / 数量 / MIME）：不再刷半透明白，
+                   统一成品牌淡蓝小胶囊，和页面冷调一致 */
                 .mcp-surface .ant-tag {
-                    background: rgba(255, 255, 255, 0.52) !important;
-                    border-color: rgba(219, 228, 242, 0.70) !important;
+                    background: rgba(91, 141, 239, 0.10) !important;
+                    border-color: rgba(91, 141, 239, 0.22) !important;
+                    color: #2A57C6;
+                }
+                /* 面板：bg-white/30 在浅画布上几乎看不见，换成冷白玻璃，给控制台分区 */
+                .mcp-surface [class~="bg-white/30"] {
+                    background: linear-gradient(180deg, rgba(253, 254, 255, 0.78) 0%, rgba(245, 250, 255, 0.70) 100%) !important;
+                }
+                /* 主按钮：和站内「开始使用 / 发布」同一支品牌渐变 */
+                .mcp-surface .ant-btn-primary {
+                    border-color: transparent !important;
+                    background: linear-gradient(135deg, #5B8DEF 0%, #4C7DE7 55%, #6E6BF0 100%) !important;
+                    box-shadow:
+                        inset 0 1px 0 rgba(255, 255, 255, 0.28),
+                        0 8px 18px -12px rgba(76, 125, 231, 0.75) !important;
+                }
+                .mcp-surface .ant-btn-primary:not(:disabled):hover {
+                    background: linear-gradient(135deg, #6B9BF5 0%, #5B8BF0 55%, #7E7BF5 100%) !important;
+                }
+                .mcp-surface .ant-btn-primary:disabled {
+                    background: #C5D5EE !important;
+                    color: #FFFFFF !important;
+                    box-shadow: none !important;
                 }
             `}</style>
             <Navbar breadcrumbs={[{ title: '首页', path: '/' }, { title: '工具' }, { title: 'MCP 服务' }]} />
-            <div className="flex flex-1 min-h-0">
+            <div className="flex flex-1 min-h-0 mcp-surface">
                 {/* ══ 左栏：连接配置 */}
                 <aside className="w-[260px] shrink-0 bg-white/30 border-r border-[#E4EBF7]/70 flex flex-col min-h-0">
                     {/* 标题 + 连接状态 */}
@@ -544,14 +608,14 @@ export default function McpConsolePage() {
                                 notFoundContent={<span className="text-xs text-[#66738F]">暂无令牌，点击「签发」创建</span>}
                             />
                             {selectedToken && (
-                                <div className="mt-2 rounded-lg border border-[#F0F4FB] bg-[#F7F9FD] px-2.5 py-2 space-y-1">
+                                <div className="mt-2 rounded-lg border border-[rgba(91,141,239,0.16)] bg-[rgba(91,141,239,0.06)] px-2.5 py-2 space-y-1">
                                     <div className="flex items-center justify-between gap-2">
                                         <span className="flex items-center gap-1.5 min-w-0">
                                             <span
-                                                className="shrink-0 rounded-full px-1.5 py-[2px] text-[10px] leading-none"
+                                                className="shrink-0 rounded-full border px-1.5 py-[2px] text-[10px] font-medium leading-none"
                                                 style={selectedToken.can_write
-                                                    ? { background: 'rgba(242, 185, 80, 0.20)', color: '#B8790F' }
-                                                    : { background: 'rgba(91, 141, 239, 0.12)', color: '#2A57C6' }}
+                                                    ? { background: 'rgba(242, 185, 80, 0.22)', color: '#B8790F', borderColor: 'rgba(242, 185, 80, 0.45)' }
+                                                    : { background: 'rgba(91, 141, 239, 0.14)', color: '#2A57C6', borderColor: 'rgba(91, 141, 239, 0.28)' }}
                                             >
                                                 {selectedToken.can_write ? '读写' : '只读'}
                                             </span>
@@ -578,7 +642,7 @@ export default function McpConsolePage() {
                                     </Button>
                                 ) : (
                                     <>
-                                        <Button block icon={<ReloadOutlined />} onClick={connect}>重连</Button>
+                                        <Button block className="tk-soft-btn" icon={<ReloadOutlined />} onClick={connect}>重连</Button>
                                         <Button
                                             block
                                             icon={<DisconnectOutlined />}
@@ -908,7 +972,7 @@ export default function McpConsolePage() {
                                                     <Button type="primary" icon={<PlayCircleOutlined />} onClick={runTool} loading={calling}>
                                                         运行工具
                                                     </Button>
-                                                    <Button icon={<CopyOutlined />} onClick={copyInput}>Copy Input</Button>
+                                                    <Button className="tk-soft-btn" icon={<CopyOutlined />} onClick={copyInput}>Copy Input</Button>
                                                 </div>
                                             </div>
 

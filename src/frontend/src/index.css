@@ -486,6 +486,11 @@ input[type="range"]::-moz-range-track {
   background: linear-gradient(180deg, #FFFFFF 0%, rgba(91, 141, 239, 0.24) 100%) !important;
 }
 
+/* 虚线版软按钮：用于下拉里的「新建知识域」这类新增动作 */
+.tk-soft-btn-dashed.ant-btn-default {
+  border-style: dashed !important;
+}
+
 /* 轻量警示按钮（2026-11-18）：构建中的「停止」这类打断动作——琥珀纸面 + 同色文字，
    比白底清楚，又不像红色删除那么重 */
 .tk-warn-soft-btn.ant-btn-default {
@@ -788,6 +793,15 @@ body .ant-form .ant-input-number-input,
 body .ant-form .ant-select-selection-search-input,
 body .ant-form .ant-picker input {
   background: transparent;
+}
+
+/* 内层 input 不参与字段皮肤：聚焦底色/描边只画在外层 wrapper 上。
+   否则输入文字时，框内部会再出现一块底色或一圈边框（2026-11-18 反馈） */
+body .ant-form .ant-input-affix-wrapper > input.ant-input:hover,
+body .ant-form .ant-input-affix-wrapper > input.ant-input:focus {
+  background: transparent !important;
+  border-color: transparent;
+  box-shadow: none;
 }
 
 body .ant-form .ant-input:not(:disabled):hover,
