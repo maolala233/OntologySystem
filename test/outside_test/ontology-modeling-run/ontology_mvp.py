@@ -1582,10 +1582,12 @@ for (lab, cls), iid in inst_id.items():
                            "class_label": cls,
                            "properties": {k: str(v)[:200] for k, v in props.items() if str(k).strip() and v not in (None, "")},
                            "source_quote": evi[:200], "source_document": _srcdoc}})
-# rdf:type 边（实例→类节点）：前端画布"展开实例"/实例挂树/详情页实例数全部依赖它
+# rdf:type 边（实例→类节点）：前端画布"展开实例"/实例挂树/详情页实例数全部依赖它。
+# 必须进 edges：此前误 append 到 nodes，画布多出上百个 rdf:type 假节点、
+# 实例挂树/类型边全丢，行表也会把假节点双写成实体。
 for (_il, _ic), _iid in list(inst_id.items()):
     if _ic in CID:
-        nodes.append({"id": f"t_{_iid}", "type": "smoothstep", "label": "rdf:type",
+        edges.append({"id": f"t_{_iid}", "type": "smoothstep", "label": "rdf:type",
                       "source": _iid, "target": CID[_ic],
                       "data": {"type": "ObjectProperty", "relation": "rdf:type", "confidence": 1.0}})
 # 收编兜底（F 专家"收编到业务对象"纪律的代码防线）：无任何类间边连接的类
@@ -1667,8 +1669,33 @@ for _a in axioms:
         _pl = str(_a.get("rel") or "").strip()
         if _pl in _op_by:
             _op_by[_pl]["functional"] = True
+# 平台详情页的统计口径：数据属性读 schema.datatype_properties、业务规则读
+# schema.business_rules；只塞进 classes.properties 会让页面显示 0。
+_dt_props: list[dict] = []
+_seen_dp: set[tuple[str, str]] = set()
+for _c in card["classes"]:
+    _cl = str(_c.get("label") or "").strip()
+    _pr = _c.get("properties") or {}
+    _names = list(_pr.keys()) if isinstance(_pr, dict) else list(_pr)
+    for _pn in _names:
+        _n = str(_pn or "").strip()
+        if _cl and _n and (_cl, _n) not in _seen_dp:
+            _seen_dp.add((_cl, _n))
+            _dt_props.append({"name": _n, "domain": _cl, "data_type": "string"})
+for _i in card["instances"]:
+    if not isinstance(_i, dict):
+        continue
+    _cl = str(_i.get("class") or "").strip()
+    for _pn in (_i.get("props") or {}):
+        _n = str(_pn or "").strip()
+        if _cl and _n and (_cl, _n) not in _seen_dp:
+            _seen_dp.add((_cl, _n))
+            _dt_props.append({"name": _n, "domain": _cl, "data_type": "string"})
+
 gd = {"nodes": nodes, "edges": edges,
       "schema": {"classes": card["classes"], "object_properties": rel_list,
+                 "datatype_properties": _dt_props,
+                 "business_rules": card["rules"],
                  "axioms": axioms, "spec_card_pending": card["pending"]}}
 os.chdir(BK)
 from sqlalchemy.orm.attributes import flag_modified
@@ -1677,6 +1704,44 @@ from app.infrastructure.neo4j_client import neo4j_client
 db = SessionLocal()
 proj = db.query(Project).filter(Project.id == pid).first()
 proj.graph_data = gd; flag_modified(proj, "graph_data"); db.commit()
+# 平台页面依赖的收尾数据（此前脚本完全没写）：构建报告、能力问题、审核待办
+try:
+    from app.services.build_report import generate_build_report
+    generate_build_report(db, pid, depth_label="MVP", model_name=model_name)
+except Exception as _e:  # noqa: BLE001
+    print(f"[H 落地] 构建报告生成跳过：{_e}")
+try:
+    from app.infrastructure.database import CompetencyQuestion, ReviewItem
+    _qs: list[str] = []
+    for _i in card["instances"]:
+        if not isinstance(_i, dict):
+            continue
+        _cl = str(_i.get("class") or "")
+        if "能力问题" in _cl:
+            _q = str(_i.get("label") or "").strip()
+            if _q and _q not in _qs:
+                _qs.append(_q)
+    for _i, _q in enumerate(_qs):
+        db.add(CompetencyQuestion(project_id=pid, question=_q[:500], source="auto",
+                                  sort_order=_i, created_by=1))
+    _n_rev = 0
+    for _msg in (card.get("pending") or []):
+        _t = str(_msg or "").strip()
+        if not _t:
+            continue
+        db.add(ReviewItem(project_id=pid, item_type="missing_evidence",
+                          payload={"message": _t[:1000], "source": "mvp"},
+                          reason=_t[:250], priority="low", status="pending"))
+        _n_rev += 1
+    if _qs or _n_rev:
+        db.commit()
+    if _qs:
+        print(f"[H 落地] 能力问题导入 {len(_qs)} 条")
+    if _n_rev:
+        print(f"[H 落地] 待确认项写入审核队列 {_n_rev} 条")
+except Exception as _e:  # noqa: BLE001
+    db.rollback()
+    print(f"[H 落地] 能力问题/审核项写入跳过：{_e}")
 t5 = time.time()
 ok = neo4j_client.sync_graph(pid, gd)
 print(f"[H 落地] DB+Neo4j {time.time()-t5:.1f}s (ok={ok})，{len(nodes)} 节点 {len(edges)} 边")
@@ -1740,7 +1805,7 @@ print(f"\n═══ 分阶段耗时 ═══")
 for k, v in TIME.items():
     print(f"  {k}: {v:.1f}s")
 print(f"LLM {IO['calls']} 次/{IO['secs']:.0f}s | 各阶段单次最大输入 "
-      f"{ {k: f'{v['in_max']}B' for k, v in IO['stages'].items()} }")
+      f"{ {k: str(v['in_max']) + 'B' for k, v in IO['stages'].items()} }")
 q = rep["quality"]
 print(f"质量：句式覆盖 {q['checklist_covered']}/29 有据 | pending {q['pending_n']} | "
       f"可疑公理拦截 {len(q['rejected_axioms'])} | 真SWRL {q['swrl_structured']} | "
