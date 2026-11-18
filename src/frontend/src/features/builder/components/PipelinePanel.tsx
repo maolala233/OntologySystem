@@ -191,10 +191,12 @@ const fmtClock = (sec?: number | null, precise = false): string => {
         : `${m}:${pad2(s)}${fracText}`;
 };
 
-/** 阶段用时：全板块统一计时器写法；只有冲突检测 / 结构自检这类亚秒级阶段带小数（「0:00.43」） */
+/** 阶段用时：全板块统一计时器写法；亚秒耗时带小数（「0:00.43」），避免显示成 0:00 */
 const fmtStageTime = (sec?: number | null, precise = false): string => {
     if (typeof sec !== 'number' || !Number.isFinite(sec) || sec < 0) return '—';
-    return fmtClock(sec, precise && sec < 60);
+    // 冲突检测/结构自检保留原有精确模式；其余阶段只要不足 1 秒也带小数，
+    // 否则解析 0.2s、实例 0.01s、消解 0.03s 都会显示成 0:00
+    return fmtClock(sec, (precise || (sec > 0 && sec < 1)) && sec < 60);
 };
 
 const tsOf = (iso?: string | null): number | null => {
