@@ -44,6 +44,10 @@ _LAST_KEY = "pipeline:last:{project_id}"
 _LAST_TTL = 7 * 24 * 3600
 _SCHEDULE_KEY = "pipeline:schedule:{project_id}"   # 定时构建登记（未开跑）
 _SCHEDULE_TTL = 7 * 24 * 3600
+# 「停止中」：点停止后先保留运行锁，等 worker 退出；超时未退出则强制收尾。
+_CANCEL_KEY = "pipeline:cancelling:{task_id}"
+PIPELINE_CANCEL_TIMEOUT_SECONDS = int(
+    os.environ.get("PIPELINE_CANCEL_TIMEOUT_SECONDS", "60"))
 # 进度多久没更新视为 worker 已死：心跳每 60s 刷新一次，留 2 次容错。
 # 旧值 900s 会让服务重启后的项目在列表里继续显示「构建中」最多 15 分钟。
 PIPELINE_STALE_SECONDS = int(os.environ.get("PIPELINE_STALE_SECONDS", "180"))
@@ -1705,9 +1709,12 @@ def dispatch_pipeline_run(project_id: int, trigger_user_id: Optional[int] = None
     existing = r.get(key)
     if existing:
         prog = get_task_progress(existing)
+        # 停止中超时（worker 卡死/被 SIGKILL 没执行收尾）→ 强制收尾再放行
+        if force_finish_cancel_timeout(project_id, existing, prog):
+            prog = None
         # 锁 + 进度新鲜度：worker 崩溃/服务重启留下的 running 进度超过 3 分钟
         # 不再挡新构建，否则项目要等 6h 锁过期或打开状态页才能重新发起
-        if _progress_alive(prog):
+        if prog is not None and _progress_alive(prog):
             return {"mode": "existing", "task_id": existing, "already_running": True}
         # 死任务落终态：页面按最近任务回落时不会继续显示「构建中」
         if prog is not None and prog.get("status") in ("running", "queued"):
@@ -2060,6 +2067,53 @@ def reconcile_pipeline_locks(stale_seconds: int = PIPELINE_STALE_SECONDS) -> dic
             pass
 
 
+def mark_pipeline_cancelling(task_id: str, prog: Optional[dict] = None) -> None:
+    """停止请求落「停止中」：保留运行锁，等 worker 自查取消/被 revoke 后收尾。
+
+    不立即释放锁，避免前端刚显示已停止、用户马上重新构建，老任务仍在写产物
+    造成新旧任务并发（2026-11-18 讨论）。超时兜底见 force_finish_cancel_timeout。
+    """
+    cur = prog or get_task_progress(task_id) or {}
+    set_task_progress(task_id, cur.get("stage") or "",
+                      int(cur.get("percent") or 0),
+                      "正在停止（等待任务退出）…",
+                      stats=dict(cur.get("stats") or {}),
+                      queue=cur.get("queue") or "", status="cancelling")
+    try:
+        if not _redis().get(_CANCEL_KEY.format(task_id=task_id)):
+            _redis().set(_CANCEL_KEY.format(task_id=task_id),
+                         str(int(time.time())), ex=300)
+    except Exception:  # noqa: BLE001 —— 取消时间戳失败不影响取消键
+        pass
+
+
+def _cancel_requested_at(task_id: str) -> int:
+    try:
+        return int(_redis().get(_CANCEL_KEY.format(task_id=task_id)) or 0)
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def force_finish_cancel_timeout(project_id: int, task_id: str,
+                                prog: Optional[dict] = None) -> bool:
+    """停止中超过阈值仍未退出 → 强制标已停止并释放锁（worker 卡死兜底）。"""
+    p = prog or get_task_progress(task_id) or {}
+    if p.get("status") != "cancelling":
+        return False
+    started = _cancel_requested_at(task_id)
+    if started and time.time() - started <= PIPELINE_CANCEL_TIMEOUT_SECONDS:
+        return False
+    finish_task_progress(task_id, "cancelled",
+                         "已停止（强制收尾：任务未在超时内退出）",
+                         stats=dict(p.get("stats") or {}))
+    release_pipeline_lock(project_id)
+    try:
+        _redis().delete(_CANCEL_KEY.format(task_id=task_id))
+    except Exception:  # noqa: BLE001
+        pass
+    return True
+
+
 def _progress_alive(prog: Optional[dict],
                     stale_seconds: int = PIPELINE_STALE_SECONDS) -> bool:
     """进度键是否代表还活着的任务（心跳 60s，默认 180s 容错）。
@@ -2089,6 +2143,10 @@ def pipeline_build_active(project_id: int,
         prog = get_task_progress(tid)
     except Exception:  # noqa: BLE001 —— Redis 抖动：保守拒绝
         return True
+    if prog and prog.get("status") == "cancelling":
+        started = _cancel_requested_at(tid)
+        if started and time.time() - started > PIPELINE_CANCEL_TIMEOUT_SECONDS:
+            return False
     return _progress_alive(prog, stale_seconds)
 
 
@@ -2112,5 +2170,6 @@ __all__ = ["STAGE_DEFS", "DEPTH_PROFILES", "build_sub_steps", "build_stage_subs"
            "run_scheduled_pipeline", "cancel_scheduled_pipeline",
            "pipeline_scheduled_at", "pipeline_schedule_for", "pipeline_scheduled_info",
            "pipeline_running_task_id", "pipeline_build_active",
+           "mark_pipeline_cancelling", "force_finish_cancel_timeout",
            "reconcile_pipeline_locks",
            "release_pipeline_lock", "pipeline_active_project_ids"]

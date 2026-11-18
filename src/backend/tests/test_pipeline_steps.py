@@ -182,6 +182,35 @@ def test_stage_failed_message_prefers_substep(pipeline_module):
     assert str(fallback) == "骨架抽取失败：无法连接模型服务"
 
 
+def test_cancel_timeout_forces_finish(monkeypatch, pipeline_module, fake_redis):
+    import time
+
+    tid, pid = "pipeline-cancel", 9
+    fake_redis.store[f"pipeline:cancelling:{tid}"] = str(int(time.time()) - 999)
+    calls = {}
+    monkeypatch.setattr(pipeline_module, "finish_task_progress",
+                        lambda *a, **k: calls.update(finish=a))
+    monkeypatch.setattr(pipeline_module, "release_pipeline_lock",
+                        lambda p: calls.update(release=p))
+    prog = {"status": "cancelling", "stats": {"project_id": pid}}
+
+    assert pipeline_module.force_finish_cancel_timeout(pid, tid, prog) is True
+    assert calls.get("release") == pid
+    assert calls.get("finish")
+
+
+def test_cancel_timeout_keeps_waiting_before_deadline(monkeypatch, pipeline_module, fake_redis):
+    import time
+
+    tid, pid = "pipeline-cancel2", 10
+    fake_redis.store[f"pipeline:cancelling:{tid}"] = str(int(time.time()))
+    monkeypatch.setattr(pipeline_module, "finish_task_progress",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("不应收尾")))
+    prog = {"status": "cancelling", "stats": {"project_id": pid}}
+
+    assert pipeline_module.force_finish_cancel_timeout(pid, tid, prog) is False
+
+
 def test_build_stage_subs_replays_all_stages(pipeline_module, progress_state):
     tid = "pipeline-test"
     progress_state[f"{tid}:parse"] = {

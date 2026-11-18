@@ -22,6 +22,8 @@ from app.tasks.pipeline_tasks import (
     build_sub_steps,
     cancel_scheduled_pipeline,
     display_sub_percent,
+    force_finish_cancel_timeout,
+    mark_pipeline_cancelling,
     dispatch_pipeline_run,
     pipeline_last_task_id,
     pipeline_running_task_id,
@@ -135,6 +137,12 @@ def pipeline_status_endpoint(
     # worker 已死（重启/掉线）——落终态并清锁，否则"一键构建"被死锁假状态
     # 永久挡住、页面永远转圈（2026-11-05 项目 249 实测；2026-11-16 重启实测
     # 15 分钟阈值太长，改成 3 分钟——心跳每 60s 刷新一次，留 2 次容错）
+    # 「停止中」超时兜底：worker 被 SIGKILL/卡在无检查点的调用里，收尾不会执行；
+    # 超过阈值强制标已停止并释放锁，否则项目会一直卡在停止中、无法重新构建。
+    if prog is not None and prog.get("status") == "cancelling":
+        if force_finish_cancel_timeout(project_id, tid, prog):
+            prog = None
+            tid = None
     if prog is not None and prog.get("status") in ("running", "queued") \
             and int(time.time()) - int(prog.get("updated_at") or 0) > PIPELINE_STALE_SECONDS:
         # 仅当死任务正是锁持有者时才清锁（显式查询更老任务不动当前运行）
@@ -341,20 +349,11 @@ def cancel_pipeline_endpoint(
     for s in ((prog or {}).get("stats") or {}).get("stages") or []:
         if s.get("status") == "running" and s.get("task_id"):
             celery_app.control.revoke(s["task_id"], terminate=True, signal="SIGTERM")
-    # 进度键立即落"已停止"终态 + 清管线锁：前端下一次轮询立刻翻到停止态
-    #（主按钮变「重头开始」），不等 worker 收尸
-    prog_stats = dict((prog or {}).get("stats") or {})
-    stages = prog_stats.get("stages") or []
-    # 运行中的格子同步标 cancelled：前端 runningNow 的判定看格子状态，不标会
-    # 一直按"运行中"渲染（2026-11-06 项目 59 实测"点了停止看着还在跑"）
-    prog_stats["stages"] = [
-        {**s, "status": "cancelled"} if s.get("status") == "running" else s
-        for s in stages
-    ]
-    finish_task_progress(tid, "cancelled", "已停止（用户取消）",
-                         stats=prog_stats)
-    release_pipeline_lock(project_id)
-    return {"task_id": tid, "cancelled": True}
+    # 进入「停止中」：保留运行锁，等 worker 在检查点退出或被 revoke；期间
+    # dispatch 看到锁/停止中会拒绝重新构建，避免老任务还在写产物时新任务并发。
+    # worker 收尾或超时兜底后才落 cancelled 并释放锁。
+    mark_pipeline_cancelling(tid, prog)
+    return {"task_id": tid, "cancelled": True, "stopping": True}
 
 
 @router.get("/report")
