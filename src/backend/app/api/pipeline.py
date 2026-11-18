@@ -139,6 +139,14 @@ def pipeline_status_endpoint(
             and int(time.time()) - int(prog.get("updated_at") or 0) > PIPELINE_STALE_SECONDS:
         # 仅当死任务正是锁持有者时才清锁（显式查询更老任务不动当前运行）
         if pipeline_running_task_id(project_id) == tid:
+            # 心跳已超时也可能只是 LLM 长调用阻塞了心跳线程，任务本身还在跑：
+            # 写取消键让它在下一个检查点停下，避免"锁清了、任务停不下来"
+            #（2026-11-18 用户反馈：点停止提示没有进行中的管线，extract 日志仍在跑）
+            try:
+                from app.tasks.extract_tasks import request_cancel
+                request_cancel(tid)
+            except Exception:  # noqa: BLE001 —— 取消键失败不阻断清锁
+                pass
             try:
                 finish_task_progress(tid, "cancelled", PIPELINE_STALE_MESSAGE)
             except Exception:  # noqa: BLE001 —— 标终态失败不阻断清锁
@@ -294,10 +302,20 @@ def cancel_pipeline_endpoint(
     if cancel_scheduled_pipeline(project_id):
         return {"cancelled": True, "kind": "scheduled"}
     tid = pipeline_running_task_id(project_id)
+    prog = None
+    if not tid:
+        # 锁被看门狗/启动自检清掉、但 worker 任务仍在跑（"没有进行中的管线"
+        # 却停不下来）：回退最近一次构建登记（7d），同样允许取消。
+        last_tid = pipeline_last_task_id(project_id)
+        last_prog = get_task_progress(last_tid) if last_tid else None
+        if (last_prog and last_prog.get("status") in ("running", "queued", "cancelled")
+                and int((last_prog.get("stats") or {}).get("project_id") or -1) == project_id):
+            tid, prog = last_tid, last_prog
     if not tid:
         raise APIError("没有进行中的管线", code="PIPELINE_NOT_RUNNING", http_status=409)
-    prog = get_task_progress(tid)
-    if prog is not None and prog.get("status") not in ("running", "queued"):
+    if prog is None:
+        prog = get_task_progress(tid)
+    if prog is not None and prog.get("status") not in ("running", "queued", "cancelled"):
         raise APIError("管线已结束", code="TASK_FINISHED", http_status=409)
     from app.tasks.celery_app import celery_app
     from app.tasks.extract_tasks import request_cancel
@@ -309,7 +327,7 @@ def cancel_pipeline_endpoint(
     # 里的 task_id：那个快照可能停留在子任务入场前（task_id=null），照它遍历
     # 会整段漏写（2026-11-10 项目 272 inline 实测"停止了还在跑"根因①）；
     # parse 阶段的子键 {tid}:parse:{doc_id} 结构不同，仍从快照 task_id 读。
-    for s in (prog.get("stats") or {}).get("stages") or []:
+    for s in ((prog or {}).get("stats") or {}).get("stages") or []:
         if s.get("status") != "running":
             continue
         if s.get("key") and s["key"] != "parse":
@@ -320,12 +338,12 @@ def cancel_pipeline_endpoint(
     # 永远走不到检查点（2026-11-05 实测"停止停不下来"）——terminate=True 直接
     # SIGTERM 池子子进程，任务立刻以 Terminated 异常收场（prefork 池自动补进程）
     celery_app.control.revoke(tid, terminate=True, signal="SIGTERM")
-    for s in (prog.get("stats") or {}).get("stages") or []:
+    for s in ((prog or {}).get("stats") or {}).get("stages") or []:
         if s.get("status") == "running" and s.get("task_id"):
             celery_app.control.revoke(s["task_id"], terminate=True, signal="SIGTERM")
     # 进度键立即落"已停止"终态 + 清管线锁：前端下一次轮询立刻翻到停止态
     #（主按钮变「重头开始」），不等 worker 收尸
-    prog_stats = dict(prog.get("stats") or {})
+    prog_stats = dict((prog or {}).get("stats") or {})
     stages = prog_stats.get("stages") or []
     # 运行中的格子同步标 cancelled：前端 runningNow 的判定看格子状态，不标会
     # 一直按"运行中"渲染（2026-11-06 项目 59 实测"点了停止看着还在跑"）
