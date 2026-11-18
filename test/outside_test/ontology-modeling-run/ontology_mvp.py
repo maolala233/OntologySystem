@@ -1774,6 +1774,7 @@ try:
     from app.services.cq_service import ensure_rdf_graphs, evaluate_cqs
     ensure_rdf_graphs(pid, rebuild=True)
     _ev = evaluate_cqs(db, pid, trigger="auto_post_extract")
+    db.commit()  # 评测记录落库（平台管线同样在 CQ 段提交）
     if _ev is not None:
         print(f"[H 落地] 能力问题评测 {_ev.answerable_count}/{_ev.total_cq}")
 except Exception as _e:  # noqa: BLE001
