@@ -1704,14 +1704,16 @@ from app.infrastructure.neo4j_client import neo4j_client
 db = SessionLocal()
 proj = db.query(Project).filter(Project.id == pid).first()
 proj.graph_data = gd; flag_modified(proj, "graph_data"); db.commit()
-# 平台页面依赖的收尾数据（此前脚本完全没写）：构建报告、能力问题、审核待办
+# 平台页面依赖的收尾数据：构建报告、能力问题。
+# 注意：card["pending"] 是脚本内部的“待补充原文”说明，不是平台审核项语义，
+# 不能直接物化成 review_items（会在页面显示一堆不该出现的待裁决项）。
 try:
     from app.services.build_report import generate_build_report
     generate_build_report(db, pid, depth_label="MVP", model_name=model_name)
 except Exception as _e:  # noqa: BLE001
     print(f"[H 落地] 构建报告生成跳过：{_e}")
 try:
-    from app.infrastructure.database import CompetencyQuestion, ReviewItem
+    from app.infrastructure.database import CompetencyQuestion
     _qs: list[str] = []
     for _i in card["instances"]:
         if not isinstance(_i, dict):
@@ -1724,24 +1726,12 @@ try:
     for _i, _q in enumerate(_qs):
         db.add(CompetencyQuestion(project_id=pid, question=_q[:500], source="auto",
                                   sort_order=_i, created_by=1))
-    _n_rev = 0
-    for _msg in (card.get("pending") or []):
-        _t = str(_msg or "").strip()
-        if not _t:
-            continue
-        db.add(ReviewItem(project_id=pid, item_type="missing_evidence",
-                          payload={"message": _t[:1000], "source": "mvp"},
-                          reason=_t[:250], priority="low", status="pending"))
-        _n_rev += 1
-    if _qs or _n_rev:
-        db.commit()
     if _qs:
+        db.commit()
         print(f"[H 落地] 能力问题导入 {len(_qs)} 条")
-    if _n_rev:
-        print(f"[H 落地] 待确认项写入审核队列 {_n_rev} 条")
 except Exception as _e:  # noqa: BLE001
     db.rollback()
-    print(f"[H 落地] 能力问题/审核项写入跳过：{_e}")
+    print(f"[H 落地] 能力问题写入跳过：{_e}")
 t5 = time.time()
 ok = neo4j_client.sync_graph(pid, gd)
 print(f"[H 落地] DB+Neo4j {time.time()-t5:.1f}s (ok={ok})，{len(nodes)} 节点 {len(edges)} 边")
@@ -1779,6 +1769,39 @@ try:
         print(f"[H 落地] 能力问题评测 {_ev.answerable_count}/{_ev.total_cq}")
 except Exception as _e:  # noqa: BLE001
     print(f"[H 落地] 能力问题评测跳过：{_e}")
+
+# 平台构建记录：页面进度条读的是 pipeline:last + progress 键。脚本不走
+# Celery 管线，写一条已完成的时间线，页面即可正常显示 8 阶段与耗时。
+try:
+    import uuid as _uuid
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+
+    from app.tasks.pipeline_tasks import _LAST_KEY, _redis as _pipeline_redis, _stages_reset
+    from app.tasks.progress import set_task_progress as _set_prog
+
+    _tid = f"pipeline-mvp-{_uuid.uuid4().hex[:12]}"
+    _dur = {"parse": TIME["A_parse"], "schema": TIME["C_schema"],
+            "instances": TIME["D_expand"] + TIME["E_narrative"],
+            "resolution": TIME["F5_resolve"], "conflicts": 0.0,
+            "selfcheck": TIME["F2_check"], "axioms": TIME["G_axiom"],
+            "adjudicate": TIME["F_expert"]}
+    _stages = _stages_reset()
+    _cursor = _dt.now(_tz.utc) - _td(seconds=float(time.time() - T0))
+    for _st in _stages:
+        _d = round(float(_dur.get(_st["key"], 0.0)), 2)
+        _st["status"] = "done"
+        _st["started_at"] = _cursor.isoformat(timespec="milliseconds")
+        _cursor = _cursor + _td(seconds=_d)
+        _st["finished_at"] = _cursor.isoformat(timespec="milliseconds")
+        _st["duration_seconds"] = _d
+        _st["detail"] = "MVP 脚本构建"
+    _set_prog(_tid, "adjudicate", 100, "脚本构建完成（MVP）",
+              {"project_id": pid, "pipeline": True, "stages": _stages},
+              queue="extract")
+    _pipeline_redis().set(_LAST_KEY.format(project_id=pid), _tid, ex=7 * 24 * 3600)
+    print(f"[H 落地] 构建记录已写入（页面时间线可用，task={_tid}）")
+except Exception as _e:  # noqa: BLE001
+    print(f"[H 落地] 构建记录写入跳过：{_e}")
 
 for q in ["贷款申请流程使用了哪些接口，分别调用了哪个后端系统", "还款账号校验矩阵中产品0122的校验配置是什么"]:
     r6 = s.post(f"{BASE}/api/projects/{pid}/retrieval", headers=H, timeout=60,
