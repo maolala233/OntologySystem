@@ -1762,6 +1762,23 @@ try:
 except Exception as _e:
     print(f"[H 落地] 关系校验跳过：{_e}")
 
+# 版本与能力问题评测（平台页面依赖；失败不阻断落地）
+try:
+    from app.tasks.extract_tasks import _auto_version
+    _vn = _auto_version(db, pid, "full", "MVP 脚本构建")
+    if _vn:
+        print(f"[H 落地] 自动版本 v{_vn}")
+except Exception as _e:  # noqa: BLE001
+    print(f"[H 落地] 自动版本跳过：{_e}")
+try:
+    from app.services.cq_service import ensure_rdf_graphs, evaluate_cqs
+    ensure_rdf_graphs(pid, rebuild=True)
+    _ev = evaluate_cqs(db, pid, trigger="auto_post_extract")
+    if _ev is not None:
+        print(f"[H 落地] 能力问题评测 {_ev.answerable_count}/{_ev.total_cq}")
+except Exception as _e:  # noqa: BLE001
+    print(f"[H 落地] 能力问题评测跳过：{_e}")
+
 for q in ["贷款申请流程使用了哪些接口，分别调用了哪个后端系统", "还款账号校验矩阵中产品0122的校验配置是什么"]:
     r6 = s.post(f"{BASE}/api/projects/{pid}/retrieval", headers=H, timeout=60,
                 json={"question": q, "top_k": 8, "mode": "retrieve"}).json()
