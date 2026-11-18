@@ -1797,7 +1797,7 @@ try:
         _st["detail"] = "MVP 脚本构建"
     _set_prog(_tid, "adjudicate", 100, "脚本构建完成（MVP）",
               {"project_id": pid, "pipeline": True, "stages": _stages},
-              queue="extract")
+              queue="extract", status="completed")
     _pipeline_redis().set(_LAST_KEY.format(project_id=pid), _tid, ex=7 * 24 * 3600)
     print(f"[H 落地] 构建记录已写入（页面时间线可用，task={_tid}）")
 except Exception as _e:  # noqa: BLE001
