@@ -655,8 +655,505 @@ body .ant-tooltip .ant-tooltip-arrow::before {
   background: rgba(15, 23, 42, 0.95);
 }
 
-.ant-modal .ant-modal-content {
-  box-shadow: 0 24px 64px -24px rgba(15, 23, 42, 0.35);
+/* ===================================================================
+   全局弹窗材质（2026-11-18）
+   所有 antd Modal / confirm / Drawer 统一到站内「冷白纸面」：
+   冷白渐变 + 蓝紫柔光 + 顶部品牌渐变线 + 蓝调发丝描边。
+   弹窗内部的表单控件、按钮、提示条、描述表也按同一色温收敛，
+   不再出现一块纯白弹窗压在浅蓝画布上的割裂感。
+   ==================================================================== */
+:root {
+  --surface-line: rgba(91, 141, 239, 0.14);
+  /* 冷白纸面（浅色页面基准档）：底色近白、只带冷蓝，不带紫。
+     紫色只留给顶部彩线 / 发光圆点这类点缀（面板装饰语言） */
+  --surface-paper:
+    radial-gradient(620px 280px at 100% 0%, rgba(91, 141, 239, 0.08), transparent 70%),
+    radial-gradient(460px 240px at 0% 100%, rgba(91, 141, 239, 0.11), transparent 72%),
+    linear-gradient(158deg, #FDFEFF 0%, #F8FBFF 54%, #F1F7FE 100%);
+  /* 冷蓝纸面（深色画布档）：与详情抽屉同一组色值，避免白纸压在深底上刺眼 */
+  --surface-immersive:
+    linear-gradient(165deg, #EDF3FE 0%, #E2ECFC 52%, #E9F1FE 100%);
+}
+
+/* 遮罩：冷蓝墨色 + 轻磨砂。antd 默认的纯黑 45% 在浅色站里显得发闷 */
+body .ant-modal-mask,
+body .ant-drawer-mask {
+  background: rgba(15, 23, 42, 0.34) !important;
+  -webkit-backdrop-filter: saturate(140%) blur(4px);
+  backdrop-filter: saturate(140%) blur(4px);
+}
+
+/* 弹窗主体：与卡片同族的冷白渐变。不再在顶部铺满宽彩线（2026-11-18 用户反馈）：
+   弹窗已经有描边/投影/圆角把层次拉开，全宽线落在每个小弹窗上反而显碎；
+   品牌彩条只留给小标题前的 3×13px 点缀（面板装饰语言） */
+body .ant-modal .ant-modal-content {
+  padding: 20px 22px 18px;
+  border: 1px solid var(--surface-line);
+  border-radius: 16px;
+  background: var(--surface-paper);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.96),
+    inset 0 -1px 0 rgba(219, 228, 242, 0.55),
+    0 30px 80px -30px rgba(15, 23, 42, 0.40),
+    0 4px 14px rgba(15, 23, 42, 0.05);
+}
+
+/* 标题区：透明底 + 一条发丝分隔线，标题与正文层级拉开 */
+body .ant-modal .ant-modal-header {
+  background: transparent;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(91, 141, 239, 0.12);
+}
+
+body .ant-modal .ant-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #0F172A;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+/* 标题彩条（2026-11-18 全局规则）：和面板小标题同一枚 3×13px 蓝→紫竖条。
+   注意必须作为标题流内的 flex 子项（间距 8px）——早先放在标题左侧的 padding
+   留白里（left:-11px），弹窗一打开就像贴在边框上，和标题脱节（2026-11-18 反馈）。
+   关系详情等标题里已自带 .ap-mark 的自动跳过，避免出现双彩条 */
+body .ant-modal .ant-modal-title::before {
+  content: '';
+  display: block;
+  flex: none;
+  width: 3px;
+  height: 13px;
+  border-radius: 2px;
+  pointer-events: none;
+  background: linear-gradient(180deg, #5B8DEF 0%, #8B5CF6 100%);
+}
+
+body .ant-modal .ant-modal-title:has(.ap-mark)::before {
+  display: none;
+}
+
+body .ant-modal .ant-modal-close {
+  color: #8A94AB;
+  border-radius: 8px;
+  transition: color 0.2s ease, background-color 0.2s ease;
+}
+
+body .ant-modal .ant-modal-close:hover {
+  color: #2A57C6;
+  background: rgba(91, 141, 239, 0.10);
+}
+
+body .ant-modal .ant-modal-body {
+  color: #33415C;
+}
+
+body .ant-modal .ant-modal-footer {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(91, 141, 239, 0.12);
+}
+
+/* ---------- 弹窗按钮：主按钮品牌渐变，次按钮冷白纸面 ---------- */
+body .ant-modal .ant-btn {
+  font-weight: 500;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+body .ant-modal .ant-btn-default {
+  color: #33415C;
+  border-color: rgba(91, 141, 239, 0.22);
+  background: linear-gradient(180deg, #FFFFFF 0%, #F7FAFF 100%);
+  box-shadow: inset 0 1px 0 #FFFFFF, 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+body .ant-modal .ant-btn-default:not(:disabled):hover {
+  color: #2A57C6;
+  border-color: rgba(91, 141, 239, 0.55);
+  background: linear-gradient(180deg, #FFFFFF 0%, #F0F6FF 100%);
+}
+
+body .ant-modal .ant-btn-primary {
+  border-color: transparent;
+  background: linear-gradient(135deg, #5B8DEF 0%, #4C7DE7 55%, #6E6BF0 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    0 10px 20px -12px rgba(76, 125, 231, 0.75);
+}
+
+body .ant-modal .ant-btn-primary:not(:disabled):hover {
+  border-color: transparent;
+  background: linear-gradient(135deg, #6B9BF5 0%, #5B8BF0 55%, #7E7BF5 100%);
+}
+
+/* ghost 主按钮（次级强调）：保留镂空形态，不铺渐变 */
+body .ant-modal .ant-btn-primary.ant-btn-background-ghost {
+  color: #2A57C6;
+  border-color: rgba(91, 141, 239, 0.45);
+  background: transparent;
+  box-shadow: none;
+}
+
+body .ant-modal .ant-btn-primary.ant-btn-background-ghost:not(:disabled):hover {
+  color: #1F4FB3;
+  border-color: rgba(91, 141, 239, 0.70);
+  background: rgba(91, 141, 239, 0.08);
+}
+
+/* 危险操作：保留语义红，但同样走浅纸面 / 渐变，不再是一块生红 */
+body .ant-modal .ant-btn-dangerous:not(.ant-btn-primary) {
+  color: #B42318;
+  border-color: rgba(180, 35, 24, 0.26);
+  background: linear-gradient(180deg, #FFFFFF 0%, #FFF6F5 100%);
+}
+
+body .ant-modal .ant-btn-dangerous:not(.ant-btn-primary):not(:disabled):hover {
+  color: #D92D20;
+  border-color: rgba(180, 35, 24, 0.50);
+  background: linear-gradient(180deg, #FFFFFF 0%, #FFEFED 100%);
+}
+
+body .ant-modal .ant-btn-primary.ant-btn-dangerous {
+  border-color: transparent;
+  background: linear-gradient(135deg, #E4574C 0%, #C43A30 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.24),
+    0 10px 20px -12px rgba(196, 58, 48, 0.70);
+}
+
+/* 禁用态放在最后，压过上面的渐变 */
+body .ant-modal .ant-btn-default:disabled {
+  color: #A9B5CC;
+  border-color: #E6ECF6;
+  background: #F4F7FC;
+  box-shadow: none;
+}
+
+body .ant-modal .ant-btn-primary:disabled {
+  color: #FFFFFF;
+  border-color: transparent;
+  background: #C5D5EE;
+  box-shadow: none;
+}
+
+body .ant-modal .ant-btn-primary.ant-btn-dangerous:disabled {
+  background: #F0C4C0;
+}
+
+/* ---------- 弹窗内表单：标签/输入框/上传区统一冷调 ---------- */
+body .ant-modal .ant-form-item-label > label {
+  height: auto;
+  color: #52607A;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* 手写字段标签（没用 Form.Item 的弹窗，如修改密码 / 发布选知识域）统一走这里：
+   和 Form 标签同一支字号、色温与下间距，别再用 text-sm font-medium 各自为政 */
+body .ant-modal .tk-field-label {
+  display: block;
+  margin-bottom: 6px;
+  color: #52607A;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+body .ant-modal .ant-form-item-extra,
+body .ant-modal .ant-form-item-explain-error {
+  font-size: 12px;
+}
+
+/* 校验态统一到项目红（2026-11-18）：antd 默认的 #ff4d4f 偏亮，和站内危险色
+   #B42318 不是同一支；必填星号与错误描边一起收进来 */
+body .ant-modal .ant-form-item-required::before {
+  color: #D92D20 !important;
+}
+
+body .ant-modal .ant-form-item-explain-error {
+  color: #B42318;
+}
+
+body .ant-modal .ant-form-item-has-error :is(.ant-input, .ant-input-affix-wrapper,
+    .ant-input-number, .ant-picker, .ant-select-selector) {
+  border-color: #D92D20;
+}
+
+body .ant-modal .ant-form-item-has-error :is(.ant-input, .ant-input-affix-wrapper,
+    .ant-input-number, .ant-picker, .ant-select-selector):hover {
+  border-color: #E0574C;
+}
+
+body .ant-modal .ant-input,
+body .ant-modal .ant-input-affix-wrapper,
+body .ant-modal .ant-input-number,
+body .ant-modal .ant-picker,
+body .ant-modal .ant-select:not(.ant-select-customize-input) .ant-select-selector {
+  color: #1F2A44;
+  border-color: #DDE6F5;
+  background: #FBFDFF;
+}
+
+body .ant-modal .ant-input-affix-wrapper > input.ant-input,
+body .ant-modal .ant-input-number-input,
+body .ant-modal .ant-select-selection-search-input,
+body .ant-modal .ant-picker input {
+  background: transparent;
+}
+
+body .ant-modal .ant-input:not(:disabled):hover,
+body .ant-modal .ant-input-affix-wrapper:not(.ant-input-affix-wrapper-disabled):hover,
+body .ant-modal .ant-input-number:not(.ant-input-number-disabled):hover,
+body .ant-modal .ant-picker:not(.ant-picker-disabled):hover,
+body .ant-modal .ant-select:not(.ant-select-disabled):not(.ant-select-customize-input):hover .ant-select-selector {
+  border-color: rgba(91, 141, 239, 0.55);
+}
+
+body .ant-modal .ant-input::placeholder,
+body .ant-modal .ant-select-selection-placeholder,
+body .ant-modal .ant-picker-input > input::placeholder {
+  color: #A9B5CC;
+}
+
+body .ant-modal .ant-input:disabled,
+body .ant-modal .ant-input-affix-wrapper-disabled,
+body .ant-modal .ant-input-number-disabled,
+body .ant-modal .ant-picker-disabled,
+body .ant-modal .ant-select-disabled .ant-select-selector {
+  color: #8A94AB;
+  border-color: #E6ECF6;
+  background: #F2F5FA;
+  box-shadow: none;
+}
+
+body .ant-modal .ant-radio-wrapper,
+body .ant-modal .ant-checkbox-wrapper {
+  color: #33415C;
+  font-size: 13px;
+}
+
+/* Radio.Button（分段按钮）也走冷白纸面，选中态用品牌渐变 */
+body .ant-modal .ant-radio-button-wrapper {
+  color: #52607A;
+  border-color: #DDE6F5;
+  background: #FBFDFF;
+}
+
+body .ant-modal .ant-radio-button-wrapper:not(:first-child)::before {
+  background-color: #DDE6F5;
+}
+
+body .ant-modal .ant-radio-button-wrapper-checked:not(.ant-radio-button-wrapper-disabled) {
+  color: #FFFFFF;
+  border-color: transparent;
+  background: linear-gradient(135deg, #5B8DEF 0%, #6E6BF0 100%);
+  box-shadow: 0 6px 14px -10px rgba(91, 141, 239, 0.80);
+}
+
+body .ant-modal .ant-radio-button-wrapper-checked:not(.ant-radio-button-wrapper-disabled):hover {
+  color: #FFFFFF;
+  border-color: transparent;
+  background: linear-gradient(135deg, #6B9BF5 0%, #7E7BF5 100%);
+}
+
+/* 上传拖拽区：冷白纸面 + 品牌虚线，悬停给一圈柔光 */
+body .ant-modal .ant-upload.ant-upload-drag {
+  border: 1px dashed rgba(91, 141, 239, 0.34);
+  border-radius: 12px;
+  background:
+    radial-gradient(360px 160px at 50% 0%, rgba(91, 141, 239, 0.10), transparent 70%),
+    linear-gradient(180deg, #FBFDFF 0%, #F5F9FF 100%);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+body .ant-modal .ant-upload.ant-upload-drag:hover {
+  border-color: rgba(91, 141, 239, 0.70);
+  box-shadow: 0 0 0 3px rgba(91, 141, 239, 0.08);
+}
+
+body .ant-modal .ant-upload-drag-icon .anticon {
+  color: #5B8DEF;
+}
+
+body .ant-modal .ant-upload-hint,
+body .ant-modal .ant-upload-list-item-name {
+  color: #8A94AB;
+}
+
+/* ---------- 弹窗内的信息展示：提示条 / 描述表 / 分隔线 / 表格 ---------- */
+body .ant-modal .ant-alert {
+  border-radius: 10px;
+}
+
+body .ant-modal .ant-alert-info {
+  border-color: rgba(91, 141, 239, 0.20);
+  background: rgba(91, 141, 239, 0.08);
+}
+
+body .ant-modal .ant-alert-warning {
+  border-color: rgba(214, 158, 46, 0.26);
+  background: rgba(214, 158, 46, 0.10);
+}
+
+body .ant-modal .ant-alert-success {
+  border-color: rgba(27, 135, 173, 0.22);
+  background: rgba(27, 135, 173, 0.09);
+}
+
+body .ant-modal .ant-alert-error {
+  border-color: rgba(180, 35, 24, 0.20);
+  background: rgba(180, 35, 24, 0.07);
+}
+
+body .ant-modal .ant-alert-message {
+  color: #1F2A44;
+  font-weight: 600;
+}
+
+body .ant-modal .ant-alert-description {
+  color: #52607A;
+}
+
+body .ant-modal .ant-descriptions-item-label {
+  color: #8A94AB;
+}
+
+body .ant-modal .ant-descriptions-bordered .ant-descriptions-item-label {
+  background: #F2F6FD;
+}
+
+body .ant-modal .ant-descriptions-bordered .ant-descriptions-item-content {
+  background: #FBFDFF;
+}
+
+body .ant-modal .ant-divider {
+  border-color: rgba(91, 141, 239, 0.12);
+}
+
+body .ant-modal .ant-table-thead > tr > th {
+  background: #F3F7FE;
+}
+
+/* 弹窗里手写的小白块（代码块/回显卡）跟着换成冷白/冷灰，避免在冷纸面上
+   贴一块刺眼的纯白。只收 bg-white 与两个中性浅灰，橙/红/绿等语义底色不动 */
+body .ant-modal .bg-white {
+  background-color: #FBFDFF;
+}
+
+body .ant-modal .bg-gray-50,
+body .ant-modal .bg-slate-50 {
+  background-color: #F3F7FE;
+}
+
+/* ---------- 确认框（Modal.confirm）的正文排版 ---------- */
+body .ant-modal .ant-modal-confirm-title {
+  color: #0F172A;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* 表单型确认框（如「选择知识域后发布」）：它本质是选值表单，不是警示确认，
+   所以也要那枚标题彩条；纯警示 / 删除确认没有这个类，保持不加 */
+body .ant-modal.tk-confirm-mark .ant-modal-confirm-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+body .ant-modal.tk-confirm-mark .ant-modal-confirm-title::before {
+  content: '';
+  display: block;
+  flex: none;
+  width: 3px;
+  height: 13px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #5B8DEF 0%, #8B5CF6 100%);
+}
+
+body .ant-modal .ant-modal-confirm-content {
+  color: #52607A;
+  font-size: 13px;
+  line-height: 1.68;
+}
+
+/* ---------- 从弹窗里弹出的浮层：下拉 / 选择器 / 气泡确认 ---------- */
+body .ant-select-dropdown,
+body .ant-picker-dropdown .ant-picker-panel-container,
+body .ant-popover .ant-popover-inner,
+body .ant-dropdown .ant-dropdown-menu {
+  border: 1px solid var(--surface-line);
+  background: linear-gradient(180deg, #FDFEFF 0%, #F8FBFF 100%);
+}
+
+body .ant-popover .ant-popover-arrow::before {
+  background: #FDFEFF;
+}
+
+body .ant-popover .ant-popover-inner-content {
+  color: #33415C;
+}
+
+/* ---------- Drawer：同族冷白纸面（浅色页面基准档） ---------- */
+body .ant-drawer .ant-drawer-content {
+  background: var(--surface-paper);
+}
+
+body .ant-drawer .ant-drawer-header {
+  background: transparent;
+  border-bottom: 1px solid rgba(91, 141, 239, 0.12);
+}
+
+body .ant-drawer .ant-drawer-title {
+  color: #0F172A;
+  font-weight: 600;
+}
+
+body .ant-drawer .ant-drawer-close {
+  color: #8A94AB;
+  border-radius: 8px;
+}
+
+body .ant-drawer .ant-drawer-close:hover {
+  color: #2A57C6;
+  background: rgba(91, 141, 239, 0.10);
+}
+
+body .ant-drawer .ant-drawer-footer {
+  background: rgba(255, 255, 255, 0.55);
+  border-top: 1px solid rgba(91, 141, 239, 0.12);
+}
+
+/* 深色画布档：图谱 / 资产详情 / 构建结果这类深色工作区里，弹窗与详情抽屉
+   换成冷蓝纸面（同一组色值），避免一块冷白纸压在深底上刺眼。
+   用法：给 Modal / Drawer 加 rootClassName="tk-surface-immersive"（2026-11-18） */
+body .tk-surface-immersive .ant-modal-content,
+body .tk-surface-immersive .ant-drawer-content {
+  background: var(--surface-immersive);
+}
+
+/* 数据类弹窗的角部线稿（2026-11-18）：只挂在「看数据」的弹窗上
+   （关系详情 / 推理分析 / 发布预检 / 原文上下文等），表单与确认弹窗不加。
+   复用构建面板的星座线，只取右下一角，压在正文之后——有内容的地方它会被盖住，
+   只在留白处隐约透出来 */
+body .tk-surface-deco .ant-modal-content {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+body .tk-surface-deco .ant-modal-content::after {
+  content: '';
+  position: absolute;
+  right: -18px;
+  bottom: -16px;
+  width: 300px;
+  height: 108px;
+  z-index: -1;
+  pointer-events: none;
+  background: url('./assets/modal-constellation.svg') right bottom / contain no-repeat;
+  opacity: 0.55;
+  transform: scaleY(-1);
 }
 
 

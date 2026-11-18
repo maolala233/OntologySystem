@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 150" fill="none" preserveAspectRatio="xMaxYMin meet" aria-hidden="true" focusable="false">
+    <defs>
+        <linearGradient id="tk-modal-line" x1="0" y1="1" x2="1" y2="0">
+            <stop offset="0%" stop-color="#5B8DEF" stop-opacity="0.05"/>
+            <stop offset="55%" stop-color="#5B8DEF" stop-opacity="0.28"/>
+            <stop offset="100%" stop-color="#8B5CF6" stop-opacity="0.36"/>
+        </linearGradient>
+        <radialGradient id="tk-modal-dot" cx="0.5" cy="0.5" r="0.5">
+            <stop offset="0%" stop-color="#8B5CF6" stop-opacity="0.42"/>
+            <stop offset="100%" stop-color="#8B5CF6" stop-opacity="0"/>
+        </radialGradient>
+    </defs>
+    <g stroke="url(#tk-modal-line)" stroke-width="1.1" stroke-linecap="round">
+        <path d="M6 128 C 64 128, 78 62, 134 62 S 196 110, 250 110 S 306 34, 378 34"/>
+        <path d="M6 108 C 70 108, 96 84, 150 84 S 214 128, 268 128 S 328 66, 414 66" stroke-dasharray="2 7" opacity="0.85"/>
+    </g>
+    <circle cx="378" cy="34" r="17" stroke="url(#tk-modal-line)" stroke-opacity="0.8"/>
+    <circle cx="378" cy="34" r="10" fill="url(#tk-modal-dot)"/>
+    <circle cx="250" cy="110" r="8" fill="url(#tk-modal-dot)"/>
+    <circle cx="134" cy="62" r="9" fill="url(#tk-modal-dot)"/>
+    <circle cx="378" cy="34" r="3" fill="#8B5CF6" fill-opacity="0.5"/>
+    <circle cx="250" cy="110" r="2.2" fill="#5B8DEF" fill-opacity="0.42"/>
+    <circle cx="134" cy="62" r="2.6" fill="#5B8DEF" fill-opacity="0.45"/>
+    <circle cx="150" cy="84" r="2.2" fill="#8B5CF6" fill-opacity="0.34"/>
+    <circle cx="268" cy="128" r="2.2" fill="#8B5CF6" fill-opacity="0.34"/>
+</svg>

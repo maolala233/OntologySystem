@@ -812,10 +812,12 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                 }
                 @keyframes pl-blink { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
                 /* 段落标题前的品牌彩条（2026-11-17）：与图谱页 / 资产详情的 .ap-mark 同一枚，
-                   用来给「本次构建」「当前阶段」这类小标题一个明确起点 */
+                   用来给「本次构建」「当前阶段」这类小标题一个明确起点。
+                   间距交给所在 flex 行的 gap：早先这里再写 margin-right 8px，
+                   叠上 gap-2 变成 16px，彩条和标题之间空出一大截（2026-11-18 反馈） */
                 .pl-mark {
                     display: inline-block; flex: none; width: 3px; height: 13px;
-                    border-radius: 2px; margin-right: 8px;
+                    border-radius: 2px;
                     background: linear-gradient(180deg, #5B8DEF, #8B5CF6);
                 }
                 /* 后端还没给阶段内百分比时的「不确定态」：一条往返的细条，不显示具体数字 */

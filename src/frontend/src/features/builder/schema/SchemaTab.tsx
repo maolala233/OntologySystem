@@ -2881,6 +2881,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
                             onCancel={() => setIsDocumentModalOpen(false)}
                             footer={null}
                             width={700}
+                            rootClassName="tk-surface-deco"
                         >
                             <div className="py-2">
                                 {isDocLoading ? (

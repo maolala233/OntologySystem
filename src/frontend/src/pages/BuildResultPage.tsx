@@ -849,6 +849,7 @@ const BuildResultPage: React.FC = () => {
                     onCancel={() => setSelectedEdge(null)}
                     footer={null}
                     width={440}
+                    rootClassName="tk-surface-immersive tk-surface-deco"
                     title={
                         <span className="flex items-center gap-2 text-[15px] font-semibold text-[#0F172A]">
                             <span className="ap-mark" aria-hidden />
@@ -856,7 +857,8 @@ const BuildResultPage: React.FC = () => {
                         </span>
                     }
                     styles={{
-                        content: { background: 'linear-gradient(165deg, #EDF3FE 0%, #E2ECFC 52%, #E9F1FE 100%)', padding: 0 },
+                        // 冷蓝底由全局 --surface-immersive 统一提供（与详情抽屉同色值）
+                        content: { padding: 0 },
                         header: { background: 'transparent', borderBottom: '1px solid #E1EAF8', marginBottom: 0, padding: '12px 18px' },
                         body: { padding: '14px 18px 16px' },
                     }}

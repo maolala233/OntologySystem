@@ -164,15 +164,15 @@ const Navbar: React.FC<NavbarProps> = ({ breadcrumbs = [] }) => {
             >
                 <div className="space-y-4 py-2">
                     <div>
-                        <div className="mb-1 text-sm font-medium">旧密码</div>
+                        <span className="tk-field-label">旧密码</span>
                         <Input.Password value={oldPwd} onChange={e => setOldPwd(e.target.value)} placeholder="请输入旧密码" />
                     </div>
                     <div>
-                        <div className="mb-1 text-sm font-medium">新密码</div>
+                        <span className="tk-field-label">新密码</span>
                         <Input.Password value={newPwd} onChange={e => setNewPwd(e.target.value)} placeholder="请输入新密码（至少6位）" />
                     </div>
                     <div>
-                        <div className="mb-1 text-sm font-medium">确认新密码</div>
+                        <span className="tk-field-label">确认新密码</span>
                         <Input.Password value={confirmPwd} onChange={e => setConfirmPwd(e.target.value)} placeholder="请再次输入新密码" />
                     </div>
                 </div>

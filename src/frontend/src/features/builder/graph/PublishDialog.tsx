@@ -91,6 +91,7 @@ const PublishDialog: React.FC<Props> = ({ projectId, open, onClose, onPublished 
             open={open}
             onCancel={onClose}
             width={720}
+            rootClassName="tk-surface-deco"
             footer={[
                 <Button key="cancel" onClick={onClose}>取消</Button>,
                 <Button key="ok" type="primary" loading={publishing}

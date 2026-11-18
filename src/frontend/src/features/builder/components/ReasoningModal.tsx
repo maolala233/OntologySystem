@@ -375,6 +375,7 @@ const ReasoningModal: React.FC<{
             open={open}
             onCancel={onClose}
             width={860}
+            rootClassName="tk-surface-deco"
             footer={null}
         >
             {/* 运行区 */}

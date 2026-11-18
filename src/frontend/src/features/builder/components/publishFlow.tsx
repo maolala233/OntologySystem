@@ -49,12 +49,23 @@ export async function publishWithDomain(projectId: number): Promise<PublishResul
     return new Promise((resolve) => {
         confirmModal({
             title: '选择知识域后发布',
+            // 这是“选一个值再发布”的表单弹窗，不是告警确认：去掉默认感叹号图标，
+            // 否则正文会被 icon 缩进约 38px，下拉框和标题、按钮对不齐，窄弹窗里特别明显
+            icon: null,
+            width: 480,
+            centered: true,
+            // 表单型确认框：标题也带那枚彩条（纯警示确认不加）
+            className: 'tk-confirm-mark',
             content: (
-                <div className="py-2">
-                    <p className="text-gray-500 text-xs mb-3">
+                <div className="pt-1">
+                    <p className="mb-2.5 text-[12.5px] leading-5 text-[#8A94AB]">
                         发布前需要给项目指定知识域，资产中心按知识域分组展示。
                     </p>
+                    <span className="tk-field-label">知识域</span>
                     <DomainPickPane onPick={(id, name) => { domainId = id; domainName = name; }} />
+                    <p className="mt-2 text-[11.5px] leading-5 text-[#A3ADC2]">
+                        没有合适的分类？在下拉里点「新建知识域」即可现场创建。
+                    </p>
                 </div>
             ),
             okText: '发布', cancelText: '取消',

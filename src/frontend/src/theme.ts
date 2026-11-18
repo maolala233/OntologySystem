@@ -135,7 +135,18 @@ export const appTheme: ThemeConfig = {
             itemActiveBg: '#EAF1FF',
             itemBg: 'transparent',
         },
-        Modal: { contentBg: '#FFFFFF' },
+        // 弹窗（2026-11-18）：不再用纯白 contentBg——纯白纸面叠在浅蓝画布上，
+        // 和全站冷白材质脱节。统一给冷白底 + 蓝调描边，渐变与顶部彩线在
+        // index.css「全局弹窗材质」里铺（token 只负责没有 ::before 的角落）
+        Modal: {
+            contentBg: '#FBFDFF',
+            headerBg: 'transparent',
+            footerBg: 'transparent',
+            titleColor: '#0F172A',
+            titleFontSize: 15,
+            boxShadow:
+                '0 30px 80px -30px rgba(15, 23, 42, 0.38), 0 4px 14px rgba(15, 23, 42, 0.05)',
+        },
         Dropdown: { paddingBlock: 6 },
     },
 };

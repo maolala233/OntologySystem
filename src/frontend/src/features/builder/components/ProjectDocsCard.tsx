@@ -8,7 +8,7 @@ import { message } from '../../../shared/feedback';
 import { Button, Card, Popconfirm, Space, Spin, Table, Tag, Tooltip, Upload } from 'antd';
 import type { UploadProps } from 'antd';
 import {
-    CloudDownloadOutlined, DeleteOutlined, FileTextOutlined, UploadOutlined,
+    CloudDownloadOutlined, DeleteOutlined, FileTextOutlined, LockOutlined, UploadOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 
@@ -251,7 +251,18 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage,
                     <span className="tk-mono text-[11px] text-[#8A94AB]">{UPLOAD_EXTS.join(' / ')}</span>
                 </span>
                 {locked && (
-                    <span className="text-[#B8790F]">构建进行中，暂不能上传或删除文档</span>
+                    // 构建锁提示（2026-11-18）：原来和左侧「支持哪些格式」挤在同一行、
+                    // 同一档字号，读起来像一句话被硬拼起来；改成右对齐的琥珀小胶囊，
+                    // 带锁图标，和左侧说明拉开距离
+                    <span className="ml-auto inline-flex items-center gap-1 rounded-md border px-2 py-[2px] text-[11px]"
+                          style={{
+                              color: '#B8790F',
+                              borderColor: 'rgba(242,185,80,0.35)',
+                              background: 'rgba(242,185,80,0.12)',
+                          }}>
+                        <LockOutlined style={{ fontSize: 11 }} />
+                        构建进行中，暂不能上传或删除文档
+                    </span>
                 )}
             </div>
         </Card>

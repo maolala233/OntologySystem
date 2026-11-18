@@ -883,6 +883,7 @@ const AssetDetailPage: React.FC = () => {
                     onCancel={() => setSelectedEdge(null)}
                     footer={null}
                     width={440}
+                    rootClassName="tk-surface-immersive tk-surface-deco"
                     title={
                         <span className="flex items-center gap-2 text-[15px] font-semibold text-[#0F172A]">
                             <span className="ap-mark" aria-hidden />
@@ -890,10 +891,10 @@ const AssetDetailPage: React.FC = () => {
                         </span>
                     }
                     styles={{
-                        // 与详情抽屉用同一组渐变色值（EDF3FE → E2ECFC → E9F1FE）；
-                        // padding 必须归零：.ant-modal-content 自带一圈内边距，不归零的话
-                        // header/body 的边距是叠加在它上面的，怎么调都多一截
-                        content: { background: 'linear-gradient(165deg, #EDF3FE 0%, #E2ECFC 52%, #E9F1FE 100%)', padding: 0 },
+                        // 冷蓝底由全局 --surface-immersive 统一提供（与详情抽屉同色值），
+                        // 这里只把 padding 归零：.ant-modal-content 自带一圈内边距，
+                        // 不归零的话 header/body 的边距是叠加在它上面的，怎么调都多一截
+                        content: { padding: 0 },
                         // 标题栏必须显式 transparent：antd 默认给 header 铺的是白色（colorBgElevated），
                         // 不覆盖就会在渐变上盖一条白带
                         header: { background: 'transparent', borderBottom: '1px solid #E1EAF8', marginBottom: 0, padding: '12px 18px' },

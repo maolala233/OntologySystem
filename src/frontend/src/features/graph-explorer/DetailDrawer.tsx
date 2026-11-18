@@ -69,6 +69,7 @@ const ChunkContextModal: React.FC<{
             onCancel={onClose}
             footer={null}
             width={720}
+            rootClassName="tk-surface-deco"
             title={
                 <span>
                     <FileTextOutlined className="mr-2" />
@@ -313,7 +314,7 @@ const DetailDrawer: React.FC<Props> = ({ projectId, selection, onClose, onNaviga
             open={!!selection}
             onClose={onClose}
             width={560}
-            rootClassName="dd-drawer"
+            rootClassName="dd-drawer tk-surface-immersive"
             title={
                 <span className="flex items-center gap-2 text-[15px] font-semibold text-[#0F172A]">
                     <span className="dd-mark" aria-hidden />
@@ -321,9 +322,8 @@ const DetailDrawer: React.FC<Props> = ({ projectId, selection, onClose, onNaviga
                 </span>
             }
             styles={{
-                // 抽屉整体走冷蓝底（和工作台说明板同族），不再是白纸：
-                // content 铺渐变，header / body 透明，内部表格和描述行一律透底
-                content: { background: 'linear-gradient(165deg, #EDF3FE 0%, #E2ECFC 52%, #E9F1FE 100%)' },
+                // 抽屉整体走冷蓝底（深色画布档，由全局 --surface-immersive 提供，
+                // 与关系详情弹窗同一组色值）：header / body 透明，内部表格和描述行一律透底
                 header: { padding: '12px 20px', borderBottom: '1px solid #E1EAF8', marginBottom: 0, background: 'transparent' },
                 body: { padding: '16px 20px 24px', background: 'transparent' },
             }}

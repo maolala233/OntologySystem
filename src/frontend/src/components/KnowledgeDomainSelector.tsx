@@ -112,74 +112,74 @@ const KnowledgeDomainSelector: React.FC<KnowledgeDomainSelectorProps> = ({
 
     return (
         <>
-            <div className="flex items-center gap-2">
-                <div className="flex-1">
-                    <Select
-                        value={value}
-                        onChange={handleSelectChange}
-                        onClear={handleClear}
-                        placeholder={placeholder}
-                        loading={loading}
-                        disabled={disabled}
-                        showSearch
-                        filterOption={false}
-                        onSearch={setSearchValue}
-                        open={open}
-                        onDropdownVisibleChange={setOpen}
-                        labelRender={() => selectedDomain?.name || placeholder}
-                        dropdownRender={(menu) => (
-                            <>
-                                <div className="max-h-64 overflow-y-auto">
-                                    {filteredOptions.map((domain) => (
-                                        <div
-                                            key={domain.id}
-                                            className={`px-3 py-2 cursor-pointer hover:bg-gray-100 ${domain.id === value ? 'bg-blue-50' : ''}`}
-                                            // mousedown preventDefault：不拦则 mousedown 先让
-                                            // Select 失焦收起下拉，click 永远完不成——
-                                            // 选项"点了没反应"的根因（2026-11-08 实测）
-                                            onMouseDown={(e) => e.preventDefault()}
-                                            onClick={() => {
-                                                handleSelectChange(domain.id);
-                                                setOpen(false); // 选中即收起，输入框即时回填
-                                            }}
-                                        >
-                                            <div className="flex items-center justify-between">
-                                                <span className="font-medium text-gray-900">{domain.name}</span>
-                                                {domain.id === value && <Tag color="blue" className="text-xs">已选择</Tag>}
-                                            </div>
-                                            {domain.description && (
-                                                <span className="text-xs text-gray-500 block mt-1">
-                                                    {domain.description}
-                                                </span>
-                                            )}
+            <div className="w-full">
+                <Select
+                    value={value}
+                    onChange={handleSelectChange}
+                    onClear={handleClear}
+                    placeholder={placeholder}
+                    loading={loading}
+                    disabled={disabled}
+                    showSearch
+                    filterOption={false}
+                    onSearch={setSearchValue}
+                    open={open}
+                    onDropdownVisibleChange={setOpen}
+                    labelRender={() => selectedDomain?.name
+                        || <span className="text-[#A9B5CC]">{placeholder}</span>}
+                    dropdownRender={() => (
+                        <>
+                            <div className="max-h-64 overflow-y-auto">
+                                {filteredOptions.map((domain) => (
+                                    <div
+                                        key={domain.id}
+                                        className={`cursor-pointer px-3 py-2 transition-colors hover:bg-[rgba(91,141,239,0.08)] ${
+                                            domain.id === value ? 'bg-[rgba(91,141,239,0.12)]' : ''}`}
+                                        // mousedown preventDefault：不拦则 mousedown 先让
+                                        // Select 失焦收起下拉，click 永远完不成——
+                                        // 选项"点了没反应"的根因（2026-11-08 实测）
+                                        onMouseDown={(e) => e.preventDefault()}
+                                        onClick={() => {
+                                            handleSelectChange(domain.id);
+                                            setOpen(false); // 选中即收起，输入框即时回填
+                                        }}
+                                    >
+                                        <div className="flex items-center justify-between gap-2">
+                                            <span className="font-medium text-[#1F2A44]">{domain.name}</span>
+                                            {domain.id === value && <Tag color="blue" className="text-xs">已选择</Tag>}
                                         </div>
-                                    ))}
-                                </div>
-                                {allowCreate && (
-                                    <div style={{ padding: '8px 12px', borderTop: '1px solid #f0f0f0' }}>
-                                        <Button
-                                            type="dashed"
-                                            block
-                                            icon={<PlusOutlined />}
-                                            onClick={() => setIsCreateModalOpen(true)}
-                                        >
-                                            新建知识域
-                                        </Button>
+                                        {domain.description && (
+                                            <span className="mt-1 block text-xs leading-5 text-[#8A94AB]">
+                                                {domain.description}
+                                            </span>
+                                        )}
                                     </div>
-                                )}
-                            </>
-                        )}
-                        options={[]}
-                        style={{ width: '100%' }}
-                    />
-                </div>
+                                ))}
+                            </div>
+                            {allowCreate && (
+                                <div style={{ padding: '8px 12px', borderTop: '1px solid #E4ECF8' }}>
+                                    <Button
+                                        type="dashed"
+                                        block
+                                        icon={<PlusOutlined />}
+                                        onClick={() => setIsCreateModalOpen(true)}
+                                    >
+                                        新建知识域
+                                    </Button>
+                                </div>
+                            )}
+                        </>
+                    )}
+                    options={[]}
+                    style={{ width: '100%' }}
+                />
             </div>
 
             {/* 新建知识域弹窗 */}
             <Modal
                 title={
                     <div className="flex items-center gap-2">
-                        <DatabaseOutlined className="text-indigo-600" />
+                        <DatabaseOutlined className="text-[#5B8DEF]" />
                         <span>新建知识域</span>
                     </div>
                 }
@@ -193,22 +193,23 @@ const KnowledgeDomainSelector: React.FC<KnowledgeDomainSelectorProps> = ({
                 cancelText="取消"
                 width={450}
             >
-                <div className="py-4">
-                    <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 mb-4 text-sm text-gray-700">
-                        <p className="font-medium text-blue-800 mb-1">什么是「知识域」？</p>
+                <div className="pt-0.5">
+                    <div className="mb-3 rounded-[10px] border border-[rgba(91,141,239,0.18)] bg-[rgba(91,141,239,0.07)] px-3 py-2.5 text-[12.5px] leading-5 text-[#52607A]">
+                        <p className="mb-1 font-semibold text-[#2A57C6]">什么是「知识域」？</p>
                         <p>
                             知识域就像图书馆里的「书架分类」：告诉系统这个项目属于哪个业务领域（如 IT 架构、医疗健康）。
                             它决定了 ① 项目的归属分类，② 发布后在资产中心里按领域被检索到。
                             填不确定也没关系，先选一个最接近的，后续可随时修改。
                         </p>
                     </div>
-                    <p className="text-gray-500 text-sm mb-4">
+                    <p className="mb-3 text-[12.5px] leading-5 text-[#8A94AB]">
                         没有合适的分类？直接在下方输入新名称即可创建。
                     </p>
                     <Form form={createDomainForm} layout="vertical">
                         <Form.Item
                             name="name"
                             label="知识域名称"
+                            style={{ marginBottom: 14 }}
                             rules={[
                                 { required: true, message: '请输入知识域名称' },
                                 { max: 50, message: '名称不能超过 50 个字符' },
@@ -219,6 +220,7 @@ const KnowledgeDomainSelector: React.FC<KnowledgeDomainSelectorProps> = ({
                         <Form.Item
                             name="description"
                             label="知识域描述"
+                            style={{ marginBottom: 0 }}
                             rules={[{ max: 200, message: '描述不能超过 200 个字符' }]}
                         >
                             <TextArea
