@@ -589,8 +589,32 @@ const MyProjectsPage: React.FC = () => {
                 /* 列表面板：和卡片同一套实体感材质（极轻渐变 + 内高光 + 近距投影） */
                 /* 列表面板：和卡片同一套实体感材质（极轻渐变 + 内高光 + 近距投影） */
                 .mp-table {
-                    background-image: linear-gradient(180deg, rgba(255,255,255,.97) 0%, rgba(250,252,255,.95) 100%);
+                    /* 平铺冷蓝：垂直渐变在长表格里会被拉得很淡，前几屏几乎还是白的；
+                       平铺一层浅冷蓝，整块表体从第一行起就能看出和页面白卡的区分 */
+                    background-color: #F5F9FF;
+                    background-image: none;
                     box-shadow: inset 0 1px 0 rgba(255,255,255,.95), inset 0 -1px 0 rgba(219,228,242,.45), 0 10px 26px -20px rgba(15,23,42,.22), 0 2px 5px rgba(15,23,42,.04);
+                }
+                /* 表体透底（2026-11-18）：antd 默认给 .ant-table / 单元格铺 colorBgContainer 纯白，
+                   会在冷白卡片里露出一块白色矩形；这里必须 !important——antd 的表格背景
+                   选择器带元素层级，普通规则会被压住，看起来就像"没生效" */
+                .mp-table .ant-table-wrapper,
+                .mp-table .ant-table,
+                .mp-table .ant-table-container,
+                .mp-table .ant-table-content,
+                .mp-table .ant-table-tbody > tr > td,
+                .mp-table .ant-table-tbody > tr > td.ant-table-cell {
+                    background: transparent !important;
+                }
+                /* 表头在冷蓝底上再压一档，形成明确的分层带；
+                   注意别和行 hover 撞色：6% 品牌蓝叠在 #F5F9FF 上约等于 #ECF3FE，
+                   表头要比它更深，hover 才有"比表头更浅"的层级感 */
+                .mp-table .ant-table-thead > tr > th {
+                    background: #E7EFFC !important;
+                }
+                .mp-table .ant-table-tbody > tr.ant-table-row:hover > td,
+                .mp-table .ant-table-tbody > tr > td.ant-table-cell-row-hover {
+                    background: rgba(91, 141, 239, 0.06) !important;
                 }
                 /* 分页器默认贴死在卡片右缘，看起来太挤；整体往左收 16px 留出呼吸感
                    （不做居中：站内其他表格都是靠右，保持一致） */
@@ -630,31 +654,7 @@ const MyProjectsPage: React.FC = () => {
                 .scope-seg.ant-segmented .ant-segmented-item:not(.ant-segmented-item-selected):hover {
                     color: #1F2A44;
                 }
-                /* 查询条（2026-11-13）：搜索 / 状态 / 排序收进一条浅色容器，
-                   内部控件去边框、透明底，整条读起来像一个查询栏，而不是三个孤立的框 */
-                .mp-query .ant-input-affix-wrapper,
-                .mp-query .ant-select:not(.ant-select-customize-input) .ant-select-selector,
-                .mp-query .ant-btn {
-                    background-color: transparent !important;
-                    border-color: transparent !important;
-                    box-shadow: none !important;
-                }
-                .mp-query .ant-input-affix-wrapper:hover,
-                .mp-query .ant-select:not(.ant-select-disabled):not(.ant-select-customize-input):hover .ant-select-selector,
-                .mp-query .ant-btn:hover {
-                    background-color: #FFFFFF !important;
-                    border-color: #DCE7F7 !important;
-                }
-                /* 聚焦态只留 1px 品牌蓝描边，不再叠 3px 外光晕：
-                   查询条本身有自己的容器边，两层框叠在一起会显得很重。
-                   注意 antd 5.29 的 affix wrapper 已不挂 -focused 类，焦点态走 :focus-within，
-                   只写 -focused 的话输入时命中的是 hover 规则，边框一直是灰的 */
-                .mp-query .ant-input-affix-wrapper:focus-within,
-                .mp-query .ant-select-focused .ant-select-selector {
-                    background-color: #FFFFFF !important;
-                    border-color: #5B8DEF !important;
-                    box-shadow: none !important;
-                }
+                /* 查询条样式走全站 .tk-query-bar（冷蓝纸面 + 控件去边框 + 占位符加深） */
                 /* 新建项目（2026-11-13）：antd 默认主色 #5B8DEF 在整页浅色里是最亮的一块，
                    抢过上方 Hero；主操作改用深一档品牌蓝，投影收小，层级降到"重要但不用喊" */
                 .mp-new-btn.ant-btn-primary {
@@ -749,7 +749,7 @@ const MyProjectsPage: React.FC = () => {
                     2026-11-12：控件统一 32px 高；右侧两个控件固定成组，窄屏换行时不会散开 */}
                 <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
                     {(!countsReady || counts.total > 0) && (
-                        <div className="mp-query flex flex-wrap items-center gap-1 rounded-[12px] border border-[#E7EEF9] bg-white/70 p-1">
+                        <div className="tk-query-bar flex flex-wrap items-center gap-1 p-1">
                             <Input
                                 prefix={<SearchOutlined className="text-[#5B8DEF]" />}
                                 placeholder="搜索项目名称/描述..."
@@ -886,7 +886,7 @@ const MyProjectsPage: React.FC = () => {
                         </div>
                     </div>
                 ) : viewMode === 'list' ? (
-                    <div className="mp-table bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
+                    <div className="mp-table border border-[#E4ECF8] rounded-xl shadow-sm overflow-hidden">
                         <Table
                             rowKey="id" size="middle"
                             loading={loading}

@@ -731,7 +731,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                     )}
                                     okText="停止" cancelText="继续"
                                     onConfirm={cancel}>
-                            <Button size="small" icon={<PauseCircleOutlined />}>停止</Button>
+                            <Button size="small" className="tk-warn-soft-btn" icon={<PauseCircleOutlined />}>停止</Button>
                         </Popconfirm>
                     )}
                     {!runningNow && (

@@ -279,7 +279,7 @@ const AssetCenterPage: React.FC = () => {
                 返回按钮也从实心默认样式降成浅底描边，把最重的位置让给搜索 */}
             <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
                 <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-2">
-                    <Button className="ac-back-btn" icon={<ArrowLeftOutlined />} onClick={handleBackToDomains}>
+                    <Button className="tk-soft-btn" icon={<ArrowLeftOutlined />} onClick={handleBackToDomains}>
                         返回知识域
                     </Button>
                     {selectedDomain && selectedDomain.id !== 0 && (
@@ -306,7 +306,7 @@ const AssetCenterPage: React.FC = () => {
                     </span>
                 </div>
                 <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto">
-                    <div className="ac-query flex w-full flex-wrap items-center gap-1 rounded-[12px] border border-[#E7EEF9] bg-white/70 p-1 sm:w-auto">
+                    <div className="tk-query-bar flex w-full flex-wrap items-center gap-1 p-1 sm:w-auto">
                         <Input
                             allowClear
                             value={searchText}
@@ -447,43 +447,8 @@ const AssetCenterPage: React.FC = () => {
     return (
         <div className="h-full flex flex-col app-canvas">
             <style>{`
-                /* 二级工具条（2026-11-13）：与「我的项目」的查询条同构——
-                   搜索/排序收进一条浅色容器，内部控件去边框、透明底，
-                   整条读起来像一个查询栏，而不是几个孤立的框 */
-                .ac-query .ant-input-affix-wrapper,
-                .ac-query .ant-select:not(.ant-select-customize-input) .ant-select-selector,
-                .ac-query .ant-btn {
-                    background-color: transparent !important;
-                    border-color: transparent !important;
-                    box-shadow: none !important;
-                }
-                .ac-query .ant-input-affix-wrapper:hover,
-                .ac-query .ant-select:not(.ant-select-disabled):not(.ant-select-customize-input):hover .ant-select-selector,
-                .ac-query .ant-btn:hover {
-                    background-color: #FFFFFF !important;
-                    border-color: #DCE7F7 !important;
-                }
-                /* 聚焦态只留 1px 品牌蓝描边，不叠 3px 外光晕：
-                   查询条本身已经有容器边，两层框套在一起会显得又粗又重。
-                   注意 antd 5.29 的 affix wrapper 已不挂 -focused 类，焦点态走 :focus-within，
-                   只写 -focused 的话输入时命中的是上面的 hover 规则，边框一直是灰的 */
-                .ac-query .ant-input-affix-wrapper:focus-within,
-                .ac-query .ant-select-focused .ant-select-selector {
-                    background-color: #FFFFFF !important;
-                    border-color: #5B8DEF !important;
-                    box-shadow: none !important;
-                }
-                /* 返回按钮：次要动作，降到低对比的浅底描边，不和右侧搜索抢注意力 */
-                .ac-back-btn.ant-btn-default {
-                    background: rgba(255, 255, 255, 0.72);
-                    border-color: #E1E8F4;
-                    color: #52607A;
-                }
-                .ac-back-btn.ant-btn-default:not(:disabled):hover {
-                    color: #2A57C6 !important;
-                    border-color: rgba(91, 141, 239, 0.42) !important;
-                    background: rgba(255, 255, 255, 0.92) !important;
-                }
+                /* 二级工具条的查询条走全站 .tk-query-bar（冷蓝纸面 + 控件去边框 + 占位符加深） */
+                /* 返回按钮走全站 .tk-soft-btn（冷蓝纸面 + 蓝调描边），不再单独写白底样式 */
             `}</style>
             <Navbar breadcrumbs={breadcrumbs} />
 

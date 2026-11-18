@@ -137,14 +137,6 @@ const HomePage: React.FC = () => {
                 .hp-feature-cta-arrow { transition: transform .2s ease; }
                 .hp-feature-col:hover .hp-feature-cta-arrow,
                 .hp-feature-col:focus-visible .hp-feature-cta-arrow { transform: translateX(3px); }
-                /* Hero 内的「浏览资产中心」幽灵按钮：浅色卡片上用品牌蓝文字 + 白底，
-                   hover 时只加深淡蓝底和描边，不再刷成白底 */
-                .hp-hero-ghost.ant-btn.ant-btn-default:hover,
-                .hp-hero-ghost.ant-btn.ant-btn-default:focus-visible {
-                    background: rgba(91, 141, 239, 0.12) !important;
-                    border-color: rgba(91, 141, 239, 0.50) !important;
-                    color: #2A57C6 !important;
-                }
             `}</style>
             <Navbar breadcrumbs={breadcrumbs} />
 
@@ -174,8 +166,7 @@ const HomePage: React.FC = () => {
                                     <Button
                                         icon={<ArrowRightOutlined />}
                                         onClick={() => navigate('/asset-center')}
-                                        className="hp-hero-ghost h-9 sm:h-10 px-4 sm:px-6"
-                                        style={{ color: '#2A57C6', borderColor: 'rgba(91,141,239,0.35)', background: 'rgba(255,255,255,0.62)' }}
+                                        className="tk-soft-btn h-9 sm:h-10 px-4 sm:px-6"
                                     >
                                         浏览资产中心
                                     </Button>

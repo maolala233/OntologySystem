@@ -461,6 +461,106 @@ input[type="range"]::-moz-range-track {
   background-color: #f5f5f5;
 }
 
+/* 轻量次级按钮（2026-11-18）：冷蓝纸面 + 蓝调描边 + 品牌蓝文字。
+   用在浅色 Hero / 工具条的「浏览资产中心」「返回知识域」这类次要动作上，
+   替代原来的半透明白底——白底压在浅色卡片上几乎和背景融在一起，
+   看不出是按钮，也不带站内的冷调。 */
+.tk-soft-btn.ant-btn-default {
+  color: #2A57C6 !important;
+  border-color: rgba(91, 141, 239, 0.30) !important;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(91, 141, 239, 0.12) 100%) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.90), 0 1px 2px rgba(15, 23, 42, 0.04) !important;
+  transition: color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.tk-soft-btn.ant-btn-default:not(:disabled):hover {
+  color: #1F4FB3 !important;
+  border-color: rgba(91, 141, 239, 0.55) !important;
+  background: linear-gradient(180deg, #FFFFFF 0%, rgba(91, 141, 239, 0.18) 100%) !important;
+  box-shadow: inset 0 1px 0 #FFFFFF, 0 4px 10px -8px rgba(91, 141, 239, 0.55) !important;
+}
+
+.tk-soft-btn.ant-btn-default:not(:disabled):active {
+  color: #1F4FB3 !important;
+  border-color: rgba(91, 141, 239, 0.65) !important;
+  background: linear-gradient(180deg, #FFFFFF 0%, rgba(91, 141, 239, 0.24) 100%) !important;
+}
+
+/* 轻量警示按钮（2026-11-18）：构建中的「停止」这类打断动作——琥珀纸面 + 同色文字，
+   比白底清楚，又不像红色删除那么重 */
+.tk-warn-soft-btn.ant-btn-default {
+  color: #B8790F !important;
+  border-color: rgba(242, 185, 80, 0.45) !important;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(242, 185, 80, 0.16) 100%) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 1px 2px rgba(15, 23, 42, 0.04) !important;
+  transition: color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.tk-warn-soft-btn.ant-btn-default:not(:disabled):hover {
+  color: #9A6206 !important;
+  border-color: rgba(242, 185, 80, 0.70) !important;
+  background: linear-gradient(180deg, #FFFFFF 0%, rgba(242, 185, 80, 0.24) 100%) !important;
+  box-shadow: inset 0 1px 0 #FFFFFF, 0 4px 10px -8px rgba(184, 121, 15, 0.55) !important;
+}
+
+.tk-warn-soft-btn.ant-btn-default:not(:disabled):active {
+  color: #9A6206 !important;
+  border-color: rgba(242, 185, 80, 0.80) !important;
+  background: linear-gradient(180deg, #FFFFFF 0%, rgba(242, 185, 80, 0.30) 100%) !important;
+}
+
+/* 查询条（2026-11-18）：我的项目 / 资产中心 / 问答共用。
+   外框用一档更深的冷蓝作容器；控件与表单字段统一成 #EFF5FF 浅冷蓝，
+   始终比容器浅——不再用半透明白（那会在条子上显得比表单更轻）。 */
+.tk-query-bar {
+  background: var(--query-bar-bg);
+  border: 1px solid rgba(91, 141, 239, 0.20);
+  border-radius: 12px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 2px 6px -4px rgba(15, 23, 42, 0.10);
+}
+
+.tk-query-bar .ant-input-affix-wrapper,
+.tk-query-bar .ant-select:not(.ant-select-customize-input) .ant-select-selector,
+.tk-query-bar .ant-btn {
+  /* 与全站表单字段同一支浅冷蓝，明显有背景、又不会发白 */
+  background: var(--field-bg) !important;
+  border-color: var(--field-border) !important;
+  box-shadow: none !important;
+}
+
+.tk-query-bar .ant-input,
+.tk-query-bar .ant-select-selection-item,
+.tk-query-bar .ant-select-selection-search-input {
+  color: #1F2A44 !important;
+}
+
+.tk-query-bar .ant-input::placeholder,
+.tk-query-bar .ant-select-selection-placeholder {
+  color: #8A94AB !important;
+}
+
+.tk-query-bar .ant-input-affix-wrapper:not(:disabled):hover,
+.tk-query-bar .ant-select:not(.ant-select-disabled):not(.ant-select-customize-input):hover .ant-select-selector,
+.tk-query-bar .ant-btn:not(:disabled):hover {
+  /* 悬停只提一档浅冷蓝，不用白色 */
+  background: var(--field-bg-hover) !important;
+  border-color: var(--field-border-hover) !important;
+}
+
+.tk-query-bar .ant-input-affix-wrapper:focus-within,
+.tk-query-bar .ant-select-focused .ant-select-selector {
+  /* 聚焦保持浅冷蓝，靠品牌蓝描边 + 柔光确认正在编辑 */
+  background: var(--field-bg-focus) !important;
+  border-color: var(--field-border-focus) !important;
+  box-shadow: var(--field-ring) !important;
+}
+
+.tk-query-bar .ant-select-multiple .ant-select-selection-item {
+  background: rgba(91, 141, 239, 0.10);
+  border-color: rgba(91, 141, 239, 0.18);
+  color: #2A57C6;
+}
+
 /* 左侧展开面板按钮样式优化 */
 button[title*="列表"] {
   transition: all 0.3s ease;
@@ -656,6 +756,122 @@ body .ant-tooltip .ant-tooltip-arrow::before {
 }
 
 /* ===================================================================
+   全站表单控件（2026-11-18）
+   只作用于 antd Form 内部：文本框 / 文本域 / 密码框 / 数字 / 日期 /
+   下拉 / 上传。独立输入（问答输入井、查询条、代码编辑器）不在这里，
+   它们各自有自己的表面，避免一刀切刷成白框。
+   ==================================================================== */
+body .ant-form .ant-form-item-label > label {
+  height: auto;
+  color: #52607A;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+body .ant-form .ant-input,
+body .ant-form .ant-input-affix-wrapper,
+body .ant-form .ant-input-number,
+body .ant-form .ant-picker,
+body .ant-form .ant-select:not(.ant-select-customize-input) .ant-select-selector {
+  color: #1F2A44;
+  border-color: var(--field-border);
+  /* 冷蓝浅底：表单纸面本身接近冷白，控件再用 #FBFDFF 会和纸面融在一起、
+     看起来像"没加背景"；压一档浅蓝，字段边界才立得住。
+     不要再加 inset 阴影——浅底上的深色内阴影会在输入框顶部画出一条"横线"，
+     聚焦时 antd 用自己的 outline 覆盖掉又消失，看起来像闪烁（2026-11-18 反馈） */
+  background: var(--field-bg);
+  box-shadow: none;
+}
+
+body .ant-form .ant-input-affix-wrapper > input.ant-input,
+body .ant-form .ant-input-number-input,
+body .ant-form .ant-select-selection-search-input,
+body .ant-form .ant-picker input {
+  background: transparent;
+}
+
+body .ant-form .ant-input:not(:disabled):hover,
+body .ant-form .ant-input-affix-wrapper:not(.ant-input-affix-wrapper-disabled):hover,
+body .ant-form .ant-input-number:not(.ant-input-number-disabled):hover,
+body .ant-form .ant-picker:not(.ant-picker-disabled):hover,
+body .ant-form .ant-select:not(.ant-select-disabled):not(.ant-select-customize-input):hover .ant-select-selector {
+  border-color: var(--field-border-hover);
+}
+
+/* 聚焦沿用浅冷蓝底：交互反馈交给描边和柔光，不把底刷白 */
+body .ant-form .ant-input:focus,
+body .ant-form .ant-input-affix-wrapper:focus-within,
+body .ant-form .ant-input-number-focused,
+body .ant-form .ant-picker-focused,
+body .ant-form .ant-select-focused .ant-select-selector {
+  background: var(--field-bg-focus) !important;
+}
+
+body .ant-form .ant-input::placeholder,
+body .ant-form .ant-select-selection-placeholder,
+body .ant-form .ant-picker-input > input::placeholder {
+  color: var(--field-placeholder);
+}
+
+body .ant-form .ant-input:disabled,
+body .ant-form .ant-input-affix-wrapper-disabled,
+body .ant-form .ant-input-number-disabled,
+body .ant-form .ant-picker-disabled,
+body .ant-form .ant-select-disabled .ant-select-selector {
+  color: #8A94AB;
+  border-color: var(--field-disabled-border);
+  background: var(--field-disabled-bg);
+  box-shadow: none;
+}
+
+body .ant-form .ant-form-item-extra,
+body .ant-form .ant-form-item-explain-error {
+  font-size: 12px;
+}
+
+body .ant-form .ant-form-item-required::before {
+  color: #D92D20 !important;
+}
+
+body .ant-form .ant-form-item-explain-error {
+  color: #B42318;
+}
+
+body .ant-form .ant-form-item-has-error :is(.ant-input, .ant-input-affix-wrapper,
+    .ant-input-number, .ant-picker, .ant-select-selector) {
+  border-color: #D92D20;
+}
+
+body .ant-form .ant-form-item-has-error :is(.ant-input, .ant-input-affix-wrapper,
+    .ant-input-number, .ant-picker, .ant-select-selector):hover {
+  border-color: #E0574C;
+}
+
+/* 表单里的上传拖拽区也走同一套冷白纸面 */
+body .ant-form .ant-upload.ant-upload-drag {
+  border: 1px dashed rgba(91, 141, 239, 0.34);
+  border-radius: 12px;
+  background:
+    radial-gradient(360px 160px at 50% 0%, rgba(91, 141, 239, 0.10), transparent 70%),
+    linear-gradient(180deg, #FBFDFF 0%, #F5F9FF 100%);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+body .ant-form .ant-upload.ant-upload-drag:hover {
+  border-color: rgba(91, 141, 239, 0.70);
+  box-shadow: 0 0 0 3px rgba(91, 141, 239, 0.08);
+}
+
+body .ant-form .ant-upload-drag-icon .anticon {
+  color: #5B8DEF;
+}
+
+body .ant-form .ant-upload-hint,
+body .ant-form .ant-upload-list-item-name {
+  color: #8A94AB;
+}
+
+/* ===================================================================
    全局弹窗材质（2026-11-18）
    所有 antd Modal / confirm / Drawer 统一到站内「冷白纸面」：
    冷白渐变 + 蓝紫柔光 + 顶部品牌渐变线 + 蓝调发丝描边。
@@ -670,9 +886,31 @@ body .ant-tooltip .ant-tooltip-arrow::before {
     radial-gradient(620px 280px at 100% 0%, rgba(91, 141, 239, 0.08), transparent 70%),
     radial-gradient(460px 240px at 0% 100%, rgba(91, 141, 239, 0.11), transparent 72%),
     linear-gradient(158deg, #FDFEFF 0%, #F8FBFF 54%, #F1F7FE 100%);
+  /* 弹窗专用纸面（2026-11-18）：整体压深一档冷蓝，作为表单的"浅底"背景，
+     和表单控件的浅冷蓝形成稳定层次；页面卡片/抽屉仍用 --surface-paper */
+  --surface-dialog:
+    linear-gradient(160deg, #EDF3FE 0%, #E3EDFC 100%);
+  /* 表单控件色阶（2026-11-18）：输入框 / 文本域 / 下拉 / 日期共用，
+     调色只改这里，不再散落十六进制值 */
+  --field-bg: #EFF5FF;
+  --field-bg-hover: #F3F8FF;
+  --field-bg-focus: #F3F8FF;
+  --field-border: rgba(91, 141, 239, 0.20);
+  --field-border-hover: rgba(91, 141, 239, 0.45);
+  --field-border-focus: #5B8DEF;
+  --field-ring: 0 0 0 2px rgba(91, 141, 239, 0.12);
+  --field-placeholder: #A9B5CC;
+  --field-disabled-bg: #F2F5FA;
+  --field-disabled-border: #E6ECF6;
+  --query-bar-bg: #E8F0FD;
   /* 冷蓝纸面（深色画布档）：与详情抽屉同一组色值，避免白纸压在深底上刺眼 */
   --surface-immersive:
     linear-gradient(165deg, #EDF3FE 0%, #E2ECFC 52%, #E9F1FE 100%);
+  /* 就近浮层（Popover / Popconfirm / 下拉）：比卡片再蓝一档，
+     和白纸卡片拉开层次——删除确认这类小气泡原来几乎和白底融为一体（2026-11-18 反馈） */
+  --surface-popover:
+    radial-gradient(240px 130px at 100% 0%, rgba(91, 141, 239, 0.16), transparent 72%),
+    linear-gradient(160deg, #F7FBFF 0%, #EEF5FE 58%, #E8F1FD 100%);
 }
 
 /* 遮罩：冷蓝墨色 + 轻磨砂。antd 默认的纯黑 45% 在浅色站里显得发闷 */
@@ -690,7 +928,7 @@ body .ant-modal .ant-modal-content {
   padding: 20px 22px 18px;
   border: 1px solid var(--surface-line);
   border-radius: 16px;
-  background: var(--surface-paper);
+  background: var(--surface-dialog);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.96),
     inset 0 -1px 0 rgba(219, 228, 242, 0.55),
@@ -759,7 +997,9 @@ body .ant-modal .ant-modal-footer {
 /* ---------- 弹窗按钮：主按钮品牌渐变，次按钮冷白纸面 ---------- */
 body .ant-modal .ant-btn {
   font-weight: 500;
-  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+  /* 不要过渡 background：我们的底色是渐变（background-image），antd hover 用
+     background 简写切纯色时无法插值，会在 hover 瞬间闪一下（2026-11-18 反馈） */
+  transition: color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 body .ant-modal .ant-btn-default {
@@ -770,9 +1010,10 @@ body .ant-modal .ant-btn-default {
 }
 
 body .ant-modal .ant-btn-default:not(:disabled):hover {
-  color: #2A57C6;
-  border-color: rgba(91, 141, 239, 0.55);
-  background: linear-gradient(180deg, #FFFFFF 0%, #F0F6FF 100%);
+  color: #2A57C6 !important;
+  border-color: rgba(91, 141, 239, 0.55) !important;
+  background: linear-gradient(180deg, #FFFFFF 0%, #F0F6FF 100%) !important;
+  box-shadow: inset 0 1px 0 #FFFFFF, 0 1px 2px rgba(15, 23, 42, 0.04) !important;
 }
 
 body .ant-modal .ant-btn-primary {
@@ -784,8 +1025,13 @@ body .ant-modal .ant-btn-primary {
 }
 
 body .ant-modal .ant-btn-primary:not(:disabled):hover {
-  border-color: transparent;
-  background: linear-gradient(135deg, #6B9BF5 0%, #5B8BF0 55%, #7E7BF5 100%);
+  border-color: transparent !important;
+  background: linear-gradient(135deg, #6B9BF5 0%, #5B8BF0 55%, #7E7BF5 100%) !important;
+}
+
+body .ant-modal .ant-btn-primary:not(:disabled):active {
+  border-color: transparent !important;
+  background: linear-gradient(135deg, #4C7DE7 0%, #3E6CD6 55%, #5B57E6 100%) !important;
 }
 
 /* ghost 主按钮（次级强调）：保留镂空形态，不铺渐变 */
@@ -797,9 +1043,10 @@ body .ant-modal .ant-btn-primary.ant-btn-background-ghost {
 }
 
 body .ant-modal .ant-btn-primary.ant-btn-background-ghost:not(:disabled):hover {
-  color: #1F4FB3;
-  border-color: rgba(91, 141, 239, 0.70);
-  background: rgba(91, 141, 239, 0.08);
+  color: #1F4FB3 !important;
+  border-color: rgba(91, 141, 239, 0.70) !important;
+  background: rgba(91, 141, 239, 0.08) !important;
+  box-shadow: none !important;
 }
 
 /* 危险操作：保留语义红，但同样走浅纸面 / 渐变，不再是一块生红 */
@@ -810,9 +1057,9 @@ body .ant-modal .ant-btn-dangerous:not(.ant-btn-primary) {
 }
 
 body .ant-modal .ant-btn-dangerous:not(.ant-btn-primary):not(:disabled):hover {
-  color: #D92D20;
-  border-color: rgba(180, 35, 24, 0.50);
-  background: linear-gradient(180deg, #FFFFFF 0%, #FFEFED 100%);
+  color: #D92D20 !important;
+  border-color: rgba(180, 35, 24, 0.50) !important;
+  background: linear-gradient(180deg, #FFFFFF 0%, #FFEFED 100%) !important;
 }
 
 body .ant-modal .ant-btn-primary.ant-btn-dangerous {
@@ -821,6 +1068,16 @@ body .ant-modal .ant-btn-primary.ant-btn-dangerous {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.24),
     0 10px 20px -12px rgba(196, 58, 48, 0.70);
+}
+
+body .ant-modal .ant-btn-primary.ant-btn-dangerous:not(:disabled):hover {
+  border-color: transparent !important;
+  background: linear-gradient(135deg, #EB6A5F 0%, #D0443A 100%) !important;
+}
+
+body .ant-modal .ant-btn-primary.ant-btn-dangerous:not(:disabled):active {
+  border-color: transparent !important;
+  background: linear-gradient(135deg, #D0443A 0%, #B22F27 100%) !important;
 }
 
 /* 禁用态放在最后，压过上面的渐变 */
@@ -891,8 +1148,11 @@ body .ant-modal .ant-input-number,
 body .ant-modal .ant-picker,
 body .ant-modal .ant-select:not(.ant-select-customize-input) .ant-select-selector {
   color: #1F2A44;
-  border-color: #DDE6F5;
-  background: #FBFDFF;
+  border-color: var(--field-border);
+  /* 弹窗纸面是浅冷的，控件再压一档冷蓝：输入区明确读成"凹进去"的字段，
+     和上传拖拽区同一套材质；不要 inset 阴影，避免顶部横线 */
+  background: var(--field-bg);
+  box-shadow: none;
 }
 
 body .ant-modal .ant-input-affix-wrapper > input.ant-input,
@@ -907,13 +1167,23 @@ body .ant-modal .ant-input-affix-wrapper:not(.ant-input-affix-wrapper-disabled):
 body .ant-modal .ant-input-number:not(.ant-input-number-disabled):hover,
 body .ant-modal .ant-picker:not(.ant-picker-disabled):hover,
 body .ant-modal .ant-select:not(.ant-select-disabled):not(.ant-select-customize-input):hover .ant-select-selector {
-  border-color: rgba(91, 141, 239, 0.55);
+  border-color: var(--field-border-hover) !important;
+  background: var(--field-bg-hover) !important;
+}
+
+/* 聚焦保持浅冷蓝底，只用品牌蓝描边 + 柔光确认"正在编辑"，不再刷白 */
+body .ant-modal .ant-input:focus,
+body .ant-modal .ant-input-affix-wrapper:focus-within,
+body .ant-modal .ant-input-number-focused,
+body .ant-modal .ant-picker-focused,
+body .ant-modal .ant-select-focused .ant-select-selector {
+  background: var(--field-bg-focus) !important;
 }
 
 body .ant-modal .ant-input::placeholder,
 body .ant-modal .ant-select-selection-placeholder,
 body .ant-modal .ant-picker-input > input::placeholder {
-  color: #A9B5CC;
+  color: var(--field-placeholder);
 }
 
 body .ant-modal .ant-input:disabled,
@@ -922,8 +1192,8 @@ body .ant-modal .ant-input-number-disabled,
 body .ant-modal .ant-picker-disabled,
 body .ant-modal .ant-select-disabled .ant-select-selector {
   color: #8A94AB;
-  border-color: #E6ECF6;
-  background: #F2F5FA;
+  border-color: var(--field-disabled-border);
+  background: var(--field-disabled-bg);
   box-shadow: none;
 }
 
@@ -1077,21 +1347,102 @@ body .ant-modal .ant-modal-confirm-content {
   line-height: 1.68;
 }
 
-/* ---------- 从弹窗里弹出的浮层：下拉 / 选择器 / 气泡确认 ---------- */
+/* ---------- 点击就近浮层：下拉 / 选择器 / 气泡确认 ---------- */
 body .ant-select-dropdown,
 body .ant-picker-dropdown .ant-picker-panel-container,
 body .ant-popover .ant-popover-inner,
 body .ant-dropdown .ant-dropdown-menu {
-  border: 1px solid var(--surface-line);
-  background: linear-gradient(180deg, #FDFEFF 0%, #F8FBFF 100%);
+  border: 1px solid rgba(91, 141, 239, 0.18);
+  background: var(--surface-popover);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    0 18px 44px -20px rgba(15, 23, 42, 0.28),
+    0 2px 8px rgba(15, 23, 42, 0.06);
 }
 
 body .ant-popover .ant-popover-arrow::before {
-  background: #FDFEFF;
+  background: #EFF5FE;
 }
 
 body .ant-popover .ant-popover-inner-content {
   color: #33415C;
+}
+
+/* 气泡确认（删除按钮等）：小尺寸的标题 / 说明 / 按钮排版 */
+body .ant-popconfirm .ant-popconfirm-message {
+  margin-bottom: 10px;
+}
+
+body .ant-popconfirm .ant-popconfirm-message-icon .anticon {
+  margin-top: 2px;
+  color: #D99A2B;
+}
+
+body .ant-popconfirm .ant-popconfirm-title {
+  color: #0F172A;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+body .ant-popconfirm .ant-popconfirm-description {
+  margin-top: 4px;
+  color: #66738F;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+body .ant-popconfirm .ant-popconfirm-buttons .ant-btn {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 500;
+  /* 同弹窗按钮：渐变底不要参与 background 过渡，否则 hover 会闪一下 */
+  transition: color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+body .ant-popconfirm .ant-popconfirm-buttons .ant-btn-default {
+  color: #33415C;
+  border-color: rgba(91, 141, 239, 0.26);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+body .ant-popconfirm .ant-popconfirm-buttons .ant-btn-default:not(:disabled):hover {
+  color: #2A57C6 !important;
+  border-color: rgba(91, 141, 239, 0.55) !important;
+  background: #FFFFFF !important;
+}
+
+body .ant-popconfirm .ant-popconfirm-buttons .ant-btn-primary {
+  border-color: transparent;
+  background: linear-gradient(135deg, #5B8DEF 0%, #6E6BF0 100%);
+  box-shadow: 0 6px 14px -10px rgba(91, 141, 239, 0.80);
+}
+
+body .ant-popconfirm .ant-popconfirm-buttons .ant-btn-primary:not(:disabled):hover {
+  border-color: transparent !important;
+  background: linear-gradient(135deg, #6B9BF5 0%, #7E7BF5 100%) !important;
+}
+
+body .ant-popconfirm .ant-popconfirm-buttons .ant-btn-primary:not(:disabled):active {
+  border-color: transparent !important;
+  background: linear-gradient(135deg, #4C7DE7 0%, #5B57E6 100%) !important;
+}
+
+body .ant-popconfirm .ant-popconfirm-buttons .ant-btn-primary.ant-btn-dangerous {
+  background: linear-gradient(135deg, #E4574C 0%, #C43A30 100%);
+  box-shadow: 0 6px 14px -10px rgba(196, 58, 48, 0.70);
+}
+
+body .ant-popconfirm .ant-popconfirm-buttons .ant-btn-primary.ant-btn-dangerous:not(:disabled):hover {
+  border-color: transparent !important;
+  background: linear-gradient(135deg, #EB6A5F 0%, #D0443A 100%) !important;
+}
+
+body .ant-popconfirm .ant-popconfirm-buttons .ant-btn-primary.ant-btn-dangerous:not(:disabled):active {
+  border-color: transparent !important;
+  background: linear-gradient(135deg, #D0443A 0%, #B22F27 100%) !important;
 }
 
 /* ---------- Drawer：同族冷白纸面（浅色页面基准档） ---------- */

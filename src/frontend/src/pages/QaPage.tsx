@@ -456,22 +456,8 @@ export default function QaPage() {
                         0 12px 32px -20px rgba(15,23,42,0.34);
                 }
                 /* 二级配置条（2026-11-13）：项目 / 对话模型收进一条浅色容器，
-                   与资产中心、我的项目的查询条同一套做法——内部控件透明去边框，
-                   hover 浮白、聚焦转品牌蓝，整条读成一个"本次问答的上下文" */
-                .qa-config .ant-select .ant-select-selector {
-                    background-color: transparent !important;
-                    border-color: transparent !important;
-                    box-shadow: none !important;
-                }
-                .qa-config .ant-select:hover .ant-select-selector {
-                    background-color: #FFFFFF !important;
-                    border-color: #DCE7F7 !important;
-                }
-                .qa-config .ant-select-focused .ant-select-selector {
-                    background-color: #FFFFFF !important;
-                    border-color: #5B8DEF !important;
-                    box-shadow: none !important;
-                }
+                   外框与内部控件的通用样式走全站 .tk-query-bar；
+                   这里只保留「未选项目」的琥珀警示态 */
                 /* 还没选项目：把"必须先选项目"从下方那行黄字提到控件本身，
                    否则选择器看起来一切正常，用户会直接开始输入然后发现发不出去 */
                 .qa-config .qa-select-warn:not(.ant-select-focused) .ant-select-selector {
@@ -686,7 +672,7 @@ export default function QaPage() {
                         它读作「工具条」，不读作「标题」 */}
                     <div className="shrink-0 px-6 pt-3 pb-1">
                         <div className="max-w-3xl mx-auto">
-                            <div className="qa-config inline-flex max-w-full flex-wrap items-center gap-1 rounded-[12px] border border-[#E7EEF9] bg-white/70 p-1">
+                            <div className="tk-query-bar qa-config inline-flex max-w-full flex-wrap items-center gap-1 p-1">
                                 <div className="flex min-w-0 items-center gap-1.5 pl-2.5">
                                     <span className="shrink-0 text-[13px] font-semibold text-[#3D4B66]">项目</span>
                                     <Select
