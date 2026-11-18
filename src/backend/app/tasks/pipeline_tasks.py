@@ -64,6 +64,16 @@ STAGE_DEFS: list[tuple[str, str]] = [
     ("adjudicate", "AI 结果审查"),
 ]
 
+
+def _stage_label(stage_key: str) -> str:
+    """内部阶段键 → 用户可见的中文名（"schema" → "骨架抽取"）。
+
+    报错文案里绝不能出现内部键：用户看到「schema 阶段失败」不知道说的是哪一步
+    （2026-11-18 反馈）。
+    """
+    return next((lbl for k, lbl in STAGE_DEFS if k == stage_key), stage_key)
+
+
 # 构建深度档位（用户新建项目时可选）：自检修复轮数 + 是否跑公理扫描
 DEPTH_PROFILES: dict[str, dict] = {
     "fast":     {"selfcheck_rounds": 1, "include_axioms": False, "label": "快速"},
@@ -247,7 +257,7 @@ def build_sub_steps(stage_key: str, sub: Optional[dict]) -> list[dict]:
                      "cancelled": "cancelled"}.get(status, "running")
             return _phase_steps(stage_key, silent[0][0], state,
                                 100 if state == "done" else pct)
-        label = next((lbl for k, lbl in STAGE_DEFS if k == stage_key), stage_key)
+        label = _stage_label(stage_key)
         state = {"completed": "done", "failed": "failed",
                  "cancelled": "cancelled"}.get(status, "running")
         return [_step(stage_key, label, state, 100 if state == "done" else pct)]
@@ -314,7 +324,7 @@ def _init_stage_sub(task_id: str, stage_key: str, message: str = "") -> None:
     子任务启动前可能先做准备工作（如骨架抽取前的 CQ 生成，数秒到数十秒），
     这段时间子键不存在，前端只能显示「等待本阶段子步骤进度…」（2026-11-16 实测）。
     """
-    label = next((lbl for k, lbl in STAGE_DEFS if k == stage_key), stage_key)
+    label = _stage_label(stage_key)
     _sub_stage_progress(
         task_id, stage_key, 0, message or f"{label}准备中…",
         steps=build_sub_steps(stage_key, {"percent": 0, "status": "running"}))
@@ -399,6 +409,20 @@ def _friendly_error(e: BaseException | str) -> str:
     return msg[:300]
 
 
+class _StageFailed(RuntimeError):
+    """某一阶段失败（reason 已经是翻成人话的原因）。
+
+    自带阶段名（「骨架抽取失败：无法连接模型服务…」），外层收尾时不得再走一次
+    _friendly_error——那会把前缀洗掉（429/鉴权等分支只返回通用文案），用户就又
+    不知道是哪一步挂了。stage_key 留给收尾逻辑定位红格子。
+    """
+
+    def __init__(self, stage_key: str, reason: str):
+        self.stage_key = stage_key
+        self.reason = reason
+        super().__init__(f"{_stage_label(stage_key)}失败：{reason}")
+
+
 def _run_stage_task(task, stage_key: str, stages: list[dict], task_id: str,
                     **kwargs) -> dict:
     """经 task.apply 就地执行子任务；失败转异常（子任务体已写 failed 进度）。
@@ -424,7 +448,7 @@ def _run_stage_task(task, stage_key: str, stages: list[dict], task_id: str,
     if res.failed():
         err = res.result
         msg = str(getattr(err, "message", None) or err)[:300]
-        raise RuntimeError(f"{stage_key} 阶段失败: {_friendly_error(msg)}")
+        raise _StageFailed(stage_key, _friendly_error(msg))
     try:
         sub_prog = get_task_progress(sub_id)
         if sub_prog and sub_prog.get("message"):
@@ -600,10 +624,11 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 sub = None
             raw = str((sub or {}).get("message") or res.get("reason") or "未知原因")
             reason = _friendly_error(raw)
+            failed = _StageFailed(stage_key, reason)
             st = _stage(stages, stage_key)
             st["status"] = "failed"
-            st["detail"] = reason
-            raise RuntimeError(f"{stage_key} 阶段失败: {reason}")
+            st["detail"] = str(failed)
+            raise failed
 
     summary: dict[str, Any] = {}
     db = None
@@ -1538,7 +1563,17 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                                  stats={"project_id": project_id, "stages": stages,
                                         **_prof_extra()})
             return {"status": "cancelled"}
-        reason = _friendly_error(e)
+        if isinstance(e, _StageFailed):
+            # 阶段内已经翻成大白话并带了「XX失败：」前缀，不能再翻一次——
+            # _friendly_error 对 429/鉴权等分支只回通用文案，会把阶段名洗掉
+            reason = str(e)
+        else:
+            reason = _friendly_error(e)
+            # 阶段间隙抛的异常（如解析批量失败）同样补上当前阶段名：
+            # 「解析文档失败：无法连接模型服务…」比裸原因更能定位停在哪一步
+            running_key = next((st["key"] for st in stages if st["status"] == "running"), None)
+            if running_key:
+                reason = f"{_stage_label(running_key)}失败：{reason}"
         for st in stages:
             if st["status"] == "running":
                 st["status"] = "failed"

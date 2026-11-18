@@ -139,7 +139,13 @@ const ProjectOverviewPage: React.FC = () => {
         } else if (s.status === 'failed' || s.status === 'cancelled') {
             load();
             loadProject(pid);
-            if (s.status === 'failed') message.error('构建失败：' + (s.message || '未知原因'));
+            if (s.status === 'failed') {
+                // 阶段失败的后端文案已自带「骨架抽取失败：…」前缀（2026-11-18），
+                // 再叠一层「构建失败：」就是「构建失败：骨架抽取失败：…」；只给
+                // 没有阶段信息的原因补前缀
+                const msg = s.message || '未知原因';
+                message.error(/失败[:：]/.test(msg) ? msg : `构建失败：${msg}`);
+            }
         } else {
             load(); // idle/running/queued/scheduled 之间跃迁也同步摘要（结果区随构建态收放）
             loadProject(pid);

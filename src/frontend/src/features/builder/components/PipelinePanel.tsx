@@ -166,40 +166,35 @@ const PctRing: React.FC<{ percent: number | null; color: string; label: string }
  *   不补任何前端臆造的清单。
  */
 
-/** 秒 → 「3 分 12 秒」；空值「—」 */
-const fmtDuration = (sec?: number | null, precise = false): string => {
-    if (typeof sec !== 'number' || !Number.isFinite(sec) || sec < 0) return '—';
-    // 冲突检测/结构自检常不足 1 秒，整秒显示会变成 0 秒
-    if (precise && sec < 60) return `${Number(sec.toFixed(2))} 秒`;
-    const t = Math.round(sec);
-    if (t < 60) return `${t} 秒`;
-    const m = Math.floor(t / 60);
-    const r = t % 60;
-    if (m < 60) return r ? `${m} 分 ${String(r).padStart(2, '0')} 秒` : `${m} 分`;
-    return `${Math.floor(m / 60)} 小时 ${m % 60} 分`;
-};
+const pad2 = (n: number): string => String(n).padStart(2, '0');
 
-/** 秒 → 「3:12 / 1:02:05」计时器写法（2026-11-17）：构建中的用时每秒都在走，
- *  用「3 分 12 秒」这种长句读起来又长又跳；等宽计时器数字宽度稳定，扫一眼就知道走了多久 */
-const fmtClock = (sec?: number | null): string => {
+/**
+ * 秒 → 「3:12 / 1:02:05」计时器写法（2026-11-17）：构建中的用时每秒都在走，
+ * 用「3 分 12 秒」这种长句读起来又长又跳；等宽计时器数字宽度稳定，扫一眼就知道走了多久。
+ *
+ * precise（2026-11-18）：不足 1 分钟的阶段（冲突检测 / 结构自检）保留两位小数，
+ * 用来表达亚秒级耗时；小数部分为 0 时只显示整秒——「0:00」而不是「0:00.00」，
+ * 既然后面没有数据，就不该拖两个 0 占位。
+ */
+const fmtClock = (sec?: number | null, precise = false): string => {
     if (typeof sec !== 'number' || !Number.isFinite(sec) || sec < 0) return '';
-    const t = Math.floor(sec);
+    // 按 0.01s 四舍五入后再拆位：59.999 会进位成 1:00，不会出现「0:59.99」
+    const cents = precise ? Math.round(sec * 100) : Math.floor(sec) * 100;
+    const t = Math.floor(cents / 100);
+    const frac = cents % 100;
     const h = Math.floor(t / 3600);
     const m = Math.floor((t % 3600) / 60);
     const s = t % 60;
+    const fracText = frac ? `.${pad2(frac)}` : '';
     return h > 0
-        ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
-        : `${m}:${String(s).padStart(2, '0')}`;
+        ? `${h}:${pad2(m)}:${pad2(s)}${fracText}`
+        : `${m}:${pad2(s)}${fracText}`;
 };
 
-/** 阶段用时：常规阶段走计时器写法；冲突检测 / 结构自检常不足 1 秒，保留两位小数（"0:00.43"） */
+/** 阶段用时：全板块统一计时器写法；只有冲突检测 / 结构自检这类亚秒级阶段带小数（「0:00.43」） */
 const fmtStageTime = (sec?: number | null, precise = false): string => {
     if (typeof sec !== 'number' || !Number.isFinite(sec) || sec < 0) return '—';
-    if (precise && sec < 60) {
-        // 与 fmtClock 同一时钟写法，避免出现「0.43s」和「0:12」单位混用
-        return `0:${sec < 10 ? '0' : ''}${sec.toFixed(2)}`;
-    }
-    return fmtClock(sec);
+    return fmtClock(sec, precise && sec < 60);
 };
 
 const tsOf = (iso?: string | null): number | null => {
@@ -645,8 +640,9 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
         const t1 = tsOf(st.finished_at) ?? nowMs;
         return Math.max(0, (t1 - t0) / 1000);
     };
-    const totalDuration = stages.reduce(
-        (n, st) => n + (typeof st.duration_seconds === 'number' ? st.duration_seconds : 0), 0);
+    // 各阶段耗时求和：优先后端 duration_seconds，旧任务没下发时由 started/finished 现算，
+    // 否则汇总会少算整段（旧任务甚至求和为 0，只能落到「本次构建已完成」）
+    const totalDuration = stages.reduce((n, st) => n + (stageDuration(st) ?? 0), 0);
     const starts = stages.map((st) => tsOf(st.started_at)).filter((t): t is number => t != null);
     const ends = stages.map((st) => tsOf(st.finished_at)).filter((t): t is number => t != null);
     const overallElapsed = starts.length
@@ -663,7 +659,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
     const overallMeta = runningNow
         ? `已完成 ${doneCount}/${stages.length} 个阶段`
         : s?.status === 'completed'
-            ? (totalDuration > 0 ? `本次构建用时 ${fmtDuration(totalDuration)}` : '本次构建已完成')
+            ? (totalDuration > 0 ? `本次构建用时 ${fmtClock(totalDuration)}` : '本次构建已完成')
             : s?.status === 'failed'
                 ? `构建未完成${failedStage ? ` · 停在「${failedStage.label}」` : ''}`
                 : s?.status === 'cancelled'
@@ -965,7 +961,10 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                                       style={{ color: st.status === 'running' ? '#2A57C6' : tone.c }}>
                                                     {st.status === 'skipped' ? '已跳过'
                                                         : st.status === 'pending' ? '—'
-                                                            : fmtStageTime(st.duration_seconds,
+                                                            // 与详情区那枚计时药丸共用 stageDuration：
+                                                            // 旧任务没有 duration_seconds 时也能由起止时间补算，
+                                                            // 运行中的阶段同样按秒走动
+                                                            : fmtStageTime(stageDuration(st),
                                                                 st.key === 'conflicts' || st.key === 'selfcheck')}
                                                 </span>
                                             </button>
