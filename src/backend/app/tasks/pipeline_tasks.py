@@ -1571,6 +1571,22 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                     "pending_by_priority": by_priority, "adjudication": adj}
         finally:
             hb_stop.set()  # 停心跳：终态已落，别再刷新主键
+            # SIGTERM（revoke terminate）不会走 _PipelineCancelled 分支，但 finally
+            # 仍会执行；进度键若停在 cancelling，这里补写 cancelled，避免锁释放后
+            # 页面永远卡在「停止中」。
+            try:
+                cur = get_task_progress(task_id)
+                if cur and cur.get("status") == "cancelling":
+                    for st in stages:
+                        if st["status"] == "running":
+                            st["status"] = "cancelled"
+                    _sync_stage_times(stages)
+                    finish_task_progress(
+                        task_id, "cancelled", "已停止（用户取消）",
+                        stats={"project_id": project_id, "stages": stages,
+                               **_prof_extra()})
+            except Exception:  # noqa: BLE001 —— 收尾补写失败不影响进程退出
+                pass
             if db is not None:
                 db.close()
             release_pipeline_lock(project_id)  # celery 模式的锁清理（inline 在线程 finally 兜底）

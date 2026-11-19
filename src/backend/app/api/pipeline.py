@@ -171,9 +171,14 @@ def pipeline_status_endpoint(
         last_tid = pipeline_last_task_id(project_id)
         last_prog = get_task_progress(last_tid) if last_tid else None
         if last_prog and int((last_prog.get("stats") or {}).get("project_id") or -1) == project_id:
-            stale_running = last_prog.get("status") in ("running", "queued") \
+            # 停止中：锁已被 worker finally 释放、但状态还停在 cancelling——这里
+            # 按取消时间戳做超时兜底，超时强制收尾，避免页面永远卡在停止中。
+            if last_prog.get("status") == "cancelling":
+                if force_finish_cancel_timeout(project_id, last_tid, last_prog):
+                    last_prog = get_task_progress(last_tid)
+            stale_running = last_prog is not None and last_prog.get("status") in ("running", "queued") \
                 and int(time.time()) - int(last_prog.get("updated_at") or 0) > PIPELINE_STALE_SECONDS
-            if not stale_running:
+            if last_prog is not None and not stale_running:
                 tid, prog = last_tid, last_prog
     if prog is None:
         sched = pipeline_schedule_for(project_id)
