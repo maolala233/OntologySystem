@@ -50,10 +50,14 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage,
     // 请求代际：轮询/删除/上传并发时，只有最新一次列表响应可写状态——
     // 否则删除后，删除前在途的旧响应返回会把已删文档"复活"回界面（实测踩坑）
     const fetchGenRef = useRef(0);
+    // 最近一次拉列表的时间：新建项目跳转时挂载会先拉一次，解析阶段的信息
+    // 0.5 秒后才传进来，不应再立刻重复拉第二条（2026-11-19）
+    const lastFetchAtRef = useRef(0);
 
     const fetchList = useCallback(async (withSpin = false): Promise<DocumentRow[]> => {
         const gen = ++fetchGenRef.current;
         if (withSpin) setLoading(true);
+        lastFetchAtRef.current = Date.now();
         try {
             const r = await documentsApi.list(projectId);
             if (gen !== fetchGenRef.current) return []; // 过期响应，丢弃（状态也不写）
@@ -82,10 +86,18 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage,
     // fetchList 每次都 setDocs 生成新数组，若 docs 进依赖，effect 会被自己触发的渲染
     // 反复重启，而重启时又会立刻 fetchList 一次 → 死循环（实测构建期间按网络往返速度打接口）
     const docsBusy = docs.some((d) => d.parse_status === 'parsing' || d.parse_status === 'uploaded');
+    // 「刚进入解析阶段先拉一次」只做一次（2026-11-19）：docsBusy 翻转会让这个 effect
+    // 重启，原来每次重启都会再拉一条，解析收尾那一秒会连发两条 /documents
+    const parseRefetchRef = useRef(false);
     useEffect(() => {
+        if (!pipelineParsing) parseRefetchRef.current = false;
         const busy = pipelineParsing || docsBusy;
         if (!busy) return;
-        if (pipelineParsing) void fetchList();  // 刚进入解析阶段先立刻拉一次，不等第一个 2.5s 周期
+        if (pipelineParsing && !parseRefetchRef.current) {
+            parseRefetchRef.current = true;
+            // 2 秒内刚拉过就不重复（新建项目跳转的典型路径）
+            if (Date.now() - lastFetchAtRef.current > 2000) void fetchList();
+        }
         // 构建中的解析是后台任务（用户在盯上面的进度面板），5s 一刷即可，一次大文档
         // 解析能省掉一半请求；用户自己上传触发的解析保持 2.5s，反馈要及时（2026-11-19）
         const t = setInterval(async () => {

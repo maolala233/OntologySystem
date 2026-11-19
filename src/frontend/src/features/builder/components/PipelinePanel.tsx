@@ -541,13 +541,9 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                     esRef.current = null;
                     setSseUp(false);
                 }
-                // 断流兜底只在"可能还在跑"时才补一次 REST（2026-11-19）：
-                // 构建结束后页面会长期挂着，此时每次重连再打一个 status 没有任何新信息
-                const local = statusRef.current?.status;
-                if (!local || local === 'running' || local === 'queued'
-                    || local === 'cancelling' || local === 'scheduled') {
-                    refresh();
-                }
+                // 断流不再额外补 REST（2026-11-19）：重订成功后 SSE 首帧就是当前状态；
+                // 若流一直连不上，下面的 3s 兜底轮询会接管。每次重连多打一个 status
+                // 只是让日志里多出一条"像轮询"的请求
                 if (retryRef.current) clearTimeout(retryRef.current);
                 retryRef.current = setTimeout(() => {
                     retryRef.current = null;
@@ -585,24 +581,6 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
         document.addEventListener('visibilitychange', onVisibility);
         return () => document.removeEventListener('visibilitychange', onVisibility);
     }, []);
-    // 回到前台补一次复核（首次挂载跳过：mount 那次 refresh 已经跑过）
-    const firstVisibleRef = useRef(true);
-    useEffect(() => {
-        if (!visible) return;
-        if (firstVisibleRef.current) {
-            firstVisibleRef.current = false;
-            return;
-        }
-        // 只有"后台期间可能真的变了"才补 REST（2026-11-19）：终态/空闲时切回来
-        // 只需重订流（SSE 首帧就是当前状态），否则每次切标签页都要多打一个 status。
-        // 后台期间如果真有新一轮构建跑起来，终态帧与本地记录对不上时会自行补刷。
-        const local = statusRef.current?.status;
-        if (!local || local === 'running' || local === 'queued'
-            || local === 'cancelling' || local === 'scheduled') {
-            void refresh();
-        }
-    }, [visible, refresh]);
-
     // 只在"可能在跑"时持有 SSE（2026-11-19 用户反馈）：构建结束/空闲/草稿都没有实时
     // 信息可推，继续挂着连接只会在每次切回标签页时重换票重连，看着像在轮询。
     // 终态一到就断开；点「一键构建」后 refresh 会把 status 置为 running，自动重新订阅。

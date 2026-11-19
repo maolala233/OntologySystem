@@ -285,7 +285,9 @@ const MyProjectsPage: React.FC = () => {
             }
             closeCreateModal();
 
-            navigate(`/projects/${pid}`);
+            // 带上创建接口的返回值（2026-11-19）：详情页首屏直接用它，省掉一次
+            // /projects/:id；附时间戳，详情页只在极短时间内采信，避免刷新重放旧快照
+            navigate(`/projects/${pid}`, { state: { project: newProject, at: Date.now() } });
         } catch (error: any) {
             const msg = error.response?.data?.error?.message || '创建失败，请稍后重试';
             message.error(msg);

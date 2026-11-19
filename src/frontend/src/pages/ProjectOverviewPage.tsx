@@ -4,7 +4,7 @@
  * 专家模式（多 Tab 工作台）需 builder_pro 模块授权，未授权不显示入口。
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { message } from '../shared/feedback';
 import { Button, Tag } from 'antd';
 
@@ -21,6 +21,7 @@ import PipelinePanel from '../features/builder/components/PipelinePanel';
 import ProjectDocsCard from '../features/builder/components/ProjectDocsCard';
 import BuildResultsPanel from '../features/builder/components/BuildResultsPanel';
 import { useBuilderStore } from '../features/builder/store';
+import type { ProjectData } from '../types/ontology';
 import Navbar from '../components/Layout/Navbar';
 
 const ProjectOverviewPage: React.FC = () => {
@@ -79,7 +80,17 @@ const ProjectOverviewPage: React.FC = () => {
         lastPipeStatusRef.current = null;
     }, [pid]);
 
-    useEffect(() => { loadProject(pid); }, [pid, loadProject]);
+    // 新建项目跳转过来时带一份创建接口的返回值（2026-11-19）：10 秒内直接采用，
+    // 省掉刚进页面又拉一次 /projects/:id。超时一律回源——浏览器刷新会重放历史 state，
+    // 不能把创建时的旧状态当成当前状态
+    const location = useLocation();
+    useEffect(() => {
+        const st = location.state as { project?: ProjectData; at?: number } | null;
+        const preloaded = st?.project?.id === pid && typeof st.at === 'number'
+            && Date.now() - st.at < 10000 ? st.project : undefined;
+        loadProject(pid, preloaded);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [pid, loadProject]);
     useEffect(() => { load(); }, [load, pipelineSignal]);
 
     // 生命周期状态只分 draft/building/ready/published，没有「中止/失败」——
