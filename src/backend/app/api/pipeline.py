@@ -258,7 +258,13 @@ async def pipeline_events(
         while time.time() - started < 1800:
             if await request.is_disconnected():
                 return
-            tid = pipeline_running_task_id(project_id) or last_task
+            # 兜底顺序（2026-11-19 停止流程反馈）：锁在 = 当前构建；锁释放后
+            # 优先取服务端「最近一次发起」的登记，最后才用前端连接时带的
+            # last_task——它在建连时就固化了，新一轮构建结束后仍指着上一轮，
+            # 会把旧任务的 stages/percent 继续推给前端（阶段时间线整块挪位、
+            # 百分比 78% → 42% 来回跳）
+            tid = (pipeline_running_task_id(project_id)
+                   or pipeline_last_task_id(project_id) or last_task)
             prog = get_task_progress(tid) if tid else None
             # 跨项目防泄露：last_task 属于别的项目时按无任务处理
             if prog is not None and int((prog.get("stats") or {}).get("project_id") or -1) != project_id:

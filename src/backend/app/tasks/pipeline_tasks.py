@@ -458,7 +458,9 @@ def _run_stage_task(task, stage_key: str, stages: list[dict], task_id: str,
     # 本阶段的子任务取消键（2026-11-10"停止了还在跑"根因之一）。重推失败不影响阶段。
     try:
         cur = get_task_progress(task_id)
-        if cur:
+        # 停止中/终态不再重推：这里不传 status，默认会写成 running，把「停止中」
+        # 顶回「进行中」，阶段时间线又往前走一格（2026-11-19 停止流程反馈）
+        if cur and cur.get("status") in ("running", "queued"):
             set_task_progress(task_id, cur.get("stage") or stage_key,
                               cur.get("percent") or 0,
                               cur.get("message") or "",
@@ -566,8 +568,18 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
     stages = _stages_reset()
     _stage_index = {k: i for i, (k, _) in enumerate(STAGE_DEFS)}
 
+    from app.tasks.extract_tasks import is_cancelled  # noqa: F811 —— _prog 的停止中判定也要用
+
     def _prog(stage_key: str, msg: str = "", pct_in_stage: float | None = None,
               status_change: bool = True) -> None:
+        # 停止中（2026-11-19 反馈）：用户点了停止后，阶段边界和计时线程还会再调
+        # 到这里——不能再写 status=running，否则界面从「停止中」闪回「进行中」，
+        # 阶段时间线也会继续往前挪；进度键停在被打断的位置，交给取消收尾落终态。
+        try:
+            if is_cancelled(task_id):
+                return
+        except Exception:  # noqa: BLE001 —— Redis 抖动不能反过来打断进度上报
+            pass
         _sync_stage_times(stages, current=stage_key)
         base = _stage_index[stage_key]
         frac = (pct_in_stage if pct_in_stage is not None else (1.0 if status_change else 0.0))
@@ -587,7 +599,6 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             raise _PipelineCancelled()
 
     restart = bool(options.get("restart"))
-    from app.tasks.extract_tasks import is_cancelled
     depth = str(options.get("depth") or DEFAULT_DEPTH)
     if depth not in DEPTH_PROFILES:
         depth = DEFAULT_DEPTH
@@ -2073,7 +2084,11 @@ def mark_pipeline_cancelling(task_id: str, prog: Optional[dict] = None) -> None:
     不立即释放锁，避免前端刚显示已停止、用户马上重新构建，老任务仍在写产物
     造成新旧任务并发（2026-11-18 讨论）。超时兜底见 force_finish_cancel_timeout。
     """
-    cur = prog or get_task_progress(task_id) or {}
+    # 以 Redis 最新值为准（端点读快照到这里的几毫秒里 worker 可能已经收尾）：
+    # 已落终态就不能再被「停止中」盖回去，否则项目会卡在停止中直到超时兜底
+    cur = get_task_progress(task_id) or prog or {}
+    if cur.get("status") in ("completed", "failed", "cancelled"):
+        return
     set_task_progress(task_id, cur.get("stage") or "",
                       int(cur.get("percent") or 0),
                       "正在停止（等待任务退出）…",
