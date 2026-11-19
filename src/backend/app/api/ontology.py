@@ -660,6 +660,22 @@ class ProjectBatchDeleteIn(BaseModel):
     project_ids: list[int] = Field(..., min_length=1, max_length=200)
 
 
+BUILDING_DELETE_MESSAGE = "构建进行中，暂不能删除项目。请等待本次构建结束，或先停止构建再操作"
+
+
+def _ensure_not_building(project_id: int) -> None:
+    """构建中禁止删除项目（与文档上传/删除的互斥口径一致）。
+
+    删除项目会级联清掉行表、审核项与图谱；构建仍持有该项目的旧文档/切片快照，
+    继续跑会写入孤儿 Entity/Relation/ReviewItem，甚至覆盖已删除项目的数据。
+    这里直接 409 拒绝，等构建结束（或先停止）再删。
+    """
+    from app.tasks.pipeline_tasks import pipeline_build_active
+
+    if pipeline_build_active(project_id):
+        raise HTTPException(status_code=409, detail=BUILDING_DELETE_MESSAGE)
+
+
 # 批量删除项目（单事务逐项目提交；部分失败不影响其他项目）
 @router.post("/batch-delete")
 def batch_delete_projects(
@@ -684,6 +700,11 @@ def batch_delete_projects(
             continue
         if db_project.owner_id != current_user.id and not is_super_admin(current_user):
             failed.append({"project_id": project_id, "reason": "no permission"})
+            continue
+        try:
+            _ensure_not_building(project_id)
+        except HTTPException as exc:
+            failed.append({"project_id": project_id, "reason": str(exc.detail)})
             continue
 
         try:
@@ -720,6 +741,9 @@ def delete_project(
     # 超管（username='admin'）可删除任何项目；普通管理员仅限自己名下
     if db_project.owner_id != current_user.id and not is_super_admin(current_user):
         raise HTTPException(status_code=403, detail="No permission to delete this project")
+
+    # 构建中禁止删除：权限校验之后再判，避免向无权限用户泄露构建状态
+    _ensure_not_building(project_id)
 
     # M4：Neo4j 清理改走 outbox（删除 → 监听器发 project.deleted → worker-graph
     # 消费 DETACH DELETE；Oxigraph 命名图由 worker-rdf 清理），API 进程不直写图存储
