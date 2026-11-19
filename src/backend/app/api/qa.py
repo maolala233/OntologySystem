@@ -82,13 +82,15 @@ def _build_llm(db: Session, project_id: int,
         return LLMClient(api_key=api_key, base_url=row.base_url, model=row.model_name,
                          think_mode="disabled" if params.get("disable_think") else None,
                          default_timeout=params.get("llm_timeout"),
-                         default_max_retries=params.get("max_retries"))
+                         default_max_retries=params.get("max_retries"),
+                         streaming_enabled=params.get("streaming_enabled"))
     cfg = build_legacy_llm_config(db, project_id)
     return LLMClient(api_key=cfg.get("api_key"), base_url=cfg.get("base_url"),
                      model=cfg.get("model"),
                      think_mode="disabled" if cfg.get("disable_think") else None,
                      default_timeout=cfg.get("llm_timeout"),
-                     default_max_retries=cfg.get("max_retries"))
+                     default_max_retries=cfg.get("max_retries"),
+                     streaming_enabled=cfg.get("streaming_enabled"))
 
 
 def _sources_out(result: QAResult) -> list[dict]:

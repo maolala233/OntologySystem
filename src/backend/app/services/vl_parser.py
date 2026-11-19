@@ -14,7 +14,7 @@ from app.core.logging import logger
 
 
 VL_BATCH_SIZE = 3
-VL_DPI = 150
+VL_DPI = 300  # 150 对 9B 级小模型太小（349 实测：整页小字读成黑点），300 下小模型可读
 VL_MAX_TOKENS = 8192
 
 
@@ -131,7 +131,29 @@ def _call_vl_model(image_paths: list[str], prompt: str, vl_config: dict) -> str:
             extra_body=extra_body if extra_body else None,
         )
         note_llm_response(response)
-        return response.choices[0].message.content
+        content = response.choices[0].message.content or ""
+        # 空响应降级（349 修复）：复杂多段提示词 + 9B 级小模型 + 思考模式 →
+        # 全部输出预算被思考耗尽，返回空串（HTTP 200 但 content 空）。
+        # 降级为简短直接提示词重试一次——简单指令下 9B 模型可完整读图。
+        if not content.strip():
+            retry_body = dict(extra_body or {})
+            body_messages = [{"role": "user", "content": [
+                {"type": "text",
+                 "text": "提取图片中全部文字与表格内容，逐字照录，用 markdown 表格表达，不要遗漏。"},
+                *[c for c in content if isinstance(c, dict) and c.get("type") == "image_url"]]}]
+            fallback = client.chat.completions.create(
+                model=vl_config["model"],
+                messages=[{"role": "user", "content": [
+                    {"type": "text",
+                     "text": "提取图片中全部文字与表格内容，逐字照录，用 markdown 表格表达，不要遗漏。"},
+                    *[c for c in content if isinstance(c, dict) and c.get("type") == "image_url"]]}],
+                timeout=float(vl_config.get("llm_timeout") or 300),
+                extra_body=retry_body if retry_body else None,
+            )
+            note_llm_response(fallback)
+            content = fallback.choices[0].message.content or ""
+            logger.warning(f"[VL解析] 空响应降级重试，返回 {len(content)} 字符")
+        return content
     finally:
         finish_llm_call(_scope)
 
@@ -152,12 +174,12 @@ def describe_images(image_paths: list[str]) -> str:
         logger.warning(f"[VL解析] 读取 VL 模型配置失败: {e}")
         return ""
 
+    # 提示词简化（349 修复）：四段结构化要求会让 9B 级视觉模型放弃识图并
+    # 幻觉"分辨率极低"（同一张图：复杂提示词答"仅见 CMDB"，简单逐行指令全量读出）。
+    # 大模型对简单指令同样有效。
     prompt = (
-        "这些是从演示文稿中截取的图片。请逐张提取与描述，不要遗漏任何信息：\n"
-        "1. 图中出现的全部文字（原文照录）；\n"
-        "2. 表格完整内容（转成 markdown 表格）；\n"
-        "3. 流程图/架构图：用「A → B → C」式的步骤与指向文字表达清楚节点和连线关系；\n"
-        "4. 其他传达的业务信息（界面元素、指标、状态等）。\n"
+        "请仔细读取图片中的全部内容：文字逐字照录；表格转成 markdown 表格逐行完整输出；"
+        "流程/架构关系用「A → B → C」式表达。不要遗漏任何一行，不要评论图片质量。"
         "每张图片以『图N』开头分别输出（N 从 1 开始按传入顺序）。"
     )
     outs: list[str] = []
@@ -202,10 +224,21 @@ def parse_file_with_vl(file_path: str) -> str:
         os.makedirs(work_dir, exist_ok=True)
         try:
             if is_docx:
-                logger.info(f"[VL解析] DOCX → PDF → 图片 → VL模型")
-                pdf_path = _docx_to_pdf(file_path, work_dir)
-                if not pdf_path:
+                # DOCX 直接抽取内嵌图片 → VL 逐图描述（349 修复）：不再走
+                # docx→pdf 转换——snap libreoffice 本环境安装损坏（Fatal Error
+                # 静默失败），且内嵌图片直读粒度更好（每张截图独立描述，
+                # 操作手册类文档的关键内容全在截图里）
+                from app.adapters.parsing import _extract_docx_images, _vl_describe_image_blobs
+
+                image_blobs = _extract_docx_images(open(file_path, "rb").read())
+                logger.info(f"[VL解析] DOCX 内嵌图片抽取: {len(image_blobs)} 张")
+                if not image_blobs:
+                    logger.info("[VL解析] DOCX 无内嵌图片，交回原生文本解析")
                     return ""
+                vl_text = _vl_describe_image_blobs(image_blobs)
+                elapsed = round(time.time() - start_time, 1)
+                logger.info(f"[VL解析] DOCX 图片描述完成，{len(vl_text)} 字符，耗时 {elapsed}s")
+                return f"\n\n## 图片内容（VL 视觉模型提取）\n\n{vl_text}"
             else:
                 pdf_path = file_path
 

@@ -1500,6 +1500,16 @@ class LLMClient:
             "stream": True,
             "max_tokens": 8000,
         }
+        # 关思考方言与 call_llm_text 同款（QA 流式此前漏接——方舟 glm-5-3-flash
+        # 思考间歇性吞掉全部输出预算 → 0 chunk 空壳响应，346 实测 153s 零 token）
+        if self._should_disable_think():
+            _base = (self.base_url or "").lower()
+            if self._is_ollama:
+                api_kwargs["extra_body"] = {"reasoning_effort": "none"}
+            elif "volces.com" in _base or "api.deepseek.com" in _base:
+                api_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+            else:
+                api_kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
         if timeout is not None:
             api_kwargs["timeout"] = timeout
 
@@ -1532,13 +1542,17 @@ class LLMClient:
 
     @_limit_llm_concurrency
     @_profile_llm_call
-    def call_llm_text(self, system_prompt: str, user_prompt: str, max_retries: int = 3, stream: bool = False,
+    def call_llm_text(self, system_prompt: str, user_prompt: str, max_retries: int = 3, stream: Optional[bool] = None,
                       timeout: Optional[float] = None, task_id: Optional[str] = None,
                       temperature: Optional[float] = None) -> Dict[str, Any]:
         from app.infrastructure.task_manager import task_manager
         model_name = getattr(self, 'model', 'unknown-model')
         call_start_time = time.time()
         timeout_str = f"{timeout}s" if timeout else "default"
+        # stream 未显式传 → 回读模型行 params.streaming_enabled（2026-11-19：QA 非流式
+        # 聚合此前硬编码 False，模型行流式配置对答案生成不生效的根因）
+        if stream is None:
+            stream = bool(getattr(self, "_default_stream", None) or False)
         logger.info(f"正在发起 LLM 调用（文本模式）：model={model_name}, stream={stream}, timeout={timeout_str}")
         logger.info(f"[LLM] 请求内容长度：system_prompt={len(system_prompt)} 字符，user_prompt={len(user_prompt)} 字符")
         if task_id:

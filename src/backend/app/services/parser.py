@@ -45,6 +45,84 @@ def clean_surrogate_characters(text: str) -> str:
     return cleaned_text
 
 
+# 表格切片周期（字符预算）：数据行累计超过该值就重发一次 Sheet 头+表头行——
+# 切片窗口落在行边界时，续片文本自带 Sheet 上下文与列语义（346 项目续片
+# 裸奔、切片行被拦腰切断的根因修复；结构感知切片的"上下文随行"原则）
+_TABLE_PERIOD_CHARS = 900
+
+
+def _cell_flat(v: str) -> str:
+    """单元格值压平：内嵌换行替换为"；"。多行单元格会把 md 表格撕成多个
+    物理行（切片拦腰断行/表格块碎片化/续片 meta 表头变数据行——346 根因）；
+    用"；"衔接而非空格，保住 structure_expand._split_multi 的多值切分语义。"""
+    return re.sub(r"\r\n?|\n", "；", str(v).strip())
+
+
+def _sheet_md(sheet_name: str, header_row: list, data_rows: list) -> str:
+    """Sheet → markdown：数据行按字符预算分周期，每周期重发 Sheet 头+表头行。"""
+    col_count = len(header_row)
+    header_line = "| " + " | ".join(str(c) for c in header_row) + " |"
+    sep_line = "| " + " | ".join(["---"] * col_count) + " |"
+    periods: list[list[str]] = []
+    buf: list[str] = []
+    buf_chars = 0
+    for row in data_rows:
+        row = list(row)
+        while len(row) < col_count:
+            row.append("")
+        line = "| " + " | ".join(str(c) for c in row[:col_count]) + " |"
+        if buf and buf_chars + len(line) > _TABLE_PERIOD_CHARS:
+            periods.append(buf)
+            buf, buf_chars = [], 0
+        buf.append(line)
+        buf_chars += len(line) + 1
+    if buf:
+        periods.append(buf)
+    parts = []
+    for lines in periods:
+        parts.append(f"\n### Sheet: {sheet_name}\n\n" + header_line + "\n" + sep_line
+                     + "\n" + "\n".join(lines) + "\n")
+    return "".join(parts)
+
+
+def _split_stacked_bands(rows_data: list, sheet_name: str):
+    """双层分节表头检测与带拆分（349 修复）。
+
+    银行接口文档的明细 Sheet 是三层结构：行0=分节带名（输入项/返回接口索引/…，
+    带间有空档）、行1=各带真实子表头（序号/字段名/…）、行2 起数据。旧逻辑把行0
+    当表头、行1 当数据 → LLM 把样例行当列名 → 明细 Sheet 0 产出（4230 行丢失）。
+    检测：行0 非空列有内部空档（非空-空-非空）且行1 非空列更密 → stacked。
+    拆分：按行0 非空列分带，每带独立 (表名/带名, 子表头, 数据行)。
+    非 stacked 返回 None。"""
+    if len(rows_data) < 3:
+        return None
+    r0, r1 = rows_data[0], rows_data[1]
+    p0 = [i for i, v in enumerate(r0) if str(v).strip()]
+    p1 = [i for i, v in enumerate(r1) if str(v).strip()]
+    if not p0 or not p1:
+        return None
+    if max(p0) - min(p0) + 1 <= len(p0):
+        return None  # 行0 连续非空 = 正常单表头
+    if len(p1) <= len(p0):
+        return None  # 行1 不比带名行密 → 非 stacked
+    starts = p0
+    out: list = []
+    for bi, bs in enumerate(starts):
+        be = starts[bi + 1] if bi + 1 < len(starts) else len(r0)
+        band_name = str(r0[bs]).strip()
+        sub = [str(r1[c]).strip() for c in range(bs, min(be, len(r1)))]
+        band_data = []
+        for r in rows_data[2:]:
+            vals = [str(r[c]).strip() if c < len(r) else "" for c in range(bs, min(be, len(r)))]
+            if any(vals):
+                band_data.append(vals)
+        if not band_data:
+            continue
+        header = sub if any(sub) else [band_name] * (be - bs)
+        out.append((f"{sheet_name}/{band_name}", header, band_data))
+    return out or None
+
+
 def _parse_excel(fname: str) -> str:
     """
     高质量 Excel 文件解析，支持 .xlsx 和 .xls 格式。
@@ -106,7 +184,7 @@ def _parse_excel(fname: str) -> str:
                             else:
                                 row_values.append(str(val))
                         else:
-                            row_values.append(str(val).strip())
+                            row_values.append(_cell_flat(val))
                     
                     # 跳过完全空行
                     if any(v for v in row_values):
@@ -128,22 +206,11 @@ def _parse_excel(fname: str) -> str:
                     # 表头全空，跳过此 Sheet
                     continue
                 
-                # 构建 Markdown 表格
-                col_count = len(header_row)
-                md_lines = []
-                md_lines.append("| " + " | ".join(header_row) + " |")
-                md_lines.append("| " + " | ".join(["---"] * col_count) + " |")
-                
-                for row in data_rows:
-                    # 补齐列数
-                    while len(row) < col_count:
-                        row.append("")
-                    md_lines.append("| " + " | ".join(row[:col_count]) + " |")
-                
-                sheet_content = f"\n### Sheet: {sheet_name}\n\n" + "\n".join(md_lines) + "\n"
+                # 构建 Markdown 表格（周期性重发 Sheet 头，保续片上下文）
+                sheet_content = _sheet_md(sheet_name, header_row, data_rows)
                 excel_parts.append(sheet_content)
                 logger.info(f"[Excel解析] 已处理 Sheet {sheet_idx+1}/{len(wb.sheetnames)}: {sheet_name}, "
-                           f"表头列数={col_count}, 数据行数={len(data_rows)}")
+                           f"表头列数={len(header_row)}, 数据行数={len(data_rows)}")
             
             if excel_parts:
                 return "\n".join(excel_parts)
@@ -170,7 +237,7 @@ def _parse_excel(fname: str) -> str:
                     for col_idx in range(sheet.ncols):
                         cell = sheet.cell(row_idx, col_idx)
                         if cell.ctype == xlrd.XL_CELL_TEXT:
-                            row_values.append(cell.value.strip())
+                            row_values.append(_cell_flat(cell.value))
                         elif cell.ctype == xlrd.XL_CELL_NUMBER:
                             val = cell.value
                             if val == int(val):
@@ -189,12 +256,22 @@ def _parse_excel(fname: str) -> str:
                         elif cell.ctype == xlrd.XL_CELL_EMPTY:
                             row_values.append("")
                         else:
-                            row_values.append(str(cell.value).strip())
+                            row_values.append(_cell_flat(cell.value))
                     
                     if any(v for v in row_values):
                         rows_data.append(row_values)
                 
                 if not rows_data:
+                    continue
+                
+                # 双层分节表检测（349 修复）：stacked → 按带拆分多表
+                bands = _split_stacked_bands(rows_data, sheet_name)
+                if bands:
+                    for band_name, header_row, data_rows in bands:
+                        sheet_content = _sheet_md(band_name, header_row, data_rows)
+                        excel_parts.append(sheet_content)
+                    logger.info(f"[Excel解析] 分节表 {sheet_name}: 拆为 {len(bands)} 个带表, "
+                               f"数据行数={sum(len(d) for _, _, d in bands)}")
                     continue
                 
                 header_row = rows_data[0]
@@ -204,20 +281,11 @@ def _parse_excel(fname: str) -> str:
                 if not any(v for v in header_row):
                     continue
                 
-                col_count = len(header_row)
-                md_lines = []
-                md_lines.append("| " + " | ".join(header_row) + " |")
-                md_lines.append("| " + " | ".join(["---"] * col_count) + " |")
-                
-                for row in data_rows:
-                    while len(row) < col_count:
-                        row.append("")
-                    md_lines.append("| " + " | ".join(row[:col_count]) + " |")
-                
-                sheet_content = f"\n### Sheet: {sheet_name}\n\n" + "\n".join(md_lines) + "\n"
+                # 构建 Markdown 表格（周期性重发 Sheet 头，保续片上下文）
+                sheet_content = _sheet_md(sheet_name, header_row, data_rows)
                 excel_parts.append(sheet_content)
                 logger.info(f"[Excel解析] 已处理 Sheet {sheet_idx+1}/{wb.nsheets}: {sheet_name}, "
-                           f"表头列数={col_count}, 数据行数={len(data_rows)}")
+                           f"表头列数={len(header_row)}, 数据行数={len(data_rows)}")
             
             if excel_parts:
                 return "\n".join(excel_parts)
@@ -242,18 +310,10 @@ def _parse_excel(fname: str) -> str:
             for col in df.columns:
                 df[col] = df[col].apply(lambda x: str(int(float(x))) if x.endswith('.0') and x.replace('.', '', 1).replace('-', '', 1).isdigit() else x)
             
-            # 构建 Markdown 表格
+            # 构建 Markdown 表格（周期性重发 Sheet 头，保续片上下文）
             header_row = [str(col) for col in df.columns]
-            col_count = len(header_row)
-            md_lines = []
-            md_lines.append("| " + " | ".join(header_row) + " |")
-            md_lines.append("| " + " | ".join(["---"] * col_count) + " |")
-            
-            for _, row in df.iterrows():
-                row_values = [str(v).strip() for v in row.values]
-                md_lines.append("| " + " | ".join(row_values) + " |")
-            
-            sheet_content = f"\n### Sheet: {sheet_name}\n\n" + "\n".join(md_lines) + "\n"
+            data_rows = [[_cell_flat(v) for v in row.values] for _, row in df.iterrows()]
+            sheet_content = _sheet_md(sheet_name, header_row, data_rows)
             excel_parts.append(sheet_content)
             logger.info(f"[Excel解析] pandas fallback 已处理 Sheet {sheet_idx+1}/{len(dfs)}: {sheet_name}")
         
@@ -357,11 +417,24 @@ def process_files(file_list: Union[List, str], vl_enabled: bool = False) -> str:
                     result = subprocess.run(['antiword', fname], capture_output=True, text=True, check=True)
                     file_content = result.stdout
                 except:
-                    # 如果 antiword 失败，尝试作为 docx 处理
+                    # antiword 失败（WPS 生成的 .doc 不被识别）→ OLE2 WordDocument
+                    # 流 UTF-16LE 正文扫描（349 根治：商票预审手册 1755 字符正文全恢复）
                     try:
-                        doc = docx.Document(fname)
-                        file_content = "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
-                    except:
+                        from app.adapters.parsing import _extract_doc_text_ole
+
+                        _ole_text = _extract_doc_text_ole(open(fname, "rb").read())
+                        if len(_ole_text.strip()) >= 50:
+                            file_content = _ole_text
+                            logger.info(f"[.doc] OLE 正文提取成功 {len(_ole_text)} 字符（antiword 不识别）")
+                    except Exception as _e:
+                        logger.warning(f"[.doc] OLE 正文提取失败: {_e}")
+                    if not (file_content or "").strip():
+                        # 如果 antiword 失败，尝试作为 docx 处理
+                        try:
+                            doc = docx.Document(fname)
+                            file_content = "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
+                        except:
+                            pass
                         # 尝试作为 MHTML 或 HTML 处理 (应对"另存为网页"的 doc)
                         try:
                             with open(fname, "r", encoding="utf-8", errors="ignore") as fo:
@@ -455,6 +528,31 @@ def process_files(file_list: Union[List, str], vl_enabled: bool = False) -> str:
             
             if file_content.strip():
                 # 清理 Unicode 代理字符，避免保存到数据库时出现编码错误
+                # .doc 图片增强 + 垃圾文本兜底（349 修复）：WPS 生成的 .doc antiword 不认 →
+                # 回退链读出二进制垃圾（279K 乱码）→ OLE2 流重组提取内嵌截图 → VL 逐图描述；
+                # 文本像二进制垃圾时以图片描述为主体
+                if fname_lower.endswith('.doc'):
+                    try:
+                        from app.adapters.parsing import _extract_doc_images_ole, _vl_describe_image_blobs
+                
+                        doc_bytes = open(fname, 'rb').read()
+                        imgs = _extract_doc_images_ole(doc_bytes)[:12]
+                        if imgs:
+                            logger.info(f"[.doc图片增强] 提取内嵌截图 {len(imgs)} 张，VL 描述中…")
+                            desc = _vl_describe_image_blobs(imgs)
+                            if desc.strip():
+                                sample = (file_content or '')[:2000]
+                                printable = sum(1 for ch in sample if ch.isprintable() or ch in '\n\r\t')
+                                garbage = len(sample) > 0 and printable / max(1, len(sample)) < 0.85
+                                if garbage:
+                                    logger.warning(f"[.doc] 文本层疑似二进制垃圾，以图片 VL 描述为主体")
+                                    file_content = ('（本文档为二进制 .doc，文本层提取失败；'
+                                                    '以下为文档内嵌截图的视觉识别内容）\n\n' + desc)
+                                else:
+                                    file_content += ('\n\n## 图片内容（截图逐张提取）\n\n' + desc)
+                                logger.info(f"[.doc图片增强] 完成 {len(desc)} 字符")
+                    except Exception as _e:
+                        logger.warning(f"[.doc图片增强] 失败（回退纯文本）: {_e}")
                 file_content = clean_surrogate_characters(file_content)
                 text_accumulated += f"\n\n<<<<<< 文件开始：{base_name} >>>>>>\n{file_content}\n<<<<<< 文件结束：{base_name} >>>>>>\n"
                 logger.info(f"[文件解析] [{idx+1}/{len(files)}] 文件处理成功，内容长度={len(file_content)} 字符")

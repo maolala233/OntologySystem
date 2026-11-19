@@ -107,6 +107,7 @@ def _prop_key_merge(db: Session, project_id: int, ents: list) -> tuple[int, int]
                 groups.setdefault((e.class_label or "", f"{k}={str(v).strip()}"), []).append(e)
                 break
     merged = migrated = 0
+    specs: list[tuple[int, list[int]]] = []
     for _key, members in groups.items():
         if len(members) < 2:
             continue
@@ -117,9 +118,200 @@ def _prop_key_merge(db: Session, project_id: int, ents: list) -> tuple[int, int]
         if not rest:
             continue
         res = merge_entities(canon.id, [m.id for m in rest], db=db)
+        specs.append((canon.label, canon.class_label,
+                      [(m.label, m.class_label) for m in rest]))
         merged += 1
         migrated += res.relations_migrated
-    return merged, migrated
+    return merged, migrated, specs
+
+
+def _class_family_subclass_edges(db: Session, project_id: int) -> int:
+    """类归一（346 修复，2026-11-18）：类名碎片化的确定性收编——类 B 的类名以
+    类 A 的类名结尾（前端接口/BP接口/交互接口 之于 接口）且 A 更短 → B ⊑ A
+    子类边落行表（SUBCLASS_OF，is_class_edge）。命名约定下"XX接口"必是接口的
+    下位类；接口输入字段/接口输出项不以"接口"结尾，天然排除。只加边不删类
+    不改名（零破坏、可逆；计数口径的运行时补偿在 QA 类族合并，此处补图结构）。
+    返回新增边数。"""
+    classes = db.query(Entity).filter(
+        Entity.project_id == project_id,
+        Entity.is_class_node.is_(True),
+        Entity.status != "rejected",
+    ).all()
+    # 同名类节点取 id 最小者作代表（类节点自身也可能重复）
+    repr_by_label: dict[str, Entity] = {}
+    for c in classes:
+        cur = repr_by_label.get(c.label)
+        if cur is None or c.id < cur.id:
+            repr_by_label[c.label] = c
+    existing = {
+        (r.subject_id, r.object_id)
+        for r in db.query(Relation).filter(
+            Relation.project_id == project_id,
+            Relation.predicate == "SUBCLASS_OF",
+        ).all()
+    }
+    added = 0
+    pairs: list[tuple[str, str]] = []
+    for label_a, a in repr_by_label.items():
+        if len(label_a) < 2:
+            continue
+        for label_b, b in repr_by_label.items():
+            if label_a == label_b or len(label_b) <= len(label_a):
+                continue
+            if not label_b.endswith(label_a) or (b.id, a.id) in existing:
+                continue
+            db.add(Relation(project_id=project_id, subject_id=b.id,
+                            predicate="SUBCLASS_OF", object_id=a.id,
+                            is_class_edge=True, status="auto", confidence=0.9))
+            existing.add((b.id, a.id))
+            pairs.append((label_b, label_a))
+            added += 1
+    return added, pairs
+
+
+def _sync_resolution_to_blob(db: Session, project_id: int,
+                             subclass_pairs: list[tuple[str, str]],
+                             merge_specs: list[tuple[str, str, list[tuple[str, str]]]] | None = None) -> int:
+    """merge_specs：(canonical_label, canonical_class, [(dup_label, dup_class)])。
+    用 (label, class) 稳定键而非行 id——行表每次 graph_data 写入都重建、id 漂移，
+    id 引用会落到回收后的任意实体（346 实测误删 126 个接口实例节点）。"""
+    """M4 blob 收敛（346 修复，2026-11-18）：行表是 graph_data blob 的投影
+    （before_flush/after_flush 监听器：blob 一写就全量重建行表）——消解只改行表
+    不回写 blob，任何后续 graph_data 写入（公理申报写 schema 等）都会把合并
+    冲掉（346 实测：108 处合并被 AI 复核的公理申报吞掉）。
+
+    终局一次性回写：
+    1. merged 行沿 canonical_id 链归约到活跃代表 → blob 删除重复节点、
+       边重指 canonical（同 (src,rel,dst) 去重）、属性/别名并集；
+    2. 类族子类边（subclass_pairs: (子类label, 父类label)）追加 SUBCLASS_OF 边。
+    返回处理的合并节点数；写后调用方需 flag_modified(graph_data)。
+    """
+    from app.services.graph_rows import entity_uri
+
+    proj = db.query(Project).filter(Project.id == project_id).first()
+    gd = proj.graph_data if proj is not None and isinstance(proj.graph_data, dict) else None
+    if gd is None:
+        return 0
+    nodes = gd.get("nodes") or []
+    edges = gd.get("edges") or []
+
+    # 显式合并清单（346 修复）：本轮合并的 (canonical_id, [dup_ids]) 由调用方
+    # 逐环节收集传入——旧实现扫描 status='merged' 全部行，行表 id 在多次图写入
+    # 重建间漂移，链路落到回收后的任意实体 → blob 手术误删活跃节点（126 个）。
+    merge_specs = merge_specs or []
+    if not merge_specs and not subclass_pairs:
+        return 0
+    repr_uri: dict[str, str] = {}  # (dup_label, dup_class) → (canon_label, canon_class)
+    for canon_lbl, canon_cls, dups in merge_specs:
+        for d_lbl, d_cls in dups or []:
+            repr_uri[(d_lbl, d_cls)] = (canon_lbl, canon_cls)
+
+    node_by_bid = {str(n.get("id")): n for n in nodes if n.get("id")}
+    inst = [n for n in nodes if (n.get("data") or {}).get("type") == "owl:NamedIndividual"]
+
+    def _props_merge(dst: dict, src: dict) -> None:
+        d = dst.setdefault("data", {})
+        props = d.get("properties") if isinstance(d.get("properties"), dict) else {}
+        for k, v in (src.get("properties") or {}).items() if isinstance(src.get("properties"), dict) else []:
+            if k not in props or props[k] in (None, ""):
+                props[k] = v
+        d["properties"] = props
+        al = d.get("aliases") or []
+        for a in (src.get("aliases") or []):
+            if a and a not in al:
+                al.append(a)
+        if al:
+            d["aliases"] = al[:64]
+
+    # blob 节点 (label, class_label) → node id（稳定键）
+    lc_bid: dict[tuple[str, str], str] = {}
+    for n in inst:
+        d = n.get("data") or {}
+        lc_bid[(str(d.get("label") or ""), str(d.get("class_label") or ""))] = str(n.get("id"))
+    removed: set[str] = set()
+    for (m_lbl, m_cls), (c_lbl, c_cls) in repr_uri.items():
+        m_bid = lc_bid.get((m_lbl, m_cls))
+        c_bid = lc_bid.get((c_lbl, c_cls))
+        if not m_bid or not c_bid or m_bid == c_bid or m_bid not in node_by_bid:
+            print(f"[blob手术-debug] 跳过: {m_lbl[:20]}({m_cls[:12]}) → {c_lbl[:20]} "
+                  f"(m_bid={'无' if not m_bid else '有'}, c_bid={'无' if not c_bid else '有'})")
+            continue
+        _props_merge(node_by_bid[c_bid], node_by_bid[m_bid].get("data") or {})
+        removed.add(m_bid)
+        print(f"[blob手术-debug] 合并: {m_lbl[:20]}({m_cls[:12]}) → {c_lbl[:20]}({c_cls[:12]})")
+    def _redirect(bid: str) -> str:
+        """merged 节点的 bid → 活跃代表 bid；非 merged 原样返回（稳定键）。"""
+        data = (node_by_bid.get(bid) or {}).get("data") or {}
+        lbl_cls = (str(data.get("label") or ""), str(data.get("class_label") or ""))
+        if bid in removed and lbl_cls in repr_uri:
+            c_bid = lc_bid.get(repr_uri[lbl_cls])
+            if c_bid:
+                return c_bid
+        return bid
+
+    if removed:
+        gd["nodes"] = [n for n in nodes if str(n.get("id")) not in removed]
+        # 边重指 + 去重
+        seen_e: set[tuple[str, str, str]] = set()
+        new_edges: list = []
+        for e in edges:
+            s, t = str(e.get("source")), str(e.get("target"))
+            s2, t2 = _redirect(s), _redirect(t)
+            rel = (e.get("data") or {}).get("relation") if isinstance(e.get("data"), dict) else None
+            rel = rel or e.get("label") or "related"
+            key = (s2, str(rel), t2)
+            if key in seen_e:
+                continue
+            seen_e.add(key)
+            if s2 != s:
+                e["source"] = s2
+            if t2 != t:
+                e["target"] = t2
+            new_edges.append(e)
+        gd["edges"] = new_edges
+
+    # 类族子类边追加（blob 层）
+    added_cls = 0
+    if subclass_pairs:
+        existing_cls = {(str(e.get("source")), str(e.get("target")))
+                        for e in (gd.get("edges") or [])
+                        if isinstance(e.get("data"), dict)
+                        and (e["data"].get("relation") or e.get("label")) == "SUBCLASS_OF"}
+        for child_lbl, parent_lbl in subclass_pairs:
+            rows_ = db.query(Entity).filter(
+                Entity.project_id == project_id,
+                Entity.is_class_node.is_(True),
+                Entity.label.in_([child_lbl, parent_lbl])).all()
+            by_lbl: dict[str, Entity] = {}
+            for c in rows_:
+                if c.label not in by_lbl or c.id < by_lbl[c.label].id:
+                    by_lbl[c.label] = c
+            # (label, class) 稳定键查 blob 节点 id（bid_by_uri 已随 uri 体系移除）
+            cb = lc_bid.get((by_lbl[child_lbl].label, by_lbl[child_lbl].class_label))
+            pb = lc_bid.get((by_lbl[parent_lbl].label, by_lbl[parent_lbl].class_label))
+            if not cb or not pb or cb == pb or (cb, pb) in existing_cls:
+                continue
+            gd.setdefault("edges", []).append({
+                "source": cb, "target": pb, "label": "SUBCLASS_OF",
+                "data": {"relation": "SUBCLASS_OF", "confidence": 0.9,
+                         "source": "类族归一（消解阶段确定性收编）"}})
+            existing_cls.add((cb, pb))
+            added_cls += 1
+    from sqlalchemy.orm.attributes import flag_modified as _fm
+
+    _fm(proj, "graph_data")
+    return len(removed) + added_cls
+
+
+
+def _label_prop_bridge_merge(db: Session, project_id: int, ents: list) -> tuple[int, int]:
+    """【已退役 2026-11-19】跨形态桥接合并：其目标问题（展开=服务标识/LLM=服务名称
+    的双形态实例）已由"映射命中切片跳过 LLM 实例抽取"在源头根除——表格切片的
+    实体唯一来源是确定性展开，双形态不再产生。且本层在混合文档上有误配风险
+    （346 实测：接口的描述属性值撞输入项字段名，C250405Y 被误并进信用保障措施）。
+    保留空实现以维持调用点兼容；若未来叙事/表格混合需要精确挂接，须走
+    LLM 辅助配对审计而非属性值精确匹配。"""
+    return 0, 0
 
 
 def run_resolution(project_id: int, scope: str = "all",
@@ -140,11 +332,17 @@ def run_resolution(project_id: int, scope: str = "all",
         review_th = float((thresholds or {}).get("manual", MANUAL_REVIEW_THRESHOLD))
         ents = load_active_entities(db, project_id, scope)
         prop_key_merged, prop_key_migrated = (0, 0)
+        bridge_merged, bridge_migrated = (0, 0)
+        merge_specs: list[tuple[int, list[int]]] = []  # (canonical_id, [dup_ids])——blob 收敛显式清单
         if len(ents) >= 2:
-            prop_key_merged, prop_key_migrated = _prop_key_merge(db, project_id, ents)
+            prop_key_merged, prop_key_migrated, pk_specs = _prop_key_merge(db, project_id, ents)
+            merge_specs.extend(pk_specs)
             if prop_key_merged:
                 db.commit()
                 ents = load_active_entities(db, project_id, scope)
+            # 跨形态桥接层已退役（双形态源头已根除：确定性展开唯一来源 + 谓词分离
+            # 护栏后无合法桥接场景；混合文档误配 C250405Y→信用保障措施 事故层），
+            # 不再调用 _label_prop_bridge_merge
         if len(ents) < 2:
             return {"clusters_total": 0, "auto_merged": 0, "review_created": 0,
                     "prop_key_merged": prop_key_merged,
@@ -162,6 +360,9 @@ def run_resolution(project_id: int, scope: str = "all",
                 continue
             rest = [i for i in c.member_ids if i != c.canonical_id]
             res = merge_entities(c.canonical_id, rest, db=db)
+            dups_lc = [(lbl, c.class_label) for lbl in c.member_labels
+                       if lbl != c.canonical_label]
+            merge_specs.append((c.canonical_label, c.class_label, dups_lc))
             relations_migrated += res.relations_migrated
             auto_merged += 1
         for c in clusters:
@@ -169,10 +370,19 @@ def run_resolution(project_id: int, scope: str = "all",
                 continue
             if _pending_merge_item_exists(db, project_id, c):
                 continue
+            # 成员类映射（AI 复核素材）：跨类同名项 LLM 判定需要看各类语义
+            member_classes = {}
+            try:
+                _mrows = (db.query(Entity.label, Entity.class_label)
+                          .filter(Entity.id.in_(c.member_ids)).all())
+                member_classes = {lbl: cl for lbl, cl in _mrows}
+            except Exception:  # noqa: BLE001 —— 素材缺失不阻断项创建
+                member_classes = {}
             db.add(ReviewItem(
                 project_id=project_id,
                 item_type="entity_merge",
-                payload={"cluster": c.model_dump()},
+                payload={"cluster": c.model_dump(),
+                         "layer": c.layer, "member_classes": member_classes},
                 reason=f"相似度 {c.similarity} 落在人工复核区间（{c.layer} 层）",
                 priority="medium",
                 status="pending",
@@ -181,11 +391,35 @@ def run_resolution(project_id: int, scope: str = "all",
                                                     if i != c.canonical_id]},
             ))
             review_created += 1
+        subclass_added, subclass_pairs = _class_family_subclass_edges(db, project_id)
         db.commit()
+        # M4 blob 收敛（346 修复）：合并/类边回写 graph_data——行表是 blob 的投影，
+        # 不回写则任何后续 blob 写入（公理申报写 schema 等）触发行表重建时会把
+        # 合并冲掉。放主事务提交后的独立短事务：监听器在另会话重建行表，与主事务
+        # 未释放的行锁串行冲突会锁等待超时（1205，346 实测）。
+        blob_n = 0
+        try:
+            blob_n = _sync_resolution_to_blob(db, project_id, subclass_pairs,
+                                              merge_specs=merge_specs)
+            try:
+                band_n = _link_band_table_parents(db, project_id)
+                if band_n:
+                    logger.info(f"[resolution] 带表父子挂接：新增 {band_n} 条包含边")
+            except Exception as _e:
+                logger.warning(f"[resolution] 带表父子挂接失败（跳过）: {_e}")
+            db.commit()  # 触发 after_flush 监听器：行表按新 blob 重建 + outbox 事件
+        except Exception as e:  # noqa: BLE001 —— 收敛失败行表仍是合并态，可对账重放
+            db.rollback()
+            logger.warning(f"[resolution] blob 收敛失败（行表保持已合并态）: {e}")
+        if blob_n:
+            logger.info(f"[resolution] blob 收敛完成：{blob_n} 个节点合并/类边回写 graph_data")
         return {"clusters_total": len(clusters), "auto_merged": auto_merged,
                 "review_created": review_created,
                 "prop_key_merged": prop_key_merged,
-                "relations_migrated": relations_migrated + prop_key_migrated,
+                "bridge_merged": bridge_merged,
+                "subclass_edges_added": subclass_added,
+                "blob_nodes_merged": blob_n,
+                "relations_migrated": relations_migrated + prop_key_migrated + bridge_migrated,
                 "entities_scanned": len(ents)}
     except Exception:
         if own:

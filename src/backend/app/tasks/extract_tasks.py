@@ -670,6 +670,13 @@ def run_instance_extraction(self, project_id: int,
 
             from app.core.config import settings as app_settings
 
+            # 结构映射在 LLM 调用前先取出：映射命中的切片跳过 LLM 实例抽取
+            # （349 双通道根除——展开是这些切片实体的唯一来源）
+            source_schema_pre = (source_gd or {}).get("schema") if isinstance(source_gd, dict) \
+                else None
+            _maps_pre = (source_schema_pre or {}).get("structure_maps") \
+                if isinstance(source_schema_pre, dict) else None
+
             result = extract_instances(
                 chunks, tbox, base_uri=f"urn:onto:{project_id}",
                 strict_gate=strict_gate, promote_policy=promote_policy,
@@ -678,7 +685,8 @@ def run_instance_extraction(self, project_id: int,
                 phase_cb=_phase_progress,
                 model_config_id=model_config_id,
                 coref_enabled=bool(app_settings.COREF_ENABLED),
-                pattern_enabled=bool(app_settings.PATTERN_LAYER_ENABLED))
+                pattern_enabled=bool(app_settings.PATTERN_LAYER_ENABLED),
+                structure_maps=_maps_pre)
 
             # 结构化切片确定性展开（外部 get_* 登记表模式）：表格/条款按结构映射
             # 逐行实例化 + 登记表去重 + 引用列→关系边。零 LLM：模型故障时结构化
@@ -706,8 +714,9 @@ def run_instance_extraction(self, project_id: int,
                         k = (_nl(ent["label"]), _nl(ent["class_label"]))
                         if k in llm_keys:
                             continue
-                        if _nl(ent["label"]) == _nl(ent["class_label"]):
-                            continue  # 伪个体防御（与闸门同口径）
+                        # 伪个体防御：structure_expand 已放行"指定主体列常量值=类名"
+                        # 的规范个体（366 贷款申请），此处不再重复拦截，否则放行的
+                        # 个体在这里二次被吞
                         result.entities.append(ExtractedEntity(
                             label=ent["label"], class_label=ent["class_label"],
                             props=ent["props"], confidence=ent["confidence"],
@@ -796,8 +805,14 @@ def run_instance_extraction(self, project_id: int,
             # ABox 节点/边并入画布（幂等：实例节点全量替换，类节点保留）
             set_task_progress(task_id, "writing", 85, "写入画布与行表",
                               {"project_id": project_id}, queue="extract")
+            _dbg_call = sum(1 for _r in result.relations if getattr(_r, "predicate", "") in ("调用", "联动交互接口"))
+            _dbg_hz = sum(1 for _r in result.relations if getattr(_r, "subject_label", "") == "合同签订")
+            print(f"[ABox-debug] result.relations={len(result.relations)} 调用类={_dbg_call} "
+                  f"主体合同签订={_dbg_hz} 实体={len(result.entities)} "
+                  f"含合同签订实体={sum(1 for _e in result.entities if _e.label == '合同签订')}")
             inst_nodes, label_ids, by_label = _build_instance_nodes(result.entities, chunks, [r[0] for r in rows])
             inst_edges = _build_instance_edges(result.relations, by_label, chunks, [r[0] for r in rows])
+            print(f"[ABox-debug] inst_nodes={len(inst_nodes)} inst_edges={len(inst_edges)}")
             proj = db.query(Project).filter(Project.id == project_id).first()
             if proj is None:
                 raise RuntimeError(f"项目不存在: {project_id}")

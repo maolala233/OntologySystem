@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from enum import Enum
 from typing import Any, Optional
 
@@ -109,7 +110,12 @@ def parse_document(content: bytes, filename: str,
     # ---- AUTO：docling 首选格式（pdf 走扫描件判定，docx/html docling 优先）----
     if ext == "pdf":
         return _parse_pdf_auto(content, filename)
-    # docx / doc / html 及其他：docling 首选 → native 兜底
+    # .doc（老二进制格式）：native 首选——docling 对 OLE2 老 .doc 产出二进制垃圾
+    # （349 实测 279K 乱码），native 分支含 antiword + OLE2 图片提取 + VL 增强
+    if ext == "doc":
+        parsed = _parse_native(content, filename, ext)
+        return _finalize(parsed, filename)
+    # docx / html 及其他：docling 首选 → native 兜底
     doc = _parse_docling(content, filename)
     if doc is not None:
         # docx 图文增强：图占位符 → 图内文字（OCR/VL；仅 docx 有图片提取器）
@@ -406,7 +412,9 @@ def _parse_csv(content: bytes) -> str:
     rows = [r for r in _csv.reader(io.StringIO(text)) if any(c.strip() for c in r)]
     if not rows:
         return ""
-    head, body = rows[0], rows[1:]
+    # 单元格压平：内嵌换行会把 md 表格撕碎（切片拦腰断行）——与 _parse_excel 同口径
+    head = [re.sub(r"\r\n?|\n", "；", c) for c in rows[0]]
+    body = [[re.sub(r"\r\n?|\n", "；", c) for c in r] for r in rows[1:]]
     lines = ["| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
     lines.extend("| " + " | ".join(r) + " |" for r in body)
     return "\n".join(lines)
@@ -458,6 +466,140 @@ def _ocr_image_bytes(blob: bytes) -> str:
 
         logger.warning(f"[parsing] PPTX 图片 OCR 失败（跳过）: {e}")
         return ""
+
+
+def _extract_doc_images_ole(content: bytes) -> list:
+    """.doc（OLE2 二进制）内嵌图片提取：流重组 + PNG/JPEG 魔数切分。
+
+    OLE2 分扇区存储会把图片字节打散——先用 olefile 重组完整流再切，
+    朴素魔数切分拿到的是碎片（349 实测 14 张全碎）。PIL 校验+尺寸过滤
+    （≥300×150，滤小图标/碎片）。不可解码全部返回空（调用方保持原文）。
+    """
+    import io as _io
+
+    try:
+        import olefile as _olefile
+    except ImportError:
+        return []
+    from PIL import Image as _Image
+
+    out: list = []
+    try:
+        ole = _olefile.OleFileIO(_io.BytesIO(content))
+        streams = []
+        for entry in ole.listdir():
+            path = "/".join(entry)
+            try:
+                if ole.get_size(path) > 10000:
+                    streams.append(ole.openstream(path).read())
+            except Exception:
+                pass
+        ole.close()
+    except Exception:
+        return []
+
+    for stream in streams:
+        pos = 0
+        while True:
+            s = stream.find(b"\x89PNG\r\n\x1a\n", pos)
+            if s < 0:
+                break
+            e = stream.find(b"IEND\xaeB`\x82", s)
+            if e < 0:
+                break
+            blob = stream[s:e + 8]
+            pos = e + 8
+            try:
+                img = _Image.open(_io.BytesIO(blob))
+                img.load()
+                if img.size[0] >= 300 and img.size[1] >= 150:
+                    out.append(blob)
+            except Exception:
+                pass
+        pos = 0
+        while True:
+            s = stream.find(b"\xff\xd8\xff", pos)
+            if s < 0:
+                break
+            e = stream.find(b"\xff\xd9", s + 3)
+            if e < 0:
+                break
+            blob = stream[s:e + 2]
+            pos = e + 2
+            if len(blob) < 3000:
+                continue
+            try:
+                img = _Image.open(_io.BytesIO(blob))
+                img.load()
+                if img.size[0] >= 300 and img.size[1] >= 150:
+                    out.append(blob)
+            except Exception:
+                pass
+    # 去重（同字节重复出现）
+    seen, uniq = set(), []
+    for b in out:
+        if b not in seen:
+            seen.add(b)
+            uniq.append(b)
+    return uniq
+
+
+def _extract_doc_text_ole(content: bytes) -> str:
+    """.doc（OLE2）正文文本提取（antiword 不认 WPS 生成 .doc 的根治，349 实测）：
+
+    WPS 生成的 .doc 把正文以 UTF-16LE 存在 WordDocument 流里——扫描连续
+    UTF-16LE 中英文段（≥8 字）拼接即为叙述正文。启发式扫描，不求 piece table
+    精确边界；返回空串表示未提取到（调用方走图片描述主体）。"""
+    import io as _io
+
+    try:
+        import olefile as _olefile
+    except ImportError:
+        return ""
+    out: list = []
+    try:
+        ole = _olefile.OleFileIO(_io.BytesIO(content))
+        streams = []
+        for entry in ole.listdir():
+            path = "/".join(entry)
+            try:
+                if "WordDocument" in path or (ole.get_size(path) > 20000):
+                    streams.append(ole.openstream(path).read())
+            except Exception:
+                pass
+        ole.close()
+    except Exception:
+        return ""
+
+    ok_chars = re.compile(
+        r"[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef a-zA-Z0-9，。：；、（）【】\-—\d\.％%]")
+    for stream in streams:
+        i = 0
+        n = len(stream)
+        while i < n - 1:
+            try:
+                ch = stream[i:i + 2].decode("utf-16-le")
+            except Exception:
+                i += 2
+                continue
+            if not ok_chars.match(ch):
+                i += 2
+                continue
+            j = i
+            buf = []
+            while j < n - 1:
+                try:
+                    c2 = stream[j:j + 2].decode("utf-16-le")
+                except Exception:
+                    break
+                if not ok_chars.match(c2):
+                    break
+                buf.append(c2)
+                j += 2
+            if len(buf) >= 8:
+                out.append("".join(buf))
+            i = max(j, i + 2)
+    return "\n".join(out)
 
 
 def _vl_describe_image_blobs(blobs: list) -> str:

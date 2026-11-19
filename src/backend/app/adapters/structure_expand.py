@@ -24,6 +24,10 @@ CLAUSE_MIN_LINES = 4
 SENTINEL_VALUES = {"无", "/", "-", "—", "—", "N/A", "NA", "null", "None", ""}
 # 展开实体置信度（确定性产物，闸门口径里属"有据"）
 EXPANSION_CONFIDENCE = 0.95
+# 行主体单元格长度上限：超长按长文本列处理（如"前端业务规则"整段文字），
+# 不作行主体——346 项目主体错落到规则文本列、流程与接口实例断链的根因。
+# 24 字：业务主体名/编码普遍 ≤20 字，切片内截断的规则片段动辄 30+ 字。
+SUBJECT_MAX_LEN = 24
 
 # ── 条款编号模式（Word 制度文档 / txt 规章）──
 _CLAUSE_PATTERNS = [
@@ -174,7 +178,10 @@ STRUCTURE_MAP_SYSTEM_PROMPT = (
     "2. 同一列的取值样例里既有编码又有描述时，看多数：引用列选 relation；\n"
     "3. subject_class / target_class 必须逐字取自类清单；谓词用中文动词短语（2-4 字），"
     "【关系清单】里已有贴合的优先沿用，没有才在新 relations 里声明；\n"
-    "4. 拿不准的列给 ignore，宁缺勿滥。\n"
+    "4. key_column 必须选行主体标识列（低基数枚举列，如 二级菜单/单据号/接口号），"
+    "禁止选场景按钮/长文本规则列——行主体=该列值，全表行共享同一主体时选取值恒定的那列；"
+    "同一映射的多个关系列不得共用同一谓词（谓词须体现列语义差异）；\n"
+    "5. 拿不准的列给 ignore，宁缺勿滥。\n"
     "只输出一个 JSON 对象，结构严格遵循给定的 JSON Schema。"
 )
 
@@ -306,13 +313,50 @@ def generate_structure_maps(prepared: list, classes: list[str],
                     entry["predicate"] = str(c["predicate"]).strip()
                     entry["target_class"] = str(c["target_class"]).strip()
                 else:
-                    entry["kind"] = "ignore"   # 目标类不在清单 → 降级，不硬连
+                    # 目标类不在清单 → 降级为 attribute 保留数据（349 修复：
+                    # 「接入情况」列被声明 relation 但目标类缺失，旧逻辑整列丢弃，
+                    # 状态分布计数题无据可答）。属性保底零语义伤害，可逆。
+                    entry["kind"] = "attribute"
+                    entry["attribute_name"] = entry["column"]
             elif kind == "attribute":
                 entry["attribute_name"] = str(c.get("attribute_name") or c.get("column") or "").strip()
             if entry["kind"] != "ignore" and entry["column"]:
                 cols.append(entry)
+        # 低基数枚举列兜底（346 修复）：LLM 把 二级菜单/三级菜单 这类主体标识列
+        # 声明成 ignore 或漏掉时，展开主体断链（366 实测主体落到场景按钮值）。
+        # 未声明/ignore 列若取值低基数（distinct ≤ 5）且短值 → 自动补为 attribute
+        # （保留数据零语义伤害，主体候选排序自会处理优先级）。
+        _declared = {c.get("column") for c in cols}
+        for ci, col in enumerate(sig.split("|")):
+            if col in _declared or not col.strip():
+                continue
+            vals = []
+            for r in sample_rows or []:
+                if ci < len(r):
+                    v = str(r[ci] or "").strip()
+                    if v:
+                        vals.append(v)
+            if not vals:
+                continue
+            distinct = len(set(vals))
+            if distinct <= 5 and all(len(v) <= SUBJECT_MAX_LEN for v in set(vals)):
+                cols.append({"column": col, "kind": "attribute", "attribute_name": col})
+                _declared.add(col)
         if not cols:
             return None
+        # 谓词分离护栏（346 修复，2026-11-18）：同一映射内两个 relation 列声明了
+        # 不同 target_class 却共用同一谓词 → 边混列（BP接口列+交互接口列都成
+        # "调用"，问"BP 接口有几个"口径不纯）。确定性消歧：谓词追加目标类名
+        # （首个保留原名，其余 → "调用交互接口" 式后缀）。映射顺序稳定，逐字收敛不变。
+        seen_pred_cls: dict[str, str] = {}
+        for c in cols:
+            if c["kind"] != "relation":
+                continue
+            key = c["predicate"]
+            if key not in seen_pred_cls:
+                seen_pred_cls[key] = c["target_class"]
+            elif seen_pred_cls[key] != c["target_class"]:
+                c["predicate"] = f"{c['predicate']}{c['target_class']}"
         return {"signature": sig, "subject_class": subject,
                 "key_column": str(payload.get("key_column") or "").strip(),
                 "columns": cols}
@@ -361,6 +405,8 @@ class EntityRegistry:
 
     def __init__(self):
         self.by_key: dict[tuple[str, str], dict] = {}
+        # 合并单元格续行继承状态：(doc, 签名) → 上一个非空行主体（跨切片共享）
+        self._last_subj: dict[tuple[str, str], str] = {}
 
     def key(self, label: str, class_label: str) -> tuple[str, str]:
         return (normalize_label(str(label or "").strip()),
@@ -399,6 +445,60 @@ def _split_multi(v: str) -> list[str]:
             and t.strip() not in SENTINEL_VALUES]
 
 
+def _subject_candidates(col_names: list[str], col_map: dict, key_column: str,
+                        rows: list[list[str]]) -> list[int]:
+    """行主体候选列（代码护栏）：键列优先；引用列/ignore 列不作主体，
+    未声明列仅当显式 key_column；含超长值的文本列一律排除。
+
+    LLM 映射的 key_column 可能选到长文本列（346：「前端业务规则」被当主体，
+    接口实例全挂到规则文本、流程节点断链）；按取值形态复核，超长列排除，
+    剩余候选按列序作主体兜底。
+    """
+    scored: list[tuple[int, float, int]] = []  # (优先级 0=键列, 基数比, 列序)
+    for ci, col in enumerate(col_names):
+        cm = col_map.get(col)
+        if cm is None:
+            if col != key_column:
+                continue  # 未声明列仅显式 key_column 可作主体（保持旧行为）
+        elif cm["kind"] == "relation":
+            continue  # 引用列是宾语，不作主体
+        elif cm["kind"] == "ignore" and col != key_column:
+            continue
+        vals = [_clean_cell(r[ci]) for r in rows if ci < len(r)]
+        vals = [v for v in vals if v]
+        if not vals or any(len(v) > SUBJECT_MAX_LEN for v in vals):
+            continue  # 全空列 / 含超长值的长文本列 → 不作主体（护栏）
+        # 键列优先；其余候选低基数优先（重复枚举值更适合作主体），再按列序
+        ratio = len(set(vals)) / len(vals)
+        scored.append((0 if col == key_column else 1, ratio, ci))
+    scored.sort()
+    return [ci for _, _, ci in scored]
+
+
+def mapping_hit(text: str, table_header: str, maps: list[dict]) -> bool:
+    """切片是否命中结构映射（349 双通道根除）：表格签名匹配或列数回退命中。
+
+    命中的切片实体+行内关系由确定性展开唯一产出，LLM 不再重复抽取——
+    双通道双形态实例（展开=服务标识/LLM=服务名称）的源头根治。且表格行占比
+    高（≥60% 非空行为表格行）才判命中，混合切片仍走 LLM 保叙述语义。
+    """
+    if not maps:
+        return False
+    lines = [ln for ln in text.split("\n") if ln.strip()]
+    table_lines = sum(1 for ln in lines if ln.lstrip().startswith("|"))
+    if not lines or table_lines / max(1, len(lines)) < 0.6:
+        return False
+    sig = _norm_signature(table_header) or table_signature(text)
+    if sig and any(m.get("signature") == sig for m in maps):
+        return True
+    tables = parse_md_tables(text)
+    if tables:
+        n_cols = len(tables[0][0])
+        if any(len(m.get("signature", "").split("|")) == n_cols for m in maps):
+            return True
+    return False
+
+
 def expand_chunk(chunk_index: int, text: str, doc: str, table_header: str,
                  maps: list[dict], registry: EntityRegistry) -> tuple[dict, dict]:
     """按映射确定性展开单个切片。返回 ({entities: n, relations: n}, orphans 统计)。
@@ -426,6 +526,9 @@ def expand_chunk(chunk_index: int, text: str, doc: str, table_header: str,
         subject_class = mapping["subject_class"]
         col_map = {c["column"]: c for c in mapping.get("columns") or []}
         sig_cells = sig.split("|")
+        # 续行切片（meta 表头为空）：合并单元格续行才允许继承主体——带 sheet 头的
+        # 首块里主体列为空多为真无主体行，保持跳过，防跨 sheet 误继承
+        cont_mode = not table_header
         for header, rows in parse_md_tables(text):
             joined = "|".join(header)
             if joined == sig:
@@ -437,27 +540,76 @@ def expand_chunk(chunk_index: int, text: str, doc: str, table_header: str,
                 rows = [header] + rows
             else:
                 continue  # 只展开映射命中的表
+            # 解析层周期性重发的表头行不是数据行（防止"二级菜单"等列名被实例化
+            # 为伪个体、污染主体列基数统计——346 修复配套）
+            rows = [r for r in rows
+                    if not (len(r) == len(col_names)
+                            and [_clean_cell(c) for c in r]
+                            == [_clean_cell(c) for c in col_names])]
+            subj_cols = _subject_candidates(col_names, col_map,
+                                            mapping.get("key_column") or "", rows)
+            # 常量主体列护栏（346 根治）：key_column 取值基数接近行数（每行不同值，
+            # 如场景按钮列）而存在近似常量短文本列（distinct ≤ 3 且覆盖 ≥60% 行，
+            # 如二级菜单恒"合同签订"）→ 整表共享主体的强信号，主体强制改用常量列，
+            # 修复 LLM 把 key_column 选成操作列导致的流程主体断链。
+            if subj_cols:
+                _top = subj_cols[0]
+                _top_vals = [_clean_cell(r[_top]) for r in rows if _top < len(r) and _clean_cell(r[_top])]
+                _top_ratio = (len(set(_top_vals)) / len(_top_vals)) if _top_vals else 1.0
+                if _top_ratio >= 0.3:  # 场景按钮类操作列 ratio ~0.7 也需让位常量主体列
+                    # 常量列限定位：必须位于最靠前的主体候选列**之前**（表格左部的
+                    # 分类列才是主体惯例——346 二级菜单 ci0 < 场景按钮 ci2 ✓；
+                    # 349 接入情况 ci4 在服务标识之后 → 状态列不抢主体 ✓）
+                    _key_ci = subj_cols[0]
+                    _const_ci = None
+                    for ci, col in enumerate(col_names):
+                        if ci >= _key_ci:
+                            break
+                        cm = col_map.get(col)
+                        if cm is None or cm.get("kind") not in ("attribute", None):
+                            continue
+                        vals = [_clean_cell(r[ci]) for r in rows if ci < len(r)]
+                        vals = [v for v in vals if v]
+                        if not vals:
+                            continue
+                        distinct = len(set(vals))
+                        # 覆盖阈值 0.3（非 0.05）：切片粒度下常量列 1/N 会到 0.1~0.2，
+                        # 0.05 使小切片护栏失灵（366 贷款申请切片主体退回场景按钮）；
+                        # distinct==1 放行：单行切片（长规则文本独立成片）每列 ratio
+                        # 都是 1.0，靠左至前的常量列（二级菜单）即主体——366 一键开立
+                        # 保证金账户行 C250401L/1003002 边曾挂到场景按钮值上
+                        if 1 <= distinct <= 3 and (distinct == 1 or distinct / max(1, len(vals)) <= 0.3) \
+                                and all(len(v) <= SUBJECT_MAX_LEN for v in vals):
+                            _const_ci = ci
+                            break
+                    if _const_ci is not None:
+                        # 无条件置前（若已在候选中则移动到首位）——346 修复：
+                        # 二级菜单已在候选（排场景按钮后），旧条件会跳过重排
+                        subj_cols = [_const_ci] + [c for c in subj_cols if c != _const_ci]
             for row in rows:
                 stats["rows"] += 1
-                # 行主体：键列优先，否则首个非哨兵值
+                # 行主体：合格主体列取首个非空值（键列优先、长文本列被护栏排除）；
+                # 续行切片全空 → 合并单元格续行，继承同文档同签名上一个非空主体
                 subj_label = ""
-                if mapping.get("key_column"):
-                    ci = col_names.index(mapping["key_column"]) \
-                        if mapping["key_column"] in col_names else -1
-                    if ci >= 0:
-                        subj_label = _clean_cell(row[ci] if ci < len(row) else "")
-                if not subj_label:
-                    for ci, col in enumerate(col_names):
-                        cm = col_map.get(col)
-                        if cm and cm["kind"] == "attribute" and ci < len(row) \
-                                and _clean_cell(row[ci]):
-                            subj_label = _clean_cell(row[ci])
-                            break
+                _subj_ci = -1
+                for _sci in subj_cols:
+                    if _sci < len(row) and _clean_cell(row[_sci]):
+                        _subj_ci = _sci
+                        subj_label = _clean_cell(row[_sci])
+                        break
+                if not subj_label and cont_mode:
+                    subj_label = registry._last_subj.get((doc, sig), "")
                 if not subj_label:
                     continue
-                # 伪个体防御：label 与类同名跳过（与闸门口径一致）
-                if normalize_label(subj_label) == normalize_label(subject_class):
+                # 伪个体防御：label 与类同名跳过（与闸门口径一致）——
+                # 例外（366 根治）：指定主体列（subj_cols[0]，护栏重排后的二级菜单/
+                # 映射 key）的常量值与骨架所建类同名（二级菜单恒"贷款申请"且骨架建了
+                # 同名类）时，该值是该流程的规范个体而非伪个体，放行建实例，否则整表
+                # 20 行全被吞、流程主体零实例零边；杂列回显（状态列等）依旧拦截
+                if normalize_label(subj_label) == normalize_label(subject_class) \
+                        and _subj_ci != subj_cols[0]:
                     continue
+                registry._last_subj[(doc, sig)] = subj_label
                 row_props: dict[str, str] = {}
                 subj, created = registry.get_or_create(
                     subj_label, subject_class, props=row_props,

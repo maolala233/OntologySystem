@@ -70,8 +70,10 @@ def _rule_entity_merge(item):
     sim = float(payload.get("similarity") or cluster.get("similarity") or 0)
     layer = str(payload.get("layer") or cluster.get("layer") or "")
     # 拼音层证据弱（共享前/后缀即可过阈值，项目 238 实测 60 实例误并）——
-    # 自动合并只认归一化同名（L1）与向量层（L3）证据，拼音层聚类留给人审
-    if layer == "pinyin":
+    # 自动合并只认归一化同名（L1）、跨类编码形（L1.5 codeish 已在消解落地，
+    # 不会成待审项）与向量层（L3）证据；拼音层与跨类非编码同名（crossclass，
+    # 2026-11-18）一律不走规则自动合并——crossclass 交 AI 复核（_llm_adjudicate）
+    if layer in ("pinyin", "crossclass"):
         return None
     if sim < AUTO_MERGE_MIN_SIMILARITY:
         return None
@@ -341,6 +343,9 @@ ADJUDICATOR_SYSTEM_PROMPT = (
     "逐条给出裁决。判定原则：\n"
     "1. 实体合并（entity_merge）：成员称呼确实指向同一个事物才 approve；只是同类事物或名字相似"
     "（如不同的系统、不同的人）必须 reject。\n"
+    "   跨类同名（layer=crossclass，成员同名但登记在不同类下）：结合 member_classes 的类语义"
+    "判断——同一事物的不同归类（如同一流程被抽成业务场景/功能模块）→ approve（并入多数类）；"
+    "同名不同物（如同名人员/机构）→ reject。\n"
     "2. 新类型/新关系（new_class/new_predicate）：证据充分且不是已有类的同义概念才 approve；"
     "若有 candidates 且第一候选确属同一概念，填 merge_into_class/merge_into_predicate 并入；"
     "含糊或编造 → reject。\n"
@@ -378,6 +383,10 @@ def _slim_item(item, reason_cap: int = 160) -> dict:
         slim["members"] = (cluster.get("member_labels")
                            or payload.get("duplicate_ids") or [])[:8]
         slim["similarity"] = cluster.get("similarity") or payload.get("similarity")
+        slim["layer"] = str(payload.get("layer") or cluster.get("layer") or "")
+        mc = payload.get("member_classes")
+        if mc:
+            slim["member_classes"] = mc  # {label: 类名}——跨类同名的判定依据
     elif item.item_type in ("new_class", "new_predicate"):
         slim["label"] = payload.get("label")
         cands = payload.get("candidates") or []
@@ -562,8 +571,8 @@ def run_auto_adjudication(project_id: int, db: Optional[Session] = None,
                     cluster = payload.get("cluster") or {}
                     sim = float(payload.get("similarity") or cluster.get("similarity") or 0)
                     layer = str(payload.get("layer") or cluster.get("layer") or "")
-                    if sim < AUTO_MERGE_MIN_SIMILARITY or layer == "pinyin":
-                        continue  # 证据不足的合并不默认执行
+                    if sim < AUTO_MERGE_MIN_SIMILARITY or layer in ("pinyin", "crossclass"):
+                        continue  # 证据不足/跨类非编码同名不默认执行——crossclass 交 AI 复核
                 try:
                     decide2(item, SYSTEM_ACTOR, "approve",
                             note="模型抽取结果默认通过（fast 档，可撤销）", db=db)

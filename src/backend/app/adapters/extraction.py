@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from collections import Counter
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Literal, Optional
@@ -132,6 +133,11 @@ SYSTEM_PROMPT = (
     "一律不要建类。注意：系统、接口、协议、业务规则、业务字段、单据等业务对象"
     "是合法的类（它们是文档数据行/配置行的主体），不要把「接口/系统/规则」"
     "误解为界面元素而漏抽。\n"
+    "2b. 【混合形态文档】（重要，349 修复）：文档可能同时包含制度条款形态的文字"
+    "（第一章/条文）与系统操作页面/流程的描述（截图描述、操作步骤、页面字段）——"
+    "类设计必须覆盖全部内容形态的业务对象：制度文本的业务概念（如预审模式、票据）、"
+    "操作流程的业务步骤与页面要素（作为业务流程步骤/页面要素类），不要只按一种形态"
+    "（如纯制度类）设计骨架而丢掉另一半内容；判断依据是内容主题而非文字格式。\n"
     "3. 层次优先：只要切片文本支持上下位关系（如「流动资金贷款合同」⊑「贷款合同」⊑「合同」），"
     "必须给 parent；更具体的类永远挂到更通用的类下，不要让类孤立。\n"
     "4. 只抽取切片文本中有依据的概念，不要臆造；同一概念沿用【已发现类清单】中的既有命名，不要造同义新类。\n"
@@ -1066,10 +1072,40 @@ def extract_schema(chunks: list, base_uri: str,
                 classes.append(merged[normalize_label(ref)])
 
     result.classes = classes
+    # 谓词声明冲突消解（346 根因③，2026-11-18）：分片 LLM 对同一谓词可能给出互相
+    # 矛盾的 domain/range（「调用」同时被声明为 身份验证接口/业务场景 的 domain），
+    # obj_props 按 (谓词|domain|range) 键并存 → 闸门取哪个全凭字典序 → 错误声明
+    # 让展开边整批被拒。确定性消解：结构映射的声明（domain=subject_class、
+    # range=列 target_class，与展开边天然自洽）优先；无映射声明取多数票；
+    # 平票取 (domain, range) 字典序最小。
+    map_decl: dict[str, tuple[str, str]] = {}
+    for m in (result.structure_maps or []):
+        sc = str(m.get("subject_class") or "")
+        for c in m.get("columns") or []:
+            if c.get("kind") == "relation" and c.get("predicate") and c.get("target_class"):
+                map_decl.setdefault(normalize_label(c["predicate"]),
+                                    (sc, str(c["target_class"])))
+    by_lbl: dict[str, list[dict]] = {}
+    for op in obj_props.values():
+        by_lbl.setdefault(normalize_label(op["label"]), []).append(op)
+    resolved_ops: list[dict] = []
+    for lbl, group in by_lbl.items():
+        if len(group) == 1:
+            resolved_ops.append(group[0])
+            continue
+        decls = Counter((op.get("domain") or "", op.get("range") or "") for op in group)
+        pick = None
+        if lbl in map_decl and map_decl[lbl] in decls:
+            pick = map_decl[lbl]  # 映射声明与展开边自洽，永远优先
+        else:
+            top = max(decls.values())
+            pick = sorted(k for k, v in decls.items() if v == top)[0]
+        resolved_ops.append(next(op for op in group
+                                 if (op.get("domain") or "", op.get("range") or "") == pick))
     # 采集表·规则层：按语句排序（确定性），上限 200 条
     result.business_rules = [biz_rules[k] for k in sorted(biz_rules)][:200]
     # 终产物同样规范化排序（写进 schema/graph_data 的顺序稳定 → QA 检索/导出/比对全链确定）
-    result.object_properties = sorted(obj_props.values(),
+    result.object_properties = sorted(resolved_ops,
                                       key=lambda v: normalize_label(v["label"]))
     result.datatype_properties = sorted(dt_props.values(),
                                         key=lambda v: normalize_label(v["name"]))
@@ -1891,7 +1927,8 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
                       cancel_cb: Optional[Callable] = None,
                       phase_cb: Optional[Callable] = None,
                       coref_enabled: bool = False,
-                      pattern_enabled: bool = False) -> ExtractionResult:
+                      pattern_enabled: bool = False,
+                      structure_maps: list[dict] | None = None) -> ExtractionResult:
     """ABox 抽取（04 §4）：分块并行 → 严格闸门（apply_gate）→ 统计。
 
     tbox_summary：{"classes": {类名: [别名]}, "object_properties": {谓词: {domain, range}}}
@@ -1919,8 +1956,18 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
     known = list(known_entities or [])
     chunks_by_idx = {idx: text for idx, text, _doc, _h in prepared}
     hdr_by_idx = {idx: hdr for idx, _text, _doc, hdr in prepared}
+    # 结构映射命中的切片跳过 LLM 实例抽取（349 双通道根除）：实体+行内关系由
+    # 确定性展开唯一产出，LLM 只服务叙事/混合切片——双形态重复实例源头根治
+    from app.adapters.structure_expand import mapping_hit
 
-    def one(idx: int, text: str):
+    _skip_llm = {idx for idx, text, _d, hdr in prepared
+                 if structure_maps and mapping_hit(text, hdr, structure_maps)}
+    if _skip_llm:
+        print(f"[instances] {len(_skip_llm)}/{len(prepared)} 个切片命中结构映射，"
+              f"跳过 LLM 实例抽取（确定性展开接管）")
+
+    def one(idx: int, text: str,
+            prev_tail: str = ""):
         prev_tail = chunks_by_idx.get(idx - 1, "") if idx != prepared[0][0] else ""
         user = _instance_user_prompt(text, tbox_summary, known, prev_tail, chunk_no=idx,
                                      table_header=hdr_by_idx.get(idx, ""))
@@ -1996,8 +2043,10 @@ def extract_instances(chunks: list, tbox_summary: dict, base_uri: str,
             if progress_cb is not None:
                 progress_cb(done, len(prepared), cache_hits)
 
+        _llm_prepared = [c for c in prepared if c[0] not in _skip_llm]
+        result.chunks_processed = len(prepared)  # 展开接管片仍计入处理量
         _run_sliding_window(
-            pool, prepared,
+            pool, _llm_prepared,
             lambda item: submit_with_context(pool, one, item[0], item[1]),
             _on_chunk_done,
             max_workers=_llm_max_workers(), request_interval=request_interval,

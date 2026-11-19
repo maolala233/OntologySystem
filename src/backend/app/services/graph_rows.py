@@ -103,7 +103,10 @@ def sync_project_rows(db: Session, project_id: int, graph_data: dict | None) -> 
         if s_id is None or o_id is None:
             skipped_edges += 1
             continue
-        key = (s_id, _edge_relation(edge), o_id)
+        # 去重键大小写归一（346 根治）：MySQL uk_proj_edge 大小写不敏感，
+        # Python 端若区分大小写，SUBCLASS_OF/subclass_of 变体边会双双入库 →
+        # 唯一键冲突 → 监听器重建失败 → 行表永久停旧状态
+        key = (s_id, _edge_relation(edge).lower(), o_id)
         if key in seen_edges:
             continue
         seen_edges.add(key)

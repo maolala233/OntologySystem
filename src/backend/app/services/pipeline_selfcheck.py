@@ -12,6 +12,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Optional
 
+from app.core.logging import logger
+
 from sqlalchemy.orm import Session
 
 # 修复 prompt 素材预算（对齐 axiom_llm 口径：LLM 不做全量输入）
@@ -224,6 +226,50 @@ def run_selfcheck_repair(project_id: int, db: Optional[Session] = None,
             except Exception:  # noqa: BLE001
                 return False
 
+        proj = db.query(Project).filter(Project.id == project_id).first()
+
+        # 确定性死类清理（346 修复，先于 LLM 轮次）：类既无实例挂靠、又不出现在
+        # 任何关系声明/层次/结构映射引用中 → 零信息死类，从 TBox 与画布移除。
+        # 这些类在图谱视图上表现为零度孤岛（346 实测 107 个），且多为属性值/
+        # 字段名被误抽成类（摘要/错误原因/合同状态/郎酒合同等）。
+        try:
+            gd0 = proj.graph_data if isinstance(proj.graph_data, dict) else {}
+            _cls0 = [c for c in (gd0.get("schema") or {}).get("classes") or [] if isinstance(c, dict)]
+            _inst_cls = set()
+            _ref = set()
+            for n in gd0.get("nodes") or []:
+                d = n.get("data") or {}
+                if d.get("type") == "owl:NamedIndividual":
+                    _inst_cls.add(str(d.get("class_label") or ""))
+            for o in (gd0.get("schema") or {}).get("object_properties") or []:
+                if isinstance(o, dict):
+                    _ref.add(str(o.get("domain") or ""))
+                    _ref.add(str(o.get("range") or ""))
+            for c in _cls0:
+                _ref.update(str(p) for p in (c.get("parent_classes") or []))
+            for m in (gd0.get("schema") or {}).get("structure_maps") or []:
+                if isinstance(m, dict):
+                    _ref.add(str(m.get("subject_class") or ""))
+                    for cc in m.get("columns") or []:
+                        if isinstance(cc, dict) and cc.get("target_class"):
+                            _ref.add(str(cc["target_class"]))
+            _dead = [c for c in _cls0
+                     if c.get("label") and c["label"] not in _inst_cls
+                     and c["label"] not in _ref]
+            if _dead:
+                _dead_labels = {c["label"] for c in _dead}
+                schema0 = gd0.get("schema") or {}
+                schema0["classes"] = [c for c in _cls0 if c.get("label") not in _dead_labels]
+                gd0["schema"] = schema0
+                gd0["nodes"] = [n for n in gd0.get("nodes") or []
+                                if not ((n.get("data") or {}).get("type") in ("Class", "owl:Class")
+                                        and (n.get("data") or {}).get("label") in _dead_labels)]
+                proj.graph_data = gd0
+                flag_modified(proj, "graph_data")
+                logger.info(f"[自检] 确定性死类清理：移除零引用类 {len(_dead)} 个 "
+                            f"（{_dead_labels and ', '.join(sorted(_dead_labels)[:8])}…）")
+        except Exception as e:
+            logger.warning(f"[自检] 死类清理失败（跳过）: {e}")
         proj = db.query(Project).filter(Project.id == project_id).first()
         if proj is None:
             return {"rounds": 0, "fixed": 0, "remaining": 0, "skipped": "project_not_found"}

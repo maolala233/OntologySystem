@@ -249,7 +249,12 @@ def _window(spans: list[tuple[int, int]], size: int, overlap: int) -> list[tuple
 
 def _table_spans(text: str, base: int, size: int, overlap: int) -> list[tuple[int, int]]:
     """markdown 表格块的行窗口化：切点全部落在行边界（行永不拦腰断），
-    窗口间带 overlap 行回看；整表 ≤ size 时单块保留。"""
+    窗口间带 overlap 行回看；整表 ≤ size 时单块保留。
+
+    逻辑行边界（346 修复）：md 表行含内嵌换行时（外部 md/docx 来源），物理行
+    ≠逻辑行——窗口尾推进到下一逻辑行起点（以 | 开头的行）或空行为止，宁可
+    超限不拦腰断；overlap 回看起点同样对齐逻辑行起点（行中起片是无上下文碎片）。
+    """
     lines = text.split("\n")
     offs: list[tuple[int, int, int]] = []  # (行起点偏移, 行终点偏移(不含\n), 行长含\n)
     off = 0
@@ -258,6 +263,11 @@ def _table_spans(text: str, base: int, size: int, overlap: int) -> list[tuple[in
         off += len(line) + 1
     if not lines:
         return []
+
+    def _row_start(k: int) -> bool:
+        """物理行 k 是否逻辑行起点：以 | 开头（新 md 行）或为空行。"""
+        return lines[k].lstrip().startswith("|") or not lines[k].strip()
+
     # 数据行 = 表头行 + 分隔行之后的所有 | 行（块内容可能前置标题/空行）
     first_pipe = next((i for i, ln in enumerate(lines) if ln.lstrip().startswith("|")), None)
     if first_pipe is None:
@@ -284,12 +294,18 @@ def _table_spans(text: str, base: int, size: int, overlap: int) -> list[tuple[in
         j = i
         while j + 1 < n and offs[j + 1][1] - offs[s_line][0] <= size:
             j += 1
+        # 窗口尾推进到逻辑行边界：下一物理行是新 md 行/空行才算行界
+        while j + 1 < n and not _row_start(j + 1):
+            j += 1
         out.append((base + offs[s_line][0], base + offs[j][1]))
         if j + 1 >= n:
             break
         # overlap 行回看
         back = max(1, int(round((size * 0.15) // max(1, (offs[j][1] - offs[s_line][0]) / max(1, j - s_line + 1)))))
         i = max(j + 1 - back, j + 1)
+        # 回看起点对齐逻辑行起点（行中起片的半行对抽取/QA 都是无上下文碎片）
+        while i <= j and not _row_start(i):
+            i += 1
         while i < n and not lines[i].strip():
             i += 1
     if not out:

@@ -237,6 +237,8 @@ const ModelConfigsPage: React.FC = () => {
     const scopeWatch = Form.useWatch('scope', form);
     const isEmbedding = purposeWatch === 'embedding';
     const isExtract = purposeWatch === 'extract';
+    const isChat = purposeWatch === 'chat';
+    const isVL = purposeWatch === 'vl';
     const projectName = (pid?: number | null) =>
         myProjects.find((p) => p.id === pid)?.name || (pid ? `项目#${pid}` : '');
 
@@ -443,6 +445,13 @@ const ModelConfigsPage: React.FC = () => {
                                                tooltip="每次任务提交之间的间隔（秒），用于给远程模型服务限速；0 表示不限速">
                                         <InputNumber min={0} max={60} />
                                     </Form.Item>
+                                </Space>
+                            </>
+                        )}
+                        {(isExtract || isChat || isVL) && (
+                            <>
+                                <Typography.Title level={5} style={{ marginTop: 8 }}>调用参数</Typography.Title>
+                                <Space size={16} wrap>
                                     <Form.Item name="llm_timeout" label="超时(s)" initialValue={300}>
                                         <InputNumber min={30} max={1800} />
                                     </Form.Item>
@@ -451,7 +460,7 @@ const ModelConfigsPage: React.FC = () => {
                                         <Switch />
                                     </Form.Item>
                                     <Form.Item name="streaming_enabled" label="流式" valuePropName="checked"
-                                               tooltip="预留开关：抽取输出为 JSON 契约固定非流式；问答是否流式由问答页开关控制，此开关当前不改变行为">
+                                               tooltip="开启后：抽取输出走流式聚合，对话问答的答案生成走流式（更快出首字，避免长阻塞超时）；关闭则内部调用整段非流式。问答页面的逐字显示由问答页开关控制">
                                         <Switch />
                                     </Form.Item>
                                 </Space>

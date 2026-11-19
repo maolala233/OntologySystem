@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 MAX_SOURCES = 10
 # 图事实在融合结果中的名额上限：结构化三元组仅作关系类问题的补充，
 # 原文切片（向量/关键词）才是内容问答的主要证据来源
-MAX_GRAPH_FACTS = 3
+MAX_GRAPH_FACTS = 5  # 聚合引用（同主体谓词合并为一条清单）后，5 条足以覆盖枚举问题
 # 语义推理引用名额上限：推理结果是推导产物（非已确认事实），只做补充证据，
 # 不得挤占事实类引用；引用卡与 LLM 上下文中都带"语义推理"标注。
 # 事实满额时为推理保留 2 个名额（事实压缩到 MAX_SOURCES-2）
@@ -207,6 +207,78 @@ def _retrieval_trace(sources: list[RetrievedSource], question: str) -> list[dict
     return trace
 
 
+def _prop_distribution_sources(db: Session, query: RetrievalQuery) -> list[RetrievedSource]:
+    """属性分布聚合引用（349 修复）：计数类问题的决定性证据通道。
+
+    长表（89 行）的切片引用只含前 ~20 行，模型按"可见行数"计数必错
+    （349 实测：真值 38 已接入答成 20/15）。本通道对实例数 top 类做
+    低基数属性分布聚合（"接入情况：已接入 38、未接入 51"），独立于类锚定——
+    问题不含类名（"有多少个系统…"）也能命中。仅问题含计数词时触发。
+    """
+    if not re.search(r"多少|几个|数量|占比|比例|统计|哪些|哪几|列出|清单|名单",
+                      query.question or ""):
+        return []
+    try:
+        top = (db.query(Entity.class_label, func.count(Entity.id))
+               .filter(Entity.project_id == query.project_id,
+                       Entity.is_class_node.is_(False),
+                       Entity.status == "auto",
+                       Entity.class_label.isnot(None))
+               .group_by(Entity.class_label)
+               .order_by(func.count(Entity.id).desc())
+               .limit(6).all())
+        out: list[RetrievedSource] = []
+        for label, n in top:
+            if n < 2:
+                continue
+            insts = (db.query(Entity)
+                     .filter(Entity.project_id == query.project_id,
+                             Entity.is_class_node.is_(False),
+                             Entity.status == "auto",
+                             Entity.class_label == label)
+                     .all())
+            prop_keys: dict[str, dict[str, int]] = {}
+            for e in insts:
+                for k, v in (e.props or {}).items():
+                    v = str(v or "").strip()
+                    if v:
+                        prop_keys.setdefault(str(k), {})
+                        prop_keys[str(k)][v] = prop_keys[str(k)].get(v, 0) + 1
+            dist_parts = []
+            for k, cnt in sorted(prop_keys.items(),
+                                 key=lambda kv: -sum(kv[1].values()))[:12]:
+                total = sum(cnt.values())
+                distinct = len(cnt)
+                if 2 <= distinct <= 20 and total >= max(1, int(0.8 * len(insts))):
+                    # 分布 + 成员清单（349）：列举题（"哪些系统未接入"）的全量证据
+                    members: dict[str, list[str]] = {}
+                    for e in insts:
+                        vv2 = str((e.props or {}).get(k) or "").strip()
+                        if vv2:
+                            members.setdefault(vv2, []).append(e.label)
+                    vals = []
+                    for vv, cc in sorted(cnt.items(), key=lambda x: -x[1])[:8]:
+                        names = "、".join(members.get(vv, [])[:60])
+                        more = f"…等{cc}个" if cc > len(members.get(vv, [])) else ""
+                        vals.append(f"{vv} {cc} 个（{names}{more}）")
+                    dist_parts.append(f"「{k}」" + "；".join(vals))
+            if dist_parts:
+                out.append(RetrievedSource(
+                    doc_file="本体图谱",
+                    # cap=4000：成员清单与表格枚举同待遇（默认 1500 会截断长名单）
+                    quote=_quote_clip(
+                        f"「{label}」共 {len(insts)} 个实例的属性分布"
+                        f"（按登记属性聚合）：{'；'.join(dist_parts[:3])}",
+                        cap=4000),
+                    ref_type="graph_node",
+                    score=0.93,
+                ))
+        return out[:3]
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[retrieval] 属性分布聚合失败：{e}")
+        return []
+
+
 def _class_inventory_sources(db: Session, query: RetrievalQuery,
                              class_labels: list[str]) -> list[RetrievedSource]:
     """类锚定枚举事实（graph_node）：列出该类全部实例（少量带属性摘要，量大只列名）。
@@ -219,6 +291,70 @@ def _class_inventory_sources(db: Session, query: RetrievalQuery,
     except Exception:  # noqa: BLE001
         _doc_dist = {}
     for label in class_labels[:2]:
+        # ── 类族合并口径（计数题防碎片化）：类名碎片化（"接口"被同轮抽成
+        # 前端接口/交互接口/BP接口/查询接口…）时单类计数严重偏少——锚定类的
+        # 后缀族（类名以锚定类名结尾，如 BP接口/前端接口 之于 接口）按实例名
+        # 去重合并计数，口径构成随引注入。干扰类天然排除：接口输入字段/接口
+        # 输出项不以"接口"结尾，不进族。
+        try:
+            family_rows = (
+                db.query(Entity.label)
+                .filter(
+                    Entity.project_id == query.project_id,
+                    Entity.is_class_node.is_(True),
+                    Entity.status != "rejected",
+                    Entity.label != label,
+                    Entity.label.endswith(label),
+                )
+                .all()
+            )
+            family_labels = [r[0] for r in family_rows]
+        except Exception as e:  # noqa: BLE001
+            family_labels = []
+            logger.warning(f"[retrieval] 类 {label} 后缀族查询失败：{e}")
+        if family_labels:
+            try:
+                fam_insts = (
+                    db.query(Entity)
+                    .filter(
+                        Entity.project_id == query.project_id,
+                        Entity.is_class_node.is_(False),
+                        Entity.status != "rejected",
+                        Entity.class_label.in_([label] + family_labels),
+                    )
+                    .all()
+                )
+                from app.adapters.extraction import normalize_label as _nl
+
+                by_key: dict[str, Entity] = {}
+                multi_cls = 0
+                for e in fam_insts:
+                    k = _nl(e.label)
+                    if k in by_key:
+                        multi_cls += 1
+                        continue
+                    by_key[k] = e
+                distinct = list(by_key.values())
+                # 锚定类自身的实例数（用于族增益判断）：族只比单类多零头则不注入
+                anchor_only = sum(1 for e in distinct if _nl(e.class_label) == _nl(label))
+                if len(distinct) > anchor_only:
+                    fam_cnt = "、".join(
+                        f"{lab} {sum(1 for e in fam_insts if e.class_label == lab)} 个"
+                        for lab in ([label] + family_labels)
+                        if any(e.class_label == lab for e in fam_insts))
+                    names = "、".join(e.label for e in distinct[:40])
+                    more = "…等" if len(distinct) > 40 else ""
+                    multi_part = f"，其中 {multi_cls} 个实例同时挂在多类" if multi_cls else ""
+                    out.append(RetrievedSource(
+                        doc_file="本体图谱",
+                        quote=_quote_clip(
+                            f"「{label}」类族去重口径：{fam_cnt}，按实例名去重共 "
+                            f"{len(distinct)} 个不同{label}{multi_part}：{names}{more}"),
+                        ref_type="graph_node",
+                        score=0.96,
+                    ))
+            except Exception as e:  # noqa: BLE001 —— 族合并失败回落单类清单
+                logger.warning(f"[retrieval] 类 {label} 类族合并失败：{e}")
         try:
             insts = (
                 db.query(Entity)
@@ -277,6 +413,50 @@ def _class_inventory_sources(db: Session, query: RetrievalQuery,
             ref_type="graph_node",
             score=0.95,
         ))
+        # 属性分布聚合引用（349 修复，计数题防"数切片可见行"）：问题含计数词时，
+        # 对该类实例的 props 做低基数属性扫描——"多少个系统接入"这类属性分布
+        # 计数题的决定性证据（长表 chunk 引用只见前 ~20 行，按可见行数必错）
+        if re.search(r"多少|几个|数量|占比|比例|哪些|哪几|列出|清单|名单", query.question or ""):
+            try:
+                from collections import Counter as _Counter
+                prop_keys: dict[str, dict[str, int]] = {}
+                for e in insts:
+                    for k, v in (e.props or {}).items():
+                        v = str(v or "").strip()
+                        if v:
+                            prop_keys.setdefault(str(k), {})
+                            prop_keys[str(k)][v] = prop_keys[str(k)].get(v, 0) + 1
+                dist_parts = []
+                for k, cnt in sorted(prop_keys.items(),
+                                     key=lambda kv: -sum(kv[1].values()))[:12]:
+                    total = sum(cnt.values())
+                    distinct = len(cnt)
+                    if 2 <= distinct <= 20 and total >= max(1, int(0.8 * len(insts))):
+                        members: dict[str, list[str]] = {}
+                        for e in insts:
+                            vv2 = str((e.props or {}).get(k) or "").strip()
+                            if vv2:
+                                members.setdefault(vv2, []).append(e.label)
+                        vals = []
+                        for vv, cc in sorted(cnt.items(), key=lambda x: -x[1])[:8]:
+                            names = "、".join(members.get(vv, [])[:40])
+                            more = f"…等{cc}个" if cc > len(members.get(vv, [])) else ""
+                            vals.append(f"{vv} {cc} 个（{names}{more}）")
+                        dist_parts.append(f"「{k}」" + "；".join(vals))
+                    if dist_parts:
+                        out.append(RetrievedSource(
+                            doc_file="本体图谱",
+                            # cap=4000：成员清单型引用与表格枚举同待遇——1500 默认
+                            # 上限会把 51 个成员名截到前 7 个，模型又数可见项（349）
+                            quote=_quote_clip(
+                                f"「{label}」共 {len(insts)} 个实例的属性分布"
+                                f"（按登记属性聚合）：{';'.join(dist_parts[:3])}",
+                                cap=4000),
+                            ref_type='graph_node',
+                            score=0.93,
+                        ))
+            except Exception as e:  # noqa: BLE001 —— 分布聚合失败不影响清单本体
+                logger.warning(f"[retrieval] 类 {label} 属性分布聚合失败：{e}")
     # 全图类分布概览：计数类问题的口径兜底——类名漂移（同文档不同轮抽成不同类名）
     # 或用户口径与类名不一致时，锚定类清单覆盖不到真类；把全图实例数 top 类一次性
     # 给到 LLM，让它自行挑选相关类并说明口径（分数低于锚定清单，名额让位）
@@ -429,6 +609,7 @@ def _axiom_sources(query: RetrievalQuery, db: Session) -> list[RetrievedSource]:
     question = query.question or ""
     terms = set(_question_terms(question))
     hits: list[tuple[int, int, RetrievedSource]] = []  # (-相关度, 序, 引用)
+    quote_seen: set[str] = set()  # 同文公理去重（schema 里 domain/range 双写会产出同 quote 两条）
     for order, ax in enumerate(axioms):
         rel_hit = sum(1 for lbl in ax["preds"] if lbl in question or lbl in terms)
         cls_hit = sum(1 for lbl in ax["clses"] if lbl in question or lbl in terms)
@@ -436,8 +617,9 @@ def _axiom_sources(query: RetrievalQuery, db: Session) -> list[RetrievedSource]:
         # 类对公理（互斥/等价）两个类名同时命中 = 问题正面问这两类的关系，+2 加成
         if ax.get("pair") and cls_hit >= 2:
             relevance += 2
-        if not relevance:
+        if not relevance or ax["quote"] in quote_seen:
             continue
+        quote_seen.add(ax["quote"])
         hits.append((-relevance, order, RetrievedSource(
             doc_file="本体公理（已声明约束）",
             quote=ax["quote"],
@@ -520,7 +702,7 @@ def _graph_expand(db: Session, query: RetrievalQuery, seeds: list[Entity]) -> li
                 seen_ids.add(other.id)
                 next_ids.append(other.id)
         frontier_ids = next_ids[:20]  # 邻域扩展宽度限制，防大图爆炸
-    return facts[:40]
+    return facts[:120]  # 枚举聚合按 (主体,谓词) 分组再限量——40 截断会吃掉组内对象（346 实测 30 边被截）
 
 
 def _prov_by_entity(db: Session, project_id: int, entity_ids: list[int]) -> dict[int, ProvenanceRecord]:
@@ -682,6 +864,24 @@ def _inference_sources(query: RetrievalQuery, db: Session) -> list[RetrievedSour
 
 
 
+def _group_edge_facts(facts: list[dict]) -> tuple[list[list[dict]], list[dict]]:
+    """图事实按 (主体,谓词) 分组：≥2 条的组用于聚合清单引用，散条保持逐条引用。
+
+    纯函数（可测）：输入 _graph_expand 产物，返回 (聚合组列表, 单条事实列表)。
+    """
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for f in facts:
+        groups.setdefault((str(f["subject"]), str(f["predicate"])), []).append(f)
+    agg: list[list[dict]] = []
+    singles: list[dict] = []
+    for fs in groups.values():
+        if len(fs) >= 2:
+            agg.append(fs)
+        else:
+            singles.append(fs[0])
+    return agg, singles
+
+
 def _quote_clip(text: str, cap: int = 1500) -> str:
     """引用截断（根修 3454"数据对不上"）：
 
@@ -730,28 +930,67 @@ def retrieve(query: RetrievalQuery, db: Session | None = None) -> list[Retrieved
             prov = _prov_by_entity(db, query.project_id,
                                    sorted({i for f in facts for i in f["entity_ids"]}))
             doc_names: dict[int, str] = {}
-            for f in facts:
-                # 事实引用 = 端点实体的溯源证据（有 evidence 用原句，无则用三元组文本）
-                p = next((prov.get(i) for i in f["entity_ids"] if prov.get(i)), None)
-                quote = (p.evidence_text if p and p.evidence_text else
-                         f"{f['subject']} —{f['predicate']}→ {f['object']}")
+
+            def _doc_of(entity_ids: list[int]) -> tuple[str | None, int | None]:
+                p = next((prov.get(i) for i in entity_ids if prov.get(i)), None)
                 doc_id = p.source_document_id if p else None
                 if doc_id and doc_id not in doc_names:
                     d = db.query(UploadedDocument).filter(UploadedDocument.id == doc_id).first()
                     doc_names[doc_id] = d.filename if d else "未知来源"
-                sources.append(RetrievedSource(
-                    doc_file=doc_names.get(doc_id, "未知来源" if doc_id else "本体图谱"),
+                return doc_names.get(doc_id, "未知来源" if doc_id else "本体图谱"), doc_id
+
+            def _single_fact(f: dict) -> RetrievedSource:
+                # 事实引用 = 端点实体的溯源证据（有 evidence 用原句，无则用三元组文本）
+                doc_file, doc_id = _doc_of(f["entity_ids"])
+                p = next((prov.get(i) for i in f["entity_ids"] if prov.get(i)), None)
+                quote = (p.evidence_text if p and p.evidence_text else
+                         f"{f['subject']} —{f['predicate']}→ {f['object']}")
+                return RetrievedSource(
+                    doc_file=doc_file,
                     quote=_quote_clip(quote),
                     char_start=p.char_start if p else None,
                     char_end=p.char_end if p else None,
                     ref_type="graph_edge",
                     score=round(f["score"], 4),
                     source_document_id=doc_id,
+                )
+
+            # 枚举聚合（计数题防零头）：同 (主体,谓词) ≥2 条 → 合并成一条对象清单
+            # 引用（"X —[调用]→ 30 个对象：C250505A、…"）。"流程涉及哪些接口"类
+            # 问题的决定性证据是对象全集，逐条引用会被名额挤掉大半（346 实测
+            # 33 条调用边只露 3 条 → 答"3 个接口"）
+            agg_groups, singles = _group_edge_facts(facts)
+            edge_sources: list[RetrievedSource] = []
+            # 聚合引用排在散条前面：融合按 score 排序（同分稳定保序），聚合清单
+            # 是枚举问题的决定性证据，必须先进 MAX_GRAPH_FACTS 名额
+            for fs in agg_groups:
+                doc_file, doc_id = _doc_of([i for f in fs for i in f["entity_ids"]])
+                objs = "、".join(str(f["object"]) for f in fs[:40])
+                more = "…等" if len(fs) > 40 else ""
+                first_p = next((prov.get(i) for i in fs[0]["entity_ids"] if prov.get(i)), None)
+                ev = (first_p.evidence_text[:80] if first_p and first_p.evidence_text
+                      else f"{fs[0]['subject']} —{fs[0]['predicate']}→ {fs[0]['object']}")
+                edge_sources.append(RetrievedSource(
+                    doc_file=doc_file,
+                    quote=_quote_clip(
+                        f"{fs[0]['subject']} —[{fs[0]['predicate']}]→ 共 {len(fs)} 个对象：{objs}{more}"
+                        f"（证据样例：{ev}）"),
+                    char_start=first_p.char_start if first_p else None,
+                    char_end=first_p.char_end if first_p else None,
+                    ref_type="graph_edge",
+                    score=round(min(1.0, max(f["score"] for f in fs) + 0.01), 4),
+                    source_document_id=doc_id,
                 ))
+            for f in singles:
+                edge_sources.append(_single_fact(f))
+            sources.extend(edge_sources)
     if not class_labels and query.use_graph and db is not None:
         vec_labels = _tbox_class_anchor(query, db)
         if vec_labels:
             sources.extend(_class_inventory_sources(db, query, vec_labels))
+    # 属性分布聚合：独立于类锚定的计数证据通道（349 修复）
+    if query.use_graph and db is not None:
+        sources.extend(_prop_distribution_sources(db, query))
     sources.extend(_vector_sources(query))
     # 关键词兜底始终参与融合（混合检索）：向量相似度对短段落/专有词弱的场景由
     # 词项命中补位；向量正常时两路结果按 (doc_file, quote) 去重互补
@@ -797,28 +1036,24 @@ def retrieve(query: RetrievalQuery, db: Session | None = None) -> list[Retrieved
     return result
 
 
-_QA_SYSTEM_PROMPT = """你是一位专业的本体知识问答助手，基于提供的上下文信息回答用户问题。
+_QA_SYSTEM_PROMPT = """你是一位熟悉这套业务系统的数据分析同事，基于提供的上下文信息回答用户问题。回答要像同事当面给你讲数据，自然、直接，不要写成系统报告。
 
-【回答要求】：
-1. 只根据提供的上下文回答，不要编造信息。
-2. **结论先行 + 构成式人话**：计数/统计类问题按「总共 N 个，其中 X 个来自《文档A》、
-   Y 个来自《文档B》，两份文档交叉去重后共 N 个」这种人话句式回答——先给总数，
-   再用"其中/来自"拆构成，让不懂本体建模的人也能看懂数字怎么来的；
-   引用中的"来源：文档×数量"标注是构成拆解的直接依据，原样转化为自然语言。
-3. **给推理过程**：结论之后用 1-3 句说明推理或构成（如"182 = 接口基线贡献 152 +
-   功能梳理贡献 30，另有 1 个编码被归入相近类"）；引用里若有"来源：文档×数量"
-   标注，据此拆解口径构成；多个数字并存时说明各自的口径与关系。
-4. 在回答中使用 [1][2][3] 等标号标注引用来源，标号放在相关语句的末尾。
-5. 如果上下文中没有相关信息，请如实告知，并指出上下文中最接近的信息（如类分布
-   概览中相近类的数量），不要空泛拒答。
-6. 计数/统计类问题：若"类分布概览"引用中存在与问题口径相近的多个类（如同义类、
-   上下位类），须把相近各类的数量一并报出并说明口径差异，不要只挑一个类作答。
-7. 来源为"语义推理"的引用是系统从本体公理/规则推导出的结论（非原文事实）：
-   可用于回答类型归属、层级关系类问题，引用时保留 [n] 标注，表述上与原文事实区分
-   （如"根据语义推理"），不要说成文档记载的内容。
-8. **说业务人话，禁系统内部术语**：不要向用户暴露"实例/类节点/类清单/概览引用/
-   锚定/通道"这类实现词汇——说"登记了 182 个接口""来自两份文档"而不是
-   "「接口」类共 182 个实例"；类名可以直接用，但句式要像人在解释数据，不是系统在报账。
+【语气与节奏】
+- 用说话的方式组织回答，少用"首先/其次/综上所述"这类报告腔和排比句式。
+- 篇幅跟着问题的分量走：简单事实问一句答一句就够；构成复杂的问题才分层展开。
+- 不要每次都套同一副骨架，让结构跟随问题本身。
+
+【硬约束】（任何情况下不可违反）
+1. 只根据上下文回答，不编造；上下文没有就直说没有，并给出最接近的相关信息，不要空泛拒答。
+2. 引用标注 [1][2][3] 放在相关语句的末尾。
+3. 说业务人话：不出现"实例/类节点/锚定/通道/概览引用"这类实现词汇；类名可以直接用，但句子要像人在解释数据。
+
+【计数与构成】（仅计数、统计、构成类问题适用）
+- 数字要能对上账：引用里带"来源：文档×数量"时，按"总共 N，其中 A 文档 X 个、B 文档 Y 个"讲清楚。
+- 引用给出"类族去重口径"时以去重总数为准，相近类的数量可一并提及并说明差别；"某流程涉及哪些 X"以对象清单型引用（如 X —[调用]→ 30 个对象）的全集计数，不要数引用条数。
+
+【语义推理引用】
+来自公理/规则推导的结论可用于归属、层级类问题，表述成"根据语义推导"，和文档原文区分开。
 
 【引用格式说明】：[1] 表示引用第 1 条参考信息，以此类推。
 """
@@ -874,7 +1109,7 @@ def query_with_reasoning(query: RetrievalQuery, db: Session | None = None,
             resp = llm.call_llm_text(
                 system_prompt=system_prompt or _QA_SYSTEM_PROMPT,
                 user_prompt=_build_user_prompt(query.question, sources),
-                stream=False,
+                stream=None,  # 跟随模型行 params.streaming_enabled（349 修复：硬编码 False 使行配置对 QA 不生效）
                 timeout=300.0,
                 temperature=temperature,
             )

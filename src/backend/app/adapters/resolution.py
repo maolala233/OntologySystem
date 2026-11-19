@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import re
+
 from collections.abc import Callable
 from typing import Any, Optional
 
@@ -41,6 +43,16 @@ class MergeResult(BaseModel):
     merged_ids: list[int] = Field(default_factory=list)
     relations_migrated: int = 0
     provenance_preserved: bool = True
+
+
+# 编码形 label（字母数字混合短码，如 C250405E/0206203）——此类实体是
+# 系统编码（同一编码=同一对象），语义相似度（向量余弦/拼音 JW）对它们
+# 虚高（MVP 实测 bge-m3 把 25 个 BP 编码误并到 6 个），一律豁免模糊合并
+_CODE_LIKE = re.compile(r"^(?=[A-Za-z0-9_-]{4,12}$)(?=.*\d)")
+
+
+def _is_code_like(label: str | None) -> bool:
+    return bool(label) and bool(_CODE_LIKE.match(label))
 
 
 def normalize_label(label: str | None) -> str:
@@ -228,6 +240,45 @@ def detect_duplicates(entities: list, blocking: str = "pinyin",
         else:
             norm_groups[key] = i
 
+    def union_to(a: int, b: int, sim: float, layer: str) -> None:
+        """a 吸收 b（a 为规范根，无视下标大小）——多数类规范选取专用。"""
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+        events.append((a, b, sim, layer))
+
+    # L1.5 跨类精确同名（346 修复，2026-11-18）：同类隔离导致同码实例散落
+    # 前端接口/接口/BP接口 多类永不合并（C2506052×3 实测）。两档：
+    # - 编码形（字母数字混合短码）：确定性合并到多数类——同编码即同对象，
+    #   两文档各自抽取的同一接口，编码是强身份证据（MVP 四层消解 L2 平台化）；
+    # - 非编码同名跨类：只进待审（layer=crossclass），绝不自动合
+    #   （60 实例拼音误并事故底线：跨类只认精确同名，不认模糊相似）。
+    _codeish = re.compile(r"^(?=[A-Za-z0-9_-]{4,12}$)(?=.*\d)")
+    cls_size: dict[str, int] = {}
+    for e in ents:
+        cls_size[e["class_label"]] = cls_size.get(e["class_label"], 0) + 1
+    label_roots: dict[str, list[int]] = {}
+    for i, e in enumerate(ents):
+        label_roots.setdefault(normalize_label(e["label"]), []).append(i)
+    for _nl, idxs in label_roots.items():
+        roots: list[int] = []
+        seen_roots: set[int] = set()
+        for i in idxs:
+            r = find(i)  # L1 已把同类同名并到同根，收集簇代表
+            if r not in seen_roots:
+                seen_roots.add(r)
+                roots.append(r)
+        if len(roots) < 2:
+            continue  # 单类内 L1 已处理
+        is_codeish = bool(_codeish.match(_nl))
+        # 多数类规范选取：类实例数多者为 canonical（多数类统一），并列取小 id
+        roots.sort(key=lambda r: (-cls_size.get(ents[r]["class_label"], 0),
+                                  ents[r]["id"] or 0))
+        base = roots[0]
+        for r in roots[1:]:
+            union_to(base, r, 1.0 if is_codeish else 0.99,
+                     "codeish" if is_codeish else "crossclass")
+
     # L2/L3：组内候选对
     vector_pairs: list[tuple[int, int]] = []  # (i, j) 待向量判定
     for _cls, members in by_class.items():
@@ -242,6 +293,10 @@ def detect_duplicates(entities: list, blocking: str = "pinyin",
                 for y in range(x + 1, len(members)):
                     i, j = index_of[id(members[x])], index_of[id(members[y])]
                     if find(i) != find(j):
+                        # 编码形豁免（349 根治）：不同编码 = 不同对象，向量对
+                        # 短编码余弦虚高，绝不做模糊合并
+                        if _is_code_like(ents[i]["label"]) and _is_code_like(ents[j]["label"]):
+                            continue
                         vector_pairs.append((min(i, j), max(i, j)))
             continue
         # blocking 桶：全拼键 + 首字母键 + 音节键（防"星辰1号/星辰一号"这类接续差异漏配）
@@ -266,6 +321,9 @@ def detect_duplicates(entities: list, blocking: str = "pinyin",
                     if pair in seen_pairs:
                         continue
                     seen_pairs.add(pair)
+                    # 编码形对：拼音/JW 相似无意义（长公共前缀虚高），跳过
+                    if _is_code_like(ents[i]["label"]) and _is_code_like(ents[j]["label"]):
+                        continue
                     sim = _pinyin_similar(ents[i]["label"], ents[j]["label"])
                     if sim is None:
                         continue
@@ -280,9 +338,22 @@ def detect_duplicates(entities: list, blocking: str = "pinyin",
         texts = {i: _embed_text(ents[i]) for pair in uniq_pairs for i in pair}
         vecs = embeddings_fn(list(texts.values()))
         vec_by_text = dict(zip(texts.keys(), vecs))  # 键=实体下标 i
+        # 标签独立嵌入（366 根治）：展开行实体的 props 是整行单元格值，同一模板
+        # 表格（各 Sheet 列结构相同）不同主体的 props 余弦可达 0.93（合同签订/
+        # 贷款申请 实测，纯标签仅 0.66）——props 把标签差异淹没导致跨流程误并。
+        # 自动合并必须标签自身也过 auto 线；标签不过线时压回 review 区间转人工/AI 复核
+        _pair_idx = sorted({k for pair in uniq_pairs for k in pair})
+        label_vecs = embeddings_fn([ents[i]["label"] for i in _pair_idx])
+        lvec = dict(zip(_pair_idx, label_vecs))
         for i, j in uniq_pairs:
             sim = _cosine(vec_by_text[i], vec_by_text[j])
             if sim >= review_threshold:
+                if sim >= auto_threshold:
+                    lsim = _cosine(lvec[i], lvec[j])
+                    if lsim < auto_threshold:
+                        # props 抬高的伪相似：降为待复核（sim 压到 auto 线下，
+                        # 簇聚合按 max(event) 定 needs_review）
+                        sim = round(auto_threshold - 0.01, 4)
                 union(i, j, sim, "vector")  # <0.60 放行
 
     # 输出簇：根 → 成员；相似度/层取该簇 union 事件的最大值
@@ -310,9 +381,10 @@ def detect_duplicates(entities: list, blocking: str = "pinyin",
             layer=best_layer,
             # 拼音层证据弱（长名共享前/后缀即可过 JW/leva 阈值：2026-11-03 项目 238 实测
         # 「零售管理域/财务管理域/风险管理域」等 60 个不同实体被误并）——一律转人工，
-        # 自动合并只认 L1 归一化同名与 L3 向量 ≥auto 两条硬证据
-        needs_review=(best_layer != "normalized" and best_sim < auto_threshold)
-        or best_layer == "pinyin",
+        # 自动合并只认 L1 归一化同名、L1.5 编码形精确同名、L3 向量 ≥auto 三条硬证据
+        needs_review=((best_layer not in ("normalized", "codeish")
+                       and best_sim < auto_threshold)
+                      or best_layer in ("pinyin", "crossclass")),
         )
         clusters.append(cluster)
     clusters.sort(key=lambda c: (-c.similarity, c.canonical_label))

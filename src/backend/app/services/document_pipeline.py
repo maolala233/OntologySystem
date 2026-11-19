@@ -70,7 +70,9 @@ def _default_chunk_params(project_id: int | None = None) -> ChunkParams:
 # 指纹存 DocumentChunk.meta["fingerprint"]（首切片），避免加列迁移；旧数据没有
 # 指纹，首次重建时会重解析一次，之后即走复用。
 # 解析器或切片算法有行为变更时手动 +1，让历史切片自动失效。
-PARSE_FINGERPRINT_VERSION = 1
+# v2（2026-11-18）：解析层修复——单元格换行压平+表格周期性重发 Sheet 头+表头行；
+# 旧 v1 产物存在切片拦腰断行/续片无上下文，必须重解析
+PARSE_FINGERPRINT_VERSION = 2
 
 
 def _hash_signature(payload: dict) -> str:
