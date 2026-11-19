@@ -286,6 +286,10 @@ async def pipeline_events(
                     last_sent = idle_line
                     yield f"data: {idle_line}\n\n"
             else:
+                # 帧里补上任务 id（2026-11-19）：Redis 原始进度键没有这个字段，而前端
+                # 要拿它判断"这一帧是不是本地正在跟踪的任务"（旧任务帧丢弃），也靠它
+                # 判断终态帧是否已经补刷过——缺了它，SSE 每次重连都会多打一个 status
+                prog = {**prog, "task_id": tid}
                 # 注入子阶段帧（2026-11-08）：当前阶段的子任务进度键里有切片级
                 # 进度（chunks_done/total、百分比、ETA）——骨架/实例抽几十个切片
                 # 时主键消息不变，没有这帧用户看到的就像卡死
