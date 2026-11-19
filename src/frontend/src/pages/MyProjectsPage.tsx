@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { message } from '../shared/feedback';
-import { Badge, Button, Checkbox, Empty, Form, Input, Modal, Pagination, Radio, Popconfirm, Select, Space, Spin, Statistic, Table, Tag, Tooltip, Upload, DatePicker } from 'antd';
+import { Badge, Button, Checkbox, Empty, Form, Input, Modal, Pagination, Radio, Select, Space, Spin, Statistic, Table, Tag, Tooltip, Upload, DatePicker } from 'antd';
 import {
      PlusOutlined,
     EditOutlined,
@@ -416,15 +416,12 @@ const MyProjectsPage: React.FC = () => {
                     编辑
                 </Button>
             </Tooltip>
-            <Popconfirm
-                title="确认删除项目？"
-                description="文档、图谱数据、审核项与版本快照将一并删除且无法恢复"
-                okText="删除" okButtonProps={{ danger: true }} cancelText="取消"
-                onConfirm={() => handleDeleteProject(project.id)}>
-                <Button type="link" size="small" danger icon={<DeleteOutlined />}>
-                    删除
-                </Button>
-            </Popconfirm>
+            {/* 删除只保留一次确认：handleDeleteProject 里的影响范围弹窗（confirmImpact）
+                已经把不可恢复的内容逐条列出，外面再套 Popconfirm 就是点两次确认（2026-11-19） */}
+            <Button type="link" size="small" danger icon={<DeleteOutlined />}
+                    onClick={() => handleDeleteProject(project.id)}>
+                删除
+            </Button>
         </Space>
     );
 
@@ -1015,13 +1012,10 @@ const MyProjectsPage: React.FC = () => {
                                                         <Button type="text" size="small" icon={<EditOutlined />}
                                                                 onClick={() => handleEditProject(project)} />
                                                     </Tooltip>
-                                                    <Popconfirm
-                                                        title="确认删除项目？"
-                                                        description="文档、图谱数据、审核项与版本快照将一并删除且无法恢复"
-                                                        okText="删除" okButtonProps={{ danger: true }} cancelText="取消"
-                                                        onConfirm={() => handleDeleteProject(project.id)}>
-                                                        <Button type="text" size="small" danger icon={<DeleteOutlined />} />
-                                                    </Popconfirm>
+                                                    {/* 同表格视图：确认只留影响范围弹窗这一层 */}
+                                                    <Button type="text" size="small" danger icon={<DeleteOutlined />}
+                                                            aria-label="删除项目"
+                                                            onClick={() => handleDeleteProject(project.id)} />
                                                 </div>
                                             </div>
                                         </div>
