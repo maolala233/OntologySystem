@@ -254,6 +254,9 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
         const pct = status?.percent;
         if (typeof pct === 'number') lastPercentRef.current = pct;
     }, [status]);
+    // 最近一次由 REST 取到的终态（任务 + 状态）：SSE 终态帧随后到达时据此判断
+    // "这个终态已经完整取过了"，不再重复补刷一次 status（2026-11-19 接口收敛）
+    const restTerminalRef = useRef<{ taskId: string; status: string } | null>(null);
 
     // 定时状态复核节流：SSE 每秒都在推 idle 帧，不能每帧都打 REST
     const schedCheckAtRef = useRef(0);
@@ -305,15 +308,12 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
 
     const refresh = useCallback(async () => {
         try {
-            // 先查项目当前任务（读运行锁）：非 idle 直接采用——否则 localStorage 的
-            // lastTask 会把面板钉死在上一次的终态，API 侧/定时触发的重建永远刷不出来
-            // （2026-11-06 项目 258 实测：面板一直显示上一轮 failed）。idle 时才用
-            // lastTask 兜底展示 24h 内历史（锁过期后仍可见）。
+            // 只查一次（2026-11-19 接口收敛）：服务端 /status 在运行锁为空时，
+            // 已经自己回落「最近一次构建登记」（pipeline:last，7d）——这正是当年
+            // 前端用 localStorage 的 lastTask 二次补查想解决的问题。进度键 24h 过期后，
+            // 那次补查必然还是 idle（项目 76 实测：两次响应完全一样），纯浪费一个往返。
+            // 本地快照在下面「补历史」里继续用，但不再参与发请求。
             let s = await pipelineApi.status(projectId);
-            if (s.status === 'idle') {
-                const lastTask = localStorage.getItem(lastTaskKey(projectId)) || undefined;
-                if (lastTask) s = await pipelineApi.status(projectId, lastTask);
-            }
             // 服务端进度键 24h 过期 / 换了浏览器：用本机最后一次终态快照兜底，
             // 构建结束后阶段时间线也保留（用户要求「步骤条永远不消失」，2026-11-16）
             const snap = readSnap(projectId);
@@ -363,6 +363,10 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
             if (s.task_id && s.status !== 'idle') {
                 localStorage.setItem(lastTaskKey(projectId), s.task_id);
             }
+            const terminalState = s.status === 'completed' || s.status === 'failed'
+                || s.status === 'cancelled';
+            restTerminalRef.current = terminalState && s.task_id
+                ? { taskId: s.task_id, status: s.status } : null;
         } catch {
             /* 状态查询失败不打扰用户（模块未开通等） */
         } finally {
@@ -379,6 +383,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
         lastTaskSeenRef.current = null;
         foreignFrameAtRef.current = 0;
         lastPercentRef.current = 0;
+        restTerminalRef.current = null;
     }, [projectId]);
 
     useEffect(() => { refresh(); }, [refresh, signal]);
@@ -439,10 +444,17 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
         esRef.current?.close();
         esRef.current = null;
         try {
+            // 让出一次微任务再换票（2026-11-19）：StrictMode 首挂载会立刻「卸载再挂载」，
+            // 被作废的这一代不必再换一张一次性票据（开发模式每次进页面省 1 个请求）
+            await Promise.resolve();
+            if (gen !== subGenRef.current) return;
             const lastTask = localStorage.getItem(lastTaskKey(projectId)) || undefined;
             const url = await pipelineApi.eventsUrl(projectId, lastTask);
             if (gen !== subGenRef.current) return;  // 已卸载/已重订：丢弃，避免遗留孤儿连接
             const es = new EventSource(url);
+            // 新连接从"现在"开始计静默：否则刚从后台切回来时，上一次连接留下的
+            // 旧时间戳会让半开检测立刻补一次多余的 REST（2026-11-19）
+            lastFrameAtRef.current = Date.now();
             es.onopen = () => setSseUp(true);
             es.onmessage = (event) => {
                 try {
@@ -524,7 +536,12 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                     }
                     if (data.status === 'completed' || data.status === 'failed'
                         || data.status === 'cancelled') {
-                        refresh();  // 补带审核统计的完整终态帧
+                        // 补带审核统计的完整终态帧（2026-11-19 收敛）：首屏进入、断流重连后的
+                        // 第一帧，拿到的都是"REST 刚取过的同一个终态"，再打一次 status 是纯重复
+                        const rest = restTerminalRef.current;
+                        if (!(rest && rest.taskId === data.task_id && rest.status === data.status)) {
+                            refresh();
+                        }
                     }
                 } catch { /* 单帧解析失败忽略，下一帧自愈 */ }
             };
@@ -534,10 +551,28 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                     esRef.current = null;
                     setSseUp(false);
                 }
-                refresh();
+                // 断流兜底只在"可能还在跑"时才补一次 REST（2026-11-19）：
+                // 构建结束后页面会长期挂着，此时每次重连再打一个 status 没有任何新信息
+                const local = statusRef.current?.status;
+                if (!local || local === 'running' || local === 'queued'
+                    || local === 'cancelling' || local === 'scheduled') {
+                    refresh();
+                }
                 if (retryRef.current) clearTimeout(retryRef.current);
                 retryRef.current = setTimeout(() => { retryRef.current = null; subscribe(); }, 8000);
             };
+            // 服务端 30 分钟上限主动收流（pipeline.py 的「event: timeout」）：不接的话
+            // 浏览器会拿已经用掉的票据自动重连，必然 401，再走 onerror + 8s 重试。
+            // 这里直接作废旧连接、1s 后换新票重订，省掉那次 401 和 8s 空窗
+            es.addEventListener('timeout', () => {
+                es.close();
+                if (esRef.current === es) {
+                    esRef.current = null;
+                    setSseUp(false);
+                }
+                if (retryRef.current) clearTimeout(retryRef.current);
+                retryRef.current = setTimeout(() => { retryRef.current = null; subscribe(); }, 1000);
+            });
             esRef.current = es;
         } catch {
             /* ticket 获取失败：一次性 refresh + 轮询兜底照常工作 */
@@ -545,7 +580,35 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectId, refresh, rememberSteps]);
 
+    // 标签页可见性（2026-11-19）：隐藏时关掉 SSE、停掉兜底轮询，切回来重订 + 补一次 REST。
+    // 隐藏的标签页没人看，没必要让后端每秒读一次 Redis；回到前台时先 REST 复核，
+    // 再把流订回来——后台期间定时构建到点、别的标签页发起的构建都不会漏。
+    const [visible, setVisible] = useState(() => !document.hidden);
     useEffect(() => {
+        const onVisibility = () => setVisible(!document.hidden);
+        document.addEventListener('visibilitychange', onVisibility);
+        return () => document.removeEventListener('visibilitychange', onVisibility);
+    }, []);
+    // 回到前台补一次复核（首次挂载跳过：mount 那次 refresh 已经跑过）
+    const firstVisibleRef = useRef(true);
+    useEffect(() => {
+        if (!visible) return;
+        if (firstVisibleRef.current) {
+            firstVisibleRef.current = false;
+            return;
+        }
+        // 只有"后台期间可能真的变了"才补 REST（2026-11-19）：终态/空闲时切回来
+        // 只需重订流（SSE 首帧就是当前状态），否则每次切标签页都要多打一个 status。
+        // 后台期间如果真有新一轮构建跑起来，终态帧与本地记录对不上时会自行补刷。
+        const local = statusRef.current?.status;
+        if (!local || local === 'running' || local === 'queued'
+            || local === 'cancelling' || local === 'scheduled') {
+            void refresh();
+        }
+    }, [visible, refresh]);
+
+    useEffect(() => {
+        if (!visible) return;  // 隐藏时不建连；再次可见由上面的可见性切换重订
         subscribe();
         return () => {
             subGenRef.current += 1;  // 作废在途换票，防止清理后才建立的连接泄漏
@@ -557,7 +620,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
             esRef.current = null;
             setSseUp(false);
         };
-    }, [subscribe]);
+    }, [subscribe, visible]);
 
     const s = status;
     // 停止中：后端收到取消后保留运行锁，等 worker 在检查点退出（或超时兜底）
@@ -586,10 +649,11 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
             && s.status !== 'completed' && s.status !== 'failed' && s.status !== 'cancelled'));
     // 断流兜底：SSE 未接通时运行中每 3s 轮询；SSE 在线则全程零轮询
     useEffect(() => {
-        if (!runningNow || sseUp) return;
+        // 隐藏的标签页也不轮询（2026-11-19）：切回前台时会先补一次 REST
+        if (!runningNow || sseUp || !visible) return;
         const t = setInterval(refresh, 3000);
         return () => clearInterval(t);
-    }, [refresh, runningNow, sseUp, s?.task_id]);
+    }, [refresh, runningNow, sseUp, s?.task_id, visible]);
 
     // SSE 半开兜底（2026-11-16 反馈）：连接看起来在线、却超过 30s 没收到任何数据帧
     // （后端每秒读一次进度、15s 一条心跳注释，正常不会这么久），主动 REST 复核一次，

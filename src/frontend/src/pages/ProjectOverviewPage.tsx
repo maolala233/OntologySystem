@@ -14,7 +14,7 @@ import { NodeIndexOutlined, RocketOutlined } from '@ant-design/icons';
 
 import { BuildSummary, pipelineApi } from '../api/pipeline';
 import type { PipelineStatus } from '../api/pipeline';
-import { versionsApi, VersionRow } from '../api/governance';
+import { versionsApi } from '../api/governance';
 import { useAuthStore } from '../shared/auth/authStore';
 import { PROJECT_STATUS, statusChip } from '../shared/projectStatus';
 import PipelinePanel from '../features/builder/components/PipelinePanel';
@@ -38,30 +38,42 @@ const ProjectOverviewPage: React.FC = () => {
 
     const [summary, setSummary] = useState<BuildSummary | null>(null);
     const [pipelineSignal, setPipelineSignal] = useState(0);
-    const [publishedVersion, setPublishedVersion] = useState<VersionRow | null>(null);
+    const [publishedVersionNo, setPublishedVersionNo] = useState<number | null>(null);
     // 实时管线状态（5s 轮询权威值，比摘要里的 last_pipeline 新）+ 文档数
     const [pipeStatus, setPipeStatus] = useState<string | null>(null);
 
     const load = useCallback(async () => {
         if (!Number.isFinite(pid) || pid <= 0) return;
+        let s: BuildSummary | null = null;
         try {
-            const s = await pipelineApi.buildSummary(pid);
+            s = await pipelineApi.buildSummary(pid);
             setSummary(s);
         } catch { /* 模块未开通等：静默 */ }
-        try {
-            const v = await versionsApi.list(pid);
-            // 已发布版本=publication 快照（is_current 是"最新快照"，schema/full 入库也会置 current，
-            // 拿它当发布状态会让所有已构建项目都显示假「已发布 vN」——2026-11-06 实测修复）
-            const pubs = (v.items || []).filter((x) => x.kind === 'publication');
-            setPublishedVersion(pubs.sort((a, b) => b.version_no - a.version_no)[0] || null);
-        } catch { /* 版本信息失败不阻断 */ }
+        // 已发布版本号只服务结果卡上那枚「已发布 vN」标签（2026-11-19 接口收敛）：
+        // ① summary 已经带 published_version_no，直接用，不再拉 /versions；
+        // ② 未发布项目根本不需要版本列表，也不再白拉；
+        // ③ 只有「已发布但 summary 没带版本号」（API 进程还是旧代码）才回退一次。
+        //    判定仍是 publication 快照按 version_no 取最大——is_current 是"最新快照"，
+        //    schema/full 入库也会置 current，拿它当发布状态会显示假「已发布 vN」（2026-11-06）
+        const vno = s?.published_version_no;
+        if (typeof vno === 'number' && vno > 0) {
+            setPublishedVersionNo(vno);
+        } else if (s?.is_published) {
+            try {
+                const v = await versionsApi.list(pid);
+                const pubs = (v.items || []).filter((x) => x.kind === 'publication');
+                setPublishedVersionNo(pubs.sort((a, b) => b.version_no - a.version_no)[0]?.version_no ?? null);
+            } catch { /* 版本信息失败不阻断 */ }
+        } else if (s) {
+            setPublishedVersionNo(null);
+        }
     }, [pid]);
 
     // 路由参数直接切到别的项目（组件不重挂载）时，清掉本页保存的上一个项目的快照/结果，
     // 否则结果卡、状态徽标会先显示旧项目的数字，等新请求回来才被覆盖
     useEffect(() => {
         setSummary(null);
-        setPublishedVersion(null);
+        setPublishedVersionNo(null);
         setPipeStatus(null);
         setPipeStage(null);
         lastPipeStatusRef.current = null;
@@ -154,7 +166,9 @@ const ProjectOverviewPage: React.FC = () => {
                 message.error(/失败[:：]/.test(msg) ? msg : `构建失败：${msg}`);
             }
         } else {
-            load(); // idle/running/queued/scheduled 之间跃迁也同步摘要（结果区随构建态收放）
+            // idle/running/queued/scheduled 之间跃迁不重拉摘要（2026-11-19）：
+            // 结果区是否显示由 building 直接决定，构建产物只有到终态才会变；
+            // 这里只同步项目元数据（草稿 / 构建中徽标）
             loadProject(pid);
         }
     }, [pid, load, loadProject]);
@@ -407,7 +421,7 @@ const ProjectOverviewPage: React.FC = () => {
 
                     {!building && summary && summary.schema.classes_total > 0 && (
                         <BuildResultsPanel projectId={pid} summary={summary} checks={summary.checks}
-                                           publishedVersionNo={publishedVersion?.version_no ?? null}
+                                           publishedVersionNo={publishedVersionNo}
                                            // 项目元数据还没回来时传 undefined：退回探测逻辑，避免误弹选择器
                                            hasDomain={projectReady ? !!domainName : undefined}
                                            onPublishedChange={() => { load(); loadProject(pid); }} />

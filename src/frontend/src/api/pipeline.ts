@@ -150,6 +150,8 @@ export interface BuildSummary {
         depth?: string; selfcheck?: Record<string, any>; stages?: PipelineStageState[];
     } | null;
     is_published: boolean;
+    /** 已发布版本号（2026-11-19）：build/summary 直接下发，省掉一次 /versions；未发布为 null */
+    published_version_no?: number | null;
 }
 
 export const pipelineApi = {
