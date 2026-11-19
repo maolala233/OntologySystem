@@ -25,6 +25,7 @@ import { useAuthStore } from '../../shared/auth/authStore';
 import { confirmLeaveUnsaved } from '../../utils/unsavedGuard';
 import CopilotWidget from '../Copilot/CopilotWidget';
 import BrandMark from '../BrandMark';
+import SiderArt from './SiderArt';
 import { SiderCollapseContext } from './siderCollapse';
 
 const { Sider, Content } = Layout;
@@ -208,7 +209,7 @@ const AppLayout: React.FC = () => {
                 </div>
 
                 {/* 导航菜单 */}
-                <div className="sidebar-scroll pt-2 pb-2" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+                <div className="sidebar-scroll relative z-10 pt-2 pb-2" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
                     <Menu
                         theme="light"
                         mode="inline"
@@ -222,6 +223,18 @@ const AppLayout: React.FC = () => {
                         }}
                         className="border-r-0"
                     />
+                </div>
+
+                {/* 侧栏底部科技插画（2026-11-19）：绝对定位，不占布局高度，菜单区占满整列；
+                    菜单内容变长时直接压在插画上层（菜单 z-10 / 插画 z-0）。
+                    pointer-events-none 保证不吃点击；只放图形、不配文案，折叠态用 56px 简化版 */}
+                <div
+                    className={`pointer-events-none absolute inset-x-0 bottom-0 z-0 flex justify-center ${
+                        collapsed ? 'px-2 pb-4' : 'px-4 pb-5'
+                    }`}
+                    aria-hidden
+                >
+                    <SiderArt compact={collapsed} />
                 </div>
 
             </Sider>

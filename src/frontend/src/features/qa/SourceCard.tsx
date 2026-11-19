@@ -80,8 +80,9 @@ export default function SourceCard({ index, source, highlighted, expandAll }: {
     const cls = isNodeList ? classSummaryLine(quote) : null;
     const listBody = cls && cls.rest.length > 40 ? readableList(cls.rest) : null;
     const md = cls ? '' : toCitationMarkdown(source.quote);
-    // 折叠时只留四行左右的高度；判断是否还有更多内容可展开（约 4 行 / 240 字）
-    const moreLines = md.split('\n').filter(l => l.trim()).length > 4 || md.length > 240;
+    // 折叠态严格两行（2026-11-19）：正文 12.5px × 行高 1.75 = 21.875px/行，
+    // 两行正好 43.75px；原来的 58px 会露出第三行半截。超过两行就给「展开全文」入口
+    const moreLines = md.split('\n').filter(l => l.trim()).length > 2 || md.replace(/\s/g, '').length > 60;
     const canExpand = cls ? !!listBody : moreLines;
 
     // 高亮：正文角标点过来时左侧亮一条品牌竖条 + 一层淡底（inset 阴影，不占布局宽度）
@@ -131,14 +132,11 @@ export default function SourceCard({ index, source, highlighted, expandAll }: {
                 </div>
             ) : (
                 md && (
-                    /* 引用原文：折叠时只露两行左右（原来 86px 接近四行，一屏引用卡太长），
+                    /* 引用原文：折叠时严格两行（43.75px = 2 × 21.875px），硬切在行边界上，
+                       不再用 58px + 底部渐隐——渐隐会把第二行吃掉一截，正是"两行半"的来源。
                        展开后卡内滚动。这里关掉 [n] 角标解析——原文里的方括号是正文 */
                     <div ref={scrollRef}
-                         className={`pl-1 ${expanded ? 'max-h-[360px] overflow-auto' : 'max-h-[58px] overflow-hidden'} ${
-                             !expanded && canExpand
-                                 ? '[mask-image:linear-gradient(to_bottom,#000_72%,transparent)]'
-                                 : ''
-                         }`}>
+                         className={`pl-1 ${expanded ? 'max-h-[360px] overflow-auto' : 'max-h-[43.75px] overflow-hidden'}`}>
                         <MarkdownAnswer content={md} sourceCount={0} onCite={() => {}} dense citations={false} />
                     </div>
                 )

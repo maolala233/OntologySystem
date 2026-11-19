@@ -108,6 +108,33 @@ body .ant-breadcrumb .ant-breadcrumb-item a:hover {
   background-color: rgba(91, 141, 239, 0.10);
 }
 
+/* 顶栏菜单折叠开关（2026-11-19）：去掉悬停提示后，反馈全靠底色——
+   悬停/键盘聚焦用品牌淡蓝，按下再深一档，和面包屑、下拉菜单项同一档色温；
+   原生 hover 是中性灰，压在冷调顶栏上显脏 */
+.sider-toggle.ant-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  color: #7C87A0;
+  transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+.sider-toggle.ant-btn .anticon {
+  font-size: 16px;
+}
+.sider-toggle.ant-btn:hover,
+.sider-toggle.ant-btn:focus-visible {
+  background: rgba(91, 141, 239, 0.10) !important;
+  color: #2A57C6 !important;
+}
+.sider-toggle.ant-btn:active {
+  background: rgba(91, 141, 239, 0.16) !important;
+  color: #2A57C6 !important;
+}
+.sider-toggle.ant-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(91, 141, 239, 0.18);
+}
+
 @media (max-width: 576px) {
   .ant-breadcrumb {
     font-size: 12px;
