@@ -182,6 +182,33 @@ def test_stage_failed_message_prefers_substep(pipeline_module):
     assert str(fallback) == "骨架抽取失败：无法连接模型服务"
 
 
+def test_summarize_stage_detail_drops_brackets(pipeline_module):
+    # 2026-11-19 反馈：详情区一行塞进「386 类 / 1002 关系（含跨切片缝合…）」太长
+    msg = ("骨架抽取完成：386 类 / 1002 关系（含跨切片缝合 12 条/3 段）"
+           "（层次组装 5 条，清理伪类 3 个）；机检 2 硬伤 / 4 提醒")
+    assert pipeline_module.summarize_stage_detail(msg) == "386 类 / 1002 关系"
+
+
+def test_summarize_stage_detail_handles_ascii_bracket(pipeline_module):
+    assert (pipeline_module.summarize_stage_detail(
+        "实例抽取完成：120 实体 / 80 关系（含反向补全 8 条）")
+        == "120 实体 / 80 关系")
+
+
+def test_summarize_stage_detail_keeps_short_text(pipeline_module):
+    assert (pipeline_module.summarize_stage_detail("消解完成：自动合并 12 处")
+            == "自动合并 12 处")
+    assert (pipeline_module.summarize_stage_detail("冲突检测完成：发现 15 处结果冲突，已转审核确认")
+            == "发现 15 处结果冲突，已转审核确认")
+
+
+def test_summarize_stage_detail_limits_length(pipeline_module):
+    out = pipeline_module.summarize_stage_detail("结构自检完成：" + "很长的说明" * 20)
+    assert len(out) == 41 and out.endswith("…")
+    # 括号在开头时不能整段切空
+    assert pipeline_module.summarize_stage_detail("（备注）通过") == "（备注）通过"
+
+
 def test_cancel_timeout_forces_finish(monkeypatch, pipeline_module, fake_redis):
     import time
 

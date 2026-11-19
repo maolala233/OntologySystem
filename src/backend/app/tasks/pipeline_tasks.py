@@ -444,6 +444,28 @@ def _failed_step_label(stage_key: str, sub: Optional[dict]) -> str:
     return ""
 
 
+_STAGE_DONE_HEAD = re.compile(
+    r"^(骨架抽取|实例抽取|冲突检测|消解|公理扫描|结构自检|裁决|业务规则挖掘|能力问题评测)完成：")
+
+
+def summarize_stage_detail(message: str, limit: int = 40) -> str:
+    """阶段完成摘要的展示文本：去掉「XX完成：」头和括号补充，并限制长度。
+
+    子任务的完成消息信息量最大，但常带括号备注（「386 类 / 1002 关系（含跨切片
+    缝合 12 条/3 段）」）——详情区一行放不下，展示层只保留括号前的主结果；
+    完整内容仍在子进度键里，需要时可回溯。
+    """
+    text = _STAGE_DONE_HEAD.sub("", str(message or "")).strip()
+    for sep in ("（", "("):
+        cut = text.find(sep)
+        if cut > 0:
+            text = text[:cut].rstrip(" ；;，,、")
+            break
+    if len(text) > limit:
+        text = text[:limit].rstrip() + "…"
+    return text
+
+
 def _run_stage_task(task, stage_key: str, stages: list[dict], task_id: str,
                     **kwargs) -> dict:
     """经 task.apply 就地执行子任务；失败转异常（子任务体已写 failed 进度）。
@@ -481,10 +503,10 @@ def _run_stage_task(task, stage_key: str, stages: list[dict], task_id: str,
         sub_prog = get_task_progress(sub_id)
         if sub_prog and sub_prog.get("message"):
             # 摘要行自带"{阶段名}："前缀，剥掉子消息里的"XX完成："头，
-            # 否则渲染成"骨架抽取：骨架抽取完成：12 类…"（2026-11-08 实测）
-            detail = re.sub(r"^(骨架抽取|实例抽取|冲突检测|消解|公理扫描|结构自检|裁决)完成：",
-                            "", str(sub_prog["message"]))
-            _stage(stages, stage_key)["detail"] = detail[:80]
+            # 否则渲染成"骨架抽取：骨架抽取完成：12 类…"（2026-11-08 实测）；
+            # 只保留括号前的主结果并限长，避免一行塞进整段统计（2026-11-19 反馈）
+            detail = summarize_stage_detail(str(sub_prog["message"]))
+            _stage(stages, stage_key)["detail"] = detail or "已完成"
         # 剖析：把子任务进度里的统计（切片数/缓存命中/批次数等）带进阶段指标
         if sub_prog and isinstance(sub_prog.get("stats"), dict):
             profile_metric(f"{stage_key}_stats", sub_prog["stats"])
