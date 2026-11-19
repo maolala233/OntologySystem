@@ -714,7 +714,29 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
         }
     };
 
-    if (!loaded) return null;
+    if (!loaded) {
+        // 首屏骨架（2026-11-19）：原来直接 return null，数据回来时整块突然插入，
+        // 下方文档段要往下蹿一大截，观感就是"好几个 loading 陆续冒出来"。
+        // 用和正式版式同序同高的骨架占住位置，加载只表现为"往里填内容"
+        return (
+            <Card size="small" className="mb-3" title={<span>构建</span>}>
+                <div className="flex items-center gap-4">
+                    <div className="tk-skel h-[26px] w-[64px]" />
+                    <div className="tk-skel h-[7px] flex-1 rounded-full" />
+                </div>
+                <div className="tk-skel mt-3 h-[11px] w-[210px]" />
+                <div className="mt-4 flex gap-2">
+                    {Array.from({ length: 8 }).map((_, i) => (
+                        <div key={i} className="flex flex-1 flex-col items-center gap-2">
+                            <div className="tk-skel h-[26px] w-[26px] rounded-full" />
+                            <div className="tk-skel h-[10px] w-[54px]" />
+                        </div>
+                    ))}
+                </div>
+                <div className="tk-skel mt-4 h-[128px] rounded-[10px]" />
+            </Card>
+        );
+    }
 
     const finished = s && (s.status === 'completed' || s.status === 'failed'
         || s.status === 'cancelled');

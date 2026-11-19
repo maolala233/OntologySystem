@@ -5,7 +5,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { message } from '../../../shared/feedback';
-import { Button, Card, Popconfirm, Space, Spin, Table, Tag, Tooltip, Upload } from 'antd';
+import { Button, Card, Popconfirm, Space, Table, Tag, Tooltip, Upload } from 'antd';
 import type { UploadProps } from 'antd';
 import {
     CloudDownloadOutlined, DeleteOutlined, FileTextOutlined, LockOutlined, UploadOutlined,
@@ -219,7 +219,7 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage,
         <Card size="small"
               // 段标题不再挂实时阶段标签（2026-11-17 用户要求）：构建板块已经常驻显示
               // 「当前阶段：实体消解 · 用时」，这里再来一个「构建中 · 实体消解」是同一句话的第二遍
-              title={<span>文档（{docs.length}）</span>}
+              title={<span>文档{loading ? '' : `（${docs.length}）`}</span>}
               extra={(
                   <Upload {...uploadProps} disabled={uploading || locked}>
                       {/* 按钮文案跟状态走（2026-11-16）：已有文档时再说"上传文档"像是第一次操作，
@@ -238,7 +238,18 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage,
                   </Upload>
               )}>
             {loading ? (
-                <div className="py-6 text-center"><Spin /></div>
+                // 首屏骨架（2026-11-19）：原来是一枚居中 Spin，和构建段的骨架不是
+                // 一套语言，页面会同时出现"转圈 + 空白"两种加载反馈
+                <div className="flex flex-col gap-2.5 py-1.5">
+                    {[0, 1, 2].map((i) => (
+                        <div key={i} className="flex items-center gap-3">
+                            <div className="tk-skel h-[12px] w-[38%]" />
+                            <div className="tk-skel h-[12px] w-[10%]" />
+                            <div className="tk-skel h-[12px] w-[12%]" />
+                            <div className="tk-skel ml-auto h-[12px] w-[64px]" />
+                        </div>
+                    ))}
+                </div>
             ) : docs.length === 0 ? (
                 /* 保持原来的图标块 + 文案（2026-11-16 一行式版本观感更差，已回退），
                    只把上下留白从 py-8 收到 py-4：整块高度约 110px，不再空一大片 */

@@ -1573,6 +1573,29 @@ body .tk-surface-deco .ant-modal-content::after {
   font-variant-numeric: tabular-nums;
 }
 
+/* 首屏骨架（2026-11-19）：冷蓝淡底 + 一道缓慢扫过的高光，和 .surface-card 同一色系。
+   只用于"数据还没回来"的占位，不参与任何交互；减少动效偏好下停止扫光 */
+.tk-skel {
+  position: relative;
+  overflow: hidden;
+  border-radius: 6px;
+  background: rgba(91, 141, 239, 0.10);
+}
+.tk-skel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.65), transparent);
+  animation: tk-skel-sweep 1.4s ease-in-out infinite;
+}
+@keyframes tk-skel-sweep {
+  100% { transform: translateX(100%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tk-skel::after { animation: none; }
+}
+
 /* 后台管理页的页面标题：统一字重与色彩，和正文拉开层次 */
 .ant-typography h4.ant-typography,
 h4.ant-typography {

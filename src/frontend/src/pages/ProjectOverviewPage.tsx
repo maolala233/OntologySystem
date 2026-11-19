@@ -375,7 +375,11 @@ const ProjectOverviewPage: React.FC = () => {
                                         className="m-0 max-w-[280px] min-w-0 truncate text-[18px] font-semibold leading-7 text-[#0F172A]"
                                         title={projectReady ? projectName : undefined}
                                     >
-                                        {projectReady ? projectName : '加载中…'}
+                                        {projectReady
+                                            ? projectName
+                                            // 骨架条占位（2026-11-19）：原来是一行"加载中…"，
+                                            // 和下面的转圈/空白叠在一起像多个 loading
+                                            : <span className="tk-skel inline-block h-[18px] w-[150px] align-middle" />}
                                     </h1>
                                     {projectReady && (
                                         <Tag
