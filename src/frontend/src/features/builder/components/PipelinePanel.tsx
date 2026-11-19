@@ -254,9 +254,6 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
         const pct = status?.percent;
         if (typeof pct === 'number') lastPercentRef.current = pct;
     }, [status]);
-    // 最近一次由 REST 取到的终态（任务 + 状态）：SSE 终态帧随后到达时据此判断
-    // "这个终态已经完整取过了"，不再重复补刷一次 status（2026-11-19 接口收敛）
-    const restTerminalRef = useRef<{ taskId: string; status: string } | null>(null);
 
     // 定时状态复核节流：SSE 每秒都在推 idle 帧，不能每帧都打 REST
     const schedCheckAtRef = useRef(0);
@@ -363,10 +360,6 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
             if (s.task_id && s.status !== 'idle') {
                 localStorage.setItem(lastTaskKey(projectId), s.task_id);
             }
-            const terminalState = s.status === 'completed' || s.status === 'failed'
-                || s.status === 'cancelled';
-            restTerminalRef.current = terminalState && s.task_id
-                ? { taskId: s.task_id, status: s.status } : null;
         } catch {
             /* 状态查询失败不打扰用户（模块未开通等） */
         } finally {
@@ -383,7 +376,6 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
         lastTaskSeenRef.current = null;
         foreignFrameAtRef.current = 0;
         lastPercentRef.current = 0;
-        restTerminalRef.current = null;
     }, [projectId]);
 
     useEffect(() => { refresh(); }, [refresh, signal]);
@@ -536,12 +528,10 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                     }
                     if (data.status === 'completed' || data.status === 'failed'
                         || data.status === 'cancelled') {
-                        // 补带审核统计的完整终态帧（2026-11-19 收敛）：首屏进入、断流重连后的
-                        // 第一帧，拿到的都是"REST 刚取过的同一个终态"，再打一次 status 是纯重复
-                        const rest = restTerminalRef.current;
-                        if (!(rest && rest.taskId === data.task_id && rest.status === data.status)) {
-                            refresh();
-                        }
+                        // 终态帧本身已带 stages / percent / message（stats.stages 摊平后），
+                        // 这个面板用到的字段都在里面；只有帧里没带 stages 时才回 REST 补齐。
+                        // 原来无条件补刷，等于每次构建结束都多打一个 status（2026-11-19）
+                        if (!(incomingStages && incomingStages.length)) refresh();
                     }
                 } catch { /* 单帧解析失败忽略，下一帧自愈 */ }
             };
@@ -559,7 +549,10 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                     refresh();
                 }
                 if (retryRef.current) clearTimeout(retryRef.current);
-                retryRef.current = setTimeout(() => { retryRef.current = null; subscribe(); }, 8000);
+                retryRef.current = setTimeout(() => {
+                    retryRef.current = null;
+                    if (streamWantedRef.current) subscribe();
+                }, 8000);
             };
             // 服务端 30 分钟上限主动收流（pipeline.py 的「event: timeout」）：不接的话
             // 浏览器会拿已经用掉的票据自动重连，必然 401，再走 onerror + 8s 重试。
@@ -571,7 +564,10 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                     setSseUp(false);
                 }
                 if (retryRef.current) clearTimeout(retryRef.current);
-                retryRef.current = setTimeout(() => { retryRef.current = null; subscribe(); }, 1000);
+                retryRef.current = setTimeout(() => {
+                    retryRef.current = null;
+                    if (streamWantedRef.current) subscribe();
+                }, 1000);
             });
             esRef.current = es;
         } catch {
@@ -607,8 +603,17 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
         }
     }, [visible, refresh]);
 
+    // 只在"可能在跑"时持有 SSE（2026-11-19 用户反馈）：构建结束/空闲/草稿都没有实时
+    // 信息可推，继续挂着连接只会在每次切回标签页时重换票重连，看着像在轮询。
+    // 终态一到就断开；点「一键构建」后 refresh 会把 status 置为 running，自动重新订阅。
+    const streamWanted = ['running', 'queued', 'cancelling', 'scheduled']
+        .includes(status?.status || '');
+    const streamWantedRef = useRef(false);
+    useEffect(() => { streamWantedRef.current = streamWanted; }, [streamWanted]);
+
     useEffect(() => {
-        if (!visible) return;  // 隐藏时不建连；再次可见由上面的可见性切换重订
+        // 隐藏时不建连；非运行态也不建连（再次可见/开跑后由依赖变化重订）
+        if (!visible || !streamWanted) return;
         subscribe();
         return () => {
             subGenRef.current += 1;  // 作废在途换票，防止清理后才建立的连接泄漏
@@ -620,7 +625,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
             esRef.current = null;
             setSseUp(false);
         };
-    }, [subscribe, visible]);
+    }, [subscribe, visible, streamWanted]);
 
     const s = status;
     // 停止中：后端收到取消后保留运行锁，等 worker 在检查点退出（或超时兜底）
@@ -695,8 +700,23 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
             }
             if (r.task_id) {
                 localStorage.setItem(lastTaskKey(projectId), r.task_id);
+                // worker 可能还没写进度键，SSE 首帧会是 idle：把"idle 帧复核"的节流基准
+                // 推到当下，避免刚开跑就为一次未落地的 idle 帧补一个 status
+                idleCheckAtRef.current = Date.now();
+                // 乐观置为运行中（2026-11-19）：让 SSE 立刻订上，省掉一次 status 往返；
+                // 阶段与进度由首帧（stats.stages）和后续帧补齐，不需要先问一次 REST
+                setStatus((prev) => (prev
+                    ? { ...prev, status: 'running', task_id: r.task_id }
+                    : {
+                        status: 'running', task_id: r.task_id, stages: [],
+                        reviews: {
+                            pending_by_priority: {}, pending_total: 0,
+                            need_human: 0, auto_handled: 0,
+                        },
+                    } as PipelineStatus));
+            } else {
+                await refresh();
             }
-            await refresh();
         } catch (e: any) {
             message.error(e.response?.data?.error?.message || '启动失败');
         } finally {

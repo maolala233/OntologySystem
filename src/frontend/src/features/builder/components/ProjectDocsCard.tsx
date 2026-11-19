@@ -86,6 +86,8 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage,
         const busy = pipelineParsing || docsBusy;
         if (!busy) return;
         if (pipelineParsing) void fetchList();  // 刚进入解析阶段先立刻拉一次，不等第一个 2.5s 周期
+        // 构建中的解析是后台任务（用户在盯上面的进度面板），5s 一刷即可，一次大文档
+        // 解析能省掉一半请求；用户自己上传触发的解析保持 2.5s，反馈要及时（2026-11-19）
         const t = setInterval(async () => {
             try {
                 const rows = await fetchList();
@@ -93,7 +95,7 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage,
                     (d) => d.parse_status === 'parsing' || d.parse_status === 'uploaded');
                 if (!stillBusy) onChanged?.(); // 全部落定才通知父级刷新统计（避免每帧打 DB）
             } catch { /* 下一轮再试 */ }
-        }, 2500);
+        }, pipelineParsing ? 5000 : 2500);
         return () => clearInterval(t);
     }, [docsBusy, fetchList, onChanged, pipelineParsing]);
 

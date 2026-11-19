@@ -85,15 +85,22 @@ const ProjectOverviewPage: React.FC = () => {
     // 生命周期状态只分 draft/building/ready/published，没有「中止/失败」——
     // 构建被中止或失败后只要已产出骨架，后端仍标 ready（已构建），语义上会误导。
     // 这里以最近一次管线终态覆盖显示：已发布优先，其次中止/失败。
-    const statusKey = projectStatus === 'published'
-        ? 'published'
-        : pipeStatus === 'cancelling'
-            ? 'stopping'
-            : pipeStatus === 'cancelled'
-                ? 'cancelled'
-                : pipeStatus === 'failed'
-                    ? 'failed'
-                    : (PROJECT_STATUS[projectStatus] ? projectStatus : 'draft');
+    // 构建中 / 待构建直接由实时管线状态给出（2026-11-19）：这两个状态本来就已经
+    // 通过 SSE 上抛了，再为了一枚徽标去重拉 /projects/:id 是白跑一趟。
+    // 优先级与后端 get_project 一致：构建中 > 待构建 > 已发布 > …
+    const statusKey = (pipeStatus === 'running' || pipeStatus === 'queued')
+        ? 'building'
+        : pipeStatus === 'scheduled'
+            ? 'scheduled'
+            : projectStatus === 'published'
+                ? 'published'
+                : pipeStatus === 'cancelling'
+                    ? 'stopping'
+                    : pipeStatus === 'cancelled'
+                        ? 'cancelled'
+                        : pipeStatus === 'failed'
+                            ? 'failed'
+                            : (PROJECT_STATUS[projectStatus] ? projectStatus : 'draft');
     const statusMeta = statusKey === 'stopping'
         ? { color: 'warning', text: '停止中', desc: '已发出停止请求，等后台任务退出后转为已中止' }
         : statusKey === 'failed'
@@ -165,12 +172,10 @@ const ProjectOverviewPage: React.FC = () => {
                 const msg = s.message || '未知原因';
                 message.error(/失败[:：]/.test(msg) ? msg : `构建失败：${msg}`);
             }
-        } else {
-            // idle/running/queued/scheduled 之间跃迁不重拉摘要（2026-11-19）：
-            // 结果区是否显示由 building 直接决定，构建产物只有到终态才会变；
-            // 这里只同步项目元数据（草稿 / 构建中徽标）
-            loadProject(pid);
         }
+        // idle/running/queued/scheduled 之间跃迁一律不重拉（2026-11-19）：
+        // 结果区是否显示由 building 决定，徽标由上面的 pipeStatus 推导，
+        // 项目元数据（名称/领域/时间）在这段时间不会变；终态才需要同步一次
     }, [pid, load, loadProject]);
 
     return (
@@ -416,7 +421,9 @@ const ProjectOverviewPage: React.FC = () => {
                                        ? (isExpert ? `/projects/${pid}/reviews` : `/projects/${pid}/result`)
                                        : `/projects/${pid}/${tab}`)} />
 
-                    <ProjectDocsCard projectId={pid} onChanged={load} pipelineStage={pipeStage}
+                    {/* 不再挂 onChanged：「解析告一段落」不改变构建产物，摘要由终态跃迁统一刷新；
+                        挂了只会在构建结束那一秒和终态刷新撞车，白拉一次 summary（2026-11-19） */}
+                    <ProjectDocsCard projectId={pid} pipelineStage={pipeStage}
                                      locked={docsLocked} />
 
                     {!building && summary && summary.schema.classes_total > 0 && (
