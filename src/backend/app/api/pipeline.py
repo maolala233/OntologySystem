@@ -118,6 +118,7 @@ def run_pipeline_endpoint(
 def pipeline_status_endpoint(
     project_id: int,
     task_id: str | None = Query(None),
+    lean: bool = Query(False),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -202,6 +203,10 @@ def pipeline_status_endpoint(
                       "status": sub.get("status"),
                       "stats": sub.get("stats") or {},
                       "steps": build_sub_steps(stage, sub)}
+    if lean:
+        # 轻量状态（2026-11-19）：详情页只用阶段/子进度；stats 里还带着一份 stages
+        # 副本（SSE 帧才需要），这里不再随包下发。实测 9.4KB → 6.2KB
+        out.pop("stats", None)
     return out
 
 
@@ -383,6 +388,7 @@ def get_build_report(
 @router.get("/build/summary")
 def build_summary_endpoint(
     project_id: int,
+    lean: bool = Query(False),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -460,7 +466,18 @@ def build_summary_endpoint(
                          "message": prog.get("message"), "depth": st.get("depth"),
                          "selfcheck": st.get("selfcheck"), "stages": st.get("stages")}
 
-    return {
+    # 已发布版本号（2026-11-19）：结果卡/发布页要显示「已发布 vN」，前端原本为此
+    # 额外拉一次 /versions。这里按与前端一致的判定（kind='publication' 里 version_no
+    # 最大的一条）直接带上；未发布项目不查，省掉这次接口调用。
+    published_version_no = None
+    if proj.is_published:
+        from app.infrastructure.database import OntologyVersion
+        published_version_no = (db.query(sa_func.max(OntologyVersion.version_no))
+                                .filter(OntologyVersion.project_id == project_id,
+                                        OntologyVersion.kind == "publication")
+                                .scalar())
+
+    summary_out = {
         "schema": {
             "classes_total": len(classes),
             "object_properties_total": len(ops),
@@ -496,7 +513,19 @@ def build_summary_endpoint(
         "checks": checks.summary(),
         "pipeline": last_pipeline,
         "is_published": bool(proj.is_published),
+        "published_version_no": published_version_no,
     }
+    if lean:
+        # 轻量汇总（2026-11-19）：详情页只消费四项计数、机检结论与发布状态；
+        # 类清单 / 实例清单 / 关系明细 / 公理清单是构建结果页的数据源，
+        # 这里置空保持响应形状不变（实测 5.5KB → 0.4KB）
+        summary_out["schema"]["classes"] = []
+        summary_out["schema"]["class_relations"] = []
+        summary_out["instances"] = {"total": summary_out["instances"]["total"],
+                                    "by_class": {}, "items": []}
+        summary_out["instance_relations"] = []
+        summary_out["axioms"]["items"] = []
+    return summary_out
 
 
 def func_count():

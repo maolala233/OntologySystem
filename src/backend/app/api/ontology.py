@@ -347,7 +347,8 @@ def get_public_projects(db: Session = Depends(get_db)):
 
 # 获取单个项目详情
 @router.get("/{project_id}", response_model=ProjectListItem)
-def get_project(project_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def get_project(project_id: int, lean: bool = Query(False),
+                current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     from sqlalchemy.orm import joinedload
 
     # 使用 joinedload 预加载 domain 和 owner 信息
@@ -394,6 +395,11 @@ def get_project(project_id: int, current_user: User = Depends(get_current_user),
     else:
         item.status = "draft"
     item.classes_total = classes_total
+    if lean:
+        # 轻量详情（2026-11-19）：详情页头部只要身份与状态；graph_data 是整份图谱
+        # （动辄十几 KB），由工作台各 Tab 需要时再单独取。实测 15KB → ~0.4KB。
+        item.graph_data = None
+        item.ttl_content = None
     return item
 
 # 创建新项目
