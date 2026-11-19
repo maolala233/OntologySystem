@@ -379,7 +379,8 @@ class VectorStoreManager:
             
             # 首先尝试使用 OpenAI SDK
             try:
-                resp = self.client.embeddings.create(input=[text], model=self.emb_model)
+                resp = self.client.embeddings.create(input=[text], model=self.emb_model,
+                                                     timeout=15.0)
                 
                 # 尝试标准 OpenAI 格式
                 if hasattr(resp, 'data') and resp.data and len(resp.data) > 0:
@@ -522,6 +523,33 @@ class VectorStoreManager:
         
         return embedding
 
+    def get_embeddings(self, texts: List[str]) -> List[List[float]]:
+        """批量 embedding（2026-11-19）：优先一次请求多条，失败回退逐条。
+
+        旧实现逐条 get_embedding：330 切片=330 次 HTTP 往返，是解析/入库的主要耗时。
+        """
+        texts = list(texts or [])
+        if not texts:
+            return []
+        if self.client is not None:
+            try:
+                resp = self.client.embeddings.create(input=texts, model=self.emb_model,
+                                                     timeout=15.0)
+                data = getattr(resp, "data", None) or []
+                out: list[list[float]] = []
+                for item in data:
+                    emb = getattr(item, "embedding", None)
+                    if emb is None and isinstance(item, dict):
+                        emb = item.get("embedding")
+                    if not emb:
+                        return [self.get_embedding(t) for t in texts]
+                    out.append(list(emb))
+                if len(out) == len(texts):
+                    return out
+            except Exception as e:  # noqa: BLE001 —— 批量接口不支持/维度不一致，回退逐条
+                logger.warning(f"[Embedding] 批量请求失败，回退逐条: {e}")
+        return [self.get_embedding(t) for t in texts]
+
     def _get_content_hash(self, text: str, metadata: Dict) -> str:
         """生成内容哈希，用于去重"""
         content = f"{text}_{json.dumps(metadata, sort_keys=True)}"
@@ -554,98 +582,103 @@ class VectorStoreManager:
             logger.info("Milvus 已禁用或无数据，跳过写入")
             return
 
-        vectors = []
-        valid_texts = []
-        valid_metas = []
-        hashes = []
-        project_ids = []
-        domains = []
-        source_files = []
-        source_quotes = []
-        chunk_text_list = []  # ★ 完整 chunk 文本
-        source_type_list = []  # ★ 来源类型
-
-        # 1. 批量获取向量并检查重复
+        # 1) 规整输入（旧实现逐条 query + 逐条 embedding；这里先批量去重、再批量嵌入）
+        items: list[dict] = []
         for i, (t, m) in enumerate(zip(texts, metadatas)):
             try:
-                # 安全截断
                 safe_text = t[:65000] if len(t) > 65000 else t
                 meta_str = json.dumps(m, ensure_ascii=False)
                 safe_meta = meta_str[:65000] if len(meta_str) > 65000 else meta_str
-                
-                c_hash = self._get_content_hash(safe_text, m)
-                
-                # 逻辑唯一性检查
-                try:
-                    existing = self.collection.query(expr=f'content_hash == "{c_hash}"', output_fields=["id"])
-                except Exception as e:
-                    # 如果报 collection not found，尝试重新加载
-                    if "collection not found" in str(e).lower():
-                        logger.info("Milvus 集合句柄失效，正在尝试重新连接...")
-                        self.collection = self._get_or_create_collection()
-                        existing = self.collection.query(expr=f'content_hash == "{c_hash}"', output_fields=["id"])
-                    else:
-                        raise e
-
-                if existing:
-                    continue
-
-                vec = self.get_embedding(safe_text)
-                if len(vec) == self.embedding_dim:
-                    vectors.append(vec)
-                    valid_texts.append(safe_text)
-                    valid_metas.append(safe_meta)
-                    hashes.append(c_hash)
-                    # ★ 提取标量字段用于隔离
-                    project_ids.append(project_id if project_id is not None else m.get("project_id", 0))
-                    domains.append(domain if domain is not None else m.get("domain", ""))
-                    source_files.append(m.get("source_file", ""))
-                    source_quotes.append(m.get("source_quote", safe_text))  # 如果没有 source_quote，使用文本作为 fallback
-                    # ★ 完整 chunk 文本 (从 metadata 或单独参数获取)
-                    chunk_text = m.get("chunk_text", "")
-                    if chunk_texts and i < len(chunk_texts):
-                        chunk_text = chunk_texts[i]
-                    chunk_text_list.append(chunk_text[:65000] if chunk_text else "")
-                    # ★ 来源类型
-                    source_type = m.get("type", "")
-                    if source_types and i < len(source_types):
-                        source_type = source_types[i]
-                    source_type_list.append(source_type)
-            except Exception as e:
+                chunk_text = m.get("chunk_text", "")
+                if chunk_texts and i < len(chunk_texts):
+                    chunk_text = chunk_texts[i]
+                source_type = m.get("type", "")
+                if source_types and i < len(source_types):
+                    source_type = source_types[i]
+                items.append({
+                    "text": safe_text,
+                    "meta": safe_meta,
+                    "hash": self._get_content_hash(safe_text, m),
+                    "project_id": project_id if project_id is not None else m.get("project_id", 0),
+                    "domain": domain if domain is not None else m.get("domain", ""),
+                    "source_file": m.get("source_file", ""),
+                    "source_quote": m.get("source_quote", safe_text),
+                    "chunk_text": chunk_text[:65000] if chunk_text else "",
+                    "source_type": source_type,
+                })
+            except Exception as e:  # noqa: BLE001 —— 单条异常不阻断整批
                 logger.warning(f"数据处理失败：{e}")
+        if not items:
+            return
 
-        # 2. 分批次存入 Milvus（包含标量字段和新增字段）
+        # 2) 批量去重：一次查询多个 content_hash；失败回退逐条（兼容旧 Milvus/字段缺失）
+        existing: set[str] = set()
+        uniq_hashes = list(dict.fromkeys(x["hash"] for x in items))
+        try:
+            for i in range(0, len(uniq_hashes), 200):
+                b_hashes = uniq_hashes[i:i + 200]
+                expr = "content_hash in [" + ",".join(
+                    json.dumps(h, ensure_ascii=False) for h in b_hashes) + "]"
+                rows = self.collection.query(expr=expr, output_fields=["content_hash"])
+                for row in rows or []:
+                    h = row.get("content_hash") if isinstance(row, dict) else None
+                    if h:
+                        existing.add(str(h))
+        except Exception as e:  # noqa: BLE001 —— 集合句柄失效/表达式不支持
+            logger.warning(f"[Milvus] 批量去重查询失败，回退逐条: {e}")
+            if "collection not found" in str(e).lower():
+                try:
+                    self.collection = self._get_or_create_collection()
+                except Exception:  # noqa: BLE001
+                    return
+            for x in items:
+                try:
+                    if self.collection.query(expr=f'content_hash == "{x["hash"]}"',
+                                             output_fields=["id"]):
+                        existing.add(x["hash"])
+                except Exception:  # noqa: BLE001
+                    continue
+        items = [x for x in items if x["hash"] not in existing]
+        if not items:
+            logger.info(f"Milvus 去重后无可写入记录 (project_id={project_id})")
+            return
+
+        # 3) 分批 embedding（32 条/次），维度不符的条目丢弃
+        vectors: list[list[float]] = []
+        valid: list[dict] = []
+        for i in range(0, len(items), 32):
+            batch = items[i:i + 32]
+            try:
+                vecs = self.get_embeddings([x["text"] for x in batch])
+            except Exception as e:  # noqa: BLE001 —— 单批失败不阻断其余批
+                logger.warning(f"[Embedding] 批 {i // 32 + 1} 失败: {e}")
+                continue
+            for x, v in zip(batch, vecs):
+                if v and len(v) == self.embedding_dim:
+                    vectors.append(v)
+                    valid.append(x)
+
+        # 4) 分批写入（100 条/批），最后 flush 一次
         if vectors:
-            batch_size = 50
+            batch_size = 100
             for i in range(0, len(vectors), batch_size):
-                b_vectors = vectors[i:i + batch_size]
-                b_texts = valid_texts[i:i + batch_size]
-                b_metas = valid_metas[i:i + batch_size]
-                b_hashes = hashes[i:i + batch_size]
-                b_project_ids = project_ids[i:i + batch_size]
-                b_domains = domains[i:i + batch_size]
-                b_source_files = source_files[i:i + batch_size]
-                b_source_quotes = source_quotes[i:i + batch_size]
-                b_chunk_texts = chunk_text_list[i:i + batch_size]
-                b_source_types = source_type_list[i:i + batch_size]
-                
+                b = valid[i:i + batch_size]
                 try:
                     self.collection.insert([
-                        b_vectors, 
-                        b_texts, 
-                        b_metas, 
-                        b_hashes,
-                        b_project_ids,
-                        b_domains,
-                        b_source_files,
-                        b_source_quotes,
-                        b_chunk_texts,
-                        b_source_types,
+                        vectors[i:i + batch_size],
+                        [x["text"] for x in b],
+                        [x["meta"] for x in b],
+                        [x["hash"] for x in b],
+                        [x["project_id"] for x in b],
+                        [x["domain"] for x in b],
+                        [x["source_file"] for x in b],
+                        [x["source_quote"] for x in b],
+                        [x["chunk_text"] for x in b],
+                        [x["source_type"] for x in b],
                     ])
-                    logger.info(f"Milvus 写入成功：{len(b_vectors)} 条记录 (project_id={project_id}, domain={domain})")
-                except Exception as e:
+                    logger.info(f"Milvus 写入成功：{len(b)} 条记录 (project_id={project_id}, domain={domain})")
+                except Exception as e:  # noqa: BLE001
                     logger.error(f"Milvus 写入失败：{e}")
-            
             self.collection.flush()
 
     def count_by_source(self, project_id: int, source_file: str) -> Optional[int]:

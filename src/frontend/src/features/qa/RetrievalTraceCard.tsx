@@ -15,6 +15,7 @@ import {
     LoadingOutlined,
     SearchOutlined,
     SafetyCertificateOutlined,
+    ToolOutlined,
     UpOutlined,
 } from '@ant-design/icons';
 import type { QaTraceStep } from '../../api/qa';
@@ -22,6 +23,7 @@ import { cleanQuote } from './quoteText';
 
 const STAGE_ICON: Record<string, JSX.Element> = {
     '查图谱': <ApartmentOutlined />,
+    '查工具': <ToolOutlined />,
     '查规则/公理': <SafetyCertificateOutlined />,
     '语义推理': <BulbOutlined />,
     '查向量库': <SearchOutlined />,

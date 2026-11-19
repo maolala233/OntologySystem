@@ -91,6 +91,23 @@ const STAGE_STATUS_TEXT: Record<string, string> = {
     failed: '失败', skipped: '已跳过', cancelled: '已中止', stopping: '停止中',
 };
 
+/** 面向业务用户的阶段名：内部仍用 key，展示不出现“抽取/消解”这类实现词 */
+const STAGE_LABEL_SIMPLE: Record<string, string> = {
+    parse: '读取文档',
+    schema: '提炼概念',
+    instances: '识别业务数据',
+    resolution: '合并重复项',
+    conflicts: '核对冲突',
+    selfcheck: '检查结构',
+    axioms: '补充规则',
+    adjudicate: '检查结果',
+};
+
+function stageLabel(st?: { key?: string; label?: string } | null): string {
+    if (!st) return '';
+    return STAGE_LABEL_SIMPLE[st.key || ''] || st.label || '';
+}
+
 // 时间线圆点底色（冷调）：进行中实心蓝 + 脉冲，完成淡青，失败淡红，中止淡琥珀
 const DOT_TONE: Record<string, { bg: string; color: string }> = {
     done: { bg: 'rgba(27,135,173,0.12)', color: '#1B87AD' },
@@ -754,8 +771,10 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
     // 默认详情：运行中跟随当前阶段；失败/中止落在出问题的阶段（先看原因）；
     // 正常结束后停在「构建汇总」。
     // 阶段切换的空窗（上一阶段已 done、下一阶段还没置 running）沿用上一个有结果的阶段
+    const gapStage = runningNow && !runningStage
+        ? (stages.find((st) => st.status === 'pending') || null) : null;
     const fallbackKey = runningNow
-        ? (runningStage?.key ?? lastActionableStage?.key ?? 'summary')
+        ? (runningStage?.key ?? gapStage?.key ?? lastActionableStage?.key ?? 'summary')
         : s?.status === 'failed'
             ? (failedStage?.key ?? 'summary')
             : s?.status === 'cancelled'
@@ -801,7 +820,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
         : s?.status === 'completed'
             ? (totalDuration > 0 ? `本次构建用时 ${fmtClock(totalDuration)}` : '本次构建已完成')
             : s?.status === 'failed'
-                ? `构建未完成${failedStage ? ` · 停在「${failedStage.label}」` : ''}`
+                ? `构建未完成${failedStage ? ` · 停在「${stageLabel(failedStage)}」` : ''}`
                 : s?.status === 'cancelled'
                     ? `已中止 · 完成 ${doneCount}/${stages.length || 8} 个阶段`
                     : '尚未构建';
@@ -827,7 +846,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
         ].filter(Boolean).join(' · ')
         : runningNow
         ? [
-            runningStage ? `当前阶段：${runningStage.label}` : '构建进行中',
+            runningStage ? `当前阶段：${stageLabel(runningStage)}` : '构建进行中',
             overallElapsed != null ? `已用 ${fmtClock(overallElapsed)}` : '',
         ].filter(Boolean).join(' · ')
         : '';
@@ -1014,7 +1033,10 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
             {stages.length > 0 && (
                 <div className="pl-tl mt-4">
                     {stages.map((st) => {
-                        const shown = st.status === 'running'
+                        const pendingGap = runningNow && !runningStage
+                            ? stages.find((x) => x.status === 'pending') : null;
+                        const shown = (st.status === 'running'
+                            || (pendingGap && st.key === pendingGap.key))
                             ? (stopping ? 'stopping' : (!runningNow ? 'cancelled' : 'running'))
                             : st.status;
                         const tone = DOT_TONE[shown] || DOT_TONE.pending;
@@ -1041,7 +1063,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                             ? <SyncOutlined spin />
                                             : (STATUS_ICON[shown] || STATUS_ICON.pending)}
                                     </span>
-                                    <span className="pl-tl-label">{st.label}</span>
+                                    <span className="pl-tl-label">{stageLabel(st)}</span>
                                     <span className="pl-tl-state">{STAGE_STATUS_TEXT[shown] || '待开始'}</span>
                                 </span>
                             </button>
@@ -1107,7 +1129,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                                 <span className="h-[6px] w-[6px] flex-none rounded-full"
                                                       style={{ background: tone.c, boxShadow: `0 0 0 3px ${tone.t}` }} />
                                                 <span className="min-w-0 truncate text-[11.5px] text-[#8A94AB]">
-                                                    {st.label}
+                                                    {stageLabel(st)}
                                                 </span>
                                                 <span className="tk-mono ml-auto whitespace-nowrap text-[12.5px] font-semibold"
                                                       style={{ color: st.status === 'running' ? '#2A57C6' : tone.c }}>
@@ -1166,7 +1188,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                         && activeStage.key !== runningStage.key && (
                                         <div className="mb-2 flex items-center gap-2 rounded-md border border-[rgba(91,141,239,0.35)] bg-[rgba(91,141,239,0.08)] px-2.5 py-[5px] text-[11.5px] text-[#2A57C6]">
                                             <span className="min-w-0 flex-1 truncate">
-                                                临时查看「{activeStage.label}」· 当前进行「{runningStage.label}」，阶段推进后自动回到实时
+                                                临时查看「{stageLabel(activeStage)}」· 当前进行「{stageLabel(runningStage)}」，阶段推进后自动回到实时
                                             </span>
                                             <Button type="link" size="small"
                                                     className="!h-auto !p-0 !text-[11.5px]"
@@ -1178,7 +1200,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                     <div className="flex flex-wrap items-center gap-2">
                                         <span className="pl-mark" aria-hidden />
                                         <span className="text-[14px] font-semibold text-[#0F172A]">
-                                            {activeStage.label}
+                                            {stageLabel(activeStage)}
                                         </span>
                                         <Tag style={{ ...STATUS_TAG_STYLE[shown], marginInlineEnd: 0 }}
                                              className="!text-[11.5px]">

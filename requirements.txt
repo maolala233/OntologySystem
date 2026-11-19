@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # Web 框架与服务器
 fastapi>=0.100.0
 uvicorn>=0.20.0
@@ -24,12 +25,14 @@ python-dotenv>=1.0.0
 elasticsearch>=8.0.0
 
 # 文档解析与处理
-PyMuPDF>=1.23.0
-pymupdf4llm>=0.0.5
+# 钉 <2：PyPI 的 pymupdf4llm 2.x 是空占位包（代码并入 pymupdf 2.x），且 pymupdf 2.x 不再保证 fitz 兼容（vl_parser.py import fitz）
+PyMuPDF>=1.23.0,<2
+pymupdf4llm>=0.0.5,<2
 python-docx>=0.8.11
 python-pptx>=0.6.21
 pandas>=2.0.0
 openpyxl>=3.1.0  # pandas 读取 Excel 必须
+xlrd>=2.0.1      # 旧版 .xls 解析（openpyxl 不支持 .xls）
 
 # 图谱与网络分析
 networkx>=3.0

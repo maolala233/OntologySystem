@@ -6,11 +6,14 @@
 # channel：statistical（仅统计）/ llm（仅 LLM）/ all（双通道，默认，向后兼容）。
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import threading
 import time
 from typing import Any, Optional
 
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -134,6 +137,21 @@ def run_axiom_suggestions(db: Session, project_id: int,
                   "object_id": r.object_id,
                   "subject_label": "", "object_label": ""}
                  for r in rels]
+    # 公理扫描缓存：同一份骨架 + 同类/关系规模 + 同一通道，重复构建不再重跑 LLM。
+    cache_key = hashlib.sha256(json.dumps({
+        "channel": channel,
+        "classes": sorted(str(c.get("label")) for c in (schema or {}).get("classes") or []
+                          if isinstance(c, dict)),
+        "relations": sorted(str(o.get("label")) for o in
+                            (schema or {}).get("object_properties") or []
+                            if isinstance(o, dict)),
+        "entities": len(ents), "facts": len(rels),
+        "doc_rules": len((schema or {}).get("business_rules") or []),
+    }, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+    _gd = proj.graph_data if isinstance(proj.graph_data, dict) else {}
+    _cache = _gd.get("axiom_scan_cache") if isinstance(_gd.get("axiom_scan_cache"), dict) else {}
+    if _cache.get("fingerprint") == cache_key and isinstance(_cache.get("result"), dict):
+        return {**_cache["result"], "cached": True}
     # 客体/主体标签富化（suggest_inverse_of 用 label 对）
     index = {e.id: e for e in db.query(Entity).filter(
         Entity.project_id == project_id).all()}
@@ -242,6 +260,15 @@ def run_axiom_suggestions(db: Session, project_id: int,
               "relations_scanned": len(rels)}
     if llm_stats is not None:
         result["llm"] = llm_stats
+    # 缓存结果（raw UPDATE，避免 trigger graph_rows 全量重建）
+    try:
+        _gd2 = dict(_gd)
+        _gd2["axiom_scan_cache"] = {"fingerprint": cache_key, "result": result,
+                                    "cached_at": time.strftime("%Y-%m-%dT%H:%M:%S")}
+        db.execute(update(Project).where(Project.id == project_id).values(graph_data=_gd2))
+        db.commit()
+    except Exception:  # noqa: BLE001
+        pass
     return result
 
 

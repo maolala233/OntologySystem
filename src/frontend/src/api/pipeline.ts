@@ -130,6 +130,8 @@ export interface AxiomItem {
 export interface BuildSummary {
     schema: {
         classes_total: number;
+        archived_total?: number;
+        quality?: Record<string, any> | null;
         object_properties_total: number;
         datatype_properties_total: number;
         classes: ClassSummary[];
@@ -142,6 +144,34 @@ export interface BuildSummary {
     };
     instance_relations: InstanceRelation[];
     relations_total: number;
+    /** 关系口径拆分：relation_types=TBox 关系类型；fact_relations=业务事实关系；
+     * total_edges=含 instance_of/subclass_of/类间关系的全部边。 */
+    relation_stats?: {
+        relation_types: number;
+        fact_relations: number;
+        tbox_relation_edges: number;
+        object_property_edges: number;
+        type_edges: number;
+        hierarchy_edges: number;
+        total_edges: number;
+    };
+    /** 解析质量报告（构建结果页展示） */
+    parse_quality?: {
+        total: number;
+        grades: Record<string, number>;
+        high_count: number;
+        medium_count: number;
+        low_count: number;
+        table_lines: number;
+        empty_chunks: number;
+        documents: Array<{
+            document_id: number; filename: string; parse_status: string;
+            backend?: string | null; grade: string; chars: number; lines: number;
+            chunks: number; table_lines: number; heading_lines: number;
+            empty_chunks: number; cjk_ratio?: number | null;
+            avg_chunk_chars?: number | null;
+        }>;
+    };
     axioms: { total: number; items: AxiomItem[] };
     reviews: PipelineReviews;
     checks: { passed: boolean; error_count: number; warning_count: number; issues: Array<Record<string, any>> };

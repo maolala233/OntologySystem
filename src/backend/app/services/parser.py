@@ -58,11 +58,142 @@ def _cell_flat(v: str) -> str:
     return re.sub(r"\r\n?|\n", "；", str(v).strip())
 
 
-def _sheet_md(sheet_name: str, header_row: list, data_rows: list) -> str:
+def _with_interface_code(sheet_name: str, header_row: list, data_rows: list):
+    """接口明细表补一列「接口编号」（从 Sheet 名 C2504051/输入项 提取）。
+
+    银行接口基线里接口编号只在 Sheet 名上，行数据没有这个字段；不补列时
+    LLM/结构展开只能抽到 1077 条“接口输入项”字段，无法回答“C2504051 的
+    输入项有哪些”。补列不改变原始内容，只把 Sheet 级上下文带到每一行。
+    """
+    m = re.match(r"^\s*([A-Za-z]{1,4}\d{4,})\s*/", str(sheet_name or ""))
+    if not m:
+        return header_row, data_rows
+    code = m.group(1)
+    header = ["接口编号"] + list(header_row)
+    rows = [[code] + list(r) for r in (data_rows or [])]
+    return header, rows
+
+
+_HEADER_HINT = re.compile(
+    r"(序号|字段|名称|描述|编号|类型|长度|备注|登记人|接口|系统|状态|日期|"
+    r"金额|比例|规则|菜单|按钮|流程|产品|客户|机构|账号|科目|输入|输出|"
+    r"参数|标签|说明|结果|代码|标识)"
+)
+
+
+def _nonempty(row: list) -> list[str]:
+    return [str(v).strip() for v in row if str(v).strip()]
+
+
+def _header_score(row: list, width: int) -> float:
+    """行像表头的程度：非空密度 + 表头关键词 + 非代码/非数字占比。"""
+    vals = _nonempty(row)
+    if len(vals) < 2 or width <= 0:
+        return 0.0
+    hint = sum(1 for v in vals if _HEADER_HINT.search(v))
+    numeric = sum(1 for v in vals if re.fullmatch(r"[-+]?\d+(\.\d+)?", v))
+    codes = sum(1 for v in vals if re.fullmatch(r"[A-Za-z]{1,5}\d{4,}[A-Za-z]?", v))
+    text_ratio = (len(vals) - numeric - codes) / len(vals)
+    return (len(vals) / width) * 0.45 + min(1.0, hint / 2) * 0.35 + text_ratio * 0.20
+
+
+def _looks_like_title(row: list) -> bool:
+    vals = _nonempty(row)
+    if not vals:
+        return False
+    # 合并标题单元格展开后会变成「同一标题重复 N 列」：只有一种取值且带标题词
+    # （普惠金融前端接口清单/接口索引），仍是标题行，不是多列表头。
+    if len(set(vals)) == 1:
+        v = vals[0]
+        return bool(re.search(r"(清单|列表|明细|索引|表|说明|统计|汇总|模板|台账|记录)", v)) or len(v) >= 6
+    if len(vals) != 1:
+        return False
+    v = vals[0]
+    return bool(re.search(r"(清单|列表|明细|索引|表|说明|统计|汇总|模板|台账|记录)", v)) or len(v) >= 6
+
+
+def _merge_header_rows(top: list, second: list) -> list:
+    """两行表头合并：上层类别 + 下层字段名（合并单元格已展开/前向填）。"""
+    width = max(len(top), len(second))
+    out: list[str] = []
+    last_top = ""
+    for i in range(width):
+        a = str(top[i]).strip() if i < len(top) else ""
+        b = str(second[i]).strip() if i < len(second) else ""
+        if a:
+            last_top = a
+        elif not a and last_top and not b:
+            a = last_top
+        if a and b and a != b:
+            out.append(f"{a} / {b}")
+        else:
+            out.append(b or a)
+    return out
+
+
+def _normalize_table_header(rows_data: list[list], text_hint: str = "") -> tuple[list, list, dict]:
+    """标题行剥离 + 单/多行表头识别。
+
+    返回 (header_row, data_rows, meta)。只做“列语义还原”，不丢数据行：
+    - 开头单格标题（如「普惠金融前端接口清单」）跳过，下一行才是表头；
+    - 两行表头（类别行 + 字段行）合并成「类别 / 字段」，避免把第二行当数据；
+    - 单行表头保持原样。
+    """
+    rows = [list(r) for r in (rows_data or []) if any(str(v).strip() for v in r)]
+    if not rows:
+        return [], [], {"header_depth": 0, "title_rows": 0, "title": ""}
+    width = max(len(r) for r in rows)
+    # 去掉整列为空的尾部列（xls 常在合并标题右侧留一个空列，白占表头/切片预算）
+    while width > 1 and all(not str(r[width - 1]).strip()
+                            for r in rows if len(r) >= width):
+        width -= 1
+    rows = [r[:width] for r in rows]
+    if not rows:
+        return [], [], {"header_depth": 0, "title_rows": 0, "title": ""}
+    skipped = 0
+    title_text = ""
+    # 连续的单格标题/说明行：最多剥 3 行，且必须“下一行明显更像多列表格”
+    while len(rows) > 2 and _looks_like_title(rows[0]):
+        nxt = _nonempty(rows[1])
+        if len(nxt) < 2:
+            break
+        if not title_text:
+            title_text = _nonempty(rows[0])[0] if _nonempty(rows[0]) else ""
+        rows.pop(0)
+        skipped += 1
+        if skipped >= 10:  # 合并标题可能竖跨多行；上限防全表误判
+            break
+    if len(rows) < 2:
+        return rows[0] if rows else [], [], {
+            "header_depth": 1, "title_rows": skipped, "title": title_text}
+    s0 = _header_score(rows[0], width)
+    s1 = _header_score(rows[1], width) if len(rows) > 2 else 0.0
+    s2 = _header_score(rows[2], width) if len(rows) > 3 else 1.0
+    depth = 1
+    header = list(rows[0])
+    data_start = 1
+    # 两行表头：第一行像类别行（含合并/分组），第二行更像字段行且第三行开始像数据
+    if s0 >= 0.35 and s1 >= 0.45 and s1 >= s0 and s2 < max(0.35, s1 - 0.10):
+        header = _merge_header_rows(rows[0], rows[1])
+        depth = 2
+        data_start = 2
+    # 列数补齐，避免 _sheet_md 行错位
+    while len(header) < width:
+        header.append("")
+    return header, rows[data_start:], {
+        "header_depth": depth, "title_rows": skipped,
+        "title": title_text,
+        "header_score": round(s0, 3),
+    }
+
+
+def _sheet_md(sheet_name: str, header_row: list, data_rows: list,
+              caption: str = "") -> str:
     """Sheet → markdown：数据行按字符预算分周期，每周期重发 Sheet 头+表头行。"""
     col_count = len(header_row)
     header_line = "| " + " | ".join(str(c) for c in header_row) + " |"
     sep_line = "| " + " | ".join(["---"] * col_count) + " |"
+    cap_line = f"> {caption}\n\n" if caption else ""
     periods: list[list[str]] = []
     buf: list[str] = []
     buf_chars = 0
@@ -80,7 +211,7 @@ def _sheet_md(sheet_name: str, header_row: list, data_rows: list) -> str:
         periods.append(buf)
     parts = []
     for lines in periods:
-        parts.append(f"\n### Sheet: {sheet_name}\n\n" + header_line + "\n" + sep_line
+        parts.append(f"\n### Sheet: {sheet_name}\n\n" + cap_line + header_line + "\n" + sep_line
                      + "\n" + "\n".join(lines) + "\n")
     return "".join(parts)
 
@@ -194,23 +325,25 @@ def _parse_excel(fname: str) -> str:
                 
                 if not rows_data:
                     continue
-                
-                # 智能检测表头行：第一行如果包含非数字、非空内容，视为表头
-                header_row = rows_data[0] if rows_data else []
-                data_rows = rows_data[1:] if len(rows_data) > 1 else []
-                
+
+                # 标题行剥离 + 单/多行表头识别（2026-11-19）：旧逻辑把首行无条件当表头，
+                # 「普惠金融前端接口清单」这类单格标题会让真正表头变成数据行。
+                header_row, data_rows, _tmeta = _normalize_table_header(rows_data, sheet_name)
+
                 # 过滤掉全空的数据行
                 data_rows = [r for r in data_rows if any(v for v in r)]
-                
+
                 if not any(v for v in header_row):
                     # 表头全空，跳过此 Sheet
                     continue
                 
                 # 构建 Markdown 表格（周期性重发 Sheet 头，保续片上下文）
-                sheet_content = _sheet_md(sheet_name, header_row, data_rows)
+                sheet_content = _sheet_md(sheet_name, header_row, data_rows,
+                                          caption=_tmeta.get("title") or "")
                 excel_parts.append(sheet_content)
                 logger.info(f"[Excel解析] 已处理 Sheet {sheet_idx+1}/{len(wb.sheetnames)}: {sheet_name}, "
-                           f"表头列数={len(header_row)}, 数据行数={len(data_rows)}")
+                           f"表头列数={len(header_row)}, 数据行数={len(data_rows)}, "
+                           f"表头行数={_tmeta.get('header_depth')}, 标题行={_tmeta.get('title_rows')}")
             
             if excel_parts:
                 return "\n".join(excel_parts)
@@ -222,7 +355,12 @@ def _parse_excel(fname: str) -> str:
     elif fname_lower.endswith('.xls'):
         try:
             import xlrd
-            wb = xlrd.open_workbook(fname)
+            # formatting_info=True 才拿得到 merged_cells；拿不到时退回普通模式，
+            # 合并单元格语义由标题/两行表头识别兜底，不因格式属性失败放弃解析。
+            try:
+                wb = xlrd.open_workbook(fname, formatting_info=True)
+            except Exception:
+                wb = xlrd.open_workbook(fname)
             
             for sheet_idx in range(wb.nsheets):
                 sheet = wb.sheet_by_index(sheet_idx)
@@ -231,7 +369,7 @@ def _parse_excel(fname: str) -> str:
                 if sheet.nrows == 0 or sheet.ncols == 0:
                     continue
                 
-                rows_data = []
+                matrix = []
                 for row_idx in range(sheet.nrows):
                     row_values = []
                     for col_idx in range(sheet.ncols):
@@ -257,9 +395,14 @@ def _parse_excel(fname: str) -> str:
                             row_values.append("")
                         else:
                             row_values.append(_cell_flat(cell.value))
-                    
-                    if any(v for v in row_values):
-                        rows_data.append(row_values)
+                    matrix.append(row_values)
+
+                # 注意：不要在 xls 上先展开合并单元格再检测分节表。
+                # 分节表的带名行（输入项/返回）原本只在首列有值，展开后每列
+                # 都变成「输入项」，_split_stacked_bands 会误判为普通表头，
+                # 导致 4230 行明细里的子表头当数据、字段类被归到「接口」。
+                # xlsx 的 merged_map 仍保留（其分节表结构不同，且已验证 105 行稳定）。
+                rows_data = [r for r in matrix if any(str(v).strip() for v in r)]
                 
                 if not rows_data:
                     continue
@@ -268,24 +411,28 @@ def _parse_excel(fname: str) -> str:
                 bands = _split_stacked_bands(rows_data, sheet_name)
                 if bands:
                     for band_name, header_row, data_rows in bands:
+                        header_row, data_rows = _with_interface_code(
+                            band_name, header_row, data_rows)
                         sheet_content = _sheet_md(band_name, header_row, data_rows)
                         excel_parts.append(sheet_content)
                     logger.info(f"[Excel解析] 分节表 {sheet_name}: 拆为 {len(bands)} 个带表, "
                                f"数据行数={sum(len(d) for _, _, d in bands)}")
                     continue
                 
-                header_row = rows_data[0]
-                data_rows = rows_data[1:]
+                header_row, data_rows, _tmeta = _normalize_table_header(rows_data, sheet_name)
                 data_rows = [r for r in data_rows if any(v for v in r)]
                 
                 if not any(v for v in header_row):
                     continue
-                
+                header_row, data_rows = _with_interface_code(
+                    sheet_name, header_row, data_rows)
                 # 构建 Markdown 表格（周期性重发 Sheet 头，保续片上下文）
-                sheet_content = _sheet_md(sheet_name, header_row, data_rows)
+                sheet_content = _sheet_md(sheet_name, header_row, data_rows,
+                                          caption=_tmeta.get("title") or "")
                 excel_parts.append(sheet_content)
                 logger.info(f"[Excel解析] 已处理 Sheet {sheet_idx+1}/{wb.nsheets}: {sheet_name}, "
-                           f"表头列数={len(header_row)}, 数据行数={len(data_rows)}")
+                           f"表头列数={len(header_row)}, 数据行数={len(data_rows)}, "
+                           f"表头行数={_tmeta.get('header_depth')}, 标题行={_tmeta.get('title_rows')}")
             
             if excel_parts:
                 return "\n".join(excel_parts)

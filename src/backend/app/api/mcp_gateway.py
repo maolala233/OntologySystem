@@ -257,6 +257,66 @@ def _jsonrpc_response(payload: dict, status: int = 200) -> Response:
 
 # ---------------------------------------------------------------- 工具清单（07 §3.3 MVP 10 个）
 
+def _doc_graph_tool_specs() -> list[dict]:
+    """testfile/工具.docx 的 17 个图谱工具（只读，参数名按文档 camelCase）。"""
+    def spec(name: str, desc: str, props: dict | None = None) -> dict:
+        return {"name": name, "description": desc,
+                "inputSchema": {"type": "object", "properties": props or {}}}
+
+    return [
+        spec("graph_schema_get", "获取图谱完整 Schema（类/对象属性/数据属性）"),
+        spec("entity_type_list", "列出图谱下所有实体类型"),
+        spec("relation_type_list", "列出图谱下所有关系类型"),
+        spec("entity_type_detail", "按英文名查询实体类型",
+             {"typeNameEn": {"type": "string", "description": "实体类型英文名"}}),
+        spec("relation_type_detail", "按英文名查询关系类型",
+             {"typeNameEn": {"type": "string", "description": "关系类型英文名"}}),
+        spec("entity_get", "获取单个实体",
+             {"dataId": {"type": "string", "description": "实体数据ID"}}),
+        spec("entities_get", "批量获取实体",
+             {"dataIds": {"type": "array", "items": {"type": "string"},
+                          "description": "实体数据ID列表"}}),
+        spec("relation_get", "获取单条关系",
+             {"dataId": {"type": "string", "description": "关系数据ID"}}),
+        spec("relations_get", "批量获取关系",
+             {"dataIds": {"type": "array", "items": {"type": "string"},
+                          "description": "关系数据ID列表"}}),
+        spec("entity_find", "按过滤表达式筛选实体",
+             {"filter": {"type": "string", "description": "SQL风格过滤表达式（=和IN，AND/OR/括号）"},
+              "limit": {"type": "integer", "description": "结果数量上限"},
+              "typeNameEn": {"type": "string", "description": "实体类型英文名"}}),
+        spec("neighbors_get", "获取实体邻居",
+             {"direction": {"type": "string", "enum": ["OUT", "IN", "BOTH"], "default": "BOTH"},
+              "entityDataId": {"type": "string", "description": "锚点实体dataId"},
+              "limit": {"type": "integer", "description": "邻居数量上限"},
+              "neighborTypeNameEns": {"type": "array", "items": {"type": "string"}},
+              "relationTypeNameEns": {"type": "array", "items": {"type": "string"}}}),
+        spec("relations_between", "获取两个实体之间的所有关系",
+             {"direction": {"type": "string", "enum": ["OUT", "IN", "BOTH"], "default": "BOTH"},
+              "fromDataId": {"type": "string", "description": "起点实体dataId"},
+              "toDataId": {"type": "string", "description": "终点实体dataId"}}),
+        spec("subgraph_expand", "子图扩展",
+             {"anchorDataIds": {"type": "array", "items": {"type": "string"}},
+              "direction": {"type": "string", "enum": ["OUT", "IN", "BOTH"], "default": "BOTH"},
+              "entityTypeNameEns": {"type": "array", "items": {"type": "string"}},
+              "hops": {"type": "integer", "minimum": 0, "default": 1},
+              "maxNodes": {"type": "integer", "default": 100},
+              "relationTypeNameEns": {"type": "array", "items": {"type": "string"}}}),
+        spec("paths_find", "查找两个实体之间的路径",
+             {"fromDataId": {"type": "string"}, "toDataId": {"type": "string"},
+              "limit": {"type": "integer", "default": 5},
+              "maxDepth": {"type": "integer", "minimum": 1, "maximum": 4, "default": 4}}),
+        spec("path_exists", "判断两个实体之间路径是否存在",
+             {"fromDataId": {"type": "string"}, "toDataId": {"type": "string"}}),
+        spec("shortest_path", "获取两个实体之间的最短路径",
+             {"fromDataId": {"type": "string"}, "toDataId": {"type": "string"}}),
+        spec("semantic_search", "高级语义检索，可带条件",
+             {"queryText": {"type": "string"}, "topK": {"type": "integer", "default": 10},
+              "typeNameEns": {"type": "array", "items": {"type": "string"}},
+              "filter": {"type": "string"}}),
+    ]
+
+
 def _tool_specs(ctx: McpContext) -> list[dict]:
     specs: list[dict] = [
         {
@@ -371,6 +431,34 @@ def _tool_specs(ctx: McpContext) -> list[dict]:
             },
         },
         {
+            "name": "query_facts",
+            "description": "确定性清单/计数查询（分页，不受问答上下文预算限制）："
+                           "kind=entities 查实体清单/计数，kind=relations 查关系清单/计数。"
+                           "支持 class_label/label_contains/predicate/subject_label/object_label/"
+                           "offset/limit；返回 total(全集计数)、returned、has_more、next_offset、items。"
+                           "清单类问题优先用本工具翻页取全量，不要根据 retrieve/ask 的截断引用推断全集",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string", "enum": ["entities", "relations"],
+                             "default": "entities"},
+                    "class_label": {"type": "string", "description": "按类过滤（entities）"},
+                    "label_contains": {"type": "string", "description": "标签子串（entities）"},
+                    "include_classes": {"type": "boolean", "default": False,
+                                        "description": "entities 是否包含类节点"},
+                    "predicate": {"type": "string", "description": "谓词精确过滤（relations）"},
+                    "subject_label": {"type": "string", "description": "主体标签过滤（relations）"},
+                    "object_label": {"type": "string", "description": "宾语标签过滤（relations）"},
+                    "entity_label": {"type": "string",
+                                     "description": "主体或宾语命中该标签（relations，双向）"},
+                    "include_structural": {"type": "boolean", "default": False,
+                                           "description": "relations 是否包含 instance_of/subclass_of"},
+                    "offset": {"type": "integer", "minimum": 0, "default": 0},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 50},
+                },
+            },
+        },
+        {
             "name": "export_graph",
             "description": "导出图谱：format=turtle（TTL 内容）或 jsonld（graph_data JSON）",
             "inputSchema": {
@@ -384,6 +472,11 @@ def _tool_specs(ctx: McpContext) -> list[dict]:
             "inputSchema": {"type": "object", "properties": {}},
         },
     ]
+    # 旧名保留为兼容别名（tools/call still works），但不再出现在 tools/list，
+    # 避免和文档契约里的新工具重复展示。
+    hidden_aliases = {"get_entity", "get_neighbors", "get_ontology_schema"}
+    specs = [s for s in specs if s.get("name") not in hidden_aliases]
+    specs.extend(_doc_graph_tool_specs())
     if ctx.can_write:
         specs += [
             {
@@ -423,6 +516,10 @@ def _resource_specs(ctx: McpContext) -> list[dict]:
          "description": "节点/边/类/实例计数与知识域", "mimeType": "application/json"},
         {"uri": "ontology://schema/info", "name": f"项目 {ctx.project.id} TBox（TTL）",
          "description": "本体骨架 turtle 文本", "mimeType": "text/turtle"},
+        {"uri": "ontology://skill/ontology-retrieval",
+         "name": "图谱检索 Skill（给 Agent 用）",
+         "description": "何时用哪些工具、计数闭合规则与引用格式；可直接作为 harness skill 加载",
+         "mimeType": "text/markdown"},
     ]
 
 
@@ -684,12 +781,44 @@ def _t_retrieve(ctx: McpContext, db: Session, args: dict) -> dict:
     return _text_content(payload)
 
 
+def _t_query_facts(ctx: McpContext, db: Session, args: dict) -> dict:
+    """确定性清单/计数：分页取全量，不依赖问答上下文里的截断清单。"""
+    from app.services.fact_query import query_facts
+
+    try:
+        payload = query_facts(db, ctx.project.id, args or {})
+    except ValueError as e:
+        raise _rpc_error(ERR_INVALID_PARAMS, str(e))
+    _audit(ctx, db, "mcp.read", "query_facts", args or {})
+    return _text_content(payload)
+
+
 def _t_export_graph(ctx: McpContext, db: Session, args: dict) -> dict:
     fmt = str(args.get("format") or "turtle").lower()
     if fmt == "turtle":
         ttl = ctx.project.ttl_content
         if not ttl:
-            raise _rpc_error(ERR_INVALID_PARAMS, "项目尚无 TTL 内容（未同步过 TTL）")
+            # 项目可能只构建了 graph_data 还没同步 TTL：给一个可用的 TBox 摘要，
+            # 而不是让工具在“项目存在但未同步 TTL”时直接失败。
+            gd = ctx.project.graph_data or {}
+            lines = [
+                "@prefix owl: <http://www.w3.org/2002/07/owl#> .",
+                "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .",
+                f"# generated from graph_data for project {ctx.project.id}; "
+                "run TTL sync for the full graph",
+                f"<urn:onto:{ctx.project.id}:> a owl:Ontology .",
+            ]
+            for n in gd.get("nodes") or []:
+                d = n.get("data") or {}
+                if d.get("type") not in ("Class", "owl:Class"):
+                    continue
+                label = str(d.get("label") or "").replace('"', '\\"')
+                node_id = str(n.get("id") or "").replace('"', '\\"')
+                if label and node_id:
+                    lines.append(
+                        f'<urn:onto:{ctx.project.id}:entity/{node_id}> a owl:Class ; '
+                        f'rdfs:label "{label}" .')
+            ttl = "\n".join(lines)
         return _text_content({"format": "turtle", "content": ttl})
     if fmt == "jsonld":
         gd = ctx.project.graph_data or {}
@@ -803,6 +932,28 @@ def _t_add_relationship(ctx: McpContext, db: Session, args: dict) -> dict:
                           "object": obj_uri, "note": "关系经行表双写自动同步"})
 
 
+def _make_doc_graph_handler(name: str):
+    def _handler(ctx: McpContext, db: Session, args: dict) -> dict:
+        from app.services.mcp_graph_tools import call_tool
+
+        try:
+            payload = call_tool(name, db, ctx.project.id, args or {})
+        except ValueError as e:
+            raise _rpc_error(ERR_INVALID_PARAMS, str(e))
+        _audit(ctx, db, "mcp.read", name, args or {})
+        return _text_content(payload)
+    return _handler
+
+
+_DOC_GRAPH_TOOL_NAMES = (
+    "graph_schema_get", "entity_type_list", "relation_type_list",
+    "entity_type_detail", "relation_type_detail", "entity_get", "entities_get",
+    "relation_get", "relations_get", "entity_find", "neighbors_get",
+    "relations_between", "subgraph_expand", "paths_find", "path_exists",
+    "shortest_path", "semantic_search",
+)
+
+
 _TOOL_TABLE = {
     "search_entities": _t_search_entities,
     "get_entity": _t_get_entity,
@@ -812,11 +963,14 @@ _TOOL_TABLE = {
     "get_ontology_schema": _t_get_ontology_schema,
     "ask": _t_ask,
     "retrieve": _t_retrieve,
+    "query_facts": _t_query_facts,
     "export_graph": _t_export_graph,
     "list_versions": _t_list_versions,
     "add_entity": _t_add_entity,
     "add_relationship": _t_add_relationship,
 }
+for _name in _DOC_GRAPH_TOOL_NAMES:
+    _TOOL_TABLE[_name] = _make_doc_graph_handler(_name)
 
 
 def _dispatch_tool(ctx: McpContext, db: Session, tool: str, args: dict) -> dict:
@@ -875,4 +1029,9 @@ def _read_resource(ctx: McpContext, db: Session, uri: str) -> dict:
         if not ttl:
             ttl = f"# 项目 {ctx.project.id} 尚无同步 TTL；TBox 概要：{schema_result['class_count']} 类"
         return {"contents": [{"uri": uri, "mimeType": "text/turtle", "text": ttl[:MAX_RESPONSE_BYTES]}]}
+    if uri == "ontology://skill/ontology-retrieval":
+        from app.services.mcp_skill import MCP_SKILL_MD
+
+        return {"contents": [{"uri": uri, "mimeType": "text/markdown",
+                              "text": MCP_SKILL_MD[:MAX_RESPONSE_BYTES]}]}
     raise _rpc_error(ERR_INVALID_PARAMS, f"未知资源: {uri}")

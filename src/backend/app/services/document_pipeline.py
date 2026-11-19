@@ -28,6 +28,43 @@ def estimate_tokens(text: str) -> int:
     return cjk + (len(text) - cjk) // 4
 
 
+def assess_parse_quality(text: str, chunks: list) -> dict:
+    """解析质量体检（2026-11-19）：给构建报告/日志一个可量化口径。
+
+    不追求“打分准确”，只回答三个问题：解析出字了吗、表格/标题结构还在吗、
+    是否像乱码/空文档。低质量文档不应硬抽，应先换解析后端或提示用户。
+    """
+    text = text or ""
+    lines = [ln for ln in text.split("\n") if ln.strip()]
+    table_lines = sum(1 for ln in lines if ln.lstrip().startswith("|"))
+    heading_lines = sum(1 for ln in lines if ln.lstrip().startswith("#"))
+    cjk = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
+    latin = sum(1 for ch in text if ch.isascii() and ch.isalpha())
+    total = max(1, len(text))
+    empty_chunks = sum(1 for c in (chunks or []) if not (getattr(c, "text", "") or "").strip())
+    if not text.strip() or not chunks:
+        grade = "low"
+    elif len(text) < 200 or (cjk + latin) / total < 0.02:
+        grade = "low"
+    elif table_lines == 0 and heading_lines == 0 and len(text) < 500:
+        grade = "medium"
+    else:
+        grade = "high"
+    return {
+        "grade": grade,
+        "chars": len(text),
+        "lines": len(lines),
+        "chunks": len(chunks or []),
+        "table_lines": table_lines,
+        "heading_lines": heading_lines,
+        "empty_chunks": empty_chunks,
+        "cjk_ratio": round(cjk / total, 3),
+        "avg_chunk_chars": round(
+            sum(len(getattr(c, "text", "") or "") for c in (chunks or []))
+            / max(1, len(chunks or [])), 1),
+    }
+
+
 def _default_chunk_params(project_id: int | None = None) -> ChunkParams:
     """chunk_params 未显式给出时回读 extract 默认行 params（2026-11-08 接线）。
 
@@ -48,6 +85,9 @@ def _default_chunk_params(project_id: int | None = None) -> ChunkParams:
         try:
             size = int(p.get("chunk_size") or 0)
             if size > 0:
+                # 旧模型配置 chunk_size=15000：中文长切片会让单次抽取 prompt 过大、
+                # 输出易截断。默认配置读取时夹到上限；显式请求参数不走这里。
+                size = min(size, int(getattr(settings, "EXTRACT_CHUNK_SIZE_MAX", 4000) or 4000))
                 kw["chunk_size"] = size
         except (TypeError, ValueError):
             pass
@@ -72,7 +112,9 @@ def _default_chunk_params(project_id: int | None = None) -> ChunkParams:
 # 解析器或切片算法有行为变更时手动 +1，让历史切片自动失效。
 # v2（2026-11-18）：解析层修复——单元格换行压平+表格周期性重发 Sheet 头+表头行；
 # 旧 v1 产物存在切片拦腰断行/续片无上下文，必须重解析
-PARSE_FINGERPRINT_VERSION = 2
+# v3（2026-11-19）：解析/切片质量修复——Excel 表头周期合并、接口明细补「接口编号」列、
+# 表格与硬切 overlap 真正生效；旧 v2 切片必须重解析，否则构建仍用旧切片。
+PARSE_FINGERPRINT_VERSION = 6
 
 
 def _hash_signature(payload: dict) -> str:
@@ -253,6 +295,12 @@ def run_parse(document_id: int, backend: str = "auto",
         _progress("store_text", 55, "全文写入对象存储")
         text_key = f"{doc.project_id}/{doc.id}.md"
         full_text = parsed.full_text_md or ""
+        if not full_text.strip():
+            # 空解析结果不能标 parsed：否则骨架阶段只看到 0 切片，报“没有可用切片”，
+            # 用户无法区分“文档没内容”和“解析器没解析出来”。直接失败并给出后端/格式。
+            raise ValueError(
+                f"解析结果为空（backend={parsed.backend.value if hasattr(parsed.backend, 'value') else parsed.backend}，"
+                f"文件={doc.filename}）：可能是扫描件/加密/损坏或解析后端不支持该格式")
         minio.put_bytes(settings.MINIO_BUCKET_PARSED, text_key, full_text.encode("utf-8"),
                         content_type="text/markdown")
         _mark("store_text")
@@ -260,6 +308,7 @@ def run_parse(document_id: int, backend: str = "auto",
         _progress("chunk", 70, "中文切片中", {"chars": len(full_text)})
         params = effective_chunk_params(doc.project_id, chunk_params)
         chunks = chunk_text(full_text, params)
+        quality = assess_parse_quality(full_text, chunks)
         _mark("chunk")
 
         # 本次解析产物的复用指纹（首切片携带；下次构建据此决定跳过/重嵌入）
@@ -275,6 +324,7 @@ def run_parse(document_id: int, backend: str = "auto",
             meta = {**c.meta, "page": _page_of(parsed, c.start_index)}
             if i == 0:
                 meta["fingerprint"] = fingerprint
+                meta["parse_quality"] = quality
             db.add(DocumentChunk(
                 document_id=doc.id,
                 chunk_index=i,
@@ -299,7 +349,8 @@ def run_parse(document_id: int, backend: str = "auto",
         _mark("vector")
         stats = {"chunks": len(chunks), "chars": len(full_text), "vectors": vector_count,
                  "backend": doc.parse_backend, "language": doc.language,
-                 "page_count": doc.page_count}
+                 "page_count": doc.page_count,
+                 "parse_quality": quality}
         finish_task_progress(task_id, "completed", "解析完成", stats)
         _mark("finalize")
         _sub.update({
@@ -309,12 +360,13 @@ def run_parse(document_id: int, backend: str = "auto",
             "chunks": len(chunks),
             "chars": len(full_text),
             "vectors": vector_count,
+            "parse_quality": quality.get("grade"),
         })
         profile_metric(f"parse_doc_{document_id}", _sub)
         logger.info(f"[pipeline] 文档 {document_id} 解析完成: {stats}")
         return {"chunks": len(chunks), "chars": len(full_text),
                 "backend": doc.parse_backend, "language": doc.language,
-                "page_count": doc.page_count}
+                "page_count": doc.page_count, "parse_quality": quality}
     except Exception as e:
         _mark("until_error")
         _sub["error"] = str(e)[:300]

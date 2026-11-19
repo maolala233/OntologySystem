@@ -104,12 +104,38 @@ def graph_meta(project_id: int, current_user: User = Depends(get_current_user),
     """画布元信息（06 §4.3 装载流程第一步）。"""
     require_project_role(project_id, "viewer", current_user, db)
     proj = _project_or_404(project_id, db)
-    n_nodes = db.query(Entity).filter(Entity.project_id == project_id).count()
-    n_edges = db.query(Relation).filter(Relation.project_id == project_id).count()
-    dist_rows = (db.query(Entity.class_label, func.count(Entity.id))
-                 .filter(Entity.project_id == project_id)
-                 .group_by(Entity.class_label)
-                 .order_by(func.count(Entity.id).desc()).limit(24).all())
+    n_nodes = (db.query(Entity)
+               .filter(Entity.project_id == project_id,
+                       Entity.status != "rejected").count())
+    n_edges = (db.query(Relation)
+               .filter(Relation.project_id == project_id,
+                       Relation.status != "rejected").count())
+    # 关系口径拆分（与构建结果卡对齐）：图页“关系”不能把 instance_of/subclass_of
+    # 也当业务关系数；fact_relations 才是用户理解的“事实关系”。
+    _struct_preds = ("instance_of", "subclass_of")
+    fact_relations = (db.query(func.count(Relation.id))
+                      .filter(Relation.project_id == project_id,
+                              Relation.status.notin_(("rejected",)),
+                              Relation.is_class_edge.is_(False),
+                              ~Relation.predicate.in_(_struct_preds))
+                      .scalar() or 0)
+    type_edges = (db.query(func.count(Relation.id))
+                  .filter(Relation.project_id == project_id,
+                          Relation.predicate == "instance_of").scalar() or 0)
+    hierarchy_edges = (db.query(func.count(Relation.id))
+                       .filter(Relation.project_id == project_id,
+                               Relation.predicate == "subclass_of").scalar() or 0)
+    tbox_relation_edges = (db.query(func.count(Relation.id))
+                           .filter(Relation.project_id == project_id,
+                                   Relation.is_class_edge.is_(True),
+                                   Relation.predicate != "subclass_of").scalar() or 0)
+    schema = (proj.graph_data or {}).get("schema") or {}
+    relation_types = len(schema.get("object_properties") or [])
+    # 类分布按多类成员口径（class_label + instance_of 边），类节点自身不计入
+    from app.services.class_membership import class_distribution
+
+    _dist = class_distribution(db, project_id)
+    dist_rows = sorted(_dist.items(), key=lambda kv: -kv[1])[:24]
     src_rows = (db.query(Entity.props).filter(Entity.project_id == project_id).all())
     sources = sorted({p.get("source_document") for (r,) in src_rows
                       for p in [r or {}] if p.get("source_document")})
@@ -117,11 +143,35 @@ def graph_meta(project_id: int, current_user: User = Depends(get_current_user),
                                            GraphLayout.status == "done")
               .order_by(GraphLayout.id.desc()).first())
     return {"node_count": n_nodes, "edge_count": n_edges,
+            "relation_type_count": relation_types,
+            "fact_relation_count": int(fact_relations),
+            "tbox_relation_edge_count": int(tbox_relation_edges),
+            "object_property_edge_count": int(fact_relations + tbox_relation_edges),
+            "type_edge_count": int(type_edges),
+            "hierarchy_edge_count": int(hierarchy_edges),
             "class_distribution": [{"class_label": c, "count": n} for c, n in dist_rows],
             "sources": sources,
             "layout_available": layout is not None,
             "layout_id": layout.id if layout else None,
             "readonly": proj.status == "published"}
+
+
+@router.post("/query-facts")
+def query_facts_endpoint(project_id: int, body: dict | None = None,
+                         current_user: User = Depends(get_current_user),
+                         db: Session = Depends(get_db)):
+    """确定性清单/计数查询（分页）：kind=entities|relations。
+
+    问答/Agent 需要完整清单时调这里按 offset 翻页，不要依赖被上下文预算截断的
+    引用文本；返回 total 永远是全集计数。
+    """
+    require_project_role(project_id, "viewer", current_user, db)
+    from app.services.fact_query import query_facts
+
+    try:
+        return query_facts(db, project_id, body or {})
+    except ValueError as e:
+        raise APIError(str(e), code="BAD_QUERY_FACTS", http_status=400)
 
 
 @router.get("/nodes")
@@ -137,9 +187,12 @@ def graph_nodes(project_id: int,
     """节点游标分页（ORDER BY degree DESC → 首屏=骨架+高度数实例）。"""
     require_project_role(project_id, "viewer", current_user, db)
     deg = _degree_map(db, project_id)
-    qy = db.query(Entity).filter(Entity.project_id == project_id)
+    qy = db.query(Entity).filter(Entity.project_id == project_id,
+                                 Entity.status != "rejected")
     if class_:
-        qy = qy.filter(Entity.class_label == class_)
+        from app.services.class_membership import membership_ids
+
+        qy = qy.filter(Entity.id.in_(membership_ids(db, project_id, class_) or [-1]))
     if status:
         qy = qy.filter(Entity.status == status)
     if source_doc:
@@ -170,7 +223,8 @@ def graph_edges(project_id: int,
     """边游标分页；node_ids 给定时只取这些节点的关联边（分页装载第 3 步）。"""
     require_project_role(project_id, "viewer", current_user, db)
     bidi = _bidi_groups(db, project_id)
-    qy = db.query(Relation).filter(Relation.project_id == project_id)
+    qy = db.query(Relation).filter(Relation.project_id == project_id,
+                                   Relation.status != "rejected")
     if node_ids:
         ids = [int(i) for i in node_ids.split(",") if i.strip().isdigit()]
         if not ids:

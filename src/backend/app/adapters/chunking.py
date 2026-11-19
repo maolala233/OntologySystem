@@ -94,6 +94,12 @@ def chunk_text(text: str, params: ChunkParams | None = None) -> list[Chunk]:
         else:
             spans.extend((s, e, None, None) for s, e in _recursive_spans(content, off, size, overlap))
 
+    # 合并相邻且表头相同的表格周期：解析层为避免续片丢列语义，会每 ~900 字符
+    # 重发一次「Sheet 头+表头行」；不合并时每个周期都会变成一个独立 chunk，
+    # 一份 154 Sheet 的接口基线会产出 200+ 个极小切片（schema/instance 各 200+ 次
+    # LLM 调用）。合并只影响切片边界，text[start:end] 仍是原文精确子串。
+    spans = _merge_adjacent_tables(spans, size)
+
     chunks: list[Chunk] = []
     for s, e, kind, header in spans:
         content = text[s:e].rstrip()
@@ -108,6 +114,28 @@ def chunk_text(text: str, params: ChunkParams | None = None) -> list[Chunk]:
     for i, c in enumerate(chunks):
         c.chunk_index = i
     return chunks
+
+
+def _merge_adjacent_tables(spans: list[tuple[int, int, str | None, str | None]],
+                           size: int) -> list[tuple[int, int, str | None, str | None]]:
+    """合并相邻、同表头、总长不超过 size 的表格 span。
+
+    解析层为保续片列语义，每 ~900 字符重发一次表头；这些周期在切片层若不合并，
+    会变成大量 900 字符小 chunk（154 Sheet 的接口文档可膨胀到 200+ 片）。
+    只合并连续 span 且 header 完全相同；text[start:end] 仍是原文精确子串。
+    """
+    if not spans:
+        return spans
+    out: list[tuple[int, int, str | None, str | None]] = []
+    for s, e, kind, header in spans:
+        if (out and kind == "table" and header
+                and out[-1][2] == "table" and out[-1][3] == header
+                and e - out[-1][0] <= size):
+            ps, _pe, pk, ph = out[-1]
+            out[-1] = (ps, e, pk, ph)
+        else:
+            out.append((s, e, kind, header))
+    return out
 
 
 def _structural_blocks(text: str) -> list[tuple[int, str, str | None, str | None]]:
@@ -300,9 +328,11 @@ def _table_spans(text: str, base: int, size: int, overlap: int) -> list[tuple[in
         out.append((base + offs[s_line][0], base + offs[j][1]))
         if j + 1 >= n:
             break
-        # overlap 行回看
-        back = max(1, int(round((size * 0.15) // max(1, (offs[j][1] - offs[s_line][0]) / max(1, j - s_line + 1)))))
-        i = max(j + 1 - back, j + 1)
+        # overlap 行回看（使用调用方传入的 overlap；旧实现硬编码 0.15 且
+        # i=max(j+1-back, j+1) 恒等于 j+1，等于完全没有重叠）
+        _avg_row = max(1, (offs[j][1] - offs[s_line][0]) / max(1, j - s_line + 1))
+        back = int(round(overlap / _avg_row)) if overlap > 0 else 0
+        i = max(j + 1 - back, s_line + 1)
         # 回看起点对齐逻辑行起点（行中起片的半行对抽取/QA 都是无上下文碎片）
         while i <= j and not _row_start(i):
             i += 1
@@ -337,7 +367,8 @@ def _hard_spans(text: str, base: int, size: int, overlap: int) -> list[tuple[int
             out.append((base + j, base + end))
         if end >= len(text):
             break
-        j = max(end, j + 1)
+        # overlap 回看：旧实现 j=end 直接前进，overlap 参数完全没用
+        j = max(end - max(0, int(overlap)), j + 1)
     return out
 
 

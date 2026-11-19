@@ -608,6 +608,13 @@ def _run_migrations() -> None:
 
     backend_root = Path(__file__).resolve().parents[2]  # src/backend
     alembic_cfg = Config(str(backend_root / "alembic.ini"))
+    # alembic 1.14+ 用 encoding="locale"（中文 Windows 上是 GBK）读 alembic.ini，
+    # 而该文件是 UTF-8 且含中文注释，启动即 UnicodeDecodeError。
+    # 这里用 UTF-8 预载解析结果覆盖 file_config，绕开 locale 解码。
+    import configparser
+    file_config = configparser.ConfigParser()
+    file_config.read(str(backend_root / "alembic.ini"), encoding="utf-8")
+    alembic_cfg.file_config = file_config
     alembic_cfg.set_main_option("script_location", str(backend_root / "alembic"))
     t0 = time.perf_counter()
     logger.info(f"[DB] Alembic 开始执行（script_location={backend_root / 'alembic'}）…")

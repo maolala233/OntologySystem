@@ -102,6 +102,11 @@ export const MCP_ENDPOINT_KEY = 'mcp_endpoint';
 /** 默认端点：host 随浏览器地址栏（部署 IP/域名）。同域部署时 API_BASE_URL 为空，
  *  取页面 origin 补全为绝对地址——相对路径 /mcp 在本页可用，但外部 MCP 客户端需要完整 URL。 */
 export function getDefaultMcpEndpoint(): string {
+    // Vite dev server (5173) 的 /mcp 代理依赖 dev server 重启且未覆盖所有部署；
+    // 本地开发直接指向后端 3001，避免把 HTML 404 当 JSON-RPC 响应（-32700）。
+    if (import.meta.env.DEV) {
+        return `${window.location.protocol}//${window.location.hostname}:3001/mcp`;
+    }
     if (API_BASE_URL) {
         return `${API_BASE_URL}/mcp`;
     }
@@ -112,6 +117,12 @@ export function getDefaultMcpEndpoint(): string {
 export function getMcpEndpoint(): string {
     const saved = localStorage.getItem(MCP_ENDPOINT_KEY)?.trim();
     if (saved) {
+        // 迁移旧版 dev 保存的页面同源 /mcp（5173 会 404）；其余自定义地址保留
+        if (import.meta.env.DEV
+            && (saved === `${window.location.origin}/mcp`
+                || saved.includes(':5173/mcp'))) {
+            return getDefaultMcpEndpoint();
+        }
         return saved.startsWith('/') ? `${window.location.origin}${saved}` : saved;
     }
     return getDefaultMcpEndpoint();

@@ -265,8 +265,7 @@ def _enrich_docx_image_text(full_text_md: str, content: bytes) -> str:
     if not blobs:
         return full_text_md
     texts: list[str] = []
-    for b in blobs:
-        t = _ocr_image_bytes(b)
+    for b, t in zip(blobs, _ocr_images(blobs)):
         if not t:
             t = _vl_describe_image_blobs([b])
         texts.append(t or "")
@@ -365,8 +364,22 @@ def _pdf_native_text(content: bytes) -> str:
             return "\n".join(page.get_text("text") or "" for page in doc)
 
 
+def _decode_text(content: bytes) -> str:
+    """文本字节解码：UTF-8 优先，中文老文档常见 GB18030/GBK 兜底。
+
+    旧实现固定 utf-8 + errors='replace'：GBK 编码的 .txt/.md/.json 会整篇乱码，
+    下游切片/抽取/问答全部失真。
+    """
+    for enc in ("utf-8-sig", "utf-8", "gb18030", "gbk"):
+        try:
+            return content.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return content.decode("utf-8", errors="replace")
+
+
 def _parse_text(content: bytes, filename: str, ext: str) -> ParsedDocument:
-    text = content.decode("utf-8", errors="replace")
+    text = _decode_text(content)
     return ParsedDocument(full_text_md=text, backend=ParseBackend.NATIVE)
 
 
@@ -401,7 +414,7 @@ def _parse_csv(content: bytes) -> str:
     import io
 
     text = None
-    for enc in ("utf-8-sig", "utf-8", "gbk"):
+    for enc in ("utf-8-sig", "utf-8", "gb18030", "gbk"):
         try:
             text = content.decode(enc)
             break
@@ -631,6 +644,26 @@ def _vl_describe_image_blobs(blobs: list) -> str:
         return ""
 
 
+def _ocr_images(blobs: list) -> list[str]:
+    """批量图片 OCR：多图并行（RapidOCR/onnxruntime 会话线程安全），保持输入顺序。
+
+    旧实现逐张串行：20 页带图 PPT 实测 95s；并行 4 路可显著缩短解析时间。
+    单图失败/引擎异常由 _ocr_image_bytes 吞掉并返回空串，最后回退串行。
+    """
+    if not blobs:
+        return []
+    if len(blobs) == 1:
+        return [_ocr_image_bytes(blobs[0])]
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+
+        workers = min(4, len(blobs))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            return list(pool.map(_ocr_image_bytes, blobs))
+    except Exception:  # noqa: BLE001 —— 并发异常回退串行，不影响解析
+        return [_ocr_image_bytes(b) for b in blobs]
+
+
 def _parse_pptx(content: bytes, filename: str, backend: ParseBackend = ParseBackend.AUTO) -> ParsedDocument:
     """PPTX 图文解析（S14）：python-pptx 逐页提取文本框/表格/备注 + 内嵌图片解析。
 
@@ -700,9 +733,8 @@ def _parse_pptx(content: bytes, filename: str, backend: ParseBackend = ParseBack
         if vl_text:
             img_txts.append(vl_text)
         else:
-            # VL 未选用/未产出（未配置/失败）→ 回退 OCR；非 VL 后端直接 OCR
-            for blob in images:
-                t = _ocr_image_bytes(blob)
+            # VL 未选用/未产出（未配置/失败）→ 回退 OCR（多图并行）
+            for t in _ocr_images(images):
                 if t:
                     img_txts.append(t)
         if img_txts:

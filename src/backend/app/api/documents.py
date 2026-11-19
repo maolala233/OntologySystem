@@ -164,16 +164,19 @@ async def upload_documents(
         task_ids: dict[int, str] = {}
         inline_count = 0
         if auto_parse:
-            from app.tasks.parse_tasks import dispatch_parse
+            from app.tasks.parse_tasks import dispatch_parse_many
 
-            for d in saved:
-                try:
-                    res = dispatch_parse(d.id, backend=parse_backend)
-                    task_ids[d.id] = res["task_id"]
+            # 一次探测 + 批量派发：旧实现对每个文档调用 dispatch_parse，
+            # 每个都 ping/active_queues 一次，批量上传会同步多等 N×2s+。
+            try:
+                results = dispatch_parse_many(
+                    [d.id for d in saved], backend=parse_backend)
+                for res in results:
+                    task_ids[res["document_id"]] = res["task_id"]
                     if res["mode"] == "inline":
                         inline_count += 1
-                except Exception as e:  # noqa: BLE001 —— 派发兜底不阻断上传
-                    logger.warning(f"[documents] 文档 {d.id} 解析任务派发失败（可手动 POST parse 重试）: {e}")
+            except Exception as e:  # noqa: BLE001 —— 派发兜底不阻断上传
+                logger.warning(f"[documents] 解析任务批量派发失败（可手动 POST parse 重试）: {e}")
         logger.info(f"[documents] 项目 {project_id} 上传 {len(saved)} 个文档 by user {current_user.id}"
                     + (f"，派发 {len(task_ids)} 个解析任务（{inline_count} 个进程内执行）" if auto_parse else ""))
         if saved and inline_count == len(saved):
@@ -239,14 +242,13 @@ def parse_events(
     import json as _json
     import time
 
-    import redis as _redis
     from fastapi.responses import StreamingResponse
 
     from app.core.config import settings
     from app.infrastructure.database import SessionLocal, User
 
-    from app.services.env_config_service import redis_url
-    client = _redis.Redis.from_url(redis_url(), socket_connect_timeout=2)
+    from app.services.env_config_service import get_redis_client
+    client = get_redis_client(decode_responses=True)
     raw = client.get(f"sse:ticket:{ticket}")
     if not raw:
         raise APIError("SSE ticket 无效或已过期", code="TICKET_INVALID", http_status=401)

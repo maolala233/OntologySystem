@@ -57,6 +57,8 @@ interface QaTurn {
     stopped?: boolean;
     /** 溯源引用是否整块展开（5~6 条时逐卡点开太累，见下方头部开关） */
     sourcesExpanded?: boolean;
+    /** 溯源引用整块是否展开（默认收起，避免回答下面拖很长） */
+    sourcesOpen?: boolean;
 }
 
 /** 会话列表时间：今天/昨天显示时刻，更早只显示日期，避免每行都挤一长串时间戳 */
@@ -79,7 +81,7 @@ function formatConvTime(s?: string | null): string {
 const SAMPLE_QUESTIONS = [
     '这个项目里有哪些核心实体和关系？',
     '梳理主要概念之间的层级结构',
-    '图谱中有哪些孤立节点或缺失关系？',
+    '这些实体之间是如何关联的？',
 ];
 
 const CONV_ID_KEY = QA_LAST_PROJECT_ID_KEY;
@@ -264,14 +266,22 @@ export default function QaPage() {
         setTurns(prev => prev.map((t, k) => (k === turnIdx ? { ...t, sourcesExpanded: !t.sourcesExpanded } : t)));
     }, []);
 
+    const toggleSourcesSection = useCallback((turnIdx: number) => {
+        setTurns(prev => prev.map((t, k) =>
+            (k === turnIdx ? { ...t, sourcesOpen: !t.sourcesOpen } : t)));
+    }, []);
+
     const handleCite = useCallback((turnIdx: number, n: number) => {
         setHighlightSource({ turn: turnIdx, n });
+        // 引用区默认收起；点正文角标时先展开引用区，再滚动到对应卡片
+        setTurns(prev => prev.map((t, k) =>
+            (k === turnIdx ? { ...t, sourcesOpen: true } : t)));
         // 定位过去的同时那条证据会自动展开（见 SourceCard），卡片高度要等这一帧
         // 渲染完才定下来；立刻滚只会停在折叠态的位置，所以延后一拍再滚
         const targetId = `qa-source-${turnIdx}-${n - 1}`;
         window.setTimeout(() => {
             document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        }, 120);
+        }, 180);
         if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
         highlightTimerRef.current = setTimeout(() => setHighlightSource(null), 2500);
     }, []);
@@ -1018,19 +1028,28 @@ export default function QaPage() {
                                                     <span className="tk-mark" aria-hidden />
                                                     <span className="font-medium text-[#3B4A63]">溯源引用</span>
                                                     <span className="tk-mono text-[10.5px] text-[#8A94AB]">{turn.sources.length} 条证据</span>
-                                                    {/* 常见 5~6 条引用，逐张点「展开全文」太累：
-                                                        给一个整块开关；单卡仍可各自展开/收起 */}
+                                                    {/* 引用区默认收起：回答下面不再一开始就拖出十几张长卡；
+                                                        点正文 [n] 会自动展开并滚到对应证据 */}
                                                     <button
                                                         type="button"
                                                         className="ml-auto -mr-1 flex items-center gap-1 rounded-[7px] px-1.5 py-0.5 text-[11px] text-[#2A57C6] transition-colors hover:bg-[rgba(91,141,239,0.12)] hover:text-[#1F47A8] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(91,141,239,0.35)]"
-                                                        onClick={() => toggleAllSources(i)}
+                                                        onClick={() => toggleSourcesSection(i)}
                                                     >
-                                                        {turn.sourcesExpanded ? <UpOutlined /> : <DownOutlined />}
-                                                        <span>{turn.sourcesExpanded ? '全部收起' : '全部展开'}</span>
+                                                        {turn.sourcesOpen ? <UpOutlined /> : <DownOutlined />}
+                                                        <span>{turn.sourcesOpen ? '收起引用' : '展开引用'}</span>
                                                     </button>
+                                                    {turn.sourcesOpen && (
+                                                        <button
+                                                            type="button"
+                                                            className="flex items-center gap-1 rounded-[7px] px-1.5 py-0.5 text-[11px] text-[#2A57C6] transition-colors hover:bg-[rgba(91,141,239,0.12)] hover:text-[#1F47A8] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(91,141,239,0.35)]"
+                                                            onClick={() => toggleAllSources(i)}
+                                                        >
+                                                            {turn.sourcesExpanded ? <UpOutlined /> : <DownOutlined />}
+                                                            <span>{turn.sourcesExpanded ? '全部收起' : '全部展开'}</span>
+                                                        </button>
+                                                    )}
                                                 </div>
-                                                {/* 引用条目不再各自一张白卡：面板冷蓝底 + 行间发丝线，
-                                                    5~6 条时不会叠成一排白块（2026-11-19） */}
+                                                {turn.sourcesOpen && (
                                                 <div className="divide-y divide-[rgba(91,141,239,0.12)]">
                                                     {turn.sources.map((s, k) => (
                                                         <div key={k} id={`qa-source-${i}-${k}`} className="py-0.5 first:pt-0 last:pb-0">
@@ -1043,6 +1062,7 @@ export default function QaPage() {
                                                         </div>
                                                     ))}
                                                 </div>
+                                                )}
                                             </div>
                                         )}
                                     </div>

@@ -109,11 +109,42 @@ class _Gate:
         self.classes: dict[str, list[str]] = self.tbox.get("classes") or {}
         self.props: dict[str, dict] = self.tbox.get("object_properties") or {}
         self.chunks: dict[int, str] = self.tbox.get("chunks") or {}
+        # 类层次（2026-11-19）：domain/range 校验必须允许“子类实例 → 父类声明”，
+        # 否则 schema 里常见“合同签订 ⊑ 合同”时，声明在合同上的关系会被整批丢弃。
+        # 键/值统一 normalize，兼容 label/别名。
+        self.class_parents: dict[str, list[str]] = {}
+        for child, parents in (self.tbox.get("class_parents") or {}).items():
+            ck = _norm(str(child))
+            if not ck:
+                continue
+            vals = parents if isinstance(parents, (list, tuple, set)) else [parents]
+            self.class_parents.setdefault(ck, [])
+            for p in vals:
+                pk = _norm(str(p or ""))
+                if pk and pk != ck and pk not in self.class_parents[ck]:
+                    self.class_parents[ck].append(pk)
         # 已知实例 label → class（domain/range 校验用；调用方可预置 tbox["label_class"]）
         self.label_class: dict[str, str] = dict(self.tbox.get("label_class") or {})
         self.result = GateResult()
         # promote 聚合：label → {kind, chunk_indices:set, hold:[items]}
         self._cand: dict[tuple[str, str], dict] = {}
+
+    def _is_a(self, cls: str, ancestor: str) -> bool:
+        """cls 是否等于 ancestor 或是其（传递）子类；环安全。"""
+        start, target = _norm(cls), _norm(ancestor)
+        if not start or not target:
+            return False
+        stack = [start]
+        seen: set[str] = set()
+        while stack:
+            cur = stack.pop()
+            if cur == target:
+                return True
+            if cur in seen:
+                continue
+            seen.add(cur)
+            stack.extend(self.class_parents.get(cur, []))
+        return False
 
     # ---------- 违例处理 ----------
     def _unknown_type(self, item: Any, kind: str, label: str, chunk_index: int) -> None:
@@ -205,9 +236,9 @@ class _Gate:
         domain = prop_def.get("domain")
         rng = prop_def.get("range")
         mismatch = None
-        if domain and subj_cls and match_class(subj_cls, {domain: []}) is None:
+        if domain and subj_cls and not self._is_a(subj_cls, domain):
             mismatch = {"side": "domain", "expected": domain, "actual": subj_cls}
-        elif rng and obj_cls and match_class(obj_cls, {rng: []}) is None:
+        elif rng and obj_cls and not self._is_a(obj_cls, rng):
             mismatch = {"side": "range", "expected": rng, "actual": obj_cls}
         if mismatch:
             self.result.violations.append(GateViolation(

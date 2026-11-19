@@ -26,7 +26,32 @@ import type { AdminUser } from '../api/admin';
 import type { ProjectData } from '../types/ontology';
 import Navbar from '../components/Layout/Navbar';
 
-// ───────────────────────── JSON 彩色折叠树（对齐 Inspector 的 JSON Viewer）
+const MCP_SKILL_TEXT = `---
+name: ontology-platform-retrieval
+description: 查询 Ontology 平台项目图谱中的实体、关系、接口清单、路径与原文证据。
+---
+
+# 本体图谱检索 Skill
+
+优先使用完整包里的脚本（只读、分页、计数闭合）：
+- python scripts/check.py
+- python scripts/retrieve.py count --class 前端接口
+- python scripts/retrieve.py group --class 前端接口 --by 登记人
+
+先看结构，再查数据：
+1. graph_schema_get / entity_type_list 确认类型；
+2. relation_type_list 确认关系谓词；
+3. entity_find 做精确过滤（filter 支持 =、in、and、or）；
+4. semantic_search 做语义召回，再用 entity_get 落到具体实体。
+
+关系与路径：neighbors_get、relations_between、subgraph_expand、shortest_path、paths_find、path_exists。
+
+计数：优先 query_facts(kind=entities)，用 total 而不是当前页条数；按属性分组时各组之和必须等于 total，缺失属性归入“未标注”。
+
+回答：先给结论和总数，再给分组/清单，最后给 dataId、label、原文切片或文档名；图谱没有直接关系就明确说“未建立该关系”。
+
+只读令牌不能写入；需要新增实体/关系时使用 can_write 令牌调用 add_entity / add_relationship。`;
+
 
 function JsonLeaf({ value }: { value: unknown }) {
     if (typeof value === 'string') return <span className="text-emerald-600 break-all">"{value}"</span>;
@@ -171,8 +196,7 @@ export default function McpConsolePage() {
     // 连接/重连进行中：握手是两次串行往返（initialize → tools/list），
     // 不给按钮 loading 的话连点会叠出两轮握手（2026-11-18）
     const [connecting, setConnecting] = useState(false);
-    const [serverInfo, setServerInfo] = useState<{ name?: string; version?: string } | null>(null);
-    const [protocolVersion, setProtocolVersion] = useState<string | null>(null);
+    const [reissuing, setReissuing] = useState(false);
 
     // ── Tab 与数据
     const [activeTab, setActiveTab] = useState<TabKey>('tools');
@@ -264,8 +288,6 @@ export default function McpConsolePage() {
 
     const disconnect = useCallback(() => {
         setConnected(false);
-        setServerInfo(null);
-        setProtocolVersion(null);
         setTools([]);
         setSelectedTool(null);
         setCallResult(null);
@@ -285,11 +307,13 @@ export default function McpConsolePage() {
     }, [disconnect]);
 
     /** 调用 JSON-RPC 并自动写历史；返回 result 或抛 McpRpcError */
-    const rpc = useCallback(async (method: string, params: Record<string, unknown> = {}) => {
+    const rpc = useCallback(async (method: string, params: Record<string, unknown> = {},
+                                 tokenOverride?: string) => {
         historySeq += 1;
         const request = { jsonrpc: '2.0', id: historySeq, method, params };
+        const authToken = tokenOverride ?? bearer;
         try {
-            const result = await mcpRpc(bearer, method, params, endpoint.trim() || undefined);
+            const result = await mcpRpc(authToken, method, params, endpoint.trim() || undefined);
             pushHistory(method, request, true, { jsonrpc: '2.0', id: historySeq, result });
             return result;
         } catch (e) {
@@ -301,9 +325,11 @@ export default function McpConsolePage() {
         }
     }, [bearer, endpoint, pushHistory]);
 
-    // 连接 = initialize（取 serverInfo/协议版本）→ tools/list
-    const connect = useCallback(async () => {
-        if (!bearer) {
+    // 连接 = initialize → tools/list；tokenOverride 用于“续签后立即连接”，
+    // 避免 setState 尚未生效时读到旧 bearer。
+    const connect = useCallback(async (tokenOverride?: string) => {
+        const authToken = tokenOverride ?? bearer;
+        if (!authToken) {
             message.warning('请先选择或签发令牌（明文仅签发时可见，已存本页内存）');
             return;
         }
@@ -311,11 +337,8 @@ export default function McpConsolePage() {
         setConnecting(true);
         disconnect();
         try {
-            const init = await rpc('initialize', { protocolVersion: '2024-11-05', capabilities: {} });
-            const info = (init?.serverInfo ?? {}) as { name?: string; version?: string };
-            setServerInfo(info);
-            setProtocolVersion((init?.protocolVersion as string) ?? null);
-            const result = await rpc('tools/list');
+            await rpc('initialize', { protocolVersion: '2024-11-05', capabilities: {} }, authToken);
+            const result = await rpc('tools/list', {}, authToken);
             const list = (result?.tools as McpToolSpec[]) ?? [];
             setTools(list);
             setConnected(true);
@@ -448,6 +471,59 @@ export default function McpConsolePage() {
         ? tools.filter(t => `${t.name} ${t.description ?? ''}`.toLowerCase().includes(toolSearch.trim().toLowerCase()))
         : tools;
     const selectedToken = tokens.find(t => t.id === selectedTokenId);
+
+    const tokenState = (t: McpTokenItem): string => {
+        if (t.revoked_at) return '已撤销';
+        if (t.expires_at && new Date(t.expires_at).getTime() < Date.now()) return '已过期';
+        return '有效';
+    };
+
+    // 有效令牌但本页没有明文时：预填同项目/同名/同权限，打开签发弹窗，
+    // 让用户一次点击拿到可用的新明文，而不是只看到“请重新签发”的死提示。
+    const openReissue = useCallback(() => {
+        if (!selectedToken) return;
+        setIssueForm({
+            user_id: selectedToken.user_id,
+            project_id: selectedToken.project_id,
+            name: selectedToken.name,
+            can_write: selectedToken.can_write,
+            expires_days: 30,
+        });
+        setIssuedPlain(null);
+        setIssueOpen(true);
+    }, [selectedToken]);
+
+    // 一键续签并连接：旧令牌的明文不可恢复，但用户不该被迫理解这套机制。
+    // 直接生成同项目/同权限的新令牌，存本页明文，并立刻完成握手。
+    const reissueAndConnect = useCallback(async () => {
+        if (!selectedToken || reissuing) return;
+        setReissuing(true);
+        try {
+            const created = isAdmin
+                ? await createMcpToken({
+                    user_id: selectedToken.user_id,
+                    project_id: selectedToken.project_id,
+                    name: selectedToken.name,
+                    can_write: selectedToken.can_write,
+                    expires_days: 30,
+                })
+                : await createMyMcpToken({
+                    project_id: selectedToken.project_id,
+                    name: selectedToken.name,
+                    can_write: selectedToken.can_write,
+                    expires_days: 30,
+                });
+            savePlainToken(created.id, created.token);
+            await loadTokens();
+            setSelectedTokenId(created.id);
+            await connect(created.token);
+            message.success('已续签并连接；新令牌明文只保存在本标签页');
+        } catch (e: any) {
+            message.error(e?.response?.data?.error?.message || '续签失败，请检查项目权限');
+        } finally {
+            setReissuing(false);
+        }
+    }, [selectedToken, reissuing, isAdmin, loadTokens, connect]);
 
     // Copy Input：把当前表单值按 tools/call 的 arguments 复制为 JSON
     const copyInput = useCallback(() => {
@@ -630,7 +706,8 @@ export default function McpConsolePage() {
                                 optionLabelProp="label"
                                 options={tokens.map(t => ({
                                     value: t.id,
-                                    label: `${t.name}（${t.token_hint}）`,
+                                    disabled: tokenState(t) !== '有效',
+                                    label: `${t.name}（${t.token_hint}）${tokenState(t) === '有效' ? '' : ` · ${tokenState(t)}`}`,
                                 }))}
                                 notFoundContent={<span className="text-xs text-[#66738F]">暂无令牌，点击「签发」创建</span>}
                             />
@@ -657,10 +734,19 @@ export default function McpConsolePage() {
                                                 </span>
                                             )}
                                         </span>
-                                        <Tooltip title="撤销该令牌">
-                                            <Button size="small" type="text" danger icon={<DeleteOutlined />}
-                                                className="!px-1" onClick={() => doRevoke(selectedToken.id)} />
-                                        </Tooltip>
+                                        <span className="flex items-center gap-0.5">
+                                            {bearer && (
+                                                <Tooltip title="复制令牌明文（仅本标签页有）">
+                                                    <Button size="small" type="text" icon={<CopyOutlined />}
+                                                        className="!px-1"
+                                                        onClick={() => { navigator.clipboard.writeText(bearer); message.success('已复制令牌'); }} />
+                                                </Tooltip>
+                                            )}
+                                            <Tooltip title="撤销该令牌">
+                                                <Button size="small" type="text" danger icon={<DeleteOutlined />}
+                                                    className="!px-1" onClick={() => doRevoke(selectedToken.id)} />
+                                            </Tooltip>
+                                        </span>
                                     </div>
                                 ) : (
                                     <span className="flex h-full items-center text-[11px] text-[#A9B4C9]">
@@ -674,12 +760,12 @@ export default function McpConsolePage() {
                         <section className="pt-1">
                             <div className="flex gap-2">
                                 {!connected ? (
-                                    <Button type="primary" block icon={<PlayCircleOutlined />} onClick={connect} loading={connecting} disabled={!bearer || connecting}>
+                                    <Button type="primary" block icon={<PlayCircleOutlined />} onClick={() => connect()} loading={connecting} disabled={!bearer || connecting}>
                                         连接
                                     </Button>
                                 ) : (
                                     <>
-                                        <Button block className="tk-soft-btn" icon={<ReloadOutlined />} onClick={connect} loading={connecting} disabled={connecting}>重连</Button>
+                                        <Button block className="tk-soft-btn" icon={<ReloadOutlined />} onClick={() => connect()} loading={connecting} disabled={connecting}>重连</Button>
                                         <Button
                                             block
                                             icon={<DisconnectOutlined />}
@@ -694,25 +780,24 @@ export default function McpConsolePage() {
                             {/* 未选令牌的提示已上移到令牌详情槽位（按钮位置保持稳定），
                                 这里只保留「选了令牌但本页没有明文」这一种需要额外解释的情况 */}
                             {!bearer && selectedTokenId != null && (
-                                <div className="mt-1.5 text-[11px] text-[#8A94AB]">
-                                    该令牌的明文不在本标签页（明文只在签发时显示一次），请重新签发一个令牌
+                                <div className="mt-2 rounded-lg border border-[rgba(242,185,80,0.35)] bg-[rgba(242,185,80,0.10)] px-2.5 py-2 text-[11px] text-[#7A5A12]">
+                                    <div className="font-medium text-[#8A5A00]">这枚令牌以前签发过，本页没有它的密钥</div>
+                                    <div className="mt-0.5 leading-relaxed text-[#8A6A2A]">
+                                        平台只保存哈希，无法恢复明文。点下面按钮会自动生成一枚同项目、同权限的新令牌并直接连接。
+                                    </div>
+                                    <div className="mt-2 flex items-center gap-2">
+                                        <Button size="small" type="primary" loading={reissuing}
+                                                onClick={reissueAndConnect}>
+                                            一键续签并连接
+                                        </Button>
+                                        <Button size="small" type="link" className="!px-0 !text-[11px]"
+                                                onClick={openReissue}>
+                                            手动调整后签发
+                                        </Button>
+                                    </div>
                                 </div>
                             )}
                         </section>
-
-                        {/* 服务端信息卡（连接后展示） */}
-                        {connected && serverInfo && (
-                            <section className="rounded-xl border border-[#DCE7F7] p-3" style={{ background: 'rgba(91, 141, 239, 0.06)' }}>
-                                <div className="flex items-center gap-1.5 min-w-0">
-                                    <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: '#2F62D8' }} />
-                                    <span className="font-mono text-sm text-[#1F2A44] truncate">{serverInfo.name ?? 'mcp-server'}</span>
-                                </div>
-                                <div className="text-[11px] text-[#66738F] mt-1">
-                                    Version {serverInfo.version ?? '-'}
-                                    {protocolVersion && ` · 协议 ${protocolVersion}`}
-                                </div>
-                            </section>
-                        )}
                     </div>
 
                     <div className="border-t border-[#F0F4FB] px-4 py-3 text-[11px] text-[#8A94AB] leading-relaxed">
@@ -857,6 +942,25 @@ export default function McpConsolePage() {
         }
       }
     }`} />
+                                    </div>
+
+                                    <div className="surface-card p-5 space-y-3">
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <div>
+                                                <div className="text-sm font-semibold text-[#1F2A44]">Agent Skill（推荐）</div>
+                                                <div className="text-xs text-[#66738F] mt-1 leading-relaxed">
+                                                    连接后读取 MCP 资源 <span className="font-mono">ontology://skill/ontology-retrieval</span>；
+                                                    或复制完整包 <span className="font-mono">.dsh/skills/ontology-platform-retrieval/</span>（含
+                                                    <span className="font-mono"> scripts/check.py、retrieve.py</span>），
+                                                    harness 配置该 Skill 后即可按统一口径查图谱与检索结果。
+                                                </div>
+                                            </div>
+                                            <Button size="small" icon={<CopyOutlined />}
+                                                onClick={() => { navigator.clipboard.writeText(MCP_SKILL_TEXT); message.success('已复制 Skill'); }}>
+                                                复制 Skill
+                                            </Button>
+                                        </div>
+                                        <CodeBlock title="SKILL.md（给智能体 harness）" code={MCP_SKILL_TEXT} />
                                     </div>
 
                                     <div className="surface-card p-5">

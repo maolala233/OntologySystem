@@ -62,10 +62,12 @@ def sync_project_rows(db: Session, project_id: int, graph_data: dict | None) -> 
     db.query(Entity).filter(Entity.project_id == project_id).delete(synchronize_session=False)
     db.flush()
 
-    # 1) 节点 → entities
+    # 1) 节点 → entities（批量 add + 一次 flush；旧实现逐节点 flush，
+    #    5K 节点=5K 次 DB 往返，是重建行表的主要耗时）
     id_map: dict[str, int] = {}
     class_map: dict[str, bool] = {}
     n_entities = 0
+    node_rows: list[tuple[str, Entity]] = []
     for node in nodes:
         data = _node_data(node)
         node_id = str(node.get("id") or data.get("label") or "")
@@ -83,14 +85,17 @@ def sync_project_rows(db: Session, project_id: int, graph_data: dict | None) -> 
             aliases=data.get("aliases"),
             props=data.get("properties") if isinstance(data.get("properties"), dict) else {},
             confidence=data.get("confidence"),
-            status="auto",
+            status="rejected" if data.get("archived") else "auto",
             is_class_node=is_class,
         )
         db.add(row)
-        db.flush()  # 取自增 id；量级（百~千节点）可接受
-        id_map[node_id] = row.id
+        node_rows.append((node_id, row))
         class_map[node_id] = is_class
         n_entities += 1
+    if node_rows:
+        db.flush()  # 一次 flush 取自增 id（量级百~万节点）
+        for node_id, row in node_rows:
+            id_map[node_id] = row.id
 
     # 2) 边 → relations（端点缺失的边跳过并计数，不产生悬空 FK）
     n_relations = 0
@@ -122,19 +127,22 @@ def sync_project_rows(db: Session, project_id: int, graph_data: dict | None) -> 
             object_id=o_id,
             props={k: v for k, v in data.items() if k not in ("label", "relation", "confidence")},
             confidence=conf,
+            status="rejected" if data.get("archived") else "auto",
             is_class_edge=class_map.get(str(edge.get("source")), False)
             and class_map.get(str(edge.get("target")), False),
         )
         db.add(row)
-        db.flush()  # 取自增 id，关系溯源 FK 需要
         relation_prov.append((row, data))
         n_relations += 1
+    if relation_prov:
+        db.flush()  # 一次 flush 取关系自增 id（关系溯源 FK 需要）
 
     # 3) 溯源：实体级 + 关系级。文档 id 优先取节点自带 source_document_id（抽取时记录），
     #    缺失时按文件名回查；char_start/end 为切片内证据偏移（locate_quote 定位，M3-6）。
     doc_by_name = _doc_index(db, project_id)
     n_prov = 0
     skipped_prov = 0
+    prov_rows: list[ProvenanceRecord] = []
 
     def _prov_target(data: dict, target_type: str, target_id: int) -> None:
         nonlocal n_prov, skipped_prov
@@ -150,7 +158,7 @@ def sync_project_rows(db: Session, project_id: int, graph_data: dict | None) -> 
         chunk_index = chunk_no if isinstance(chunk_no, int) else data.get("source_chunk_index")
         cs = data.get("source_char_start")
         ce = data.get("source_char_end")
-        db.add(ProvenanceRecord(
+        prov_rows.append(ProvenanceRecord(
             project_id=project_id,
             target_type=target_type,
             target_id=target_id,
@@ -175,7 +183,9 @@ def sync_project_rows(db: Session, project_id: int, graph_data: dict | None) -> 
         if data.get("source_quote"):
             _prov_target(data, "relation", rel_row.id)
 
-    db.flush()
+    if prov_rows:
+        db.add_all(prov_rows)
+        db.flush()
     return {"entities": n_entities, "relations": n_relations,
             "provenance": n_prov, "skipped_edges": skipped_edges,
             "skipped_prov": skipped_prov}

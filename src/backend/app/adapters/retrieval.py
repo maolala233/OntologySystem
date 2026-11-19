@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -182,6 +183,8 @@ def _retrieval_trace(sources: list[RetrievedSource], question: str) -> list[dict
     for i, s in enumerate(sources):
         groups.setdefault(s.ref_type, []).append(i + 1)
     step_def = [
+        ("tool_query", "查工具 · query_facts",
+         "确定性清单/计数查询，返回 total 与翻页游标"),
         ("graph_node", "查图谱 · 类与实例清单", "从本体图谱查到类锚定清单与全图分布概览"),
         ("axiom", "查规则/公理 · 结构约束", "从本体公理查到定义域/值域/互斥等约束"),
         ("graph_edge", "查图谱 · 关系事实", "从图谱关系边查到实例间的关联事实"),
@@ -194,7 +197,8 @@ def _retrieval_trace(sources: list[RetrievedSource], question: str) -> list[dict
         ids = groups.pop(ref_type, [])
         if not ids:
             continue
-        sample = str(sources[ids[0] - 1].quote or "")[:80]
+        # 工具步骤要把 query_facts(...) 的调用参数/总数露出来；普通步骤 80 字够摘要
+        sample = str(sources[ids[0] - 1].quote or "")[:160 if ref_type == "tool_query" else 80]
         trace.append({"stage": stage, "what": what, "count": len(ids),
                       "refs": ids, "sample": sample})
     for rt, ids in groups.items():   # 未登记的通道兜底展示（不丢）
@@ -259,7 +263,8 @@ def _prop_distribution_sources(db: Session, query: RetrievalQuery) -> list[Retri
                     vals = []
                     for vv, cc in sorted(cnt.items(), key=lambda x: -x[1])[:8]:
                         names = "、".join(members.get(vv, [])[:60])
-                        more = f"…等{cc}个" if cc > len(members.get(vv, [])) else ""
+                        more = (f"（共{cc}个，完整清单见图谱）"
+                                if cc > len(members.get(vv, [])) else "")
                         vals.append(f"{vv} {cc} 个（{names}{more}）")
                     dist_parts.append(f"「{k}」" + "；".join(vals))
             if dist_parts:
@@ -314,13 +319,18 @@ def _class_inventory_sources(db: Session, query: RetrievalQuery,
             logger.warning(f"[retrieval] 类 {label} 后缀族查询失败：{e}")
         if family_labels:
             try:
+                from app.services.class_membership import membership_ids
+
+                family_ids: set[int] = set()
+                for _lab in [label] + family_labels:
+                    family_ids |= membership_ids(db, query.project_id, _lab)
                 fam_insts = (
                     db.query(Entity)
                     .filter(
                         Entity.project_id == query.project_id,
                         Entity.is_class_node.is_(False),
                         Entity.status != "rejected",
-                        Entity.class_label.in_([label] + family_labels),
+                        Entity.id.in_(family_ids or [-1]),
                     )
                     .all()
                 )
@@ -336,14 +346,16 @@ def _class_inventory_sources(db: Session, query: RetrievalQuery,
                     by_key[k] = e
                 distinct = list(by_key.values())
                 # 锚定类自身的实例数（用于族增益判断）：族只比单类多零头则不注入
-                anchor_only = sum(1 for e in distinct if _nl(e.class_label) == _nl(label))
+                anchor_only = sum(1 for e in distinct
+                                  if _nl(e.class_label) == _nl(label))
                 if len(distinct) > anchor_only:
                     fam_cnt = "、".join(
-                        f"{lab} {sum(1 for e in fam_insts if e.class_label == lab)} 个"
+                        f"{lab} {len(membership_ids(db, query.project_id, lab))} 个"
                         for lab in ([label] + family_labels)
-                        if any(e.class_label == lab for e in fam_insts))
+                        if membership_ids(db, query.project_id, lab))
                     names = "、".join(e.label for e in distinct[:40])
-                    more = "…等" if len(distinct) > 40 else ""
+                    more = (f"（共{len(distinct)}个，完整清单见图谱）"
+                            if len(distinct) > 40 else "")
                     multi_part = f"，其中 {multi_cls} 个实例同时挂在多类" if multi_cls else ""
                     out.append(RetrievedSource(
                         doc_file="本体图谱",
@@ -356,13 +368,16 @@ def _class_inventory_sources(db: Session, query: RetrievalQuery,
             except Exception as e:  # noqa: BLE001 —— 族合并失败回落单类清单
                 logger.warning(f"[retrieval] 类 {label} 类族合并失败：{e}")
         try:
+            from app.services.class_membership import membership_ids
+
+            _ids = membership_ids(db, query.project_id, label)
             insts = (
                 db.query(Entity)
                 .filter(
                     Entity.project_id == query.project_id,
                     Entity.is_class_node.is_(False),
                     Entity.status != "rejected",
-                    Entity.class_label == label,
+                    Entity.id.in_(_ids or [-1]),
                 )
                 .all()
             )
@@ -440,7 +455,8 @@ def _class_inventory_sources(db: Session, query: RetrievalQuery,
                         vals = []
                         for vv, cc in sorted(cnt.items(), key=lambda x: -x[1])[:8]:
                             names = "、".join(members.get(vv, [])[:40])
-                            more = f"…等{cc}个" if cc > len(members.get(vv, [])) else ""
+                            more = (f"（共{cc}个，完整清单见图谱）"
+                                    if cc > len(members.get(vv, [])) else "")
                             vals.append(f"{vv} {cc} 个（{names}{more}）")
                         dist_parts.append(f"「{k}」" + "；".join(vals))
                     if dist_parts:
@@ -864,21 +880,37 @@ def _inference_sources(query: RetrievalQuery, db: Session) -> list[RetrievedSour
 
 
 
-def _group_edge_facts(facts: list[dict]) -> tuple[list[list[dict]], list[dict]]:
-    """图事实按 (主体,谓词) 分组：≥2 条的组用于聚合清单引用，散条保持逐条引用。
+def _group_edge_facts(facts: list[dict]) -> tuple[list[dict], list[dict]]:
+    """图事实聚合：正向 (主体,谓词) 或反向 (宾语,谓词) 达到 ≥2 条即合并。
 
     纯函数（可测）：输入 _graph_expand 产物，返回 (聚合组列表, 单条事实列表)。
+    反向聚合是 2026-11-19 新增：接口字段表是“字段 —属于→ 接口”，按正向分组
+    每组只有 1 条，70 个字段全部落到散条后被 MAX_GRAPH_FACTS 挤掉，问答
+    答不出“C2504051 的输入项”。反向聚合把同一接口的字段合成一条清单引用。
     """
-    groups: dict[tuple[str, str], list[dict]] = {}
+    fwd: dict[tuple[str, str], list[dict]] = {}
+    rev: dict[tuple[str, str], list[dict]] = {}
     for f in facts:
-        groups.setdefault((str(f["subject"]), str(f["predicate"])), []).append(f)
-    agg: list[list[dict]] = []
-    singles: list[dict] = []
-    for fs in groups.values():
+        fwd.setdefault((str(f["subject"]), str(f["predicate"])), []).append(f)
+        rev.setdefault((str(f["object"]), str(f["predicate"])), []).append(f)
+    agg: list[dict] = []
+    used: set[int] = set()
+
+    def _add(fs: list[dict], reverse: bool) -> None:
+        if not fs:
+            return
+        agg.append({"facts": fs, "reverse": reverse})
+        used.update(id(x) for x in fs)
+
+    # 正向组优先（既有语义：主体—谓词→对象清单）
+    for fs in fwd.values():
         if len(fs) >= 2:
-            agg.append(fs)
-        else:
-            singles.append(fs[0])
+            _add(fs, False)
+    # 反向组：只收未被正向组消费的、≥3 条的大组（字段/成员清单）
+    for fs in rev.values():
+        if len(fs) >= 3 and any(id(x) not in used for x in fs):
+            _add(fs, True)
+    singles = [f for f in facts if id(f) not in used]
     return agg, singles
 
 
@@ -963,18 +995,25 @@ def retrieve(query: RetrievalQuery, db: Session | None = None) -> list[Retrieved
             edge_sources: list[RetrievedSource] = []
             # 聚合引用排在散条前面：融合按 score 排序（同分稳定保序），聚合清单
             # 是枚举问题的决定性证据，必须先进 MAX_GRAPH_FACTS 名额
-            for fs in agg_groups:
+            for group in agg_groups:
+                fs = group["facts"]
+                reverse = bool(group.get("reverse"))
                 doc_file, doc_id = _doc_of([i for f in fs for i in f["entity_ids"]])
-                objs = "、".join(str(f["object"]) for f in fs[:40])
-                more = "…等" if len(fs) > 40 else ""
+                names = "、".join(str(f["subject"] if reverse else f["object"])
+                                 for f in fs[:200])
+                more = (f"（共{len(fs)}个，完整清单见图谱）" if len(fs) > 200 else "")
                 first_p = next((prov.get(i) for i in fs[0]["entity_ids"] if prov.get(i)), None)
                 ev = (first_p.evidence_text[:80] if first_p and first_p.evidence_text
                       else f"{fs[0]['subject']} —{fs[0]['predicate']}→ {fs[0]['object']}")
+                if reverse:
+                    desc = (f"{fs[0]['object']} ←[{fs[0]['predicate']}]— 共 {len(fs)} 个主体："
+                            f"{names}{more}（证据样例：{ev}）")
+                else:
+                    desc = (f"{fs[0]['subject']} —[{fs[0]['predicate']}]→ 共 {len(fs)} 个对象："
+                            f"{names}{more}（证据样例：{ev}）")
                 edge_sources.append(RetrievedSource(
                     doc_file=doc_file,
-                    quote=_quote_clip(
-                        f"{fs[0]['subject']} —[{fs[0]['predicate']}]→ 共 {len(fs)} 个对象：{objs}{more}"
-                        f"（证据样例：{ev}）"),
+                    quote=_quote_clip(desc, cap=4000),
                     char_start=first_p.char_start if first_p else None,
                     char_end=first_p.char_end if first_p else None,
                     ref_type="graph_edge",
@@ -1047,10 +1086,14 @@ _QA_SYSTEM_PROMPT = """你是一位熟悉这套业务系统的数据分析同事
 1. 只根据上下文回答，不编造；上下文没有就直说没有，并给出最接近的相关信息，不要空泛拒答。
 2. 引用标注 [1][2][3] 放在相关语句的末尾。
 3. 说业务人话：不出现"实例/类节点/锚定/通道/概览引用"这类实现词汇；类名可以直接用，但句子要像人在解释数据。
+4. 引用里写"共 N 个/共 N 项"但只列出其中一部分时，**必须明确说出总数**，并说明"当前列出的是其中 M 个/示例"，不得把已列项当成全集；需要完整清单时提示到图谱或原始文档查看。
+5. 来源标注为"本体图谱 · query_facts（确定性查询）"的引用是工具查出的全集/计数，**优先于**其它图谱摘要；清单/字段题必须按它的 items 逐项或按业务分组列全（total > 200 时列前 50 并说明剩余），不得用"等"省略，也不得说"工具没给/去图谱查"。
 
 【计数与构成】（仅计数、统计、构成类问题适用）
 - 数字要能对上账：引用里带"来源：文档×数量"时，按"总共 N，其中 A 文档 X 个、B 文档 Y 个"讲清楚。
 - 引用给出"类族去重口径"时以去重总数为准，相近类的数量可一并提及并说明差别；"某流程涉及哪些 X"以对象清单型引用（如 X —[调用]→ 30 个对象）的全集计数，不要数引用条数。
+- 长清单被上下文预算截断时，回答"共 N 个"并列出可见部分；不要把"当前可见的 M 个"说成"全部 N 个"。
+- 按属性分组计数时，各组之和必须等于总数；属性缺失的实例归入"未标注"单列，不得漏掉这一项。
 
 【语义推理引用】
 来自公理/规则推导的结论可用于归属、层级类问题，表述成"根据语义推导"，和文档原文区分开。
@@ -1077,6 +1120,88 @@ def _confidence(sources: list[RetrievedSource]) -> float:
     return round(min(0.95, sum(s.score for s in top) / len(top) * 0.9 + 0.05), 3)
 
 
+def _tool_observations_to_sources(observations: list[dict]) -> list[RetrievedSource]:
+    """query_facts 工具结果 → 一条高信任图谱引用（带 total/翻页提示）。"""
+    out: list[RetrievedSource] = []
+    seen: set[str] = set()
+    for obs in observations or []:
+        res = obs.get("result") or {}
+        if not isinstance(res, dict) or res.get("error"):
+            continue
+        total = int(res.get("total") or 0)
+        returned = int(res.get("returned") or 0)
+        items = res.get("items") or []
+        if total <= 0 or not items:
+            continue
+        args = obs.get("args") or {}
+        key = json.dumps({"args": args, "total": total, "returned": returned},
+                         ensure_ascii=False, sort_keys=True, default=str)
+        if key in seen:
+            continue
+        seen.add(key)
+        lines: list[str] = []
+        for x in items[:300]:
+            if isinstance(x, dict) and "predicate" in x:
+                lines.append(f"{x.get('subject') or '?'} —[{x.get('predicate')}]→ "
+                             f"{x.get('object') or '?'}")
+            elif isinstance(x, dict):
+                props = x.get("props") or {}
+                prop_txt = "；".join(f"{k}={v}" for k, v in list(props.items())[:8])
+                lines.append(f"{x.get('label') or '?'}（{x.get('class_label') or ''}）"
+                             + (f"：{prop_txt}" if prop_txt else ""))
+        more = ""
+        if res.get("has_more"):
+            more = (f"；还有 {total - returned} 条未展示，next_offset="
+                    f"{res.get('next_offset')}")
+        quote = (f"query_facts({json.dumps(args, ensure_ascii=False, default=str)}) "
+                 f"共 {total} 条，本页 {returned} 条{more}。\n" + "\n".join(lines))
+        if len(quote) > 12000:
+            quote = quote[:12000] + "\n（工具结果过长已截断，按 next_offset 翻页取余量）"
+        out.append(RetrievedSource(
+            doc_file="本体图谱 · query_facts（确定性查询）",
+            quote=quote,
+            ref_type="tool_query",
+            score=0.995,
+        ))
+    return out
+
+
+def _augment_with_qa_tools(query: RetrievalQuery, sources: list[RetrievedSource],
+                           db: Session | None, llm: LLMClient | None
+                           ) -> tuple[list[RetrievedSource], list[dict], int, list[dict]]:
+    """清单/计数类问题先走 query_facts 工具；失败静默回落原检索。"""
+    if db is None or llm is None or not query.use_graph:
+        return sources, [], 0, []
+    try:
+        from app.services.qa_tool_loop import run_qa_tool_loop, should_use_tools
+
+        if not should_use_tools(query.question):
+            return sources, [], 0, []
+        info = run_qa_tool_loop(db, query.project_id, query.question, llm)
+        observations = info.get("observations") or []
+        tool_sources = _tool_observations_to_sources(observations)
+        tool_meta: list[dict] = []
+        for obs in observations:
+            res = obs.get("result") or {}
+            if int(res.get("total") or 0) <= 0:
+                continue
+            tool_meta.append({
+                "args": obs.get("args") or {},
+                "total": int(res.get("total") or 0),
+                "returned": int(res.get("returned") or 0),
+                "has_more": bool(res.get("has_more")),
+            })
+        if not tool_sources:
+            return sources, info.get("calls") or [], 0, tool_meta
+        # 工具结果是确定性全集，放最前：模型先看到 total/items，再读普通检索引用，
+        # 避免被后面的类清单/边引用带偏（C2504051 实测工具在第 11 条时模型只说“去图谱查”）。
+        return (tool_sources + sources, info.get("calls") or [],
+                len(tool_sources), tool_meta)
+    except Exception as e:  # noqa: BLE001 —— 工具失败不阻断问答
+        logger.warning(f"[retrieval] QA 工具查询失败，回落原检索：{e}")
+        return sources, [], 0, []
+
+
 def query_with_reasoning(query: RetrievalQuery, db: Session | None = None,
                          llm: LLMClient | None = None,
                          system_prompt: str | None = None,
@@ -1088,6 +1213,8 @@ def query_with_reasoning(query: RetrievalQuery, db: Session | None = None,
     """
     t0 = time.time()
     sources = retrieve(query, db=db)
+    sources, tool_calls, tool_source_count, tool_meta = _augment_with_qa_tools(
+        query, sources, db, llm)
     # 推理路径 = 真实检索过程（通道构成+锚定类），不再是泛化描述
     inv = [s for s in sources if s.ref_type == "graph_node"]
     axm = [s for s in sources if s.ref_type == "axiom"]
@@ -1095,6 +1222,12 @@ def query_with_reasoning(query: RetrievalQuery, db: Session | None = None,
     txt = [s for s in sources if s.ref_type not in ("graph_node", "graph_edge", "axiom")]
     anchored = [m.group(1) for s in inv if (m := re.match(r"「(.+?)」类共", s.quote))]
     reasoning: list[str] = []
+    if tool_calls or tool_source_count:
+        qf = [c for c in tool_calls if c.get("phase") == "end"
+              and c.get("tool") == "query_facts"]
+        reasoning.append(f"工具 query_facts 调用 {max(len(qf), 1 if tool_source_count else 0)} 次，"
+                         f"补充确定性清单引用 {tool_source_count} 条"
+                         f"（total/next_offset 可用于翻页）")
     if anchored:
         reasoning.append(f"类锚定命中：{'、'.join(anchored[:4])}（实例清单/分布概览 {len(inv)} 条）")
     else:
@@ -1252,9 +1385,12 @@ def iter_answer(query: RetrievalQuery, db: Session | None = None,
     """
     t0 = time.time()
     sources = retrieve(query, db=db)
+    sources, tool_calls, tool_source_count, tool_meta = _augment_with_qa_tools(
+        query, sources, db, llm)
     yield ("meta", {"source_count": len(sources)})
     # 检索过程先行：LLM 生成前就把步骤卡发给前端（用户先看到"怎么查"，再看到答案）
-    yield ("trace", _retrieval_trace(sources, query.question))
+    trace = _retrieval_trace(sources, query.question)
+    yield ("trace", trace)
     if not sources or llm is None:
         result = query_with_reasoning(query, db=db, llm=llm)
         result.failed = not result.sources  # O3-B16：空引用问答计失败轨迹

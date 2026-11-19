@@ -23,6 +23,7 @@ export const REF_TYPE_LABEL: Record<string, string> = {
     vector_chunk: '向量切片',
     graph_edge: '图关系',
     graph_node: '图节点',
+    tool_query: '工具查询',
     keyword_chunk: '关键词切片',
     inference: '语义推理',
     axiom: '本体公理',
@@ -34,6 +35,7 @@ const REF_TYPE_TONE: Record<string, 'brand' | 'violet'> = {
     keyword_chunk: 'brand',
     graph_edge: 'brand',
     graph_node: 'brand',
+    tool_query: 'brand',
     inference: 'violet',
     axiom: 'violet',
 };
@@ -43,7 +45,9 @@ function readableList(rest: string): { head: string; tailNote: string } {
     const sep = rest.includes('；') ? '；' : '、';
     const items = rest.split(sep).map(s => s.trim()).filter(Boolean);
     if (items.length <= 12) return { head: rest, tailNote: '' };
-    return { head: items.slice(0, 12).join(sep), tailNote: `…等 ${items.length} 项` };
+    // 不用“…”隐去数据：折叠态只列前 12 项，但明确告知总数并提供“查看完整清单”，
+    // 展开后 cls.rest 渲染全量（2026-11-19 用户反馈“清单被…等截断”）。
+    return { head: items.slice(0, 12).join(sep), tailNote: `（共 ${items.length} 项，展开查看完整清单）` };
 }
 
 export default function SourceCard({ index, source, highlighted, expandAll }: {

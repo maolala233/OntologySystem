@@ -70,7 +70,7 @@ const BuildResultsPanel: React.FC<Props> = ({ projectId, summary, checks, publis
   // 右角给一枚同色淡底图标块（与「我的项目」统计卡同一件装饰），把右侧那片空白填掉
   const statCards = [
     { title: '类', value: summary.schema.classes_total, c: '#6D3FD8', t: 'rgba(139,92,246,0.16)', icon: <AppstoreOutlined /> },
-    { title: '关系', value: summary.schema.object_properties_total, c: '#1B87AD', t: 'rgba(27,135,173,0.14)', icon: <PartitionOutlined /> },
+    { title: '关系', value: summary.relation_stats?.total_edges ?? summary.relations_total, c: '#1B87AD', t: 'rgba(27,135,173,0.14)', icon: <PartitionOutlined /> },
     { title: '实例', value: summary.instances.total, c: '#2F62D8', t: 'rgba(91,141,239,0.16)', icon: <ClusterOutlined /> },
     { title: '公理', value: summary.axioms.total, c: '#B8790F', t: 'rgba(242,185,80,0.24)', icon: <SafetyCertificateOutlined /> },
   ];
@@ -155,14 +155,9 @@ const BuildResultsPanel: React.FC<Props> = ({ projectId, summary, checks, publis
                       : '0 0 6px rgba(242,104,92,0.75)',
                   }} />
             {checkOk
-              ? '机检通过，无硬伤'
-              : `机检 ${checks.error_count} 处硬伤（发布会被拦截）`}
+              ? '机检通过'
+              : `机检 ${checks.error_count} 处问题（发布会被拦截）`}
           </span>
-          {checks.warning_count > 0 && (
-            <span className="text-[11.5px] text-[#A3ADC2]">
-              另有 {checks.warning_count} 处提示
-            </span>
-          )}
         </div>
       )}
       <style>{`

@@ -257,17 +257,30 @@ def run_selfcheck_repair(project_id: int, db: Optional[Session] = None,
                      if c.get("label") and c["label"] not in _inst_cls
                      and c["label"] not in _ref]
             if _dead:
+                # 2026-11-19 用户要求“构建结果与前端图谱不能丢类”：不再从
+                # TBox/画布删除零引用类，改为标记 isolated/zero_reference，
+                # 让它们继续在 schema、graph_data.nodes 中可见；前端可自行
+                # 用该标记做弱化展示，但绝不静默消失。
                 _dead_labels = {c["label"] for c in _dead}
-                schema0 = gd0.get("schema") or {}
-                schema0["classes"] = [c for c in _cls0 if c.get("label") not in _dead_labels]
-                gd0["schema"] = schema0
-                gd0["nodes"] = [n for n in gd0.get("nodes") or []
-                                if not ((n.get("data") or {}).get("type") in ("Class", "owl:Class")
-                                        and (n.get("data") or {}).get("label") in _dead_labels)]
+                for c in _cls0:
+                    if c.get("label") in _dead_labels:
+                        c["isolated"] = True
+                        c["zero_reference"] = True
+                for n in gd0.get("nodes") or []:
+                    d = n.get("data") or {}
+                    if (d.get("type") in ("Class", "owl:Class")
+                            and d.get("label") in _dead_labels):
+                        d["isolated"] = True
+                        d["zero_reference"] = True
+                        n["data"] = d
                 proj.graph_data = gd0
                 flag_modified(proj, "graph_data")
-                logger.info(f"[自检] 确定性死类清理：移除零引用类 {len(_dead)} 个 "
-                            f"（{_dead_labels and ', '.join(sorted(_dead_labels)[:8])}…）")
+                try:
+                    db.commit()  # 标记也要落盘（否则后续无提交点时标记丢失）
+                except Exception:  # noqa: BLE001
+                    db.rollback()
+                logger.info(f"[自检] 零引用类保留并标记 {len(_dead)} 个 "
+                            f"（{', '.join(sorted(_dead_labels)[:8])}…）")
         except Exception as e:
             logger.warning(f"[自检] 死类清理失败（跳过）: {e}")
         proj = db.query(Project).filter(Project.id == project_id).first()

@@ -52,24 +52,20 @@ def _humanize_seconds(s: Optional[int]) -> str:
     return f"约 {minutes // 60} 小时 {minutes % 60} 分"
 
 
-def _redis_url() -> str:
-    from app.services.env_config_service import redis_url
-    return redis_url()
+def _redis():
+    from app.services.env_config_service import get_redis_client
+    return get_redis_client(decode_responses=True)
 
 
 def request_cancel(task_id: str) -> bool:
     """API 侧取消：写取消标记（worker 在 chunk 间隙检查）+ 软 revoke。"""
-    import redis
-
-    r = redis.Redis.from_url(_redis_url(), socket_connect_timeout=2)
+    r = _redis()
     r.set(_CANCEL_KEY.format(task_id=task_id), "1", ex=24 * 3600)
     return True
 
 
 def is_cancelled(task_id: str) -> bool:
-    import redis
-
-    r = redis.Redis.from_url(_redis_url(), socket_connect_timeout=2)
+    r = _redis()
     if r.get(_CANCEL_KEY.format(task_id=task_id)):
         return True
     # 子任务（{主任务id}:{阶段/子键}）兜底认主任务的取消键：cancel 端点给子
@@ -497,6 +493,8 @@ def _tbox_from_graph(gd: dict) -> dict:
         return {}
     classes = {}
     class_props = {}
+    class_parents = {}
+    class_definitions = {}
     # schema 级 datatype_properties 挂到类：UI 类面板属性即来源于此（domains 引用类 id），
     # 实例抽取 prompt 的【各类属性清单】必须与 UI 同源，否则模型只能自行发明属性名
     dtype_by_cls_id: dict[str, list[dict]] = {}
@@ -515,6 +513,19 @@ def _tbox_from_graph(gd: dict) -> dict:
         if not label:
             continue
         classes[label] = list((c or {}).get("aliases") or [])
+        parents = []
+        for p in ((c or {}).get("parent_classes") or []):
+            if str(p or "").strip():
+                parents.append(str(p).strip())
+        for key in ("parent", "sub_class_of"):
+            p = str((c or {}).get(key) or "").strip()
+            if p and p not in parents:
+                parents.append(p)
+        if parents:
+            class_parents[label] = parents
+        definition = str((c or {}).get("definition") or "").strip()
+        if definition:
+            class_definitions[label] = definition[:160]
         props = []
         for p in (c or {}).get("properties") or []:
             if not str((p or {}).get("name") or "").strip():
@@ -549,6 +560,7 @@ def _tbox_from_graph(gd: dict) -> dict:
                  if str((dp or {}).get("label") or (dp or {}).get("name") or "").strip()
                  and not (dp or {}).get("domains")]
     return {"classes": classes, "object_properties": ops, "class_properties": class_props,
+            "class_parents": class_parents, "class_definitions": class_definitions,
             "suggested_properties": suggested[:40]}
 
 

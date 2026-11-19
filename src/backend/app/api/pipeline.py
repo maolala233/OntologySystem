@@ -242,14 +242,12 @@ async def pipeline_events(
     import asyncio
     import json as _json
 
-    import redis as _redis
-
     from app.core.deps import require_project_role
     from app.infrastructure.database import SessionLocal
-    from app.services.env_config_service import redis_url
+    from app.services.env_config_service import get_redis_client
     from app.tasks.progress import get_task_progress
 
-    client = _redis.Redis.from_url(redis_url(), socket_connect_timeout=2)
+    client = get_redis_client(decode_responses=True)
     raw = client.get(f"sse:ticket:{ticket}")
     if not raw:
         raise APIError("SSE ticket 无效或已过期", code="TICKET_INVALID", http_status=401)
@@ -417,7 +415,10 @@ def build_summary_endpoint(
 
     gd = proj.graph_data if isinstance(proj.graph_data, dict) else {}
     schema = gd.get("schema") if isinstance(gd.get("schema"), dict) else {}
-    classes = [c for c in schema.get("classes") or [] if isinstance(c, dict)]
+    _archived_labels = {str(c.get("label")) for c in (schema.get("archived_classes") or [])
+                        if isinstance(c, dict)}
+    classes = [c for c in schema.get("classes") or []
+               if isinstance(c, dict) and str(c.get("label")) not in _archived_labels]
     ops = [o for o in schema.get("object_properties") or [] if isinstance(o, dict)]
     dprops = [d for d in schema.get("datatype_properties") or [] if isinstance(d, dict)]
 
@@ -427,13 +428,92 @@ def build_summary_endpoint(
         Entity.status != "merged").scalar() or 0
     rel_total = db.query(func_count()).filter(
         Relation.project_id == project_id).scalar() or 0
-    # 按类分组的实例计数（结果页分组预览）
-    by_class_rows = (db.query(Entity.class_label, sa_func.count())
-                     .filter(Entity.project_id == project_id,
-                             Entity.is_class_node.is_(False),
-                             Entity.status != "merged")
-                     .group_by(Entity.class_label).all())
-    by_class = {lbl: int(c) for lbl, c in by_class_rows}
+    # 关系口径拆分（2026-11-19）：构建结果卡的“关系”此前取 schema.object_properties
+    # （TBox 关系类型=161），图谱页的“关系”取 Relation 总行数/边数（含 instance_of/
+    # subclass_of/类间关系=3529），两个数字必然对不上。这里一次算清三种口径，
+    # 前端按“事实关系 / 关系类型 / 总边”分别展示，不再拿不同东西同名。
+    _struct_preds = ("instance_of", "subclass_of")
+    fact_relation_total = (db.query(func_count())
+                           .filter(Relation.project_id == project_id,
+                                   Relation.status.notin_(("rejected",)),
+                                   Relation.is_class_edge.is_(False),
+                                   ~Relation.predicate.in_(_struct_preds))
+                           .scalar() or 0)
+    type_edge_total = (db.query(func_count())
+                       .filter(Relation.project_id == project_id,
+                               Relation.predicate == "instance_of")
+                       .scalar() or 0)
+    hierarchy_edge_total = (db.query(func_count())
+                            .filter(Relation.project_id == project_id,
+                                    Relation.predicate == "subclass_of")
+                            .scalar() or 0)
+    tbox_relation_edge_total = (db.query(func_count())
+                                .filter(Relation.project_id == project_id,
+                                        Relation.is_class_edge.is_(True),
+                                        Relation.predicate != "subclass_of")
+                                .scalar() or 0)
+    relation_stats = {
+        "relation_types": len(ops),
+        "fact_relations": int(fact_relation_total),
+        "tbox_relation_edges": int(tbox_relation_edge_total),
+        "object_property_edges": int(fact_relation_total + tbox_relation_edge_total),
+        "type_edges": int(type_edge_total),
+        "hierarchy_edges": int(hierarchy_edge_total),
+        "total_edges": int(rel_total),
+    }
+
+    # 解析质量报告（2026-11-19）：解析阶段的体检结果进入构建结果页。
+    # 新解析写入首切片 meta；旧数据没有 meta 时按切片文本即时体检，保证存量项目也能看。
+    from app.infrastructure.database import DocumentChunk, UploadedDocument
+    from app.services.document_pipeline import assess_parse_quality
+
+    parse_docs: list[dict] = []
+    grade_counts = {"high": 0, "medium": 0, "low": 0}
+    docs = (db.query(UploadedDocument)
+            .filter(UploadedDocument.project_id == project_id,
+                    UploadedDocument.deleted_at.is_(None))
+            .order_by(UploadedDocument.id).all())
+    for doc in docs:
+        chunks = (db.query(DocumentChunk)
+                  .filter(DocumentChunk.document_id == doc.id)
+                  .order_by(DocumentChunk.chunk_index).all())
+        q = None
+        for c in chunks:
+            meta = c.meta if isinstance(c.meta, dict) else {}
+            if isinstance(meta.get("parse_quality"), dict):
+                q = meta["parse_quality"]
+                break
+        if q is None:
+            q = assess_parse_quality(
+                doc.text_content or "\n".join((c.text or "") for c in chunks), chunks)
+        grade = str(q.get("grade") or "low")
+        grade_counts[grade] = grade_counts.get(grade, 0) + 1
+        parse_docs.append({
+            "document_id": doc.id, "filename": doc.filename,
+            "parse_status": doc.parse_status, "backend": doc.parse_backend,
+            "grade": grade,
+            "chars": int(q.get("chars") or 0),
+            "lines": int(q.get("lines") or 0),
+            "chunks": int(q.get("chunks") or len(chunks)),
+            "table_lines": int(q.get("table_lines") or 0),
+            "heading_lines": int(q.get("heading_lines") or 0),
+            "empty_chunks": int(q.get("empty_chunks") or 0),
+            "cjk_ratio": q.get("cjk_ratio"),
+            "avg_chunk_chars": q.get("avg_chunk_chars"),
+        })
+    parse_quality = {
+        "total": len(parse_docs), "grades": grade_counts,
+        "low_count": grade_counts.get("low", 0),
+        "medium_count": grade_counts.get("medium", 0),
+        "high_count": grade_counts.get("high", 0),
+        "table_lines": sum(d["table_lines"] for d in parse_docs),
+        "empty_chunks": sum(d["empty_chunks"] for d in parse_docs),
+        "documents": parse_docs,
+    }
+    # 按类分组的实例计数（结果页分组预览）：多类成员按 instance_of 边去重计数
+    from app.services.class_membership import class_distribution
+
+    by_class = class_distribution(db, project_id)
 
     axioms = list_axioms(proj)
     reviews = _reviews_summary(db, project_id)
@@ -489,6 +569,8 @@ def build_summary_endpoint(
     summary_out = {
         "schema": {
             "classes_total": len(classes),
+            "archived_total": len(schema.get("archived_classes") or []),
+            "quality": schema.get("quality"),
             "object_properties_total": len(ops),
             "datatype_properties_total": len(dprops),
             "classes": [{"label": c.get("label"),
@@ -517,6 +599,8 @@ def build_summary_endpoint(
                                                  if ent_index.get(r.object_id) else "")}
                                for r in rel_rows],
         "relations_total": int(rel_total),
+        "relation_stats": relation_stats,
+        "parse_quality": parse_quality,
         "axioms": {"total": len(axioms), "items": axioms[:100]},
         "reviews": reviews,
         "checks": checks.summary(),

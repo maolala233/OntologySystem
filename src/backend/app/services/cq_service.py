@@ -4,13 +4,18 @@
 from __future__ import annotations
 
 import datetime
+import hashlib
+import json
 import logging
 from typing import Any, Optional
 
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.adapters.retrieval import RetrievalQuery, retrieve as default_retrieve
-from app.infrastructure.database import CompetencyQuestion, CqEvaluation
+from app.infrastructure.database import (
+    CompetencyQuestion, CqEvaluation, Entity, Project, Relation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -194,6 +199,44 @@ def _default_sparql_exec(sparql: str, project_id: int) -> dict:
         # 再开短连接会撞自己的锁（"lock hold by current process"）
         return oxigraph_sink.query_sparql(sparql, project_id, 50)
     return oxigraph_sink.query_sparql_standalone(sparql, project_id=project_id, limit=50)
+
+
+def cq_eval_fingerprint(db: Session, project_id: int) -> str:
+    """图谱规模 + 类数 + CQ 问题/模板指纹；相同则复用上次评测。"""
+    proj = db.query(Project).filter(Project.id == project_id).first()
+    schema = ((proj.graph_data or {}).get("schema") or {}) if proj else {}
+    cqs = list_cqs(db, project_id, enabled_only=True)
+    data = {
+        "entities": db.query(Entity).filter(Entity.project_id == project_id).count(),
+        "relations": db.query(Relation).filter(Relation.project_id == project_id).count(),
+        "classes": len(schema.get("classes") or []),
+        "cqs": [[str(c.question or ""), str(getattr(c, "sparql", "") or "")]
+                for c in cqs],
+    }
+    return hashlib.sha256(json.dumps(data, ensure_ascii=False, sort_keys=True)
+                          .encode("utf-8")).hexdigest()
+
+
+def cached_cq_evaluation(db: Session, project_id: int, fingerprint: str) -> CqEvaluation | None:
+    proj = db.query(Project).filter(Project.id == project_id).first()
+    gd = proj.graph_data if proj and isinstance(proj.graph_data, dict) else {}
+    cache = gd.get("cq_eval_cache") if isinstance(gd.get("cq_eval_cache"), dict) else {}
+    if cache.get("fingerprint") != fingerprint:
+        return None
+    eid = cache.get("evaluation_id")
+    return db.query(CqEvaluation).filter(CqEvaluation.id == eid).first() if eid else None
+
+
+def store_cq_evaluation_cache(db: Session, project_id: int,
+                              fingerprint: str, ev: CqEvaluation) -> None:
+    proj = db.query(Project).filter(Project.id == project_id).first()
+    if proj is None or not isinstance(proj.graph_data, dict):
+        return
+    gd = dict(proj.graph_data)
+    gd["cq_eval_cache"] = {"fingerprint": fingerprint, "evaluation_id": ev.id,
+                           "cached_at": datetime.datetime.utcnow().isoformat(timespec="seconds")}
+    db.execute(update(Project).where(Project.id == project_id).values(graph_data=gd))
+    db.commit()
 
 
 def evaluate_cqs(db: Session, project_id: int, trigger: str = "manual",

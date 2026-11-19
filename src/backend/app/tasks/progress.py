@@ -17,10 +17,10 @@ _PROGRESS_TTL = 24 * 3600
 
 
 def _redis():
-    import redis
-
-    from app.services.env_config_service import redis_url
-    return redis.Redis.from_url(redis_url(), decode_responses=True)
+    # 进程级共享客户端（连接池复用）：此前每次进度读写都新建 Redis 连接，
+    # 500 切片 + SSE 每秒轮询会制造数千次连接建立。见 env_config_service.get_redis_client。
+    from app.services.env_config_service import get_redis_client
+    return get_redis_client(decode_responses=True)
 
 
 def set_task_progress(task_id: str, stage: str, percent: int,

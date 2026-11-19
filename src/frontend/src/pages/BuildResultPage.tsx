@@ -268,7 +268,7 @@ const BuildResultPage: React.FC = () => {
         switch (key) {
             case 'classes': return summary.schema?.classes_total ?? 0;
             case 'instances': return summary.instances?.total ?? 0;
-            case 'relations': return summary.relations_total ?? graphEdges.length;
+            case 'relations': return summary.relation_stats?.total_edges ?? summary.relations_total ?? graphEdges.length;
             case 'properties':
                 return (summary.schema?.object_properties_total ?? 0)
                     + (summary.schema?.datatype_properties_total ?? 0);
@@ -596,7 +596,7 @@ const BuildResultPage: React.FC = () => {
                                             }}
                                         />
                                         <span style={{ color: checkPassed ? '#8BE8CF' : '#FFB4AC' }}>
-                                            {checkPassed ? '机检通过，无硬伤' : `机检 ${checks.error_count} 处硬伤`}
+                                            {checkPassed ? '机检通过' : `机检 ${checks.error_count} 处问题`}
                                         </span>
                                     </div>
                                 )}

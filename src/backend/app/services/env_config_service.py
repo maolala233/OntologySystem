@@ -10,6 +10,7 @@
 
 import json
 import logging
+import threading
 import time
 from typing import Any, Dict, List, Optional
 
@@ -114,17 +115,67 @@ def get_effective_raw(db) -> Dict[str, Any]:
     return out
 
 
+# ── Redis URL / 客户端进程级缓存（2026-11-19 性能优化）────────────────────
+# 背景：redis_url() 每次调用都会新建 DB 会话、读取 platform_config、解密 12 个字段；
+# progress/cache/cancel/SSE 等热路径每条切片调用 4~5 次，500 切片就是数千次
+# MySQL 查询 + Redis 连接建立。这里做 URL 短 TTL 缓存 + 客户端单例（连接池复用）；
+# 管理端保存配置时失效，下一次调用重建客户端。
+_REDIS_URL_TTL_SECONDS = 30.0
+_redis_url_cache: tuple[float, str] | None = None
+_redis_caches: dict[bool, object] = {}
+_redis_cache_lock = threading.Lock()
+
+
+def invalidate_redis_cache() -> None:
+    """配置更新后清空 URL/客户端缓存（旧客户端不强制关闭，等待自然回收）。"""
+    global _redis_url_cache
+    with _redis_cache_lock:
+        _redis_url_cache = None
+        _redis_caches.clear()
+
+
+def get_redis_client(decode_responses: bool = False):
+    """共享 Redis 客户端（按 decode 模式区分），连接池复用；DB 不可用时回落 .env。"""
+    import redis as _redis
+
+    with _redis_cache_lock:
+        cached = _redis_caches.get(decode_responses)
+        if cached is not None:
+            return cached
+        client = _redis.Redis.from_url(
+            redis_url(),
+            decode_responses=decode_responses,
+            socket_connect_timeout=2,
+            max_connections=32,
+        )
+        _redis_caches[decode_responses] = client
+        return client
+
+
 def redis_url(db=None) -> str:
-    """便捷读取：Redis URL（DB 覆盖优先，DB 不可达回退 .env）。"""
+    """便捷读取：Redis URL（DB 覆盖优先，DB 不可达回退 .env）。
+
+    db 为 None 时走 30s 进程级缓存（热路径），显式传 db 时仍按请求读库。
+    """
+    global _redis_url_cache
+    if db is None:
+        now = time.monotonic()
+        cached = _redis_url_cache
+        if cached is not None and now - cached[0] < _REDIS_URL_TTL_SECONDS:
+            return cached[1]
     try:
         if db is None:
             from app.infrastructure.database import SessionLocal
             db = SessionLocal()
             try:
-                return get_effective_raw(db)["redis_url"]
+                url = get_effective_raw(db)["redis_url"]
             finally:
                 db.close()
-        return get_effective_raw(db)["redis_url"]
+        else:
+            url = get_effective_raw(db)["redis_url"]
+        if db is None:
+            _redis_url_cache = (time.monotonic(), url)
+        return url
     except Exception as e:
         logger.debug(f"[env-config] redis_url 读库失败，回退 .env：{e}")
         return settings.REDIS_URL
@@ -184,6 +235,7 @@ def update(db, updates: Dict[str, Any], operator_id: int) -> Dict[str, int]:
     from sqlalchemy.orm.attributes import flag_modified
     flag_modified(row, "value")
     db.commit()
+    invalidate_redis_cache()
     logger.info(f"[env-config] 用户 {operator_id} 更新环境配置：changed={changed} skipped={skipped}")
     return {"changed": changed, "skipped": skipped}
 

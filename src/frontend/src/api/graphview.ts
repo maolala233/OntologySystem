@@ -35,6 +35,13 @@ export interface GraphEdge {
 export interface GraphMeta {
     node_count: number;
     edge_count: number;
+    /** 关系口径拆分（2026-11-19）：图页“事实关系”与“总边”分开显示 */
+    relation_type_count?: number;
+    fact_relation_count?: number;
+    tbox_relation_edge_count?: number;
+    object_property_edge_count?: number;
+    type_edge_count?: number;
+    hierarchy_edge_count?: number;
     class_distribution: { class_label: string; count: number }[];
     sources: string[];
     layout_available: boolean;

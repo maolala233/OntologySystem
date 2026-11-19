@@ -54,18 +54,14 @@ PIPELINE_STALE_SECONDS = int(os.environ.get("PIPELINE_STALE_SECONDS", "180"))
 PIPELINE_STALE_MESSAGE = "构建已中断：超过 3 分钟没有进度（服务重启或 worker 掉线）"
 
 STAGE_DEFS: list[tuple[str, str]] = [
-    ("parse", "解析文档"),
-    ("schema", "骨架抽取"),
-    ("instances", "实例抽取"),
-    ("resolution", "实体消解"),
-    ("conflicts", "冲突检测"),
-    # 更名（2026-11-08 用户反馈）："自检修复"与"冲突检测"并列时像是同一件事的
-    # 重复——本阶段只查建模结构（层次环/悬空引用等），改名"结构自检"划清边界
-    ("selfcheck", "结构自检"),
-    ("axioms", "AI 公理扫描"),
-    # 2026-11-08 两轮更名：原「AI 自动处理」易被误解成"整个构建都是 AI 自动弄的"——
-    # 实际只做一件事：低风险审核项由 AI 初审自动确认，高风险项仍等人拍板
-    ("adjudicate", "AI 结果审查"),
+    ("parse", "读取文档"),
+    ("schema", "提炼概念"),
+    ("instances", "识别业务数据"),
+    ("resolution", "合并重复项"),
+    ("conflicts", "核对冲突"),
+    ("selfcheck", "检查结构"),
+    ("axioms", "补充规则"),
+    ("adjudicate", "检查结果"),
 ]
 
 
@@ -534,6 +530,21 @@ def _mine_business_rules(db, project_id: int) -> dict:
     schema = gd.get("schema") if isinstance(gd.get("schema"), dict) else {}
     doc_rules = [r for r in (schema.get("business_rules") or [])
                  if isinstance(r, dict) and str(r.get("statement") or "").strip()]
+    import hashlib as _hashlib
+    import json as _json
+
+    fp = _hashlib.sha256(_json.dumps({
+        "classes": sorted(str(c.get("label")) for c in (schema.get("classes") or [])
+                          if isinstance(c, dict)),
+        "relations": sorted(str(o.get("label")) for o in
+                            (schema.get("object_properties") or [])
+                            if isinstance(o, dict)),
+        "doc_rules": len(doc_rules),
+        "entities": db.query(Entity).filter(Entity.project_id == project_id).count(),
+    }, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+    cache = gd.get("business_rules_cache") if isinstance(gd.get("business_rules_cache"), dict) else {}
+    if cache.get("fingerprint") == fp and isinstance(cache.get("result"), dict):
+        return {**cache["result"], "cached": True}
     candidates, stats = llm_rule_suggestions(db, proj, doc_rules=doc_rules)
     existing_n = (db.query(OntologyRule)
                   .filter(OntologyRule.project_id == project_id).count())
@@ -553,8 +564,23 @@ def _mine_business_rules(db, project_id: int) -> dict:
             continue
     if added:
         db.commit()
-    return {"rules_added": added, "mined": len(candidates or []),
-            "doc_rules": len(doc_rules), "skipped": stats.get("skipped")}
+    result = {"rules_added": added, "mined": len(candidates or []),
+              "doc_rules": len(doc_rules), "skipped": stats.get("skipped")}
+    try:
+        from sqlalchemy import update as _sa_update
+
+        from app.infrastructure.database import Project as _Project
+
+        gd2 = dict(gd)
+        gd2["business_rules_cache"] = {
+            "fingerprint": fp, "result": result,
+            "cached_at": time.strftime("%Y-%m-%dT%H:%M:%S")}
+        db.execute(_sa_update(_Project).where(_Project.id == project_id)
+                   .values(graph_data=gd2))
+        db.commit()
+    except Exception:  # noqa: BLE001
+        pass
+    return result
 
 
 def _default_guidance(proj) -> Optional[str]:
@@ -765,7 +791,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
 
             st = _stage(stages, "parse")
             st["status"] = "running"
-            profile_stage_begin("parse", "解析文档")
+            profile_stage_begin("parse", "读取文档")
 
             def _parse_steps(inspect_state: str = "running",
                              resync_state: str = "pending", resync_pct: int = 0,
@@ -1098,7 +1124,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             _cancel_check()
             _fresh_read()
             st = _stage(stages, "schema")
-            profile_stage_begin("schema", "骨架抽取")
+            profile_stage_begin("schema", "提炼概念")
             proj = db.query(Project).filter(Project.id == project_id).first()
             gd = proj.graph_data if isinstance(proj.graph_data, dict) else {}
             schema = gd.get("schema") if isinstance(gd.get("schema"), dict) else {}
@@ -1159,7 +1185,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             # ── 阶段 3：实例抽取 ──
             _cancel_check()
             st = _stage(stages, "instances")
-            profile_stage_begin("instances", "实例抽取")
+            profile_stage_begin("instances", "识别业务数据")
             st["status"] = "running"
             _prog("instances", "AI 抽取实例中…", 0.0)
             _init_stage_sub(task_id, "instances", "准备抽取实例…")
@@ -1177,7 +1203,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             # ── 阶段 4：实体消解 ──
             _cancel_check()
             st = _stage(stages, "resolution")
-            profile_stage_begin("resolution", "实体消解")
+            profile_stage_begin("resolution", "合并重复项")
             st["status"] = "running"
             _prog("resolution", "实体消解中…", 0.0)
             _init_stage_sub(task_id, "resolution", "准备消解实体…")
@@ -1186,13 +1212,28 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 project_id=project_id), "resolution")
             st["status"] = "done"
             _prog("resolution", "实体消解完成")
+            # 索引表对账：LLM/结构展开可能漏行（3820 实测 152 行只建 151 个
+            # 前端接口）。消解后按索引表补建/补多类成员，幂等；失败不阻断构建。
+            try:
+                from app.services.index_reconcile import reconcile_frontend_index
+
+                _rec = reconcile_frontend_index(db, project_id, apply=True)
+                if _rec.get("created") or _rec.get("linked"):
+                    st["detail"] = (f"{st.get('detail') or '完成'}；"
+                                    f"索引对账补建 {len(_rec.get('created') or [])}、"
+                                    f"补多类 {len(_rec.get('linked') or [])} 个")
+                    _prog("resolution", st["detail"])
+            except Exception as _rec_err:  # noqa: BLE001
+                from app.core.logging import logger as _logger
+
+                _logger.warning(f"[pipeline] 索引表对账失败 project={project_id}: {_rec_err}")
             profile_stage_end("resolution", status="done",
                               detail=st.get("detail") or "完成")
 
             # ── 阶段 5：冲突检测 ──
             _cancel_check()
             st = _stage(stages, "conflicts")
-            profile_stage_begin("conflicts", "冲突检测")
+            profile_stage_begin("conflicts", "核对冲突")
             st["status"] = "running"
             _prog("conflicts", "冲突检测中…", 0.0)
             _init_stage_sub(task_id, "conflicts", "准备检测冲突…")
@@ -1206,7 +1247,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
 
             # ── 阶段 6：自检修复环（准出标准：机检无硬伤；LLM 定向修复，最小动作）──
             st = _stage(stages, "selfcheck")
-            profile_stage_begin("selfcheck", "结构自检")
+            profile_stage_begin("selfcheck", "检查结构")
             st["status"] = "running"
             _prog("selfcheck", "本体质量自检中…", 0.0)
             _init_stage_sub(task_id, "selfcheck", "准备质量自检…")
@@ -1255,7 +1296,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             # ── 阶段 7：AI 公理扫描（深度=fast 跳过；失败/跳过不阻断收尾）──
             _cancel_check()
             st = _stage(stages, "axioms")
-            profile_stage_begin("axioms", "AI 公理扫描")
+            profile_stage_begin("axioms", "补充规则")
             if not profile["include_axioms"]:
                 st["status"] = "skipped"
                 st["detail"] = "快速档跳过公理扫描"
@@ -1355,7 +1396,11 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                 _br_step_state = "done"
                 try:
                     _fresh_read()
-                    rules_res = _mine_business_rules(db, project_id)
+                    if not profile.get("include_axioms"):
+                        rules_res = {"rules_added": 0, "mined": 0,
+                                     "skipped": "快速档跳过业务规则挖掘"}
+                    else:
+                        rules_res = _mine_business_rules(db, project_id)
                     profile_metric("business_rules_seconds",
                                    round(time.perf_counter() - _br_t0, 6))
                     summary["business_rules"] = rules_res
@@ -1386,7 +1431,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             _cancel_check()
             _fresh_read()
             st = _stage(stages, "adjudicate")
-            profile_stage_begin("adjudicate", "AI 结果审查")
+            profile_stage_begin("adjudicate", "检查结果")
             st["status"] = "running"
             # 阶段一开始就把子步骤写出来（结果确认 running / 能力问题评测 pending）：
             # 裁决本身没有子任务进度键，等 CQ 开始才写会导致整个裁决期间子区空白
@@ -1493,10 +1538,22 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             _cq_thread.start()
             try:
                 from app.services.cq_service import (
-                    attach_sparql, ensure_rdf_graphs, evaluate_cqs, list_cqs,
+                    attach_sparql, cached_cq_evaluation, cq_eval_fingerprint,
+                    ensure_rdf_graphs, evaluate_cqs, list_cqs, store_cq_evaluation_cache,
                 )
 
-                if list_cqs(db, project_id, enabled_only=True):
+                _cq_fp = cq_eval_fingerprint(db, project_id)
+                _cached_ev = cached_cq_evaluation(db, project_id, _cq_fp)
+                if _cached_ev is not None:
+                    ev = _cached_ev
+                    graph_state = "cached"
+                    summary["cq_evaluation_id"] = ev.id
+                    summary["cq_graph_state"] = "cached"
+                    ok = ev.answerable_count == ev.total_cq
+                    mode_note = "（复用上次评测）"
+                    cq_note = (f"，能力问题验证通过 {ev.answerable_count}/{ev.total_cq}{mode_note}")
+                    _cq_msg = f"能力问题评测完成：通过 {ev.answerable_count}/{ev.total_cq}（缓存）"
+                elif list_cqs(db, project_id, enabled_only=True):
                     _cq_steps: dict = {}
                     _t = time.perf_counter()
                     _fresh_read()
@@ -1520,6 +1577,7 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
                     if ev is not None:
                         summary["cq_evaluation_id"] = ev.id
                         summary["cq_graph_state"] = graph_state
+                        store_cq_evaluation_cache(db, project_id, _cq_fp, ev)
                         ok = ev.answerable_count == ev.total_cq
                         mode_note = "（SPARQL 实查）" if ev.mode == "sparql+retrieval" else ""
                         cq_note = (f"，能力问题验证通过 {ev.answerable_count}/{ev.total_cq}{mode_note}"
@@ -1547,6 +1605,35 @@ def run_pipeline(self, project_id: int, trigger_user_id: Optional[int] = None,
             st["status"] = "done"
             _prog("adjudicate", f"能力问题评测完成{cq_note}" if cq_note else "能力问题评测结束")
             profile_stage_end("cq_eval", status="done", detail=cq_note or "完成")
+
+            # ── 过度抽取治理（CQ 评测之后：避免归档类影响覆盖，只收尾图谱）──
+            try:
+                from app.services.schema_governance import govern_schema
+
+                _gov = govern_schema(project_id, db, apply=True)
+                summary["schema_governance"] = {
+                    k: _gov.get(k) for k in
+                    ("classes_before", "classes_after", "archived")}
+                db.expire_all()
+            except Exception as _gov_err:  # noqa: BLE001
+                from app.core.logging import logger as _logger
+
+                _logger.warning(f"[pipeline] 过度抽取治理失败 project={project_id}: {_gov_err}")
+
+            # 收尾再对账一次：治理/自检可能重写 graph_data，最后确认索引行和多类成员
+            # 都在终态里（重复执行幂等，失败不阻断）。
+            try:
+                from app.services.index_reconcile import reconcile_frontend_index
+
+                _final_rec = reconcile_frontend_index(db, project_id, apply=True)
+                if _final_rec.get("created") or _final_rec.get("linked"):
+                    summary["index_reconcile_final"] = {
+                        "created": _final_rec.get("created"),
+                        "linked": _final_rec.get("linked")}
+            except Exception as _final_err:  # noqa: BLE001
+                from app.core.logging import logger as _logger
+
+                _logger.warning(f"[pipeline] 收尾索引对账失败 project={project_id}: {_final_err}")
 
             # ── 构建报告（外部方法论交付物对照：人话版，零 LLM）──
             profile_stage_begin("build_report", "构建报告", tracked=False)

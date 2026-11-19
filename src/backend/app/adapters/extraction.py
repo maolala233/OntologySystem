@@ -227,10 +227,10 @@ def _cache_key(model: str, system_prompt: str, user_prompt: str) -> str:
 
 
 def _redis():
-    import redis
-
-    from app.services.env_config_service import redis_url
-    return redis.Redis.from_url(redis_url(), socket_connect_timeout=2)
+    # 共享连接池（2026-11-19）：_cache_get/_cache_put 每切片各调一次，旧实现每次
+    # Redis.from_url 新建连接 + redis_url() 读库解密，是本链路最大的固定开销之一。
+    from app.services.env_config_service import get_redis_client
+    return get_redis_client(decode_responses=False)
 
 
 def _cache_get(key: str) -> Optional[dict]:
@@ -1854,10 +1854,23 @@ def _instance_user_prompt(chunk_text: str, tbox_summary: dict, known_entities: l
     """字段化 TBox 摘要 prompt（04 §4.1：类/属性/关系清单 + 前块上下文）。"""
     parts = []
     classes = tbox_summary.get("classes") or {}
+    class_parents = tbox_summary.get("class_parents") or {}
+    class_defs = tbox_summary.get("class_definitions") or {}
     if classes:
-        lines = [f"- {c}" + (f"（别名：{'、'.join(a)}）" if a else "")
-                 for c, a in classes.items()]
-        parts.append("【本体类清单】（class_label 只能取自这里）\n" + "\n".join(lines))
+        lines = []
+        for c, a in classes.items():
+            line = f"- {c}"
+            if a:
+                line += f"（别名：{'、'.join(a)}）"
+            parents = class_parents.get(c) or []
+            if parents:
+                line += f"（父类：{'、'.join(str(p) for p in parents[:4])}）"
+            d = str(class_defs.get(c) or "").strip()
+            if d:
+                line += f"：{d[:80]}"
+            lines.append(line)
+        parts.append("【本体类清单】（class_label 只能取自这里；实例可归入子类，"
+                     "关系按父类兼容）\n" + "\n".join(lines))
     cp = tbox_summary.get("class_properties") or {}
     if cp:
         lines = []
