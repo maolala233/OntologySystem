@@ -1,7 +1,7 @@
 // src/pages/QaPage.tsx - 本体问答独立页面（R8：docs/design/05 §6 / 07 §4）
 // 左侧：新建对话 + 历史对话列表（按会话分组）；右侧：项目/模型选择 + 流式对话 + 引用溯源。
 // 复用 features/qa 下的 MarkdownAnswer（[n] 角标点击定位）与 SourceCard。
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { message } from '../shared/feedback';
 import { Button, Input, Popconfirm, Select, Tag, Tooltip } from 'antd';
@@ -230,8 +230,11 @@ export default function QaPage() {
         loadModels(projectId);
     }, [projectId, loadConversations, loadModels, clearTokenFlush]);
 
-    // 流式输出逐 token 更新：在容器内贴底滚，比每个 token 重启动一次 smooth scrollIntoView 稳得多
-    useEffect(() => {
+    // 流式输出逐 token 更新：在容器内贴底滚，比每个 token 重启动一次 smooth scrollIntoView 稳得多。
+    // 必须是 useLayoutEffect（2026-11-19）：原先用 useEffect，它在浏览器绘制之后才执行——
+    // 每 50ms 一次 token 冲刷，新文字先按旧的滚动位置画在屏幕底部（正好压在「正在生成」那一行上），
+    // 下一帧才被滚下去，看起来就是文字时不时"糊"住状态行。改成绘制前滚动，这一帧就不存在了。
+    useLayoutEffect(() => {
         const el = listRef.current;
         if (!el || !stickBottomRef.current) return;
         el.scrollTop = el.scrollHeight;
@@ -813,7 +816,7 @@ export default function QaPage() {
                         ref={listRef}
                         onScroll={updateEdgeFade}
                         style={{ WebkitMaskImage: edgeMask, maskImage: edgeMask }}
-                        className="flex-1 overflow-auto px-6 pb-2 [scrollbar-gutter:stable_both-edges]"
+                        className="flex-1 overflow-auto px-6 pb-2 [overflow-anchor:none] [scrollbar-gutter:stable_both-edges]"
                     >
                         {turns.length === 0 && (
                             <div className="flex h-full flex-col items-center justify-center px-6 text-center">
@@ -915,7 +918,7 @@ export default function QaPage() {
                                             </div>
                                         ) : (
                                             <div className="qa-answer overflow-hidden rounded-2xl">
-                                                <div className="px-4 py-3">
+                                                <div className={`px-4 pt-3 ${turn.streaming ? '' : 'pb-3'}`}>
                                                     {/* 检索过程先行：提问后立即逐步展示"怎么查"（流式期间最后一步进行中），
                                                         答案在过程之下出现，溯源收尾——"一步步处理 → 得到结果 → 溯源" */}
                                                     {(turn.trace?.length || meta?.retrieval_trace?.length) ? (
@@ -932,16 +935,26 @@ export default function QaPage() {
                                                                 onCite={n => handleCite(i, n)}
                                                             />
                                                         )}
-                                                        {turn.streaming ? (
-                                                            <div className={`flex items-center gap-2 text-xs text-[#8A94AB] ${turn.answer ? 'mt-2.5' : ''}`}>
-                                                                <LoadingOutlined className="text-[#5B8DEF]" />
-                                                                <span>{turn.answer ? '正在生成…' : (turn.trace?.length ? '正在综合检索结果…' : '正在检索本体图谱…')}</span>
-                                                            </div>
-                                                        ) : !turn.answer && (
+                                                        {!turn.streaming && !turn.answer && (
                                                             <div className="text-sm text-[#8A94AB]">（模型未返回内容）</div>
                                                         )}
                                                     </div>
                                                 </div>
+                                                {/* 生成状态单独一行、放在正文容器之外（2026-11-19 用户反馈）：
+                                                    正文再怎么一坨坨往外冒，也只会把它往下顶，不会和它叠在一起。
+                                                    间距按旧版口径给——有正文时 pt-2.5（等同原来的 mt-2.5），
+                                                    行下一律 pb-3，和正文容器的 py-3 收在同一个位置，
+                                                    不会像绝对定位那版在卡片底部多垫一截空白 */}
+                                                {turn.streaming && (
+                                                    <div
+                                                        role="status"
+                                                        aria-live="polite"
+                                                        className={`flex items-center gap-2 px-4 pb-3 text-xs text-[#8A94AB] ${turn.answer ? 'pt-2.5' : ''}`}
+                                                    >
+                                                        <LoadingOutlined className="text-[#5B8DEF]" />
+                                                        <span>{turn.answer ? '正在生成…' : (turn.trace?.length ? '正在综合检索结果…' : '正在检索本体图谱…')}</span>
+                                                    </div>
+                                                )}
                                                 {/* 元信息收进卡片底部：模型 / 延迟是这条回答自身的属性，
                                                     不该浮在卡外和下面的溯源区抢位置。
                                                     置信度胶囊已去掉：一个百分数看完就过，
