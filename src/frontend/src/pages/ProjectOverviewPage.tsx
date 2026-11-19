@@ -75,25 +75,32 @@ const ProjectOverviewPage: React.FC = () => {
     // 这里以最近一次管线终态覆盖显示：已发布优先，其次中止/失败。
     const statusKey = projectStatus === 'published'
         ? 'published'
-        : pipeStatus === 'cancelled'
-            ? 'cancelled'
-            : pipeStatus === 'failed'
-                ? 'failed'
-                : (PROJECT_STATUS[projectStatus] ? projectStatus : 'draft');
-    const statusMeta = statusKey === 'failed'
-        ? { color: 'error', text: '构建失败', desc: '最近一次构建失败' }
-        : statusKey === 'cancelled'
-            ? { color: 'warning', text: '已中止', desc: '最近一次构建被中止，已完成阶段的成果保留' }
-            : PROJECT_STATUS[statusKey] || PROJECT_STATUS.draft;
+        : pipeStatus === 'cancelling'
+            ? 'stopping'
+            : pipeStatus === 'cancelled'
+                ? 'cancelled'
+                : pipeStatus === 'failed'
+                    ? 'failed'
+                    : (PROJECT_STATUS[projectStatus] ? projectStatus : 'draft');
+    const statusMeta = statusKey === 'stopping'
+        ? { color: 'warning', text: '停止中', desc: '已发出停止请求，等后台任务退出后转为已中止' }
+        : statusKey === 'failed'
+            ? { color: 'error', text: '构建失败', desc: '最近一次构建失败' }
+            : statusKey === 'cancelled'
+                ? { color: 'warning', text: '已中止', desc: '最近一次构建被中止，已完成阶段的成果保留' }
+                : PROJECT_STATUS[statusKey] || PROJECT_STATUS.draft;
     // 构建中判定以轮询到的实时状态为准（摘要里的 last_pipeline 可能滞后一拍）
-    const building = ['running', 'queued', 'scheduled'].includes(pipeStatus || '')
+    // 「停止中」也按构建中处理：后端保留运行锁，页面继续显示进度区、结果区让位
+    const building = ['running', 'queued', 'scheduled', 'cancelling'].includes(pipeStatus || '')
         || (!pipeStatus && (summary?.pipeline?.status === 'running'
             || summary?.pipeline?.status === 'queued'
-            || summary?.pipeline?.status === 'scheduled'));
+            || summary?.pipeline?.status === 'scheduled'
+            || summary?.pipeline?.status === 'cancelling'));
     // 文档集合是否锁住：后端只在真正跑构建时拒绝改文档（c9b9388，409 PIPELINE_RUNNING），
-    // 「待构建（scheduled）」不占运行锁，仍可增删（2026-11-16）
-    const docsLocked = ['running', 'queued'].includes(pipeStatus || '')
-        || (!pipeStatus && ['running', 'queued'].includes(summary?.pipeline?.status || ''));
+    // 「待构建（scheduled）」不占运行锁，仍可增删（2026-11-16）；
+    // 「停止中（cancelling）」backend 仍持锁（老任务可能还在写产物），继续锁住（2026-11-19）
+    const docsLocked = ['running', 'queued', 'cancelling'].includes(pipeStatus || '')
+        || (!pipeStatus && ['running', 'queued', 'cancelling'].includes(summary?.pipeline?.status || ''));
 
     // 管线状态跃迁自动刷新（2026-11-07 SSE 版）：PipelinePanel 订阅后端事件流
     // （运行锁为事实源），状态经 onPipeStatus 上抛——页面不再自建 5s 轮询

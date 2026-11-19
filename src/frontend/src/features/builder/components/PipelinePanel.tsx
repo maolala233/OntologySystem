@@ -4,7 +4,7 @@
  * 展示形式收敛为一层：「阶段时间线 + 单一详情区」——
  * - 八阶段时间线可点开临时查看，默认跟随当前运行阶段；阶段一推进就自动回到实时；
  * - 详情区展示该阶段主进度、阶段内子步骤（后端 build_sub_steps 下发 steps）、
- *   实时计数与耗时；构建结束后默认落在「本次构建」汇总（各阶段耗时）；
+ *   实时计数与耗时；构建结束后默认落在「构建汇总」（各阶段耗时）；
  * - 原来的「三步清单 + 主进度条 + 阶段格子 + 子进度框」四层表达合并掉。
  *
  * 数据依赖后端 8c3f0ca：stages 带 started_at/finished_at/duration_seconds，
@@ -82,12 +82,13 @@ const STATUS_ICON: Record<string, React.ReactNode> = {
     running: <SyncOutlined spin style={{ color: '#5B8DEF' }} />,
     skipped: <MinusCircleOutlined style={{ color: '#A3ADC2' }} />,
     cancelled: <PauseCircleOutlined style={{ color: '#B8790F' }} />,
+    stopping: <SyncOutlined spin style={{ color: '#B8790F' }} />,
     pending: <span style={{ color: '#CBD5E5' }}>○</span>,
 };
 
 const STAGE_STATUS_TEXT: Record<string, string> = {
     done: '完成', running: '进行中', pending: '待开始',
-    failed: '失败', skipped: '已跳过', cancelled: '已中止',
+    failed: '失败', skipped: '已跳过', cancelled: '已中止', stopping: '停止中',
 };
 
 // 时间线圆点底色（冷调）：进行中实心蓝 + 脉冲，完成淡青，失败淡红，中止淡琥珀
@@ -96,6 +97,7 @@ const DOT_TONE: Record<string, { bg: string; color: string }> = {
     running: { bg: '#5B8DEF', color: '#FFFFFF' },
     failed: { bg: 'rgba(180,35,24,0.10)', color: '#B42318' },
     cancelled: { bg: 'rgba(242,185,80,0.18)', color: '#B8790F' },
+    stopping: { bg: 'rgba(242,185,80,0.22)', color: '#B8790F' },
     skipped: { bg: '#F3F5F9', color: '#A3ADC2' },
     pending: { bg: '#F3F5F9', color: '#C2C7CF' },
 };
@@ -105,6 +107,7 @@ const STATUS_TAG_STYLE: Record<string, React.CSSProperties> = {
     running: { background: 'rgba(91,141,239,0.12)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.28)' },
     failed: { background: 'rgba(180,35,24,0.10)', color: '#B42318', borderColor: 'rgba(180,35,24,0.22)' },
     cancelled: { background: 'rgba(242,185,80,0.20)', color: '#B8790F', borderColor: 'rgba(242,185,80,0.45)' },
+    stopping: { background: 'rgba(242,185,80,0.24)', color: '#B8790F', borderColor: 'rgba(242,185,80,0.50)' },
     skipped: { background: 'rgba(15,23,42,0.05)', color: '#8A94AB', borderColor: 'rgba(15,23,42,0.08)' },
     pending: { background: 'rgba(15,23,42,0.05)', color: '#8A94AB', borderColor: 'rgba(15,23,42,0.08)' },
 };
@@ -116,6 +119,7 @@ const STAGE_TONE: Record<string, { c: string; t: string }> = {
     running: { c: '#5B8DEF', t: 'rgba(91,141,239,0.16)' },
     failed: { c: '#B42318', t: 'rgba(180,35,24,0.12)' },
     cancelled: { c: '#B8790F', t: 'rgba(242,185,80,0.22)' },
+    stopping: { c: '#B8790F', t: 'rgba(242,185,80,0.26)' },
     skipped: { c: '#C2C7CF', t: 'rgba(15,23,42,0.04)' },
     pending: { c: '#CBD5E5', t: 'rgba(15,23,42,0.04)' },
 };
@@ -125,6 +129,7 @@ const BAR_BG: Record<string, string> = {
     done: 'linear-gradient(90deg,#6FC3CF,#1B87AD)',
     failed: 'linear-gradient(90deg,#E88A80,#B42318)',
     cancelled: 'linear-gradient(90deg,#F2CB87,#B8790F)',
+    stopping: 'linear-gradient(90deg,#F2CB87,#B8790F)',
     skipped: '#D7DDE8',
     pending: '#D7DDE8',
 };
@@ -169,35 +174,26 @@ const PctRing: React.FC<{ percent: number | null; color: string; label: string }
 const pad2 = (n: number): string => String(n).padStart(2, '0');
 
 /**
- * 秒 → 「3:12 / 1:02:05」计时器写法（2026-11-17）：构建中的用时每秒都在走，
- * 用「3 分 12 秒」这种长句读起来又长又跳；等宽计时器数字宽度稳定，扫一眼就知道走了多久。
- *
- * precise（2026-11-18）：不足 1 分钟的阶段（冲突检测 / 结构自检）保留两位小数，
- * 用来表达亚秒级耗时；小数部分为 0 时只显示整秒——「0:00」而不是「0:00.00」，
- * 既然后面没有数据，就不该拖两个 0 占位。
+ * 秒 → 计时器写法（2026-11-19 按用户反馈统一口径）：
+ * - 不足 1 秒一律写「<1s」，亚秒耗时不再用小数表达（0.43 这种读数扫不出来，
+ *   同一列数字也会一会儿宽一会儿窄）；
+ * - 其余四舍五入到整秒，秒以下完全不出现小数点：59.6 进位成「01:00」，不会停在「00:59」；
+ * - 分与小时都补零，等宽字体下宽度恒定：「00:07」/「01:23」/「01:02:05」。
  */
-const fmtClock = (sec?: number | null, precise = false): string => {
+const fmtClock = (sec?: number | null): string => {
     if (typeof sec !== 'number' || !Number.isFinite(sec) || sec < 0) return '';
-    // 按 0.01s 四舍五入后再拆位：59.999 会进位成 1:00，不会出现「0:59.99」
-    const cents = precise ? Math.round(sec * 100) : Math.floor(sec) * 100;
-    const t = Math.floor(cents / 100);
-    const frac = cents % 100;
+    if (sec < 1) return '<1s';
+    const t = Math.round(sec);
     const h = Math.floor(t / 3600);
     const m = Math.floor((t % 3600) / 60);
     const s = t % 60;
-    const fracText = frac ? `.${pad2(frac)}` : '';
     return h > 0
-        ? `${h}:${pad2(m)}:${pad2(s)}${fracText}`
-        : `${m}:${pad2(s)}${fracText}`;
+        ? `${pad2(h)}:${pad2(m)}:${pad2(s)}`
+        : `${pad2(m)}:${pad2(s)}`;
 };
 
-/** 阶段用时：全板块统一计时器写法；亚秒耗时带小数（「0:00.43」），避免显示成 0:00 */
-const fmtStageTime = (sec?: number | null, precise = false): string => {
-    if (typeof sec !== 'number' || !Number.isFinite(sec) || sec < 0) return '—';
-    // 冲突检测/结构自检保留原有精确模式；其余阶段只要不足 1 秒也带小数，
-    // 否则解析 0.2s、实例 0.01s、消解 0.03s 都会显示成 0:00
-    return fmtClock(sec, (precise || (sec > 0 && sec < 1)) && sec < 60);
-};
+/** 阶段用时：与汇总表同一个计时器写法；只有拿不到耗时（null / 非法值）才显示「—」 */
+const fmtStageTime = (sec?: number | null): string => fmtClock(sec) || '—';
 
 const tsOf = (iso?: string | null): number | null => {
     if (!iso) return null;
@@ -252,11 +248,20 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
     // 最新状态快照：SSE 的 idle 帧要据此判断"是不是正处在定时等待中"（2026-11-16）
     const statusRef = useRef<PipelineStatus | null>(null);
     useEffect(() => { statusRef.current = status; }, [status]);
+    // 最近一次有效的主进度百分比：终止帧缺字段时用它兜底（见下方 overallPercent）
+    const lastPercentRef = useRef(0);
+    useEffect(() => {
+        const pct = status?.percent;
+        if (typeof pct === 'number') lastPercentRef.current = pct;
+    }, [status]);
 
     // 定时状态复核节流：SSE 每秒都在推 idle 帧，不能每帧都打 REST
     const schedCheckAtRef = useRef(0);
     // 运行锁释放后的 idle 帧复核节流（同上面，只在本地仍显示运行时复核）
     const idleCheckAtRef = useRef(0);
+    // 异任务帧复核节流：SSE 连接时固化的 last_task 会把上一轮构建的帧推进来，
+    // 丢弃这类帧后回一次 REST 复核即可（见 onmessage 里的任务一致性判定）
+    const foreignFrameAtRef = useRef(0);
     // 快照落盘节流：运行中最多 5s 写一次 localStorage
     const snapAtRef = useRef(0);
     // 最近一次收到 SSE 数据帧的时间：半开连接（无 onerror 也不再推帧）时靠它兜底轮询
@@ -312,7 +317,15 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
             // 服务端进度键 24h 过期 / 换了浏览器：用本机最后一次终态快照兜底，
             // 构建结束后阶段时间线也保留（用户要求「步骤条永远不消失」，2026-11-16）
             const snap = readSnap(projectId);
-            if (s.status === 'idle' && !(s.stages || []).length) {
+            const live = statusRef.current;
+            // 当前正在跟踪的任务：内存里的状态，或（内存清空后）本机登记的任务 id
+            const liveTask = live?.task_id || localStorage.getItem(lastTaskKey(projectId)) || '';
+            // 本机快照只用于「补历史」：当前正跟踪某个任务时不再回填——
+            // 否则上一轮构建留下的快照（例如 completed / 100%）会把刚收到的
+            // cancelled / 76%（或停止中的 76%）顶掉，进度条先跳 100% 再跳回来
+            //（2026-11-19 停止流程实测）
+            if (s.status === 'idle' && !(s.stages || []).length
+                && (!liveTask || snap?.task_id === liveTask)) {
                 if (snap && snap.status !== 'running' && snap.status !== 'queued') {
                     s = {
                         ...s,
@@ -335,7 +348,18 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
             // 后端回放各阶段子步骤（2026-11-17）：晚进入的定时构建也能看到早期阶段的明细
             applyStageSubs(s.stage_subs);
             if (s.stage && s.sub?.steps?.length) rememberSteps(s.stage, s.sub.steps);
-            setStatus(s);
+            setStatus((prev) => {
+                // 迟到的 REST 响应（例如点停止后立刻发出的那一次，读完 Redis 时
+                // worker 还没收尾）不能把已经收到的同一任务终态顶回「停止中/进行中」，
+                // 否则界面会卡在停止中直到下一次复核（2026-11-19 反馈）
+                const terminal = (st?: string) => st === 'completed'
+                    || st === 'failed' || st === 'cancelled';
+                if (prev && prev.task_id && prev.task_id === s.task_id
+                    && terminal(prev.status) && !terminal(s.status)) {
+                    return prev;
+                }
+                return s;
+            });
             if (s.task_id && s.status !== 'idle') {
                 localStorage.setItem(lastTaskKey(projectId), s.task_id);
             }
@@ -353,6 +377,8 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
         stepsCacheRef.current = {};
         setStepsByStage({});
         lastTaskSeenRef.current = null;
+        foreignFrameAtRef.current = 0;
+        lastPercentRef.current = 0;
     }, [projectId]);
 
     useEffect(() => { refresh(); }, [refresh, signal]);
@@ -375,7 +401,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
     }, [status?.task_id, applyStageSubs]);
 
     // 纯跟随：临时查看只在打开时的那个阶段内有效——后端阶段推进（status.stage 变化）
-    // 就自动回到实时；构建结束（完成/失败/中止）也收回，回到「本次构建」汇总
+    // 就自动回到实时；构建结束（完成/失败/中止）也收回，回到「构建汇总」
     useEffect(() => {
         if (!peekKey) return;
         const live = status?.stage || null;
@@ -422,6 +448,24 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                 try {
                     const data = JSON.parse(event.data);
                     lastFrameAtRef.current = Date.now();
+                    // 任务一致性（2026-11-19 停止流程反馈）：SSE 的 last_task 是建立
+                    // 连接时固化的兜底——本轮构建结束、运行锁一释放，服务端就回落到
+                    // 它继续推帧，上一轮构建的 stages/percent 会整条顶掉本轮。界面表现
+                    // 就是「停止中」一变终态，阶段时间线整块挪位、百分比从 25% 跳到上
+                    // 一轮的 78% 再跳回本轮的 42%。帧里带 task_id：与本地正在跟踪的
+                    // 任务不一致就丢弃，改回 REST 复核（REST 以运行锁 / 最近一次发起
+                    // 登记为准，不会拿旧任务顶包）。
+                    const trackedTask = statusRef.current?.task_id
+                        || localStorage.getItem(lastTaskKey(projectId)) || '';
+                    if (data.status && data.status !== 'idle' && data.task_id
+                        && trackedTask && data.task_id !== trackedTask) {
+                        const now = Date.now();
+                        if (now - foreignFrameAtRef.current > 3000) {
+                            foreignFrameAtRef.current = now;
+                            void refresh();
+                        }
+                        return;
+                    }
                     if (data.stage && data.sub?.steps?.length) {
                         rememberSteps(data.stage, data.sub.steps);
                     }
@@ -516,6 +560,9 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
     }, [subscribe]);
 
     const s = status;
+    // 停止中：后端收到取消后保留运行锁，等 worker 在检查点退出（或超时兜底）
+    // 才落 cancelled。这段时间既不是「运行中」也不是「已中止」——按钮要禁用、进度要留在原地
+    const stopping = s?.status === 'cancelling';
     const rawStages: PipelineStageState[] = s?.stages || [];
     // 子任务已跑到 100%（finish_task_progress 置 percent=100）但主阶段还没被置 done：
     // 后端在阶段收尾（如骨架索引同步）期间会有数秒到数十秒的间隙，界面会卡在「转圈 +
@@ -534,6 +581,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
     const mainPercent = typeof s?.percent === 'number' ? s.percent : undefined;
     // 运行中 3s 轮询；其余状态不轮询（事件驱动：signal / 手动刷新）
     const runningNow = !!s && (s.status === 'running' || s.status === 'queued'
+        || s.status === 'cancelling'
         || (!!stages.length && s.stages.some((x) => x.status === 'running')
             && s.status !== 'completed' && s.status !== 'failed' && s.status !== 'cancelled'));
     // 断流兜底：SSE 未接通时运行中每 3s 轮询；SSE 在线则全程零轮询
@@ -597,7 +645,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
             const r = await pipelineApi.cancel(projectId);
             message.success(r.kind === 'scheduled'
                 ? '已取消定时构建（到点不再自动开始）'
-                : '正在停止：当前这次 AI 调用返回后立即中断');
+                : '已发出停止请求：等后台任务退出后转为「已中止」，期间不能重新构建');
             refresh();
         } catch (e: any) {
             message.error(e.response?.data?.error?.message || '取消失败');
@@ -620,7 +668,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
         (st) => st.status === 'done' || st.status === 'failed' || st.status === 'cancelled') || null;
 
     // 默认详情：运行中跟随当前阶段；失败/中止落在出问题的阶段（先看原因）；
-    // 正常结束后停在「本次构建」汇总。
+    // 正常结束后停在「构建汇总」。
     // 阶段切换的空窗（上一阶段已 done、下一阶段还没置 running）沿用上一个有结果的阶段
     const fallbackKey = runningNow
         ? (runningStage?.key ?? lastActionableStage?.key ?? 'summary')
@@ -652,13 +700,19 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
             - Math.min(...starts)) / 1000)
         : null;
 
+    // 终止态的真实进度由后端保留（cancelled/failed 都是打断时的 percent，不是 100）。
+    // 若某一帧没带 percent，沿用上一次的读数——绝不能再回落成 100%，
+    // 否则「停止中 → 已中止」会先跳到 100% 再跳回来（2026-11-19 反馈）
     const overallPercent = s?.status === 'completed' ? 100
         : typeof mainPercent === 'number' ? mainPercent
-            : finished ? 100 : 0;
+            : finished ? lastPercentRef.current : 0;
     const overallState = s?.status === 'completed' && !runningNow ? 'done'
         : s?.status === 'failed' ? 'failed'
-            : s?.status === 'cancelled' ? 'cancelled' : 'running';
-    const overallMeta = runningNow
+            : stopping ? 'stopping'
+                : s?.status === 'cancelled' ? 'cancelled' : 'running';
+    const overallMeta = stopping
+        ? (s?.message || '正在停止（等待任务退出）…')
+        : runningNow
         ? `已完成 ${doneCount}/${stages.length} 个阶段`
         : s?.status === 'completed'
             ? (totalDuration > 0 ? `本次构建用时 ${fmtClock(totalDuration)}` : '本次构建已完成')
@@ -681,8 +735,13 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
 
     // 段头只补充运行中的上下文：完成态的总用时已经在总进度行与汇总区表达，不再重复第三遍。
     // 「已用」拿不到起点时（旧任务没有 started_at）整段略去，不显示「已用 —」；
-    // 计时同样走 3:12 的计时器写法（2026-11-17），与阶段头部那枚计时药丸同一套
-    const headSub = runningNow
+    // 计时同样走 01:23 的计时器写法（2026-11-17），与阶段头部那枚计时药丸同一套
+    const headSub = stopping
+        ? [
+            '正在停止，等待后台任务退出',
+            overallElapsed != null ? `已用 ${fmtClock(overallElapsed)}` : '',
+        ].filter(Boolean).join(' · ')
+        : runningNow
         ? [
             runningStage ? `当前阶段：${runningStage.label}` : '构建进行中',
             overallElapsed != null ? `已用 ${fmtClock(overallElapsed)}` : '',
@@ -692,6 +751,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
     const chips = activeKey === s?.stage ? statChips(s?.sub?.stats) : [];
 
     const detailMessage = (st: PipelineStageState, shown: string): string => {
+        if (shown === 'stopping') return s?.message || '正在停止（等待任务退出）…';
         if (shown === 'running') return s?.sub?.message || s?.message || st.detail || '正在执行…';
         if (shown === 'failed') return st.detail || s?.message || '阶段失败';
         if (shown === 'cancelled') return st.detail || '已中止';
@@ -702,7 +762,8 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
 
     const summaryTagState = s?.status === 'completed' ? 'done'
         : s?.status === 'failed' ? 'failed'
-            : s?.status === 'cancelled' ? 'cancelled' : 'running';
+            : stopping ? 'stopping'
+                : s?.status === 'cancelled' ? 'cancelled' : 'running';
 
     return (
         <Card
@@ -710,7 +771,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
             className="mb-3"
             title={(
                 <Space>
-                    {runningNow && <SyncOutlined spin style={{ color: '#5B8DEF' }} />}
+                    {runningNow && <SyncOutlined spin style={{ color: stopping ? '#B8790F' : '#5B8DEF' }} />}
                     <span>构建</span>
                     {headSub && (
                         <span className="hidden text-[11.5px] text-[#8A94AB] font-normal md:inline">
@@ -721,7 +782,12 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
             )}
             extra={(
                 <Space split={<span className="text-[#DCE3F0]">|</span>}>
-                    {runningNow && (
+                    {runningNow && (stopping ? (
+                        /* 已发取消、后端还在等 worker 退出（或超时兜底）：
+                           期间不能重复点停止，也不能重新构建（后端会拒绝） */
+                        <Button size="small" className="tk-warn-soft-btn" loading disabled
+                                icon={<PauseCircleOutlined />}>停止中</Button>
+                    ) : (
                         <Popconfirm title="停止当前构建？"
                                     description={(
                                         <div className="max-w-[260px] text-[13px]">
@@ -733,7 +799,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                     onConfirm={cancel}>
                             <Button size="small" className="tk-warn-soft-btn" icon={<PauseCircleOutlined />}>停止</Button>
                         </Popconfirm>
-                    )}
+                    ))}
                     {!runningNow && (
                         <Button size="small" type="primary" loading={starting}
                                 icon={<RetweetOutlined />}
@@ -812,7 +878,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                 }
                 @keyframes pl-blink { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
                 /* 段落标题前的品牌彩条（2026-11-17）：与图谱页 / 资产详情的 .ap-mark 同一枚，
-                   用来给「本次构建」「当前阶段」这类小标题一个明确起点。
+                   用来给「构建汇总」「当前阶段」这类小标题一个明确起点。
                    间距交给所在 flex 行的 gap：早先这里再写 margin-right 8px，
                    叠上 gap-2 变成 16px，彩条和标题之间空出一大截（2026-11-18 反馈） */
                 .pl-mark {
@@ -843,7 +909,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                         <div className="tk-mono w-[64px] shrink-0 text-[26px] font-semibold leading-none"
                              style={{ color: overallState === 'done' ? '#1B87AD'
                                  : overallState === 'failed' ? '#B42318'
-                                     : overallState === 'cancelled' ? '#B8790F' : '#5B8DEF' }}>
+                                     : (overallState === 'cancelled' || overallState === 'stopping') ? '#B8790F' : '#5B8DEF' }}>
                             {overallPercent}<span className="ml-[1px] text-[15px] font-medium">%</span>
                         </div>
                         <div className="h-[7px] min-w-0 flex-1 overflow-hidden rounded-full bg-[#EDF1F8]"
@@ -864,7 +930,9 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
             {stages.length > 0 && (
                 <div className="pl-tl mt-4">
                     {stages.map((st) => {
-                        const shown = st.status === 'running' && !runningNow ? 'cancelled' : st.status;
+                        const shown = st.status === 'running'
+                            ? (stopping ? 'stopping' : (!runningNow ? 'cancelled' : 'running'))
+                            : st.status;
                         const tone = DOT_TONE[shown] || DOT_TONE.pending;
                         return (
                             <button type="button" key={st.key}
@@ -920,7 +988,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                         <>
                             <div className="flex flex-wrap items-center gap-2">
                                 <span className="pl-mark" aria-hidden />
-                                <span className="text-[14px] font-semibold text-[#0F172A]">本次构建</span>
+                                <span className="text-[14px] font-semibold text-[#0F172A]">构建汇总</span>
                                 <Tag style={{ ...STATUS_TAG_STYLE[summaryTagState], marginInlineEnd: 0 }}
                                      className="!text-[11.5px]">
                                     {STAGE_STATUS_TEXT[summaryTagState] || '进行中'}
@@ -968,8 +1036,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                                             // 与详情区那枚计时药丸共用 stageDuration：
                                                             // 旧任务没有 duration_seconds 时也能由起止时间补算，
                                                             // 运行中的阶段同样按秒走动
-                                                            : fmtStageTime(stageDuration(st),
-                                                                st.key === 'conflicts' || st.key === 'selfcheck')}
+                                                            : fmtStageTime(stageDuration(st))}
                                                 </span>
                                             </button>
                                         );
@@ -982,8 +1049,9 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                         </>
                     ) : (
                         (() => {
-                            const shown = activeStage.status === 'running' && !runningNow
-                                ? 'cancelled' : activeStage.status;
+                            const shown = activeStage.status === 'running'
+                                ? (stopping ? 'stopping' : (!runningNow ? 'cancelled' : 'running'))
+                                : activeStage.status;
                             const pct = stagePercentOf(activeStage);
                             const live = stageDuration(activeStage);
                             // 子步骤只用后端数据（2026-11-16 用户要求前端不写死）：
@@ -1007,7 +1075,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                             const doneStepCount = visibleSteps.filter((s) => s.state === 'done').length;
                             const ringColor = shown === 'failed' ? '#B42318'
                                 : shown === 'done' ? '#1B87AD'
-                                    : shown === 'cancelled' ? '#B8790F'
+                                    : (shown === 'cancelled' || shown === 'stopping') ? '#B8790F'
                                         : shown === 'running' ? '#5B8DEF' : '#C2C7CF';
                             const ringLabel = STAGE_STATUS_TEXT[shown] || '—';
                             return (
@@ -1045,22 +1113,29 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                                     <Button type="link" size="small"
                                                             className="!h-auto !p-0 !text-[11.5px]"
                                                             onClick={() => setPeekKey(null)}>
-                                                        {runningNow ? '回到实时进度' : '返回本次构建'}
+                                                        {runningNow ? '回到实时进度' : '回到构建汇总'}
                                                     </Button>
                                                 </span>
                                             )}
                                             {/* 阶段用时（2026-11-17 改计时器药丸）：原来是一行
                                                 「用时 3 分 12 秒」裸文字，运行中每秒跳动、字宽也在变；
                                                 改成「时钟图标 + 等宽计时」，和右侧的临时查看入口同一行不打架。
-                                                冲突检测 / 结构自检常不足 1 秒，这两项保留小数秒写法 */}
+                                                不足 1 秒的阶段（冲突检测 / 结构自检）统一显示「<1s」（2026-11-19） */}
                                             {shown !== 'pending' && (
                                                 <span
                                                     className="inline-flex items-center gap-1 rounded-full border px-2 py-[2px]"
                                                     title="本阶段用时"
                                                     style={{
-                                                        background: 'rgba(255,255,255,0.66)',
+                                                        // 2026-11-19：原来是纯白 0.66 的药丸，压在冷蓝明细区上像一枚按钮；
+                                                        // 改成冷白纸面（与卡片同一档 #FBFDFF），运行中换成淡蓝底 + 极浅光晕，
+                                                        // 「在走」和「已停」在材质上就分开了
+                                                        background: shown === 'running'
+                                                            ? 'rgba(91,141,239,0.10)' : 'rgba(251,253,255,0.72)',
                                                         borderColor: shown === 'running'
-                                                            ? 'rgba(91,141,239,0.28)' : 'rgba(91,141,239,0.16)',
+                                                            ? 'rgba(91,141,239,0.30)' : 'rgba(91,141,239,0.20)',
+                                                        boxShadow: shown === 'running'
+                                                            ? '0 0 0 3px rgba(91,141,239,0.06)'
+                                                            : 'inset 0 1px 0 rgba(255,255,255,0.80)',
                                                     }}
                                                 >
                                                     <ClockCircleOutlined
@@ -1072,9 +1147,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                                         className={`tk-mono text-[12px] font-medium ${
                                                             shown === 'running' ? 'text-[#2A57C6]' : 'text-[#33415C]'}`}
                                                     >
-                                                        {fmtStageTime(live,
-                                                            activeStage.key === 'conflicts'
-                                                            || activeStage.key === 'selfcheck')}
+                                                        {fmtStageTime(live)}
                                                     </span>
                                                 </span>
                                             )}
@@ -1127,7 +1200,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                                 <div className="mt-1.5 flex flex-wrap gap-1.5">
                                                     {chips.map(([k, v]) => (
                                                         <span key={k}
-                                                              className="rounded-md border border-[#E4ECF8] bg-[rgba(255,255,255,0.72)] px-2 py-[1px] text-[11.5px] text-[#8A94AB]">
+                                                              className="rounded-md border border-[#E4ECF8] bg-[rgba(251,253,255,0.72)] px-2 py-[1px] text-[11.5px] text-[#8A94AB]">
                                                             {k}{' '}
                                                             <b className="tk-mono font-semibold text-[#2A57C6]">{v}</b>
                                                         </span>

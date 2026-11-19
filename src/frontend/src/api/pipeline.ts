@@ -44,7 +44,7 @@ export const DEPTH_OPTIONS = [
 ] as const;
 
 export interface PipelineStatus {
-    status: 'idle' | 'running' | 'queued' | 'scheduled' | 'completed' | 'failed' | 'cancelled';
+    status: 'idle' | 'running' | 'queued' | 'scheduled' | 'cancelling' | 'completed' | 'failed' | 'cancelled';
     task_id: string | null;
     stage?: string;
     percent?: number;
@@ -180,7 +180,8 @@ export const pipelineApi = {
         return `${base}/api/projects/${projectId}/pipeline/events?${q.toString()}`;
     },
 
-    cancel: async (projectId: number): Promise<{ cancelled: boolean; kind?: string }> => {
+    /** 取消：普通构建返回 stopping=true（进入「停止中」，等 worker 退出后才落 cancelled）；定时构建返回 kind=scheduled */
+    cancel: async (projectId: number): Promise<{ cancelled: boolean; kind?: string; task_id?: string; stopping?: boolean }> => {
         const response = await apiClient.post(`/api/projects/${projectId}/pipeline/cancel`);
         return response.data;
     },

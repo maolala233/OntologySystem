@@ -40,6 +40,8 @@ export const STATUS_CHIP: Record<string, { background: string; color: string; bo
     published: { background: 'rgba(139,92,246,0.14)', color: '#6D3FD8', borderColor: 'rgba(139,92,246,0.30)' },
     failed: { background: 'rgba(180,35,24,0.10)', color: '#B42318', borderColor: 'rgba(180,35,24,0.22)' },
     cancelled: { background: 'rgba(242,185,80,0.18)', color: '#B8790F', borderColor: 'rgba(242,185,80,0.45)' },
+    // 停止中（后端 pipeline status=cancelling）：已发取消、等 worker 退出，仍持运行锁
+    stopping: { background: 'rgba(242,185,80,0.20)', color: '#B8790F', borderColor: 'rgba(242,185,80,0.48)' },
 };
 
 /** 取状态徽标配色（未知状态回落到草稿） */
