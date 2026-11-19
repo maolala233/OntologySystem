@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx';
 import { Drawer, Form, Input, Button, Space, Modal, Spin, Tabs, Tooltip, Select, AutoComplete, Tag, Divider, Switch, Segmented, InputNumber, Tree, Input as AntInput, Dropdown, Menu, Badge, Empty, Upload } from 'antd';
 import type { TreeProps } from 'antd';
 import { message, confirmModal } from '../../../shared/feedback';
+import Tip from '../../../shared/Tip';
 import {
     SaveOutlined,
     CloudUploadOutlined,
@@ -1964,20 +1965,21 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
                     >
                         {/* 收起按钮 - 仅在面板展开时显示在面板右侧边缘 */}
                         {isLeftPanelExpanded && (
-                            <button
-                                className="absolute top-1/2 -translate-y-1/2 z-[100] shadow-md rounded-r-lg p-2 transition-all duration-300"
-                                style={{
-                                    right: '-32px',
-                                    background: '#1A2233',
-                                    color: '#E6EAF2',
-                                    border: '1px solid #2A3550',
-                                    borderLeft: 'none',
-                                }}
-                                onClick={() => setIsLeftPanelExpanded(false)}
-                                title="收起列表"
-                            >
-                                <LeftOutlined />
-                            </button>
+                            <Tip text="收起列表">
+                                <button
+                                    className="absolute top-1/2 -translate-y-1/2 z-[100] shadow-md rounded-r-lg p-2 transition-all duration-300"
+                                    style={{
+                                        right: '-32px',
+                                        background: '#1A2233',
+                                        color: '#E6EAF2',
+                                        border: '1px solid #2A3550',
+                                        borderLeft: 'none',
+                                    }}
+                                    onClick={() => setIsLeftPanelExpanded(false)}
+                                >
+                                    <LeftOutlined />
+                                </button>
+                            </Tip>
                         )}
                         
                         <div className="h-full flex flex-col overflow-hidden" style={{ minWidth: isLeftPanelExpanded ? '380px' : '0' }}>
@@ -2127,22 +2129,20 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
                                 >
                                     <Button size="small" type="primary" ghost icon={<PlusOutlined />}>添加</Button>
                                 </Dropdown>
-                                <Tooltip title={Array.from(expandedNodeIds).length > 0 ? '收起所有实例' : '展开所有实例'}>
-                                    <Button
-                                        size="small"
-                                        type="primary"
-                                        ghost
-                                        icon={Array.from(expandedNodeIds).length > 0 ? <ShrinkOutlined /> : <ExpandOutlined />}
-                                        onClick={expandAllInstances}
-                                    >
-                                        展开/收起实例
-                                    </Button>
-                                </Tooltip>
-                                <Tooltip title="类与实例列表">
-                                    <Button size="small" type="primary" ghost icon={<UnorderedListOutlined />} onClick={() => setIsLeftPanelExpanded((v) => !v)}>
-                                        列表
-                                    </Button>
-                                </Tooltip>
+                                {/* 文案自己说明动作（2026-11-19）：展开中显示「收起实例」、收起时显示「展开实例」，
+                                    不再靠悬停提示复述按钮要做什么 */}
+                                <Button
+                                    size="small"
+                                    type="primary"
+                                    ghost
+                                    icon={Array.from(expandedNodeIds).length > 0 ? <ShrinkOutlined /> : <ExpandOutlined />}
+                                    onClick={expandAllInstances}
+                                >
+                                    {Array.from(expandedNodeIds).length > 0 ? '收起实例' : '展开实例'}
+                                </Button>
+                                <Button size="small" type="primary" ghost icon={<UnorderedListOutlined />} onClick={() => setIsLeftPanelExpanded((v) => !v)}>
+                                    {isLeftPanelExpanded ? '收起列表' : '展开列表'}
+                                </Button>
                                 <Tooltip title="评测问题（CQ）：告诉系统该抽什么、发布前用这些问题验收新版本">
                                     <Button size="small" type="primary" ghost icon={<QuestionCircleOutlined />} onClick={() => setIsCqDrawerOpen(true)}>
                                         评测问题

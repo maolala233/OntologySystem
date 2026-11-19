@@ -8,6 +8,7 @@ import { message, confirmModal } from '../../shared/feedback';
 import { authAPI } from '../../api/auth';
 import { useAuthStore } from '../../shared/auth/authStore';
 import SiderToggle from './SiderToggle';
+import Tip from '../../shared/Tip';
 
 interface NavbarProps {
     breadcrumbs?: { title: string; path?: string }[];
@@ -113,9 +114,17 @@ const Navbar: React.FC<NavbarProps> = ({ breadcrumbs = [] }) => {
                         // 用路由 Link 做站内跳转：href 会触发整页刷新（白屏闪烁），SPA 内切换才平滑。
                         // 末级常是项目/资源名，可能很长：统一限宽截断，悬停看全称，
                         // 否则超长名字会把顶栏挤得只剩面包屑（2026-11-13）
-                        title: (
-                            <span className="inline-block max-w-[220px] truncate align-middle" title={item.title}>
-                                {item.path ? <Link to={item.path}>{item.title}</Link> : item.title}
+                        // 截断交给链接自己（2026-11-19）：原来外面套了一层
+                        // `overflow-hidden` 的 span，会把 antd 链接 hover 时的药丸
+                        // padding 和圆角一起裁掉，看着只剩一块贴着文字的方色块。
+                        // 链接本身用 inline-block + truncate，截断和 hover 底各自生效。
+                        title: item.path ? (
+                            <Link to={item.path} className="inline-block max-w-[220px] truncate align-middle">
+                                {item.title}
+                            </Link>
+                        ) : (
+                            <span className="inline-block max-w-[220px] truncate align-middle">
+                                {item.title}
                             </span>
                         ),
                     }))}
@@ -144,9 +153,11 @@ const Navbar: React.FC<NavbarProps> = ({ breadcrumbs = [] }) => {
                                 </Tag>
                             </div>
                             {user.email && (
-                                <div className="text-[11px] text-gray-400 truncate max-w-[180px]" title={user.email}>
-                                    {user.email}
-                                </div>
+                                <Tip text={user.email}>
+                                    <div className="text-[11px] text-gray-400 truncate max-w-[180px]">
+                                        {user.email}
+                                    </div>
+                                </Tip>
                             )}
                         </div>
                         <DownOutlined className="text-gray-400 text-[10px]" />

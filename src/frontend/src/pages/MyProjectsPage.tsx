@@ -98,7 +98,7 @@ const EllipsisTip: React.FC<{
     className?: string;
     placement?: 'topLeft' | 'top' | 'topRight';
     onClick?: React.MouseEventHandler<HTMLSpanElement>;
-}> = ({ text, fallback = '—', className, placement = 'topLeft', onClick }) => {
+}> = ({ text, fallback = '—', className, placement = 'top', onClick }) => {
     const ref = useRef<HTMLSpanElement>(null);
     const [hovered, setHovered] = useState(false);
     const [overflow, setOverflow] = useState(false);
@@ -1007,10 +1007,10 @@ const MyProjectsPage: React.FC = () => {
                                                     className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100"
                                                     onClick={(e) => e.stopPropagation()}
                                                 >
-                                                    <Tooltip title="详情">
-                                                        <Button type="text" size="small" icon={<EyeOutlined />}
-                                                                onClick={() => navigate(`/projects/${project.id}`)} />
-                                                    </Tooltip>
+                                                    {/* 眼睛图标本身就是「查看详情」，不再挂悬停提示 */}
+                                                    <Button type="text" size="small" icon={<EyeOutlined />}
+                                                            aria-label="查看项目详情"
+                                                            onClick={() => navigate(`/projects/${project.id}`)} />
                                                     <Tooltip title="编辑项目名称与介绍">
                                                         <Button type="text" size="small" icon={<EditOutlined />}
                                                                 onClick={() => handleEditProject(project)} />

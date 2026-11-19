@@ -17,6 +17,7 @@ import { FileTextOutlined } from '@ant-design/icons';
 import type { QaSource } from '../../api/qa';
 import { cleanQuote, classSummaryLine, toCitationMarkdown } from './quoteText';
 import MarkdownAnswer from './MarkdownAnswer';
+import Tip from '../../shared/Tip';
 
 export const REF_TYPE_LABEL: Record<string, string> = {
     vector_chunk: '向量切片',
@@ -94,14 +95,18 @@ export default function SourceCard({ index, source, highlighted, expandAll }: {
             <div className="mb-1 flex flex-wrap items-center gap-1.5">
                 <span className="tk-chip tk-chip--quiet tk-mono !px-1.5">[{index + 1}]</span>
                 <span className={toneCls}>{REF_TYPE_LABEL[source.ref_type] ?? source.ref_type}</span>
-                <span className="flex min-w-0 items-center gap-1 text-[#3B4A63]" title={source.doc_file || '未知文件'}>
-                    <FileTextOutlined className="shrink-0 text-[#8A94AB]" />
-                    <span className="truncate">{source.doc_file || '未知文件'}</span>
-                </span>
-                {source.score > 0 && (
-                    <span className="tk-mono ml-auto shrink-0 text-[11px] text-[#A3ADC2]" title="检索相似度">
-                        {(source.score * 100).toFixed(0)}%
+                <Tip text={source.doc_file || '未知文件'}>
+                    <span className="flex min-w-0 items-center gap-1 text-[#3B4A63]">
+                        <FileTextOutlined className="shrink-0 text-[#8A94AB]" />
+                        <span className="truncate">{source.doc_file || '未知文件'}</span>
                     </span>
+                </Tip>
+                {source.score > 0 && (
+                    <Tip text="检索相似度">
+                        <span className="tk-mono ml-auto shrink-0 text-[11px] text-[#A3ADC2]">
+                            {(source.score * 100).toFixed(0)}%
+                        </span>
+                    </Tip>
                 )}
             </div>
             {cls ? (

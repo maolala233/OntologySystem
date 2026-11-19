@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { message } from '../shared/feedback';
-import { Button, Input, Popconfirm, Select, Tag, Tooltip } from 'antd';
+import { Button, Input, Popconfirm, Select, Tag } from 'antd';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
 import { QA_LAST_PROJECT_ID_KEY } from '../shared/keys';
 import BrandMark from '../components/BrandMark';
@@ -43,6 +43,7 @@ import MarkdownAnswer from '../features/qa/MarkdownAnswer';
 import SourceCard from '../features/qa/SourceCard';
 import RetrievalTraceCard from '../features/qa/RetrievalTraceCard';
 import { uuid } from '../utils/uuid';
+import Tip from '../shared/Tip';
 
 interface QaTurn {
     question: string;
@@ -460,6 +461,11 @@ export default function QaPage() {
     })();
     const activeProject = projects.find(p => p.id === projectId);
     const activeProjectName = activeProject?.name;
+    // 欢迎语里的项目名最多显示 20 字（2026-11-19）：再长会把这行居中文字撑成两三行；
+    // 超出部分用省略号收掉，完整名字仍可在上方选择器里查看
+    const welcomeProjectName = activeProjectName && activeProjectName.length > 20
+        ? `${activeProjectName.slice(0, 20)}…`
+        : activeProjectName;
     const activeStatusMeta = activeProject ? projectStatusMeta(activeProject) : null;
     // 列表加载中留白（不画骨架、不判「暂无」）；确定没有任何可用项目、或列表已就绪时才下结论
     const convsReadyForUi = convsReady || (!projectsLoading && projectId == null);
@@ -680,8 +686,9 @@ export default function QaPage() {
                                 历史对话{convsReadyForUi ? `（${conversations.length}）` : ''}
                             </span>
                             {/* 会话按项目隔离，切项目后整列会换掉；标题里带上项目名，列表突然变化时不至于莫名其妙 */}
+                            {/* 项目名在顶部选择器里本来就完整可见，这里不再挂悬停提示 */}
                             {activeProjectName && (
-                                <span className="truncate text-[11px] text-[#A9B4C9]" title={activeProjectName}>
+                                <span className="truncate text-[11px] text-[#A9B4C9]">
                                     · {activeProjectName}
                                 </span>
                             )}
@@ -732,20 +739,19 @@ export default function QaPage() {
                                             onConfirm={e => { e?.stopPropagation(); removeConversation(c.id); }}
                                             onCancel={e => e?.stopPropagation()}
                                         >
-                                            <Tooltip title="删除对话">
-                                                {/* 删除是低频操作：非当前会话只在 hover/键盘聚焦时出现，列表更清爽 */}
-                                                <Button
-                                                    size="small" type="text"
-                                                    aria-label="删除对话"
-                                                    className={`!px-1 transition-opacity ${
-                                                        activeConvId === c.id
-                                                            ? 'opacity-100'
-                                                            : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto focus-visible:opacity-100'
-                                                    }`}
-                                                    icon={<DeleteOutlined className="text-[#A3ADC2] hover:text-red-500" />}
-                                                    onClick={e => e.stopPropagation()}
-                                                />
-                                            </Tooltip>
+                                            {/* 删除是低频操作：非当前会话只在 hover/键盘聚焦时出现，列表更清爽；
+                                                图标本身就是删除（垃圾桶）+ aria-label，不再挂悬停提示 */}
+                                            <Button
+                                                size="small" type="text"
+                                                aria-label="删除对话"
+                                                className={`!px-1 transition-opacity ${
+                                                    activeConvId === c.id
+                                                        ? 'opacity-100'
+                                                        : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto focus-visible:opacity-100'
+                                                }`}
+                                                icon={<DeleteOutlined className="text-[#A3ADC2] hover:text-red-500" />}
+                                                onClick={e => e.stopPropagation()}
+                                            />
                                         </Popconfirm>
                                     </div>
                                     <div className="text-[11px] text-[#A3ADC2] mt-0.5 flex justify-between">
@@ -783,11 +789,19 @@ export default function QaPage() {
                                            琥珀底（.qa-select-warn），列表回来后自动选中第一个
                                            又变回白色。只有"加载完了确实没选中"才提示 */
                                         className={!projectsLoading && projectId == null ? 'qa-select-warn' : undefined}
-                                        style={{ width: 'auto', minWidth: 200, maxWidth: 270 }}
+                                        /* 固定宽度（2026-11-19）：原来是 auto + 270 上限，长项目名会把整条
+                                           「项目 / 对话模型」工具条撑长；定宽后名字只在选择器里省略号截断，
+                                           工具条长度稳定，右侧「对话模型」不会被挤走 */
+                                        style={{ width: 240 }}
                                         options={projects.map(p => ({ value: p.id, label: p.name }))}
                                     />
+                                    {/* 状态标签占固定槽位（2026-11-19）：文案只有「草稿」(2 字) 和
+                                        其余 3 字两档，不定宽会让后面的竖线和「对话模型」随项目状态横移；
+                                        54px 兜住 3 字（约 52px），短文案居中 */}
                                     {activeStatusMeta && (
-                                        <Tag color={activeStatusMeta.color} className="!mr-0 shrink-0">{activeStatusMeta.text}</Tag>
+                                        <Tag color={activeStatusMeta.color} className="!mr-0 min-w-[54px] shrink-0 text-center">
+                                            {activeStatusMeta.text}
+                                        </Tag>
                                     )}
                                 </div>
                                 <span className="mx-1 h-4 w-px shrink-0 bg-[#E4EBF7]" aria-hidden />
@@ -799,7 +813,7 @@ export default function QaPage() {
                                         placeholder="跟随默认模型"
                                         allowClear
                                         onClear={() => setModelId(null)}
-                                        style={{ width: 'auto', minWidth: 200, maxWidth: 270 }}
+                                        style={{ width: 240 }}
                                         options={models.map(m => ({
                                             value: m.id,
                                             label: `${m.name}${m.is_default ? ' · 默认' : ''}`,
@@ -826,10 +840,11 @@ export default function QaPage() {
                                 </div>
                                 <p className="tk-mono text-[10px] tracking-[0.24em] text-[#9AA6BF]">ONTOLOGY Q&amp;A</p>
                                 <h3 className="mt-2 text-[17px] font-semibold text-[#0F172A]">基于本体知识图谱的检索问答</h3>
-                                {/* 上下文行：告诉用户这次问答落在哪个图谱上，引用还能溯源到原文 */}
+                                {/* 上下文行：告诉用户这次问答落在哪个图谱上，引用还能溯源到原文。
+                                    项目名超过 20 字在 welcomeProjectName 里已经截断，句长可控 */}
                                 <p className="mt-1.5 text-[12.5px] leading-5 text-[#66738F]">
                                     {activeProjectName
-                                        ? <>将从 <span className="font-medium text-[#2F62D8]">《{activeProjectName}》</span> 的本体图谱中检索答案，引用可溯源到原文</>
+                                        ? <>将从 <span className="font-medium text-[#2F62D8]">《{welcomeProjectName}》</span> 的本体图谱中检索答案，引用可溯源到原文</>
                                         : '选择一个项目后即可开始提问'}
                                 </p>
 
@@ -1021,15 +1036,16 @@ export default function QaPage() {
                                 浮在输入框正上方居中，和 composer 共用同一条 768px 轴 */}
                             {turns.length > 0 && edgeFade.bottom && (
                                 <div className="pointer-events-none absolute bottom-[calc(100%+10px)] left-1/2 z-[2] -translate-x-1/2">
-                                    <button
-                                        type="button"
-                                        onClick={jumpToLatest}
-                                        aria-label="回到最新消息"
-                                        title="回到最新"
-                                        className="qa-return-btn qa-return-in pointer-events-auto"
-                                    >
-                                        <ArrowDownOutlined />
-                                    </button>
+                                    <Tip text="回到最新">
+                                        <button
+                                            type="button"
+                                            onClick={jumpToLatest}
+                                            aria-label="回到最新消息"
+                                            className="qa-return-btn qa-return-in pointer-events-auto"
+                                        >
+                                            <ArrowDownOutlined />
+                                        </button>
+                                    </Tip>
                                 </div>
                             )}
                             <div className={`qa-composer relative rounded-2xl border border-[#D7E3F3] px-3.5 pt-3 pb-2.5 transition-[border-color,box-shadow] duration-200 focus-within:border-[#5B8DEF] focus-within:shadow-[0_16px_38px_-18px_rgba(91,141,239,0.42)] ${!busy && projectId != null ? 'qa-composer--awaiting' : ''}`}>
@@ -1062,10 +1078,10 @@ export default function QaPage() {
                                             停止
                                         </Button>
                                     ) : (
+                                        // 纸飞机图标 + 下方 Enter 发送说明已经够用，不再叠悬停提示
                                         <button
                                             type="button"
                                             aria-label="发送"
-                                            title="发送"
                                             onClick={send}
                                             disabled={!canSend}
                                             className="qa-send-btn"

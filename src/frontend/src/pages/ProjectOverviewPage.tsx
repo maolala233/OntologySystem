@@ -23,6 +23,7 @@ import BuildResultsPanel from '../features/builder/components/BuildResultsPanel'
 import { useBuilderStore } from '../features/builder/store';
 import type { ProjectData } from '../types/ontology';
 import Navbar from '../components/Layout/Navbar';
+import Tip from '../shared/Tip';
 
 const ProjectOverviewPage: React.FC = () => {
     const { projectId } = useParams<{ projectId: string }>();
@@ -374,10 +375,9 @@ const ProjectOverviewPage: React.FC = () => {
                         <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
                             <div className="min-w-0 flex-1">
                                 <div className="flex min-w-0 items-center gap-2">
-                                    <h1
-                                        className="m-0 max-w-[280px] min-w-0 truncate text-[18px] font-semibold leading-7 text-[#0F172A]"
-                                        title={projectReady ? projectName : undefined}
-                                    >
+                                    {/* 项目名不再挂悬停提示（2026-11-19 用户反馈）：它就在页面标题处，
+                                        提示内容与可见文字完全重复；超长由 truncate 收成省略号 */}
+                                    <h1 className="m-0 max-w-[280px] min-w-0 truncate text-[18px] font-semibold leading-7 text-[#0F172A]">
                                         {projectReady
                                             ? projectName
                                             // 骨架条占位（2026-11-19）：原来是一行"加载中…"，
@@ -393,22 +393,22 @@ const ProjectOverviewPage: React.FC = () => {
                                         </Tag>
                                     )}
                                     {projectReady && domainName && (
-                                        <Tag
-                                            className="!m-0 shrink-0 max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap"
-                                            title={domainName}
-                                            style={{ background: 'rgba(91,141,239,0.10)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.24)', marginInlineEnd: 0 }}
-                                        >
-                                            {domainName}
-                                        </Tag>
+                                        <Tip text={domainName}>
+                                            <Tag
+                                                className="!m-0 shrink-0 max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap"
+                                                style={{ background: 'rgba(91,141,239,0.10)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.24)', marginInlineEnd: 0 }}
+                                            >
+                                                {domainName}
+                                            </Tag>
+                                        </Tip>
                                     )}
                                 </div>
                                 {projectReady && projectDescription && (
-                                    <p
-                                        className="m-0 mt-1 truncate text-[12.5px] leading-5 text-[#66738F]"
-                                        title={projectDescription}
-                                    >
-                                        {projectDescription}
-                                    </p>
+                                    <Tip text={projectDescription}>
+                                        <p className="m-0 mt-1 truncate text-[12.5px] leading-5 text-[#66738F]">
+                                            {projectDescription}
+                                        </p>
+                                    </Tip>
                                 )}
                             </div>
                             <div className="flex shrink-0 items-center gap-2.5">

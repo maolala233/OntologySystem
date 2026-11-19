@@ -10,6 +10,7 @@ import {
     ExpandOutlined, ShrinkOutlined, SearchOutlined,
 } from '@ant-design/icons';
 import Navbar from '../components/Layout/Navbar';
+import Tip from '../shared/Tip';
 import { publishApi } from '../api/governance';
 import { ProjectData } from '../types/ontology';
 
@@ -484,12 +485,12 @@ const AssetDetailPage: React.FC = () => {
                         {/* 身份段：名称 + 发布状态 + 一行元信息（作者 · 知识域 · 发布时间 · 版本） */}
                         <div className="border-b px-5 pb-3.5 pt-4" style={{ borderColor: AP_DIV }}>
                             <div className="flex items-start justify-between gap-2">
-                                <h1
-                                    className="line-clamp-2 text-[20px] font-semibold leading-7 text-[#F2F6FF]"
-                                    title={project.name}
-                                >
-                                    {project.name}
-                                </h1>
+                                {/* 两行截断：悬停看全称（走全站统一 Tooltip，不用浏览器白框） */}
+                                <Tip text={project.name}>
+                                    <h1 className="line-clamp-2 text-[20px] font-semibold leading-7 text-[#F2F6FF]">
+                                        {project.name}
+                                    </h1>
+                                </Tip>
                                 <Tag
                                     className="!m-0 shrink-0"
                                     style={{ background: 'rgba(91,141,239,0.18)', color: '#9EC1FF', borderColor: 'rgba(91,141,239,0.36)' }}
@@ -566,12 +567,11 @@ const AssetDetailPage: React.FC = () => {
                                     <span className="ap-mark" aria-hidden />
                                     项目描述
                                 </div>
-                                <p
-                                    className="m-0 line-clamp-6 text-[13px] leading-6 text-[#A9B7D9]"
-                                    title={project.description}
-                                >
-                                    {project.description}
-                                </p>
+                                <Tip text={project.description}>
+                                    <p className="m-0 line-clamp-6 text-[13px] leading-6 text-[#A9B7D9]">
+                                        {project.description}
+                                    </p>
+                                </Tip>
                             </div>
                         )}
 
@@ -666,24 +666,22 @@ const AssetDetailPage: React.FC = () => {
                             </label>
                             <span className="hidden xl:block h-5 w-px" style={{ background: '#1A2233' }} aria-hidden />
                             <div className="flex items-center gap-1.5">
-                                <Tooltip title={Array.from(expandedNodeIds).length > 0 ? '收起所有实例' : '展开所有实例'}>
-                                    <Button
-                                        icon={Array.from(expandedNodeIds).length > 0 ? <ShrinkOutlined /> : <ExpandOutlined />}
-                                        onClick={Array.from(expandedNodeIds).length > 0 ? collapseAll : expandAll}
-                                        className="ap-tool"
-                                    >
-                                        展开/收起实例
-                                    </Button>
-                                </Tooltip>
-                                <Tooltip title="类与实例列表">
-                                    <Button
-                                        icon={<UnorderedListOutlined />}
-                                        onClick={() => setIsLeftPanelExpanded((v) => !v)}
-                                        className={`ap-tool ${isLeftPanelExpanded ? 'ap-tool-on' : ''}`}
-                                    >
-                                        列表
-                                    </Button>
-                                </Tooltip>
+                                {/* 文案自己说明动作（2026-11-19）：展开中显示「收起实例」、收起时显示「展开实例」，
+                                    不再靠悬停提示复述按钮要做什么 */}
+                                <Button
+                                    icon={Array.from(expandedNodeIds).length > 0 ? <ShrinkOutlined /> : <ExpandOutlined />}
+                                    onClick={Array.from(expandedNodeIds).length > 0 ? collapseAll : expandAll}
+                                    className="ap-tool"
+                                >
+                                    {Array.from(expandedNodeIds).length > 0 ? '收起实例' : '展开实例'}
+                                </Button>
+                                <Button
+                                    icon={<UnorderedListOutlined />}
+                                    onClick={() => setIsLeftPanelExpanded((v) => !v)}
+                                    className={`ap-tool ${isLeftPanelExpanded ? 'ap-tool-on' : ''}`}
+                                >
+                                    {isLeftPanelExpanded ? '收起列表' : '展开列表'}
+                                </Button>
                             </div>
                         </div>
                     </div>

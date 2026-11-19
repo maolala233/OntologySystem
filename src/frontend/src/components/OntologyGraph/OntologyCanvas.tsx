@@ -31,6 +31,7 @@ import {
 // --- 引入自定义组件和工具 ---
 // 请确保路径正确指向你存放文件的位置
 import Neo4jNode from './Neo4jNode';
+import Tip from '../../shared/Tip';
 import { getLayoutedElements } from '../../utils/layoutUtils';
 import { projectsApi } from '../../api/projects';
 import { OntologyNode, OntologyEdge } from '../../types/ontology'; // 假设你有定义类型，如果没有可用 any
@@ -430,11 +431,12 @@ const OntologyCanvas: React.FC<{ projectId: number }> = ({ projectId }) => {
                         />
                         <Divider type="vertical" />
 
-                        <Button
-                            icon={<DeploymentUnitOutlined />}
-                            onClick={() => applyAutoLayout(nodes, edges)}
-                            title="重新自动布局"
-                        />
+                        <Tip text="重新自动布局">
+                            <Button
+                                icon={<DeploymentUnitOutlined />}
+                                onClick={() => applyAutoLayout(nodes, edges)}
+                            />
+                        </Tip>
 
                         <Button
                             icon={<PlusOutlined />}

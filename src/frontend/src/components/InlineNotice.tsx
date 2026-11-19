@@ -1,5 +1,6 @@
 import React from 'react';
 import { CheckCircleOutlined, CloseCircleOutlined, ExclamationCircleOutlined, InfoCircleOutlined } from '@ant-design/icons';
+import Tip from '../shared/Tip';
 
 type Tone = 'info' | 'warning' | 'error' | 'success';
 
@@ -58,12 +59,12 @@ const InlineNotice: React.FC<InlineNoticeProps> = ({
             style={{ background: t.bg, borderColor: t.border, color: t.color }}
         >
             <span className="shrink-0 text-[13px]">{icon ?? t.icon}</span>
-            <span
-                className="min-w-0 flex-1 truncate"
-                title={typeof children === 'string' ? children : undefined}
-            >
-                {children}
-            </span>
+            {/* 截断时悬停看全文：走全站统一的深色 Tooltip，不用浏览器原生白框 */}
+            <Tip text={typeof children === 'string' ? children : undefined}>
+                <span className="min-w-0 flex-1 truncate">
+                    {children}
+                </span>
+            </Tip>
             {action && <span className="shrink-0">{action}</span>}
         </div>
     );

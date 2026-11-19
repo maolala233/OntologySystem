@@ -17,6 +17,7 @@ import {
 
 import { projectsApi } from '../../../api/projects';
 import { setUnsavedGuard } from '../../../utils/unsavedGuard';
+import Tip from '../../../shared/Tip';
 import confirmImpact from '../../../utils/impactConfirm';
 import { extractionApi } from '../../../api/extraction';
 import { versionsApi } from '../../../api/governance';
@@ -829,14 +830,15 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                         }}
                     >
                         {isLeftPanelExpanded && (
-                            <button
-                                className="absolute top-1/2 -translate-y-1/2 z-[100] shadow-md rounded-r-lg p-2 transition-all duration-300"
-                                style={{ right: '-32px', background: '#1A2233', color: '#E6EAF2', border: '1px solid #2A3550', borderLeft: 'none' }}
-                                onClick={() => setIsLeftPanelExpanded(false)}
-                                title="收起列表"
-                            >
-                                <LeftOutlined />
-                            </button>
+                            <Tip text="收起列表">
+                                <button
+                                    className="absolute top-1/2 -translate-y-1/2 z-[100] shadow-md rounded-r-lg p-2 transition-all duration-300"
+                                    style={{ right: '-32px', background: '#1A2233', color: '#E6EAF2', border: '1px solid #2A3550', borderLeft: 'none' }}
+                                    onClick={() => setIsLeftPanelExpanded(false)}
+                                >
+                                    <LeftOutlined />
+                                </button>
+                            </Tip>
                         )}
 
                         <div className="h-full flex flex-col overflow-hidden" style={{ minWidth: isLeftPanelExpanded ? '380px' : '0' }}>
@@ -912,20 +914,18 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                                 className="flex items-center gap-1 px-2 py-1.5 rounded-lg border"
                                 style={{ background: 'rgba(19, 26, 42, 0.92)', borderColor: '#1A2233', backdropFilter: 'blur(6px)' }}
                             >
-                                <Tooltip title={Array.from(expandedNodeIds).length > 0 ? '收起所有实例' : '展开所有实例'}>
-                                    <Button
-                                        size="small" type="primary" ghost
-                                        icon={Array.from(expandedNodeIds).length > 0 ? <ShrinkOutlined /> : <ExpandOutlined />}
-                                        onClick={Array.from(expandedNodeIds).length > 0 ? collapseAll : expandAll}
-                                    >
-                                        展开/收起实例
-                                    </Button>
-                                </Tooltip>
-                                <Tooltip title="类与实例列表">
-                                    <Button size="small" type="primary" ghost icon={<UnorderedListOutlined />} onClick={() => setIsLeftPanelExpanded((v) => !v)}>
-                                        列表
-                                    </Button>
-                                </Tooltip>
+                                {/* 文案自己说明动作（2026-11-19）：展开中显示「收起实例」、收起时显示「展开实例」，
+                                    不再靠悬停提示复述按钮要做什么 */}
+                                <Button
+                                    size="small" type="primary" ghost
+                                    icon={Array.from(expandedNodeIds).length > 0 ? <ShrinkOutlined /> : <ExpandOutlined />}
+                                    onClick={Array.from(expandedNodeIds).length > 0 ? collapseAll : expandAll}
+                                >
+                                    {Array.from(expandedNodeIds).length > 0 ? '收起实例' : '展开实例'}
+                                </Button>
+                                <Button size="small" type="primary" ghost icon={<UnorderedListOutlined />} onClick={() => setIsLeftPanelExpanded((v) => !v)}>
+                                    {isLeftPanelExpanded ? '收起列表' : '展开列表'}
+                                </Button>
                                 <Tooltip title="手动新增一个实例节点（挂到所选类下，操作记录到版本时间轴）">
                                     <Button size="small" type="primary" ghost icon={<PlusOutlined />} onClick={openInstAdd}>
                                         新增实例

@@ -9,6 +9,7 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import Tip from '../../shared/Tip';
 
 const CITE_RE = /\[(\d{1,2})\]/g;
 
@@ -31,21 +32,22 @@ function CitationMark({ n, active, onCite }: { n: number; active: boolean; onCit
     }
     return (
         <sup>
-            <button
-                type="button"
-                title={`查看引用 [${n}]`}
-                onClick={e => {
-                    e.stopPropagation();
-                    onCite(n);
-                }}
-                className="mx-0.5 inline-flex h-[16px] min-w-[18px] cursor-pointer items-center justify-center
-                    rounded-full border border-[rgba(91,141,239,0.30)] bg-[rgba(91,141,239,0.08)] px-1.5
-                    align-super text-[10px] font-medium leading-none text-[#2A57C6] transition-colors
-                    hover:border-[#5B8DEF] hover:bg-[rgba(91,141,239,0.16)]
-                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(91,141,239,0.35)]"
-            >
-                {n}
-            </button>
+            <Tip text={`查看引用 [${n}]`}>
+                <button
+                    type="button"
+                    onClick={e => {
+                        e.stopPropagation();
+                        onCite(n);
+                    }}
+                    className="mx-0.5 inline-flex h-[16px] min-w-[18px] cursor-pointer items-center justify-center
+                        rounded-full border border-[rgba(91,141,239,0.30)] bg-[rgba(91,141,239,0.08)] px-1.5
+                        align-super text-[10px] font-medium leading-none text-[#2A57C6] transition-colors
+                        hover:border-[#5B8DEF] hover:bg-[rgba(91,141,239,0.16)]
+                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(91,141,239,0.35)]"
+                >
+                    {n}
+                </button>
+            </Tip>
         </sup>
     );
 }

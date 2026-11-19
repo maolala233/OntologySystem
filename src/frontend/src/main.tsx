@@ -7,8 +7,12 @@ import dayjs from 'dayjs'
 import 'dayjs/locale/zh-cn'
 import App from './App.tsx'
 import './index.css'
+import { installNativeTitleStripper } from './shared/stripNativeTitles'
 
 dayjs.locale('zh-cn')   // 周一为一周起始，符合国内习惯
+
+// 分页页码 / 每页条数 / 树节点上由 rc-* 自动挂的原生 title，统一在 hover 时摘掉
+installNativeTitleStripper()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>

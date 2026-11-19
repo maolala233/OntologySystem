@@ -98,6 +98,16 @@ export const appTheme: ThemeConfig = {
             headerBg: 'transparent',
             headerFontSize: 15,
         },
+        Breadcrumb: {
+            // 面包屑（2026-11-19）：antd 默认的链接 / 分隔符取中性灰（colorTextDescription），
+            // 悬停又叠一层中性灰底（colorBgTextHover），压在冷蓝顶栏上发脏、发暖。
+            // 这里重取冷调：常规项冷灰、当前页冷墨、链接冷灰蓝，悬停底色见 index.css
+            itemColor: '#8A94AB',
+            lastItemColor: '#1F2A44',
+            linkColor: '#66738F',
+            linkHoverColor: BRAND.primaryInk,
+            separatorColor: '#C3CCDD',
+        },
         Table: {
             // 表头/悬停/分隔线换成冷蓝调（2026-11-13）：antd 默认的表头是中性灰白，
             // 在浅蓝画布上显得"脏"；只调色温，不动任何结构

@@ -101,6 +101,13 @@ body,
   font-size: 14px;
 }
 
+/* 面包屑链接的悬停底（2026-11-19）：antd 默认用中性灰 colorBgTextHover，
+   压在偏冷的顶栏上显脏；换成和下拉菜单项 / 会话行同一档的品牌淡蓝。
+   取色见 theme.ts 的 components.Breadcrumb */
+body .ant-breadcrumb .ant-breadcrumb-item a:hover {
+  background-color: rgba(91, 141, 239, 0.10);
+}
+
 @media (max-width: 576px) {
   .ant-breadcrumb {
     font-size: 12px;

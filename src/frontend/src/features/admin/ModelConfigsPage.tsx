@@ -15,6 +15,7 @@ import { projectsApi } from '../../api/projects';
 import { ProjectData } from '../../types/ontology';
 import Navbar from '../../components/Layout/Navbar';
 import PageHeader from '../../components/Layout/PageHeader';
+import Tip from '../../shared/Tip';
 
 const PURPOSES = [
     { key: 'extract', label: '抽取模型', hint: '文档解析后的本体抽取（消耗最大）' },
@@ -294,7 +295,7 @@ const ModelConfigsPage: React.FC = () => {
                                 size="small"
                                 title={
                                     <div className="flex items-center gap-1.5 min-w-0">
-                                        <span className="truncate" title={row.name}>{row.name}</span>
+                                        <Tip text={row.name}><span className="truncate">{row.name}</span></Tip>
                                         {row.is_default && <Tag className="!m-0 shrink-0" style={{ background: 'rgba(91,141,239,0.12)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.28)' }}>默认</Tag>}
                                         {!row.enabled && <Tag className="!m-0 shrink-0" style={{ background: 'rgba(15,23,42,0.05)', color: '#8A94AB', borderColor: 'rgba(15,23,42,0.08)' }}>停用</Tag>}
                                         <Tag className="!m-0 shrink-0">{row.scope === 'global' ? '全局' : projectName(row.project_id)}</Tag>
@@ -329,9 +330,11 @@ const ModelConfigsPage: React.FC = () => {
                                 <div className="space-y-1.5">
                                     <div className="flex items-baseline gap-2 min-w-0">
                                         <span className="w-14 shrink-0 text-xs text-[#8A94AB]">模型</span>
-                                        <span className="tk-mono text-[13px] text-[#3D4B66] truncate" title={row.model_name}>
-                                            {row.model_name}
-                                        </span>
+                                        <Tip text={row.model_name}>
+                                            <span className="tk-mono text-[13px] text-[#3D4B66] truncate">
+                                                {row.model_name}
+                                            </span>
+                                        </Tip>
                                     </div>
                                     <div className="flex items-baseline gap-2 min-w-0">
                                         <span className="w-14 shrink-0 text-xs text-[#8A94AB]">地址</span>

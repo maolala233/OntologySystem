@@ -1034,8 +1034,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                         setPeekKey(st.key);
                                         peekLiveKeyRef.current = status?.stage || null;
                                     }}
-                                    className={`pl-tl-item ${shown} ${activeKey === st.key ? 'selected' : ''}`}
-                                    title={`${st.label} · ${STAGE_STATUS_TEXT[shown] || '待开始'}`}>
+                                    className={`pl-tl-item ${shown} ${activeKey === st.key ? 'selected' : ''}`}>
                                 <span className="pl-tl-inner">
                                     <span className="pl-tl-dot" style={{ background: tone.bg, color: tone.color }}>
                                         {shown === 'running'
@@ -1096,9 +1095,6 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                         const peekable = st.status !== 'pending';
                                         return (
                                             <button type="button" key={st.key}
-                                                    title={peekable
-                                                        ? `查看「${st.label}」明细`
-                                                        : `「${st.label}」尚未开始`}
                                                     disabled={!peekable}
                                                     onClick={() => {
                                                         setPeekKey((prev) => (prev === st.key ? null : st.key));
@@ -1208,7 +1204,6 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                             {shown !== 'pending' && (
                                                 <span
                                                     className="inline-flex items-center gap-1 rounded-full border px-2 py-[2px]"
-                                                    title="本阶段用时"
                                                     style={{
                                                         // 2026-11-19：原来是纯白 0.66 的药丸，压在冷蓝明细区上像一枚按钮；
                                                         // 改成冷白纸面（与卡片同一档 #FBFDFF），运行中换成淡蓝底 + 极浅光晕，
