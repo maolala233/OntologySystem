@@ -11,6 +11,7 @@ import BrandMark from '../components/BrandMark';
 import Navbar from '../components/Layout/Navbar';
 import { projectStatusMeta } from '../shared/projectStatus';
 import {
+    ArrowDownOutlined,
     ArrowRightOutlined,
     BulbOutlined,
     DeleteOutlined,
@@ -126,6 +127,15 @@ export default function QaPage() {
         const top = el.scrollTop > 2;
         const bottom = el.scrollTop + el.clientHeight < el.scrollHeight - 2;
         setEdgeFade((prev) => (prev.top === top && prev.bottom === bottom ? prev : { top, bottom }));
+    }, []);
+
+    /** 回到最新：用户滚上去看历史后，输入框上方浮出的圆形按钮（参考 aiBank 的 return-current-btn）。
+        点一下恢复"贴底跟随"，并把视图平滑滚到底 */
+    const jumpToLatest = useCallback(() => {
+        const el = listRef.current;
+        if (!el) return;
+        stickBottomRef.current = true;
+        el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
     }, []);
 
     /** 把缓冲区里攒下的 token 合并进最后一条回答（节流后的实际渲染点） */
@@ -605,8 +615,43 @@ export default function QaPage() {
                         0 14px 34px -26px rgba(15, 23, 42, 0.36),
                         0 2px 6px rgba(15, 23, 42, 0.05);
                 }
+                /* 回到最新（2026-11-19，参考 aiBank 的 return-current-btn）：
+                   36px 冷白圆片 + 品牌描边 + 柔投影，hover 加深描边并转纯白；
+                   出现时 180ms 上浮淡入，不打断阅读 */
+                .qa-return-btn {
+                    display: grid;
+                    place-items: center;
+                    width: 36px;
+                    height: 36px;
+                    padding: 0;
+                    border: 1px solid rgba(91, 141, 239, 0.28);
+                    border-radius: 50%;
+                    background: rgba(251, 253, 255, 0.94);
+                    color: #2A57C6;
+                    font-size: 16px;
+                    cursor: pointer;
+                    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.16);
+                    transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+                }
+                .qa-return-btn:hover {
+                    border-color: rgba(91, 141, 239, 0.55);
+                    background: #FFFFFF;
+                    box-shadow: 0 8px 22px rgba(15, 23, 42, 0.20);
+                }
+                .qa-return-btn:focus-visible {
+                    outline: 2px solid rgba(91, 141, 239, 0.50);
+                    outline-offset: 2px;
+                }
+                .qa-return-in {
+                    animation: qa-return-in 180ms ease-out both;
+                }
+                @keyframes qa-return-in {
+                    from { opacity: 0; transform: translateY(6px); }
+                    to { opacity: 1; transform: translateY(0); }
+                }
                 @media (prefers-reduced-motion: reduce) {
                     .qa-composer::after { animation: none; opacity: 0.35; }
+                    .qa-return-in { animation: none; }
                 }
             `}</style>
             {/* 全站顶栏：面包屑 + 账号（与工作台/我的项目/资产中心共用，切页不再「失去顶栏」） */}
@@ -958,7 +1003,22 @@ export default function QaPage() {
                     {/* 输入区：一体化 composer（玻璃底 + 细描边 + 柔光；聚焦转品牌蓝；
                         等待输入时外圈有缓慢旋转的高光，参考 aiBank demo） */}
                     <div className="shrink-0 px-6 pt-3 pb-4">
-                        <div className="max-w-3xl mx-auto">
+                        <div className="relative max-w-3xl mx-auto">
+                            {/* 回到最新：只有「有内容」且「视图没贴底」时才出现，
+                                浮在输入框正上方居中，和 composer 共用同一条 768px 轴 */}
+                            {turns.length > 0 && edgeFade.bottom && (
+                                <div className="pointer-events-none absolute bottom-[calc(100%+10px)] left-1/2 z-[2] -translate-x-1/2">
+                                    <button
+                                        type="button"
+                                        onClick={jumpToLatest}
+                                        aria-label="回到最新消息"
+                                        title="回到最新"
+                                        className="qa-return-btn qa-return-in pointer-events-auto"
+                                    >
+                                        <ArrowDownOutlined />
+                                    </button>
+                                </div>
+                            )}
                             <div className={`qa-composer relative rounded-2xl border border-[#D7E3F3] px-3.5 pt-3 pb-2.5 transition-[border-color,box-shadow] duration-200 focus-within:border-[#5B8DEF] focus-within:shadow-[0_16px_38px_-18px_rgba(91,141,239,0.42)] ${!busy && projectId != null ? 'qa-composer--awaiting' : ''}`}>
                                 <Input.TextArea
                                     ref={inputRef}

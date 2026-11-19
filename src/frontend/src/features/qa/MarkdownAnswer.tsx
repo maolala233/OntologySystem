@@ -85,7 +85,11 @@ export default function MarkdownAnswer({ content, sourceCount, onCite, dense, ci
     const h3 = dense ? 'text-[13px]' : 'text-[14px]';
     const h4 = dense ? 'text-[12.5px]' : 'text-[13.5px]';
     return (
-        <div className={`break-words leading-[1.75] text-[#2B3852] ${dense ? 'text-[12.5px]' : 'text-[14px]'}`}>
+        /* 首/末块去掉外边距（2026-11-19 用户反馈）：正文块都带 my-*，落在容器里会和
+           容器自己的 padding 叠成一段说不清来源的留白——回答以段落开头是 6+10，以标题开头
+           是 14+10，以表格开头是 8+10，于是"有的上面空得多、有的正常"。这里统一把第一个块的
+           上边距、最后一个块的下边距归零，留白只由容器决定 */
+        <div className={`break-words leading-[1.75] text-[#2B3852] [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 ${dense ? 'text-[12.5px]' : 'text-[14px]'}`}>
             <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 components={{
