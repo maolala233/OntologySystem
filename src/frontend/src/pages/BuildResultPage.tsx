@@ -12,7 +12,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { message } from '../shared/feedback';
-import { Button, Input, Modal, Spin, Tag, Tooltip, Tree } from 'antd';
+import { Button, Input, Modal, Tag, Tooltip, Tree } from 'antd';
 import type { TreeProps } from 'antd/es/tree';
 import {
     ArrowLeftOutlined, DatabaseOutlined,
@@ -26,6 +26,7 @@ import { useBuilderStore } from '../features/builder/store';
 import D3ForceGraph, { spacingLabel } from '../components/OntologyGraph/D3ForceGraph';
 import DetailDrawer from '../features/graph-explorer/DetailDrawer';
 import Navbar from '../components/Layout/Navbar';
+import WorkspaceSkeleton from '../components/Layout/WorkspaceSkeleton';
 import Tip from '../shared/Tip';
 
 const CLASS_TYPES = new Set(['owl:Class', 'Class']);
@@ -251,15 +252,8 @@ const BuildResultPage: React.FC = () => {
     ];
 
     if (loading || !summary) {
-        // 加载态沿用同一外壳（Navbar + 居中 Spin），避免先闪一屏无顶栏的布局再跳变
-        return (
-            <div className="h-full flex flex-col app-canvas">
-                <Navbar breadcrumbs={breadcrumbs} />
-                <div className="flex-1 flex items-center justify-center">
-                    <Spin size="large" />
-                </div>
-            </div>
-        );
+        // 加载态直接用最终构图（与资产详情同一套骨架），避免深色台面在数据到达时突然出现
+        return <WorkspaceSkeleton breadcrumbs={breadcrumbs} />;
     }
 
     const sc = (summary.pipeline?.selfcheck || null) as null | {

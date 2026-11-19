@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { PROJECT_STATUS, PUBLISHED_TAG } from '../shared/projectStatus';
 import { useParams, useNavigate } from 'react-router-dom';
 import { message } from '../shared/feedback';
-import { Button, Spin, Tag, Modal, Input, Tooltip, Tree } from 'antd';
+import { Button, Tag, Modal, Input, Tooltip, Tree } from 'antd';
 import type { TreeProps } from 'antd';
 import {
     ArrowLeftOutlined, UserOutlined, InfoCircleOutlined, DatabaseOutlined,
@@ -10,6 +10,7 @@ import {
     ExpandOutlined, ShrinkOutlined, SearchOutlined,
 } from '@ant-design/icons';
 import Navbar from '../components/Layout/Navbar';
+import WorkspaceSkeleton from '../components/Layout/WorkspaceSkeleton';
 import Tip from '../shared/Tip';
 import { publishApi } from '../api/governance';
 import { ProjectData } from '../types/ontology';
@@ -275,17 +276,10 @@ const AssetDetailPage: React.FC = () => {
         { title: project?.name || '本体详情' },
     ];
 
-    // 加载态走浅色外壳：深色画布现在是内缩的一块"台面"，先按外壳色铺一屏，
-    // 数据到了再把这块台面浮上来，比整屏先黑一下再亮回去稳
+    // 加载态直接用最终构图：同样是浅色外壳 + 内缩深色台面 + 左栏面板骨架，
+    // 数据回来是在原位填充，避免一整块深色面积突然浮上来（2026-11-19）
     if (loading) {
-        return (
-            <div className="h-full flex flex-col app-canvas">
-                <Navbar breadcrumbs={breadcrumbs} />
-                <div className="flex-1 flex items-center justify-center">
-                    <Spin size="large" />
-                </div>
-            </div>
-        );
+        return <WorkspaceSkeleton breadcrumbs={breadcrumbs} panelClass="w-[400px]" />;
     }
 
     if (!project) {

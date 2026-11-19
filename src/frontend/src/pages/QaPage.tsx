@@ -103,6 +103,11 @@ export default function QaPage() {
     // 切项目时作废旧请求的响应，防止慢请求回来覆盖新项目的列表
     const convSeqRef = useRef(0);
     const [activeConvId, setActiveConvId] = useState<string | null>(null);
+    // 打开历史会话的加载态：延迟 180ms 才显示，避免本地快请求时闪一下提示
+    const [convOpening, setConvOpening] = useState(false);
+    const convOpenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // 连点两条会话时，只让最后一次请求收掉加载态（先返回的旧请求不碰它）
+    const convOpenSeqRef = useRef(0);
 
     const [turns, setTurns] = useState<QaTurn[]>([]);
     const [question, setQuestion] = useState('');
@@ -250,6 +255,7 @@ export default function QaPage() {
     useEffect(() => () => {
         abortRef.current?.abort();
         if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+        if (convOpenTimerRef.current) clearTimeout(convOpenTimerRef.current);
         if (flushTimerRef.current !== null) clearTimeout(flushTimerRef.current);
     }, []);
 
@@ -284,6 +290,11 @@ export default function QaPage() {
         abortRef.current?.abort();
         clearTokenFlush();
         stickBottomRef.current = true;
+        // 加载态延迟出现（2026-11-19）：本地点开只是几十毫秒，立刻弹转圈会闪；
+        // 超过 180ms 还没回来才提示，慢的时候用户不至于"点了没反应"
+        const openSeq = ++convOpenSeqRef.current;
+        if (convOpenTimerRef.current) clearTimeout(convOpenTimerRef.current);
+        convOpenTimerRef.current = setTimeout(() => setConvOpening(true), 180);
         try {
             const detail = await getQaConversation(projectId, convId);
             setActiveConvId(detail.id);
@@ -304,6 +315,14 @@ export default function QaPage() {
             })));
         } catch {
             message.error('加载对话失败');
+        } finally {
+            if (openSeq === convOpenSeqRef.current) {
+                if (convOpenTimerRef.current) {
+                    clearTimeout(convOpenTimerRef.current);
+                    convOpenTimerRef.current = null;
+                }
+                setConvOpening(false);
+            }
         }
     }, [projectId, clearTokenFlush]);
 
@@ -765,7 +784,7 @@ export default function QaPage() {
                 </aside>
 
                 {/* 右侧：对话区 */}
-                <div className="flex-1 flex flex-col min-w-0">
+                <div className="relative flex-1 flex flex-col min-w-0">
                     {/* 二级工具条：项目 + 模型。放在画布上（不自建白色页头），避免与全站顶栏叠成两条白条。
                         两者是同一组上下文配置（这次问答用哪个项目、哪个模型），
                         收进一条浅色胶囊并用一条淡竖线分隔，不再用 flex-1 推到屏幕两端 */}
@@ -795,14 +814,19 @@ export default function QaPage() {
                                         style={{ width: 240 }}
                                         options={projects.map(p => ({ value: p.id, label: p.name }))}
                                     />
-                                    {/* 状态标签占固定槽位（2026-11-19）：文案只有「草稿」(2 字) 和
-                                        其余 3 字两档，不定宽会让后面的竖线和「对话模型」随项目状态横移；
-                                        54px 兜住 3 字（约 52px），短文案居中 */}
-                                    {activeStatusMeta && (
-                                        <Tag color={activeStatusMeta.color} className="!mr-0 min-w-[54px] shrink-0 text-center">
-                                            {activeStatusMeta.text}
-                                        </Tag>
-                                    )}
+                                    {/* 状态标签固定槽位（2026-11-19）：
+                                        ① 文案只有「草稿」(2 字) 和其余 3 字两档，不定宽会让后面的
+                                           竖线和「对话模型」随项目状态横移；
+                                        ② 槽位常驻——项目列表回来前还没有状态，如果这时不占位，
+                                           数据到达的瞬间整条工具条会突然变长（进入页面时的那下跳动）。
+                                           54px 兜住 3 字（约 52px），短文案居中 */}
+                                    <span className="inline-flex w-[54px] shrink-0 items-center justify-center">
+                                        {activeStatusMeta && (
+                                            <Tag color={activeStatusMeta.color} className="!mr-0 min-w-[54px] text-center">
+                                                {activeStatusMeta.text}
+                                            </Tag>
+                                        )}
+                                    </span>
                                 </div>
                                 <span className="mx-1 h-4 w-px shrink-0 bg-[#E4EBF7]" aria-hidden />
                                 <div className="flex min-w-0 items-center gap-1.5 px-1">
@@ -1027,6 +1051,17 @@ export default function QaPage() {
                             })}
                         </div>
                     </div>
+
+                    {/* 打开历史会话的加载态（2026-11-19）：只在慢请求时出现，
+                        不遮整页、也不换掉旧对话——数据回来后由下面的列表整体替换 */}
+                    {convOpening && (
+                        <div className="pointer-events-none absolute inset-0 z-[5] flex items-center justify-center">
+                            <div className="flex items-center gap-2 rounded-full border border-[rgba(91,141,239,0.22)] bg-[rgba(251,253,255,0.94)] px-3 py-1.5 text-[12px] text-[#52607A] shadow-[0_10px_26px_-18px_rgba(15,23,42,0.5)] backdrop-blur">
+                                <LoadingOutlined className="text-[#5B8DEF]" />
+                                正在载入对话…
+                            </div>
+                        </div>
+                    )}
 
                     {/* 输入区：一体化 composer（玻璃底 + 细描边 + 柔光；聚焦转品牌蓝；
                         等待输入时外圈有缓慢旋转的高光，参考 aiBank demo） */}

@@ -221,8 +221,13 @@ export default function McpConsolePage() {
     const loadTokens = useCallback(async () => {
         try {
             const items = isAdmin ? await listMcpTokens() : await listMyMcpTokens();
-            setTokens(items.filter(t => !t.revoked_at));
-            setSelectedTokenId(prev => prev ?? items.find(t => !t.revoked_at)?.id ?? null);
+            const alive = items.filter(t => !t.revoked_at);
+            setTokens(alive);
+            // 不再默认选中第一个令牌（2026-11-19 用户反馈）：列表是异步回来的，
+            // 自动选中会让令牌信息块在进页面时"从无到有"出现，把下面的「连接」按钮顶下去；
+            // 而且第一个令牌多半没有明文（明文只在签发时展示一次），选中了也连不上。
+            // 只自动恢复当前标签页里还留着明文的令牌——只有这种能直接连
+            setSelectedTokenId(prev => prev ?? alive.find(t => !!getPlainToken(t.id))?.id ?? null);
         } catch {
             message.error(isAdmin ? '加载 MCP 令牌失败（需 admin）' : '加载 MCP 令牌失败');
         }
@@ -629,10 +634,14 @@ export default function McpConsolePage() {
                                 }))}
                                 notFoundContent={<span className="text-xs text-[#66738F]">暂无令牌，点击「签发」创建</span>}
                             />
-                            {selectedToken && (
-                                <div className="mt-2 rounded-lg border border-[rgba(91,141,239,0.16)] bg-[rgba(91,141,239,0.06)] px-2.5 py-2 space-y-1">
-                                    <div className="flex items-center justify-between gap-2">
-                                        <span className="flex items-center gap-1.5 min-w-0">
+                            {/* 令牌详情固定占位（2026-11-19 用户反馈）：令牌列表是异步回来的，
+                                详情块如果"有才渲染"，会在数据到达时把下面的「连接」按钮顶下去——
+                                3G 下最明显。这里始终占同一行高：选中令牌显示绑定信息（有效期并进同一行），
+                                没选就显示连接前置提示，按钮的位置从此不再随数据变化 */}
+                            <div className="mt-2 h-9">
+                                {selectedToken ? (
+                                    <div className="flex h-full w-full items-center justify-between gap-2 rounded-lg border border-[rgba(91,141,239,0.16)] bg-[rgba(91,141,239,0.06)] px-2.5">
+                                        <span className="flex min-w-0 items-center gap-1.5">
                                             <span
                                                 className="shrink-0 rounded-full border px-1.5 py-[2px] text-[10px] font-medium leading-none"
                                                 style={selectedToken.can_write
@@ -642,17 +651,23 @@ export default function McpConsolePage() {
                                                 {selectedToken.can_write ? '读写' : '只读'}
                                             </span>
                                             <span className="text-[11px] text-[#66738F] truncate">项目 #{selectedToken.project_id}</span>
+                                            {selectedToken.expires_at && (
+                                                <span className="shrink-0 text-[11px] text-[#8A94AB]">
+                                                    至 {selectedToken.expires_at.slice(0, 10)}
+                                                </span>
+                                            )}
                                         </span>
                                         <Tooltip title="撤销该令牌">
                                             <Button size="small" type="text" danger icon={<DeleteOutlined />}
                                                 className="!px-1" onClick={() => doRevoke(selectedToken.id)} />
                                         </Tooltip>
                                     </div>
-                                    {selectedToken.expires_at && (
-                                        <div className="text-[11px] text-[#8A94AB]">有效期至 {selectedToken.expires_at.slice(0, 10)}</div>
-                                    )}
-                                </div>
-                            )}
+                                ) : (
+                                    <span className="flex h-full items-center text-[11px] text-[#A9B4C9]">
+                                        先选择或签发令牌后才能连接
+                                    </span>
+                                )}
+                            </div>
                         </section>
 
                         {/* 连接操作 */}
@@ -676,11 +691,11 @@ export default function McpConsolePage() {
                                     </>
                                 )}
                             </div>
-                            {!bearer && (
+                            {/* 未选令牌的提示已上移到令牌详情槽位（按钮位置保持稳定），
+                                这里只保留「选了令牌但本页没有明文」这一种需要额外解释的情况 */}
+                            {!bearer && selectedTokenId != null && (
                                 <div className="mt-1.5 text-[11px] text-[#8A94AB]">
-                                    {selectedTokenId != null
-                                        ? '该令牌的明文不在本标签页（明文只在签发时显示一次），请重新签发一个令牌'
-                                        : '先选择或签发令牌后才能连接'}
+                                    该令牌的明文不在本标签页（明文只在签发时显示一次），请重新签发一个令牌
                                 </div>
                             )}
                         </section>
