@@ -158,7 +158,7 @@ def run_axiom_suggestions(db: Session, project_id: int,
         # 当前默认模型实测 38s。这里只报状态 + 每 10s 的已用时，
         # 用户能看出调用还活着（2026-11-16 用户反馈）。
         _prog(35, f"统计通道完成 {len(stat_candidates)} 条候选；"
-                  "AI 通道生成中…（可取消）")
+                  "AI 通道生成中…")
         if _cancelled():
             return {"candidates": 0, "review_created": 0, "deduped": 0,
                     "cancelled": True}
@@ -169,7 +169,7 @@ def run_axiom_suggestions(db: Session, project_id: int,
             while not _llm_stop.wait(10):
                 elapsed = int(time.monotonic() - _llm_t0)
                 _prog(35, f"统计通道完成 {len(stat_candidates)} 条候选；"
-                          f"AI 通道生成中… 已 {elapsed} 秒（可取消）")
+                          f"AI 通道生成中… 已 {elapsed} 秒")
 
         _llm_thread = None
         if progress_cb is not None:
