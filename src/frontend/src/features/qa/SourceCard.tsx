@@ -1,12 +1,21 @@
-// src/features/qa/SourceCard.tsx - 问答溯源引用卡（QaDrawer / QaPage 共用）
+// src/features/qa/SourceCard.tsx - 问答溯源引用卡（问答页 /qa 使用）
 // evidence 原句 + char 定位 + 文档预签名链接；highlighted 用于正文 [n] 角标点击定位。
-// 引用内容经 cleanQuote 清理解析残留；图节点类清单引用重组为「摘要行 + 实例列表」，
-// 长内容默认截断可展开——溯源要完整且可读。
-import { useState } from 'react';
-import { Button, Popover, Tag } from 'antd';
+// 引用正文统一走 markdown 渲染（2026-11-19）：解析器把 docx/pptx 的表格拍成了
+// 「a | b | c」的行，chunk 里没有分隔行，直接渲染只会得到一堆纯文本段落。
+// toCitationMarkdown 先把这些行块还原成 GFM 表格、把单个换行转成硬换行，
+// 再交给 MarkdownAnswer——表格就是表格，条款就是一行一条。
+// 图节点清单引用另走一套：摘要行 + 实例列表，比原样堆实例名好读。
+// 视觉层同样统一到站内冷调：类型标记只留品牌蓝（检索证据）/ 品牌紫（推演结论）两支，
+// 序号与相似度用等宽冷灰。
+// 底色（2026-11-19 二次收敛）：原先每条都是一张白卡，5~6 条叠在冷蓝面板上，
+// 白块把面板本身压没了，页面上还平白多出五六个"卡片边界"。现在卡片透明，
+// 靠面板自己的冷蓝底 + 行间发丝线分区，hover 才浮出一层品牌淡底，
+// 定位高亮用左侧品牌竖条 —— 同一张面板里的条目，不再各自是一块纸。
+import { useEffect, useRef, useState } from 'react';
+import { Button } from 'antd';
 import { FileTextOutlined } from '@ant-design/icons';
 import type { QaSource } from '../../api/qa';
-import { cleanQuote, classSummaryLine } from './quoteText';
+import { cleanQuote, classSummaryLine, toCitationMarkdown } from './quoteText';
 import MarkdownAnswer from './MarkdownAnswer';
 
 export const REF_TYPE_LABEL: Record<string, string> = {
@@ -18,13 +27,14 @@ export const REF_TYPE_LABEL: Record<string, string> = {
     axiom: '本体公理',
 };
 
-const REF_TYPE_COLOR: Record<string, string> = {
-    vector_chunk: 'geekblue',
-    keyword_chunk: 'cyan',
-    graph_edge: 'purple',
-    graph_node: 'geekblue',
-    inference: 'magenta',
-    axiom: 'gold',
+/** 推演类引用（不是检索命中，而是规则/公理推出来的）用品牌紫，其余用品牌蓝 */
+const REF_TYPE_TONE: Record<string, 'brand' | 'violet'> = {
+    vector_chunk: 'brand',
+    keyword_chunk: 'brand',
+    graph_edge: 'brand',
+    graph_node: 'brand',
+    inference: 'violet',
+    axiom: 'violet',
 };
 
 /** 长实例列表转可读形态：前 12 项一行展示 + 尾注 */
@@ -35,118 +45,120 @@ function readableList(rest: string): { head: string; tailNote: string } {
     return { head: items.slice(0, 12).join(sep), tailNote: `…等 ${items.length} 项` };
 }
 
-export default function SourceCard({ index, source, highlighted }: {
+export default function SourceCard({ index, source, highlighted, expandAll }: {
     index: number;
     source: QaSource;
     highlighted?: boolean;
+    /** 父级「全部展开 / 全部收起」：变化时覆写本条自己的展开态，之后仍可单独切换 */
+    expandAll?: boolean;
 }) {
     const [expanded, setExpanded] = useState(false);
+    const scrollRef = useRef<HTMLDivElement>(null);
+    // 正文角标点过来时顺带展开这条证据：原来只给一圈高亮，用户还得自己再点一次
+    // 「展开全文」才看得到内容。只展开不自动收起，免得手动展开的卡被下一次定位折回去
+    useEffect(() => {
+        if (highlighted) setExpanded(true);
+    }, [highlighted]);
+    // 折叠后内容被裁到固定高度：内层滚动位置必须归零。否则展开时滚到中间、
+    // 再收起，露出来的就是从中间截断的一屏，看着像内容丢了（2026-11-19 反馈）
+    useEffect(() => {
+        if (!expanded) scrollRef.current?.scrollTo({ top: 0 });
+    }, [expanded]);
+    useEffect(() => {
+        setExpanded(!!expandAll);
+    }, [expandAll]);
+
     const openDetail = () => {
         if (source.doc_url) window.open(source.doc_url, '_blank');
     };
 
-    const isInferred = source.ref_type === 'inference';
-    const isAxiom = source.ref_type === 'axiom';
     const isNodeList = source.ref_type === 'graph_node';
-    // 切片类（向量/关键词）：内容缩略一行，悬浮展示原文全文+来源文档（表格/word/txt 均适用）
-    const isChunk = source.ref_type === 'vector_chunk' || source.ref_type === 'keyword_chunk';
 
     const quote = cleanQuote(source.quote);
-    // 图节点清单引用 → 摘要行 + 实例列表分块
+    // 图节点清单引用 → 摘要行 + 实例列表分块；其余类型统一走 markdown
     const cls = isNodeList ? classSummaryLine(quote) : null;
     const listBody = cls && cls.rest.length > 40 ? readableList(cls.rest) : null;
-    const longText = (cls ? cls.rest : quote).length > 140;
+    const md = cls ? '' : toCitationMarkdown(source.quote);
+    // 折叠时只留四行左右的高度；判断是否还有更多内容可展开（约 4 行 / 240 字）
+    const moreLines = md.split('\n').filter(l => l.trim()).length > 4 || md.length > 240;
+    const canExpand = cls ? !!listBody : moreLines;
 
-    const borderCls = highlighted
-        ? 'border-blue-400 ring-2 ring-blue-200 shadow-sm'
-        : isInferred
-            ? 'border-purple-200 hover:border-purple-300'
-            : isAxiom
-                ? 'border-amber-200 hover:border-amber-300'
-                : 'border-gray-200 hover:border-blue-300';
+    // 高亮：正文角标点过来时左侧亮一条品牌竖条 + 一层淡底（inset 阴影，不占布局宽度）
+    const cardCls = highlighted
+        ? 'bg-[rgba(91,141,239,0.10)] shadow-[inset_2px_0_0_0_#5B8DEF]'
+        : 'hover:bg-[rgba(255,255,255,0.55)]';
+    const toneCls = REF_TYPE_TONE[source.ref_type] === 'violet' ? 'tk-chip tk-chip--violet' : 'tk-chip';
 
     return (
-        <div className={`p-2.5 bg-white border rounded-lg text-xs transition-all ${borderCls}`}>
-            <div className="flex items-center gap-1.5 mb-1 flex-wrap">
-                <Tag color={REF_TYPE_COLOR[source.ref_type] ?? 'default'} className="mr-0">[{index + 1}]</Tag>
-                <Tag color={REF_TYPE_COLOR[source.ref_type] ?? 'default'} className="mr-0">
-                    {REF_TYPE_LABEL[source.ref_type] ?? source.ref_type}
-                </Tag>
-                <span className="text-gray-600 font-medium flex items-center gap-1">
-                    <FileTextOutlined />{source.doc_file || '未知文件'}
+        <div className={`rounded-[8px] px-2.5 py-2 text-[12px] transition-colors ${cardCls}`}>
+            <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                <span className="tk-chip tk-chip--quiet tk-mono !px-1.5">[{index + 1}]</span>
+                <span className={toneCls}>{REF_TYPE_LABEL[source.ref_type] ?? source.ref_type}</span>
+                <span className="flex min-w-0 items-center gap-1 text-[#3B4A63]" title={source.doc_file || '未知文件'}>
+                    <FileTextOutlined className="shrink-0 text-[#8A94AB]" />
+                    <span className="truncate">{source.doc_file || '未知文件'}</span>
                 </span>
-                {source.score > 0 && <span className="text-gray-500 ml-auto">{(source.score * 100).toFixed(0)}%</span>}
+                {source.score > 0 && (
+                    <span className="tk-mono ml-auto shrink-0 text-[11px] text-[#A3ADC2]" title="检索相似度">
+                        {(source.score * 100).toFixed(0)}%
+                    </span>
+                )}
             </div>
             {cls ? (
                 /* 图节点清单：摘要行粗体 + 实例列表 */
                 <div className="pl-1">
-                    <div className="text-gray-700 font-medium leading-relaxed">{cls.summary}</div>
+                    <div className="font-medium leading-[1.7] text-[#3B4A63]">{cls.summary}</div>
                     {listBody ? (
                         <>
-                            <div className="text-gray-500 leading-relaxed mt-0.5">
-                                {listBody.head}{listBody.tailNote && <span className="text-gray-400"> {listBody.tailNote}</span>}
+                            <div className="mt-0.5 leading-[1.7] text-[#52607A]">
+                                {listBody.head}
+                                {listBody.tailNote && <span className="text-[#A3ADC2]"> {listBody.tailNote}</span>}
                             </div>
                             {expanded && (
-                                <div className="text-gray-500 leading-relaxed mt-1 whitespace-pre-wrap border-t border-dashed border-gray-200 pt-1">
+                                <div className="mt-1 whitespace-pre-wrap border-t border-dashed border-[rgba(91,141,239,0.18)] pt-1 leading-[1.7] text-[#52607A]">
                                     {cls.rest}
                                 </div>
                             )}
-                            <Button size="small" type="link" className="!px-1 !text-[11px]"
-                                    onClick={() => setExpanded(v => !v)}>
-                                {expanded ? '收起完整清单' : '查看完整清单'}
-                            </Button>
                         </>
                     ) : (
-                        <div className="text-gray-500 leading-relaxed mt-0.5">{cls.rest}</div>
+                        <div className="mt-0.5 leading-[1.7] text-[#52607A]">{cls.rest}</div>
                     )}
                 </div>
-            ) : isChunk && source.quote ? (
-                /* 切片引用：缩略一行 + 悬浮看原文（markdown 渲染——表格还原为真表格，
-                   word/txt 段落正常排版；来源文档在悬浮卡顶部标明） */
-                <Popover
-                    placement="rightTop"
-                    mouseEnterDelay={0.25}
-                    styles={{ body: { padding: '12px 14px', width: 660 } }}
-                    content={
-                        <div>
-                            <div className="flex items-center gap-1.5 text-[11px] text-gray-500 mb-2 pb-1.5 border-b border-gray-100">
-                                <FileTextOutlined />来源文档：{source.doc_file || '未知文件'}
-                            </div>
-                            <div className="max-h-96 overflow-y-auto pr-1">
-                                <MarkdownAnswer content={source.quote} sourceCount={0} onCite={() => {}} />
-                            </div>
-                        </div>
-                    }
-                >
-                    <div className="pl-1 cursor-help">
-                        <div className="text-gray-500 leading-relaxed line-clamp-1">
-                            {quote.slice(0, 60)}{quote.length > 60 ? '…' : ''}
-                        </div>
-                    </div>
-                </Popover>
             ) : (
-                /* 其它引用：清理后的原文（长文可展开） */
-                quote && (
-                    <div className="pl-1">
-                        <div className={`text-gray-500 leading-relaxed whitespace-pre-wrap ${expanded ? '' : 'line-clamp-4'}`}>
-                            {quote}
-                        </div>
-                        {longText && (
-                            <Button size="small" type="link" className="!px-1 !text-[11px]"
-                                    onClick={() => setExpanded(v => !v)}>
-                                {expanded ? '收起' : '展开全文'}
-                            </Button>
-                        )}
+                md && (
+                    /* 引用原文：折叠时只露两行左右（原来 86px 接近四行，一屏引用卡太长），
+                       展开后卡内滚动。这里关掉 [n] 角标解析——原文里的方括号是正文 */
+                    <div ref={scrollRef}
+                         className={`pl-1 ${expanded ? 'max-h-[360px] overflow-auto' : 'max-h-[58px] overflow-hidden'} ${
+                             !expanded && canExpand
+                                 ? '[mask-image:linear-gradient(to_bottom,#000_72%,transparent)]'
+                                 : ''
+                         }`}>
+                        <MarkdownAnswer content={md} sourceCount={0} onCite={() => {}} dense citations={false} />
                     </div>
                 )
             )}
-            {source.char_start != null && (
-                <div className="text-gray-400 mt-1 pl-1">原文定位：第 {source.char_start}–{source.char_end ?? source.char_start} 字符</div>
-            )}
-            {source.doc_url && (
-                <Button size="small" type="link" className="!px-1 !text-[11px]" onClick={openDetail}>
-                    打开原文
-                </Button>
+            {(canExpand || source.doc_url || source.char_start != null) && (
+                <div className="mt-1 flex flex-wrap items-center gap-x-3 pl-1">
+                    {canExpand && (
+                        <Button size="small" type="link" className="!h-auto !px-1 !text-[11px]"
+                                onClick={() => setExpanded(v => !v)}>
+                            {expanded
+                                ? (cls ? '收起完整清单' : '收起')
+                                : (cls ? '查看完整清单' : '展开全文')}
+                        </Button>
+                    )}
+                    {source.doc_url && (
+                        <Button size="small" type="link" className="!h-auto !px-0 !text-[11px]" onClick={openDetail}>
+                            打开原文
+                        </Button>
+                    )}
+                    {source.char_start != null && (
+                        <span className="text-[11px] text-[#A3ADC2]">
+                            原文定位：第 <span className="tk-mono">{source.char_start}–{source.char_end ?? source.char_start}</span> 字符
+                        </span>
+                    )}
+                </div>
             )}
         </div>
     );

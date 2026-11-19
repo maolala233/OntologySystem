@@ -1596,6 +1596,50 @@ body .tk-surface-deco .ant-modal-content::after {
   .tk-skel::after { animation: none; }
 }
 
+/* 小标题彩条（面板装饰语言，2026-11-19）：3×13px 蓝→紫竖条。
+   此前这枚彩条只散落在各页面的私有样式里（.ap-mark），问答区的
+   「检索过程 / 溯源引用」两个子面板也要同一枚，收进全局供各处复用；
+   与弹窗标题的 :has(.ap-mark) 跳过逻辑无关，用独立类名避免误伤 */
+.tk-mark {
+  display: block;
+  flex: none;
+  width: 3px;
+  height: 13px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #5B8DEF 0%, #8B5CF6 100%);
+}
+
+/* 冷调小胶囊（2026-11-19）：问答 / 溯源里的类型标记与计数。
+   替代 antd Tag 的 geekblue / cyan / purple / magenta / gold——那套语义色
+   和站内冷调蓝紫没有血缘关系，一排彩色标签会把答案正压成背景。
+   这里只留两支：检索到的证据用品牌蓝，推演得到的结论用品牌紫，
+   其余（计数、序号）一律安静灰 */
+.tk-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(91, 141, 239, 0.18);
+  background: rgba(91, 141, 239, 0.10);
+  color: #2A57C6;
+  font-size: 10.5px;
+  line-height: 1;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.tk-chip--violet {
+  border-color: rgba(139, 92, 246, 0.20);
+  background: rgba(139, 92, 246, 0.10);
+  color: #6D4AD8;
+}
+.tk-chip--quiet {
+  border-color: rgba(91, 141, 239, 0.12);
+  background: rgba(91, 141, 239, 0.05);
+  color: #66738F;
+}
+
 /* 后台管理页的页面标题：统一字重与色彩，和正文拉开层次 */
 .ant-typography h4.ant-typography,
 h4.ant-typography {

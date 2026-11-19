@@ -1,8 +1,9 @@
 // src/features/qa/RetrievalTraceCard.tsx - 检索过程卡片：本次问答"怎么得到这个结果"的
 // 编号步骤展示（①查图谱→②查规则/公理→③查关系→④查切片→⑤综合得到答案），
 // 每次查询动态不同；可折叠（默认展开，头部点击收起只留摘要行）。
+// 头部与「溯源引用」用同一套小标题语言（彩条 + 标题 + 等宽摘要），
+// 命中数从 antd 彩色 Tag 换成冷调小胶囊（2026-11-19）。
 import { useState } from 'react';
-import { Tag } from 'antd';
 import {
     ApartmentOutlined,
     ApiOutlined,
@@ -38,13 +39,13 @@ export default function RetrievalTraceCard({ trace, streaming }: {
     const last = trace[trace.length - 1];
     const totalRefs = trace.reduce((acc, st) => (st.stage !== '大模型综合' ? acc + (st.refs?.length || 0) : acc), 0);
     return (
-        <div className="mt-1 rounded-xl border border-[#E7EEF9] bg-[#F7F9FD] p-2.5">
-            <button type="button" className="w-full mb-1.5 flex items-center gap-1.5 text-[11.5px] text-[#66738F] text-left"
+        <div className="mt-1 rounded-xl border border-[rgba(91,141,239,0.16)] bg-[#EDF3FE] p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]">
+            <button type="button" className={`flex w-full items-center gap-2 text-left text-[11.5px] text-[#66738F] ${collapsed ? '' : 'mb-1.5'}`}
                     onClick={() => setCollapsed(v => !v)}>
-                <DatabaseOutlined className="text-[#5B8DEF]" />
+                <span className="tk-mark" aria-hidden />
                 <span className="font-medium text-[#3B4A63]">检索过程</span>
                 <span className="tk-mono text-[10.5px] text-[#8A94AB]">{trace.length - 1} 步检索 · {totalRefs} 条证据</span>
-                <span className="ml-auto text-[#5B8DEF] flex items-center gap-0.5 text-[11px]">
+                <span className="ml-auto flex items-center gap-0.5 text-[11px] text-[#2A57C6]">
                     {collapsed ? <DownOutlined /> : <UpOutlined />}
                     <span>{collapsed ? '展开过程' : '收起'}</span>
                 </span>
@@ -58,25 +59,25 @@ export default function RetrievalTraceCard({ trace, streaming }: {
                         return (
                             <div key={k} className="relative flex gap-2 pb-3 last:pb-0">
                                 <div className="flex flex-col items-center">
-                                    <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-semibold shrink-0 ${isLast ? 'bg-[#2F62D8] text-white' : 'bg-white border border-[#9DBCF3] text-[#2F62D8]'}`}>
+                                    <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ${isLast ? 'bg-[#2F62D8] text-white' : 'border border-[rgba(91,141,239,0.45)] bg-[#FBFDFF] text-[#2F62D8]'}`}>
                                         {isLast && streaming
-                                            ? <LoadingOutlined className="text-[12px] animate-spin" />
+                                            ? <LoadingOutlined className="animate-spin text-[12px]" />
                                             : isLast ? <CheckCircleFilled className="text-[12px]" /> : k + 1}
                                     </span>
-                                    {!isLast && <span className="flex-1 w-px bg-[#D7E3F3] my-0.5" />}
+                                    {!isLast && <span className="my-0.5 w-px flex-1 bg-[rgba(91,141,239,0.22)]" />}
                                 </div>
-                                <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                <div className="min-w-0 flex-1">
+                                    <div className="flex flex-wrap items-center gap-1.5">
                                         <span className={`text-[12.5px] font-medium ${isLast ? 'text-[#2F62D8]' : 'text-[#3B4A63]'}`}>
                                             {st.stage}
                                         </span>
                                         <span className="text-[11px] text-[#8A94AB]">{st.what}</span>
-                                        <Tag className="mr-0 !text-[10px] !leading-4 !px-1.5" color={isLast ? 'blue' : 'default'}>
+                                        <span className={isLast ? 'tk-chip' : 'tk-chip tk-chip--quiet'}>
                                             {isLast ? (streaming ? '综合中…' : `综合 ${st.count} 条引用`) : `命中 ${st.count} 条`}
-                                        </Tag>
+                                        </span>
                                     </div>
                                     {st.sample && (
-                                        <div className="mt-0.5 text-[11px] text-[#66738F] leading-relaxed line-clamp-2">
+                                        <div className="mt-0.5 line-clamp-2 text-[11px] leading-relaxed text-[#66738F]">
                                             {isLast && streaming ? '正在综合生成答案…'
                                                 : isLast ? '综合以上检索结果，得到上方答案'
                                                 : `「${cleanQuote(st.sample)}」`}

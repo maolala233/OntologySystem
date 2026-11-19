@@ -315,15 +315,18 @@ const ProjectOverviewPage: React.FC = () => {
                    只是把左上那圈柔光又压平一次；现在让纸面的光自然透到标题后面 */
                 /* 表格融进卡面（2026-11-17）：表头色带换成品牌淡蓝、行背景透明——
                    原来行是实白，压在一张冷蓝纸上会横切出一条白色带子 */
+                /* 表头与行 hover 要拉开层级（2026-11-19 用户反馈：原来表头 6%、
+                   hover 5.5%，叠在这张冷蓝纸上几乎同色，鼠标划过等于没有反馈）。
+                   口径和「我的项目」一致：表头是更深的色带，hover 是更浅的一层 */
                 .overview-stack .ant-table-thead > tr > th {
-                    background: rgba(91, 141, 239, 0.06) !important;
+                    background: rgba(91, 141, 239, 0.10) !important;
                 }
                 .overview-stack .ant-table-tbody > tr > td {
                     background: transparent;
                 }
                 .overview-stack .ant-table-tbody > tr.ant-table-row:hover > td,
                 .overview-stack .ant-table-tbody > tr > td.ant-table-cell-row-hover {
-                    background: rgba(91, 141, 239, 0.055) !important;
+                    background: rgba(91, 141, 239, 0.05) !important;
                 }
                 /* 表格内的链接按钮（下载 / 删除）：字号跟表格收到 12.5px；
                    删除用冷调红——antd 默认 #ff4d4f 在这套冷色里过艳 */

@@ -1,6 +1,6 @@
 // src/pages/QaPage.tsx - 本体问答独立页面（R8：docs/design/05 §6 / 07 §4）
 // 左侧：新建对话 + 历史对话列表（按会话分组）；右侧：项目/模型选择 + 流式对话 + 引用溯源。
-// 与 QaDrawer 共用 MarkdownAnswer（[n] 角标点击定位）与 SourceCard。
+// 复用 features/qa 下的 MarkdownAnswer（[n] 角标点击定位）与 SourceCard。
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { message } from '../shared/feedback';
@@ -14,6 +14,7 @@ import {
     ArrowRightOutlined,
     BulbOutlined,
     DeleteOutlined,
+    DownOutlined,
     ExclamationCircleOutlined,
     FileSearchOutlined,
     LoadingOutlined,
@@ -21,6 +22,7 @@ import {
     PlusOutlined,
     SendOutlined,
     StopOutlined,
+    UpOutlined,
 } from '@ant-design/icons';
 import {
     askQuestionStream,
@@ -51,6 +53,8 @@ interface QaTurn {
     streaming: boolean;
     /** 用户手动停止生成（保留已产出的部分内容） */
     stopped?: boolean;
+    /** 溯源引用是否整块展开（5~6 条时逐卡点开太累，见下方头部开关） */
+    sourcesExpanded?: boolean;
 }
 
 /** 会话列表时间：今天/昨天显示时刻，更早只显示日期，避免每行都挤一长串时间戳 */
@@ -235,9 +239,19 @@ export default function QaPage() {
         if (flushTimerRef.current !== null) clearTimeout(flushTimerRef.current);
     }, []);
 
+    /** 整块展开/收起某一轮的全部引用卡；单卡之后仍可各自切换 */
+    const toggleAllSources = useCallback((turnIdx: number) => {
+        setTurns(prev => prev.map((t, k) => (k === turnIdx ? { ...t, sourcesExpanded: !t.sourcesExpanded } : t)));
+    }, []);
+
     const handleCite = useCallback((turnIdx: number, n: number) => {
         setHighlightSource({ turn: turnIdx, n });
-        document.getElementById(`qa-source-${turnIdx}-${n - 1}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        // 定位过去的同时那条证据会自动展开（见 SourceCard），卡片高度要等这一帧
+        // 渲染完才定下来；立刻滚只会停在折叠态的位置，所以延后一拍再滚
+        const targetId = `qa-source-${turnIdx}-${n - 1}`;
+        window.setTimeout(() => {
+            document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }, 120);
         if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
         highlightTimerRef.current = setTimeout(() => setHighlightSource(null), 2500);
     }, []);
@@ -573,6 +587,24 @@ export default function QaPage() {
                     outline: 2px solid rgba(91, 141, 239, 0.45);
                     outline-offset: 2px;
                 }
+                /* 回答卡（2026-11-19）：原来是一张纯白 + 细描边的平面纸，压在冷蓝画布上
+                   像从别处抠来的一块控件。改成和 .ant-card 同一族的冷白纸面
+                   ——冷蓝渐变底 + 上内高光 + 下内阴影 + 近距投影，
+                   与「我的项目」卡片同一档材质，卡片因此有厚度而不是一张贴纸 */
+                .qa-answer {
+                    /* 不用 --surface-paper：那支纸面右上角带一大片品牌柔光，
+                       放在整页抽屉/卡片上好看，缩到一张回答卡上会变成角落里的一块蓝斑。
+                       2026-11-19 再提一档：原来底部收到 #F3F8FF，和画布（#EAF1FB 附近）
+                       只差几个色阶，整张卡"贴"在底图上；现在改成冷白→浅蓝的纸面，
+                       底部比画布亮一档，卡才有离地的感觉 */
+                    background: linear-gradient(180deg, #FFFFFF 0%, #FBFCFF 58%, #F5F9FF 100%);
+                    border: 1px solid rgba(91, 141, 239, 0.20);
+                    box-shadow:
+                        inset 0 1px 0 rgba(255, 255, 255, 0.96),
+                        inset 0 -1px 0 rgba(219, 228, 242, 0.5),
+                        0 14px 34px -26px rgba(15, 23, 42, 0.36),
+                        0 2px 6px rgba(15, 23, 42, 0.05);
+                }
                 @media (prefers-reduced-motion: reduce) {
                     .qa-composer::after { animation: none; opacity: 0.35; }
                 }
@@ -724,7 +756,7 @@ export default function QaPage() {
                                             value: m.id,
                                             label: `${m.name}${m.is_default ? ' · 默认' : ''}`,
                                         }))}
-                                        notFoundContent={<span className="text-xs text-gray-500">暂无可用模型，请在管理后台「模型配置」添加</span>}
+                                        notFoundContent={<span className="text-xs text-[#66738F]">暂无可用模型，请在管理后台「模型配置」添加</span>}
                                     />
                                 </div>
                             </div>
@@ -808,17 +840,22 @@ export default function QaPage() {
                         <div className="max-w-3xl mx-auto">
                             {turns.map((turn, i) => {
                                 const meta = turn.done;
-                                const confidence = meta?.confidence ?? 0;
-                                const confHigh = confidence >= 0.6;
                                 return (
                                 <div key={i} className="pt-4">
                                     {/* 提问气泡：品牌淡蓝底 + 深墨字。原来是品牌渐变 + 发光投影——
                                         整页一直在往下压，只有这里还在喊；多轮之后右侧是一屏蓝块，
-                                        反而把真正要读的「回答」压成了背景 */}
-                                    <div className="flex justify-end mb-2">
+                                        反而把真正要读的「回答」压成了背景。
+                                        2026-11-19 再收一档：平涂切成同族渐变 + 上内高光，
+                                        和回答卡同一套「有厚度」的材质语法；右上角收一个小圆角当气泡折角，
+                                        一眼能分出「我问的」和「它答的」 */}
+                                    <div className="flex justify-end mb-4">
                                         <div
-                                            className="max-w-[85%] rounded-2xl border border-[rgba(91,141,239,0.28)] px-3.5 py-2 text-[14px] leading-[1.7] whitespace-pre-wrap text-[#1F2A44]"
-                                            style={{ background: 'rgba(91, 141, 239, 0.12)' }}
+                                            className="max-w-[85%] rounded-2xl rounded-tr-[6px] px-3.5 py-2 text-[14px] leading-[1.7] whitespace-pre-wrap text-[#1F2A44]"
+                                            style={{
+                                                background: 'linear-gradient(180deg, rgba(91,141,239,0.15) 0%, rgba(91,141,239,0.10) 100%)',
+                                                border: '1px solid rgba(91,141,239,0.22)',
+                                                boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.55)',
+                                            }}
                                         >
                                             {turn.question}
                                         </div>
@@ -832,7 +869,7 @@ export default function QaPage() {
                                                 问答失败：{turn.error}
                                             </div>
                                         ) : (
-                                            <div className="overflow-hidden rounded-2xl border border-[#E7EEF9] bg-white shadow-[0_2px_10px_-8px_rgba(15,23,42,0.18)]">
+                                            <div className="qa-answer overflow-hidden rounded-2xl">
                                                 <div className="px-4 py-3">
                                                     {/* 检索过程先行：提问后立即逐步展示"怎么查"（流式期间最后一步进行中），
                                                         答案在过程之下出现，溯源收尾——"一步步处理 → 得到结果 → 溯源" */}
@@ -842,7 +879,7 @@ export default function QaPage() {
                                                             streaming={turn.streaming && !turn.answer}
                                                         />
                                                     ) : null}
-                                                    <div className={turn.trace?.length || meta?.retrieval_trace?.length ? 'mt-2.5 border-t border-dashed border-[#E7EEF9] pt-2.5' : ''}>
+                                                    <div className={turn.trace?.length || meta?.retrieval_trace?.length ? 'mt-2.5 border-t border-dashed border-[rgba(91,141,239,0.16)] pt-2.5' : ''}>
                                                         {turn.answer && (
                                                             <MarkdownAnswer
                                                                 content={turn.answer}
@@ -860,53 +897,51 @@ export default function QaPage() {
                                                         )}
                                                     </div>
                                                 </div>
-                                                {/* 元信息收进卡片底部：置信度 / 模型 / 延迟 / 推理路径
-                                                    是这条回答自身的属性，不该浮在卡外和下面的溯源区抢位置。
-                                                    置信度不再用 antd 的绿/橙 Tag——那是一套和冷调蓝紫无关的语义色 */}
+                                                {/* 元信息收进卡片底部：模型 / 延迟是这条回答自身的属性，
+                                                    不该浮在卡外和下面的溯源区抢位置。
+                                                    置信度胶囊已去掉：一个百分数看完就过，
+                                                    却和耗时并列在同一行，白占一格的注意力 */}
                                                 {(meta || turn.stopped) && (
-                                                    <div className="flex flex-wrap items-center justify-end gap-x-2.5 gap-y-1 border-t border-[#F0F4FB] px-4 py-2 text-[11px] text-[#A3ADC2]">
+                                                    <div className="flex flex-wrap items-center justify-end gap-x-2.5 gap-y-1 border-t border-[rgba(91,141,239,0.10)] px-4 py-2 text-[11px] text-[#A3ADC2]">
                                                         {turn.stopped && <span className="mr-auto">已停止生成</span>}
-                                                        {confidence > 0 && (
-                                                            <span
-                                                                className="inline-flex items-center gap-1.5 rounded-full px-2 py-[3px]"
-                                                                style={{ background: confHigh ? 'rgba(91, 141, 239, 0.10)' : 'rgba(242, 185, 80, 0.16)' }}
-                                                            >
-                                                                <span
-                                                                    className="h-1.5 w-1.5 shrink-0 rounded-full"
-                                                                    style={{ background: confHigh ? '#2F62D8' : '#B8790F' }}
-                                                                />
-                                                                置信度
-                                                                <span
-                                                                    className="tk-mono font-semibold"
-                                                                    style={{ color: confHigh ? '#2F62D8' : '#B8790F' }}
-                                                                >
-                                                                    {(confidence * 100).toFixed(0)}%
-                                                                </span>
-                                                            </span>
-                                                        )}
-                                                        {meta?.model && <span>{meta.model}</span>}
-                                                        {meta && <span>{meta.latency_ms}ms</span>}
+                                                        {meta?.model && <span className="tk-mono">{meta.model}</span>}
+                                                        {meta && <span className="tk-mono">{meta.latency_ms}ms</span>}
                                                     </div>
                                                 )}
                                             </div>
                                         )}
                                         {turn.sources.length > 0 && (
-                                            /* 溯源证据区：浅底容器把「引用卡」和「答案正文」分成两层，白卡不再直接叠白卡 */
-                                            <div className="mt-2 rounded-xl border border-[#E7EEF9] bg-[#F7F9FD] p-2.5">
-                                                <div className="mb-2 flex items-center gap-1.5 text-[11.5px] text-[#66738F]">
-                                                    <FileSearchOutlined className="text-[#5B8DEF]" />
-                                                    <span>溯源引用</span>
-                                                    <span className="tk-mono rounded-full bg-white px-1.5 py-[1px] text-[10.5px] text-[#52607A]">
-                                                        {turn.sources.length}
-                                                    </span>
+                                            /* 溯源证据区：把「引用」和「答案正文」分成两层。
+                                               2026-11-19 两次收敛：①底面和「检索过程」统一；②压深一档到 #EDF3FE
+                                               （表单控件 --field-bg 同一族），并补一条顶部内高光——
+                                               原来 #F4F8FE 和回答卡底部几乎同色，这层读起来像卡片拖出来的尾巴，
+                                               现在它是卡片里一块压下去的凹槽，引用行浮在里面 */
+                                            <div className="mt-4 rounded-xl border border-[rgba(91,141,239,0.16)] bg-[#EDF3FE] p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]">
+                                                <div className="mb-2 flex items-center gap-2 text-[11.5px] text-[#66738F]">
+                                                    <span className="tk-mark" aria-hidden />
+                                                    <span className="font-medium text-[#3B4A63]">溯源引用</span>
+                                                    <span className="tk-mono text-[10.5px] text-[#8A94AB]">{turn.sources.length} 条证据</span>
+                                                    {/* 常见 5~6 条引用，逐张点「展开全文」太累：
+                                                        给一个整块开关；单卡仍可各自展开/收起 */}
+                                                    <button
+                                                        type="button"
+                                                        className="ml-auto -mr-1 flex items-center gap-1 rounded-[7px] px-1.5 py-0.5 text-[11px] text-[#2A57C6] transition-colors hover:bg-[rgba(91,141,239,0.12)] hover:text-[#1F47A8] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(91,141,239,0.35)]"
+                                                        onClick={() => toggleAllSources(i)}
+                                                    >
+                                                        {turn.sourcesExpanded ? <UpOutlined /> : <DownOutlined />}
+                                                        <span>{turn.sourcesExpanded ? '全部收起' : '全部展开'}</span>
+                                                    </button>
                                                 </div>
-                                                <div className="space-y-1.5">
+                                                {/* 引用条目不再各自一张白卡：面板冷蓝底 + 行间发丝线，
+                                                    5~6 条时不会叠成一排白块（2026-11-19） */}
+                                                <div className="divide-y divide-[rgba(91,141,239,0.12)]">
                                                     {turn.sources.map((s, k) => (
-                                                        <div key={k} id={`qa-source-${i}-${k}`}>
+                                                        <div key={k} id={`qa-source-${i}-${k}`} className="py-0.5 first:pt-0 last:pb-0">
                                                             <SourceCard
                                                                 index={k}
                                                                 source={s}
                                                                 highlighted={highlightSource?.turn === i && highlightSource.n === k + 1}
+                                                                expandAll={turn.sourcesExpanded}
                                                             />
                                                         </div>
                                                     ))}
@@ -945,7 +980,7 @@ export default function QaPage() {
                                     }}
                                 />
                                 <div className="mt-2 flex items-center justify-between gap-3">
-                                    <span className="flex items-center gap-1.5 text-[11px] text-gray-400 select-none">
+                                    <span className="flex items-center gap-1.5 text-[11px] text-[#A3ADC2] select-none">
                                         <FileSearchOutlined className="text-[#8A94AB]" />
                                         Enter 发送 · Shift + Enter 换行
                                     </span>

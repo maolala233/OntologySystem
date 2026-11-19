@@ -226,7 +226,6 @@ const AppLayout: React.FC = () => {
 
             </Sider>
 
-            {/* 本体问答已改为独立页面 /qa（R8）；QaDrawer 组件保留供其他入口复用 */}
 
             {/* 主内容区 */}
             <Layout>
