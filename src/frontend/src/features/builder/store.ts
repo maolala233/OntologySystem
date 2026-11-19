@@ -56,7 +56,7 @@ export const useBuilderStore = create<BuilderState>((set) => ({
             }),
         }));
         try {
-            const p = preloaded ?? await projectsApi.getProject(projectId);
+            const p = preloaded ?? await projectsApi.getProject(projectId, { lean: true });
             set({
                 projectId,
                 projectName: p.name || '',

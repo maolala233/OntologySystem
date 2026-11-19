@@ -46,7 +46,7 @@ const ProjectOverviewPage: React.FC = () => {
         if (!Number.isFinite(pid) || pid <= 0) return;
         let s: BuildSummary | null = null;
         try {
-            s = await pipelineApi.buildSummary(pid);
+            s = await pipelineApi.buildSummary(pid, { lean: true });
             setSummary(s);
         } catch { /* 模块未开通等：静默 */ }
         // 已发布版本号只服务结果卡上那枚「已发布 vN」标签（2026-11-19 接口收敛）：

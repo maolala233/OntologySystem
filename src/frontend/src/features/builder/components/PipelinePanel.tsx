@@ -313,7 +313,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
             // 前端用 localStorage 的 lastTask 二次补查想解决的问题。进度键 24h 过期后，
             // 那次补查必然还是 idle（项目 76 实测：两次响应完全一样），纯浪费一个往返。
             // 本地快照在下面「补历史」里继续用，但不再参与发请求。
-            let s = await pipelineApi.status(projectId);
+            let s = await pipelineApi.status(projectId, undefined, { lean: true });
             // 服务端进度键 24h 过期 / 换了浏览器：用本机最后一次终态快照兜底，
             // 构建结束后阶段时间线也保留（用户要求「步骤条永远不消失」，2026-11-16）
             const snap = readSnap(projectId);

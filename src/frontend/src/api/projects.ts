@@ -82,9 +82,11 @@ export const projectsApi = {
         return [...mine, ...pub.filter((p) => !seen.has(p.id))];
     },
 
-    // 获取单个项目详情
-    getProject: (projectId: number): Promise<ProjectData> =>
-        sharedGet<ProjectData>(`/api/projects/${projectId}`),
+    // 获取单个项目详情（lean=true 不返回 graph_data / ttl_content：详情页头部只要身份与状态）
+    getProject: (projectId: number, opts?: { lean?: boolean }): Promise<ProjectData> =>
+        sharedGet<ProjectData>(`/api/projects/${projectId}`, {
+            params: opts?.lean ? { lean: true } : {},
+        }),
 
     // 创建新项目
     createProject: async (data: CreateProjectRequest): Promise<ProjectData> => {

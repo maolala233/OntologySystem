@@ -166,10 +166,14 @@ export const pipelineApi = {
         return response.data;
     },
 
-    /** 管线进度聚合（stages 实时计数 + 审核统计）；taskId 缺省读项目当前管线 */
-    status: (projectId: number, taskId?: string): Promise<PipelineStatus> =>
+    /** 管线进度聚合（stages 实时计数 + 审核统计）；taskId 缺省读项目当前管线。
+     *  opts.lean：不返回 stats（详情页只用阶段/子进度，SSE 帧里才有它的需要） */
+    status: (projectId: number, taskId?: string, opts?: { lean?: boolean }): Promise<PipelineStatus> =>
         sharedGet<PipelineStatus>(`/api/projects/${projectId}/pipeline/status`, {
-            params: taskId ? { task_id: taskId } : {},
+            params: {
+                ...(taskId ? { task_id: taskId } : {}),
+                ...(opts?.lean ? { lean: true } : {}),
+            },
         }),
 
     /** SSE 事件流 URL（一次性 ticket 鉴权，EventSource 不支持 header）。
@@ -188,9 +192,12 @@ export const pipelineApi = {
         return response.data;
     },
 
-    /** 构建结果页数据源：骨架/实例/公理/审核四区 + 机检结论（零 LLM 调用） */
-    buildSummary: (projectId: number): Promise<BuildSummary> =>
-        sharedGet<BuildSummary>(`/api/projects/${projectId}/pipeline/build/summary`),
+    /** 构建结果页数据源：骨架/实例/公理/审核四区 + 机检结论（零 LLM 调用）。
+     *  opts.lean：类/实例/关系/公理明细置空，只留计数与机检结论（详情页用） */
+    buildSummary: (projectId: number, opts?: { lean?: boolean }): Promise<BuildSummary> =>
+        sharedGet<BuildSummary>(`/api/projects/${projectId}/pipeline/build/summary`, {
+            params: opts?.lean ? { lean: true } : {},
+        }),
 
     /** 撤销 AI 自动合并（resolution/split：被并成员拆回独立实体） */
     undoMerge: async (projectId: number, canonicalId: number, splitIds: number[]): Promise<void> => {
