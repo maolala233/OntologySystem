@@ -80,33 +80,33 @@ services:
     restart: always
     volumes:
       - type: bind
-        source: /home/lenovo/Documents/PythonProject/OntologySystem/TTL
+        source: ./TTL
         target: /app/TTL
         bind:
           create_host_path: true
       - type: bind
-        source: /home/lenovo/Documents/PythonProject/OntologySystem/logs
+        source: ./logs
         target: /app/logs
         bind:
           create_host_path: true
       - type: bind
-        source: /home/lenovo/Documents/PythonProject/OntologySystem/uploads
+        source: ./uploads
         target: /app/uploads
         bind:
           create_host_path: true
       - type: bind
-        source: /home/lenovo/Documents/PythonProject/OntologySystem/temp
+        source: ./temp
         target: /app/temp
         bind:
           create_host_path: true
       - type: bind
-        source: /home/lenovo/Documents/PythonProject/OntologySystem/models
+        source: ${DOCKER_VOLUME_DIRECTORY:-.}/models
         target: /opt/docling-models
         read_only: true
         bind:
           create_host_path: true
       - type: bind
-        source: /home/lenovo/Documents/PythonProject/OntologySystem/volumes/oxigraph
+        source: ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/oxigraph
         target: /data/oxigraph
         read_only: true
         bind:
@@ -143,7 +143,7 @@ services:
     restart: always
     volumes:
       - type: bind
-        source: /home/lenovo/Documents/PythonProject/OntologySystem/logs
+        source: ./logs
         target: /app/logs
         bind:
           create_host_path: true
@@ -183,7 +183,7 @@ services:
     restart: unless-stopped
     volumes:
       - type: bind
-        source: /home/lenovo/Documents/PythonProject/OntologySystem/volumes/etcd
+        source: ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/etcd
         target: /etcd
         bind:
           create_host_path: true
@@ -244,7 +244,7 @@ services:
     restart: unless-stopped
     volumes:
       - type: bind
-        source: /home/lenovo/Documents/PythonProject/OntologySystem/volumes/minio
+        source: ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/minio
         target: /minio_data
         bind:
           create_host_path: true
@@ -291,7 +291,7 @@ services:
     restart: unless-stopped
     volumes:
       - type: bind
-        source: /home/lenovo/Documents/PythonProject/OntologySystem/volumes/minio-business
+        source: ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/minio-business
         target: /data
         bind:
           create_host_path: true
@@ -321,7 +321,7 @@ services:
       - --collation-server=utf8mb4_unicode_ci
       - --default-time-zone=+08:00
       - --max-connections=200
-      - --innodb-buffer-pool-size=256M
+      - --innodb-buffer-pool-size=1G
       - --performance-schema=OFF
       - --skip-log-bin
     container_name: mysql-onto
@@ -343,7 +343,7 @@ services:
       options:
         max-file: "3"
         max-size: 10m
-    mem_limit: "1073741824"
+    mem_limit: "4294967296"
     networks:
       default: null
     ports:
@@ -354,7 +354,7 @@ services:
     restart: unless-stopped
     volumes:
       - type: bind
-        source: /home/lenovo/Documents/PythonProject/OntologySystem/volumes/mysql
+        source: ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/mysql
         target: /var/lib/mysql
         bind:
           create_host_path: true
@@ -399,27 +399,27 @@ services:
     restart: unless-stopped
     volumes:
       - type: bind
-        source: /home/lenovo/Documents/PythonProject/OntologySystem/volumes/neo4j/plugins
+        source: ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/neo4j/plugins
         target: /plugins
         bind:
           create_host_path: true
       - type: bind
-        source: /home/lenovo/Documents/PythonProject/OntologySystem/volumes/neo4j/data
+        source: ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/neo4j/data
         target: /data
         bind:
           create_host_path: true
       - type: bind
-        source: /home/lenovo/Documents/PythonProject/OntologySystem/volumes/neo4j/logs
+        source: ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/neo4j/logs
         target: /logs
         bind:
           create_host_path: true
       - type: bind
-        source: /home/lenovo/Documents/PythonProject/OntologySystem/volumes/neo4j/file
+        source: ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/neo4j/file
         target: /mnt/file
         bind:
           create_host_path: true
       - type: bind
-        source: /home/lenovo/Documents/PythonProject/OntologySystem/volumes/neo4j/import
+        source: ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/neo4j/import
         target: /var/lib/neo4j/import
         bind:
           create_host_path: true
@@ -464,7 +464,7 @@ services:
     restart: unless-stopped
     volumes:
       - type: bind
-        source: /home/lenovo/Documents/PythonProject/OntologySystem/volumes/redis
+        source: ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/redis
         target: /data
         bind:
           create_host_path: true
@@ -518,7 +518,7 @@ services:
       - seccomp:unconfined
     volumes:
       - type: bind
-        source: /home/lenovo/Documents/PythonProject/OntologySystem/volumes/milvus
+        source: ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/milvus
         target: /var/lib/milvus
         bind:
           create_host_path: true
@@ -555,8 +555,12 @@ services:
       MYSQL_PASSWORD: password
       MYSQL_PORT: "3306"
       MYSQL_USER: root
+      MILVUS_COLLECTION_NAME: knowledge_graph_rag
+      MILVUS_HOST: standalone
+      MILVUS_PORT: "19530"
       REDIS_URL: redis://redis:6379/0
       TZ: Asia/Shanghai
+      VECTOR_STORE_DIMENSION: "1024"
       VLLM_API_KEY: EMPTY
       VLLM_BASE_URL: ""
       VLLM_MODEL: ""
@@ -566,7 +570,7 @@ services:
     restart: always
     volumes:
       - type: bind
-        source: /home/lenovo/Documents/PythonProject/OntologySystem/logs
+        source: ./logs
         target: /app/logs
         bind:
           create_host_path: true
@@ -623,7 +627,7 @@ services:
     restart: always
     volumes:
       - type: bind
-        source: /home/lenovo/Documents/PythonProject/OntologySystem/logs
+        source: ./logs
         target: /app/logs
         bind:
           create_host_path: true
@@ -676,22 +680,22 @@ services:
     restart: always
     volumes:
       - type: bind
-        source: /home/lenovo/Documents/PythonProject/OntologySystem/logs
+        source: ./logs
         target: /app/logs
         bind:
           create_host_path: true
       - type: bind
-        source: /home/lenovo/Documents/PythonProject/OntologySystem/uploads
+        source: ./uploads
         target: /app/uploads
         bind:
           create_host_path: true
       - type: bind
-        source: /home/lenovo/Documents/PythonProject/OntologySystem/temp
+        source: ./temp
         target: /app/temp
         bind:
           create_host_path: true
       - type: bind
-        source: /home/lenovo/Documents/PythonProject/OntologySystem/models
+        source: ${DOCKER_VOLUME_DIRECTORY:-.}/models
         target: /opt/docling-models
         read_only: true
         bind:
@@ -736,12 +740,12 @@ services:
     restart: always
     volumes:
       - type: bind
-        source: /home/lenovo/Documents/PythonProject/OntologySystem/logs
+        source: ./logs
         target: /app/logs
         bind:
           create_host_path: true
       - type: bind
-        source: /home/lenovo/Documents/PythonProject/OntologySystem/volumes/oxigraph
+        source: ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/oxigraph
         target: /data/oxigraph
         bind:
           create_host_path: true
