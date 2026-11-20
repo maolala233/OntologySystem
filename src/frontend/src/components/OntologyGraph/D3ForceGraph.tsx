@@ -71,6 +71,13 @@ const DARK_THEME = {
 
 const EDGE_CLICK_WIDTH = 20;
 
+/**
+ * 邻域高亮的「压暗」档位（2026-11-20）：
+ * 之前用 stroke-opacity 压边，线几乎看不见、但箭头（marker）仍是实色，画面上就剩一地箭头；
+ * 现在统一走元素级 opacity，线和箭头一起淡，非相关元素也只是退到背景，不会「消失」。
+ */
+const HOVER_DIM_OPACITY = 0.3;
+
 /** 「节点间距」档位的人话标签（0=紧凑 … 100=宽松）：画布内的卡片与外部工具条共用这一套口径 */
 export const spacingLabel = (value: number): string => {
     if (value < 25) return '紧凑';
@@ -180,6 +187,19 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
     // 悬停高亮当前点亮的集合（null = 全亮）：用于差分更新，避免每次悬停把几百个节点/边全写一遍
     const hoverActiveNodesRef = useRef<Set<string> | null>(null);
     const hoverActiveEdgesRef = useRef<Set<string> | null>(null);
+    // 收尾惯性动画的令牌：新渲染 / 拖拽时作废，避免和新的布局动画打架
+    const coastTokenRef = useRef(0);
+    // 拖拽时的局部重绘：只搬被拖的节点和它相连的边，不跑仿真
+    const dragPaintRef = useRef<((node: any) => void) | null>(null);
+    // 指针停住后的降温计时器：让「跟随」尽快收尾，而不是等 alpha 指数衰减
+    const dragSettleTimerRef = useRef<number | null>(null);
+    // 本次布局动起来的起始时间（拖拽重新加热时也要刷新，否则 2.6s 兜底会立刻生效）
+    const heatStartRef = useRef(0);
+    // 被移出画布的节点（收起实例）的落点：再次展开时直接摆回原位，不再重排。
+    // 实例额外记「相对所属类节点」的偏移 —— 收起期间如果挪过类节点，展开后实例也跟着走
+    const posCacheRef = useRef<Map<string, { x: number; y: number; anchor?: string; dx?: number; dy?: number }>>(new Map());
+    // 实例 → 所属类 的映射（展开时从 rdf:type 边学出来；收起后边没了，靠它还原相对位置）
+    const instanceClassRef = useRef<Map<string, string>>(new Map());
 
     const onNodeClickRef = useRef(onNodeClick);
     onNodeClickRef.current = onNodeClick;
@@ -236,6 +256,12 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
 
     const width = propWidth || containerSize.width;
     const height = propHeight || containerSize.height;
+    // 画布尺寸放进 ref：renderGraph / 悬浮卡定位每次执行时都读最新值。
+    // 这样容器尺寸变化（左侧列表展开/收起会连续触发几十次）不必整图重建
+    const sizeRef = useRef({ width: 0, height: 0 });
+    sizeRef.current = { width, height };
+    // 只关心「有没有尺寸」这个状态：从 0 变成可绘制的这一刻需要出图
+    const sizeReady = width > 0 && height > 0;
 
     const getNodeRadius = useCallback((node: OntologyNode) => {
         return NODE_RADII[normalizeNodeType(node.data?.type)] || NODE_RADII[NODE_TYPES.CLASS];
@@ -331,9 +357,11 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
         return isInstanceEdge(d) ? "4,4" : "none";
     }, [isInstanceEdge]);
 
+    // 箭头跟着线色走：公理紫 / 实例蓝 / 类边灰，和 getEdgeColor 的分支顺序保持一致
     const getEdgeMarker = useCallback((d: any) => {
+        if (edgeHasAxiom(d.data)) return `url(#${uid}-arrowhead-axiom)`;
         return isInstanceEdge(d) ? `url(#${uid}-arrowhead-instance)` : `url(#${uid}-arrowhead-class)`;
-    }, [isInstanceEdge]);
+    }, [isInstanceEdge, uid]);
 
     // 类节点默认带一层柔和投影（2026-11-17）：让它浮在画布上，而不是像贴纸一样贴在底上。
     // 节点超过 150 个时关掉——SVG 滤镜在大量节点下很吃性能
@@ -433,9 +461,12 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
 
     const renderGraph = useCallback(() => {
         if (!svgRef.current || nodes.length === 0) return;
+        coastTokenRef.current++;
         // 容器尺寸还没测出来（首帧 width/height = 0）时先不建仿真：
         // 否则会在 (0,0) 摆一版、随后尺寸就绪又重绘，节点会先堆在原点再被冻住
-        if (!width || !height) return;
+        const vizWidth = sizeRef.current.width;
+        const vizHeight = sizeRef.current.height;
+        if (!vizWidth || !vizHeight) return;
 
         if (simulationRef.current) {
             simulationRef.current.stop();
@@ -443,8 +474,8 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
         }
 
         const svg = select(svgRef.current);
-        const centerX = width / 2;
-        const centerY = height / 2;
+        const centerX = vizWidth / 2;
+        const centerY = vizHeight / 2;
 
         let g = svg.select<SVGGElement>("g.main-group");
         if (g.empty()) {
@@ -455,22 +486,27 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
         const markers = svg.select<SVGGElement>("defs.markers");
         if (markers.empty() || markers.attr("data-theme") !== theme) {
             svg.select("defs.markers").remove();
-            // 箭头比原来小一档（6.5×5.5 → 5×4.4）：边只有 1.5px，原尺寸在短边上几乎占满整条线；
-            // 颜色跟随边的语义（类边偏亮的冷灰、实例边蓝），不再一律浅灰
-            const arrowClass = theme === 'dark' ? '#6B7BA8' : '#94a3b8';
-            const arrowInstance = theme === 'dark' ? '#5B8DEF' : '#e0c8b8';
+            // 箭头比原来小一档（6.5×5.5 → 5×4.4）：边只有 1.5px，原尺寸在短边上几乎占满整条线。
+            // 颜色直接取「线色」本身（getEdgeColor 用的是同一套 T.edge / T.edgeInstance / 公理紫），
+            // 线和箭头永远是同一个颜色；公理边单独一支紫箭头，之前借用类边的灰箭头所以对不上色
+            const arrowClass = T.edge;
+            const arrowInstance = T.edgeInstance;
+            const arrowAxiom = theme === 'dark' ? '#B585F2' : '#8F5BD9';
             const arrowHl = T.edgeHighlight;
             const glowSelected = theme === 'dark' ? '#F2B950' : '#409eff';
             const glowHover = theme === 'dark' ? '#5AC8FA' : '#5AC8FA'; // F6：浅深两主题统一品牌 hover 青（与 graph-explorer colors.ts 一致）
             svg.append("defs").attr("class", "markers").attr("data-theme", theme)
                 .html(`
-                    <marker id="${uid}-arrowhead-class" markerWidth="5.5" markerHeight="4.4" refX="5" refY="2.2" orient="auto">
+                    <marker id="${uid}-arrowhead-class" markerWidth="5.5" markerHeight="4.4" refX="4" refY="2.2" orient="auto">
                         <polygon points="0 0, 5 2.2, 0 4.4" fill="${arrowClass}" />
                     </marker>
-                    <marker id="${uid}-arrowhead-instance" markerWidth="5.5" markerHeight="4.4" refX="5" refY="2.2" orient="auto">
+                    <marker id="${uid}-arrowhead-instance" markerWidth="5.5" markerHeight="4.4" refX="4" refY="2.2" orient="auto">
                         <polygon points="0 0, 5 2.2, 0 4.4" fill="${arrowInstance}" />
                     </marker>
-                    <marker id="${uid}-arrowhead-hl" markerWidth="5.5" markerHeight="4.4" refX="5" refY="2.2" orient="auto">
+                    <marker id="${uid}-arrowhead-axiom" markerWidth="5.5" markerHeight="4.4" refX="4" refY="2.2" orient="auto">
+                        <polygon points="0 0, 5 2.2, 0 4.4" fill="${arrowAxiom}" />
+                    </marker>
+                    <marker id="${uid}-arrowhead-hl" markerWidth="5.5" markerHeight="4.4" refX="4" refY="2.2" orient="auto">
                         <polygon points="0 0, 5 2.2, 0 4.4" fill="${arrowHl}" />
                     </marker>
                     <radialGradient id="${uid}-grad-class" cx="35%" cy="28%" r="78%">
@@ -514,6 +550,19 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
         const hadNodesBefore = prevNodeIdsRef.current.size > 0;
         const newNodeIds = new Set([...currentNodeIds].filter(id => !prevNodeIdsRef.current.has(id)));
         const removedNodeIds = new Set([...prevNodeIdsRef.current].filter(id => !currentNodeIds.has(id)));
+        // 收起实例时先记下它们的落点：下次展开直接回到原位（类节点没大动的话就是原样），
+        // 不必再跑一遍布局、也不会有那段「移动之后回到上次的样子」的动画
+        removedNodeIds.forEach((id: string) => {
+            const prev = d3NodesRef.current.get(id);
+            if (!prev) return;
+            const anchorId = instanceClassRef.current.get(id);
+            const anchor = anchorId ? d3NodesRef.current.get(anchorId) : null;
+            if (anchor) {
+                posCacheRef.current.set(id, { x: prev.x, y: prev.y, anchor: anchorId, dx: prev.x - anchor.x, dy: prev.y - anchor.y });
+            } else {
+                posCacheRef.current.set(id, { x: prev.x, y: prev.y });
+            }
+        });
         // 间距变化会改力参数，需要重排一次；高亮/主题/容器尺寸等重绘不动布局
         const spacingChanged = prevSpacingRef.current !== spacingSlider;
         prevSpacingRef.current = spacingSlider;
@@ -533,6 +582,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             });
             const byClass = new Map<string, string[]>();
             classIdByInstance.forEach((classId, instId) => {
+                instanceClassRef.current.set(instId, classId);
                 if (!newNodeIds.has(instId) || !d3NodesRef.current.has(classId)) return;
                 const list = byClass.get(classId);
                 if (list) list.push(instId);
@@ -562,10 +612,17 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             const isNew = newNodeIds.has(node.id);
 
             const seed = seedPosById.get(node.id);
+            const cachedPos = posCacheRef.current.get(node.id);
+            const cachedAnchor = cachedPos?.anchor ? d3NodesRef.current.get(cachedPos.anchor) : null;
+            const restored = cachedPos
+                ? (cachedAnchor
+                    ? { x: cachedAnchor.x + (cachedPos.dx || 0), y: cachedAnchor.y + (cachedPos.dy || 0) }
+                    : { x: cachedPos.x, y: cachedPos.y })
+                : null;
             const nodeData = {
                 id: node.id,
-                x: existingNode?.x ?? (node.position?.x || (seed ? seed.x + (Math.random() - 0.5) * 24 : centerX + (Math.random() - 0.5) * width * 0.3)),
-                y: existingNode?.y ?? (node.position?.y || (seed ? seed.y + (Math.random() - 0.5) * 24 : centerY + (Math.random() - 0.5) * height * 0.3)),
+                x: existingNode?.x ?? (restored?.x ?? (node.position?.x || (seed ? seed.x + (Math.random() - 0.5) * 24 : centerX + (Math.random() - 0.5) * vizWidth * 0.3))),
+                y: existingNode?.y ?? (restored?.y ?? (node.position?.y || (seed ? seed.y + (Math.random() - 0.5) * 24 : centerY + (Math.random() - 0.5) * vizHeight * 0.3))),
                 vx: existingNode?.vx || 0,
                 vy: existingNode?.vy || 0,
                 fx: isPinned ? (existingNode?.x ?? node.position?.x) : (existingNode?.fx || null),
@@ -625,8 +682,13 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
 
         // 只有「首次进入 / 新增节点（展开实例）/ 新增边 / 间距调整」才让布局动起来；
         // 高亮、主题、容器尺寸、收起实例等重绘 alpha 保持 0 —— 图谱原地不动
-        const heating = newNodeIds.size > 0 || edgeAdded || spacingChanged;
-        const heatStart = performance.now();
+        // 新节点如果全都记得上次收起时的位置，就不必跑布局：直接摆回原位、连线也一起画出来，
+        // 和收起前一模一样；只有真有「没见过的实例」时才动一下
+        const allNewCached = newNodeIds.size > 0
+            && Array.from(newNodeIds).every((id: string) => posCacheRef.current.has(id));
+        const structureNeedsLayout = newNodeIds.size > 0 ? !allNewCached : edgeAdded;
+        const heating = structureNeedsLayout || spacingChanged;
+        heatStartRef.current = performance.now();
         if (heating) {
             simulation.alpha(hadNodesBefore ? 0.35 : forceParams.simAlpha);
         } else {
@@ -679,6 +741,19 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
 
         const linkMerge = linkEnter.merge(linkSelection as any);
 
+        // 悬浮一条边结束后，按「当前是不是还在邻域高亮里」还原外观：
+        // 直接还原成常态会把压暗态的边点亮，或者把高亮态的边打回原样
+        const restoreEdgeVisual = (el: SVGPathElement | null, d: any) => {
+            if (!el) return;
+            const active = hoverActiveEdgesRef.current;
+            const isActive = !active || active.has(d.id);
+            el.style.opacity = isActive ? '1' : String(HOVER_DIM_OPACITY);
+            el.setAttribute('stroke', getEdgeColor(d));
+            el.setAttribute('stroke-opacity', !active ? '0.55' : isActive ? '0.95' : '0.9');
+            el.setAttribute('stroke-width', !active ? '1.5' : isActive ? '2.2' : '1.5');
+            el.setAttribute('marker-end', getEdgeMarker(d));
+        };
+
         linkMerge
             .attr("stroke", (d: any) => getEdgeColor(d))
             .attr("stroke-dasharray", (d: any) => getEdgeDash(d))
@@ -694,6 +769,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                 .on("mouseenter", function (this: SVGPathElement, event: MouseEvent) {
                     event.stopPropagation();
                     select(this)
+                        .style("opacity", 1)
                         .attr("stroke", T.edgeHighlight)
                         .attr("stroke-width", 2.5)
                         .attr("marker-end", `url(#${uid}-arrowhead-hl)`);
@@ -754,10 +830,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                 })
                 .on("mouseleave", function (this: SVGPathElement, event: MouseEvent) {
                     event.stopPropagation();
-                    select(this)
-                        .attr("stroke", getEdgeColor(d))
-                        .attr("stroke-width", 1.5)
-                        .attr("marker-end", getEdgeMarker(d));
+                    restoreEdgeVisual(this as SVGPathElement, d);
                     svg.selectAll("g.edge-label-group").style("display", "none");
                 });
         });
@@ -790,6 +863,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                 event.stopPropagation();
                 const visibleLink = g.select<SVGPathElement>(`path.link[data-edge-id="${d.id}"]`);
                 visibleLink
+                    .style("opacity", 1)
                     .attr("stroke", T.edgeHighlight)
                     .attr("stroke-width", 2.5)
                     .attr("marker-end", `url(#${uid}-arrowhead-hl)`);
@@ -850,15 +924,29 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             .on("mouseleave", function (this: SVGPathElement, event: MouseEvent, d: any) {
                 event.stopPropagation();
                 const visibleLink = g.select<SVGPathElement>(`path.link[data-edge-id="${d.id}"]`);
-                visibleLink
-                    .attr("stroke", getEdgeColor(d))
-                    .attr("stroke-width", 1.5)
-                    .attr("marker-end", getEdgeMarker(d));
+                restoreEdgeVisual(visibleLink.node() as SVGPathElement | null, d);
                 svg.selectAll("g.edge-label-group").style("display", "none");
             });
 
         // ── Nodes: enter/update/exit ──
         const dragStartPos = { x: 0, y: 0 };
+        // 上一次「补热」时指针所在的位置：只有真的移动了一段距离才唤醒布局
+        const dragHeatPos = { x: 0, y: 0 };
+        // 指针停下后立刻降温：alpha 压到很低 + 临时加大阻尼，速度两三帧内就耗光，
+        // 停稳判定随即收手 —— 不用等 alpha 从 0.12 慢慢衰减
+        const coolDrag = () => {
+            const sim = simulationRef.current;
+            if (!sim) return;
+            sim.velocityDecay(0.3);
+            if (sim.alpha() > 0.05) sim.alpha(0.05);
+            heatStartRef.current = performance.now() - 300;  // 让停稳判定立刻可用
+        };
+        const clearDragSettleTimer = () => {
+            if (dragSettleTimerRef.current != null) {
+                window.clearTimeout(dragSettleTimerRef.current);
+                dragSettleTimerRef.current = null;
+            }
+        };
 
         const nodeSelection = g.selectAll<SVGGElement, any>("g.node-group")
             .data(d3Nodes, (d: any) => d.id);
@@ -881,16 +969,25 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
         const nodeEnter = nodeSelection.enter()
             .append("g")
             .attr("class", "node-group")
+            .attr("transform", (d: any) => `translate(${d.x || 0}, ${d.y || 0})`)
             .style("cursor", "pointer")
             .style("opacity", 0)
             .call(d3Drag<any, any>()
                 .on("start", (event: any, d: any) => {
                     dragStartPos.x = event.x;
                     dragStartPos.y = event.y;
-                    // 从静止状态拖拽时先热一下，邻居才会即时避让；抬手后 alphaTarget(0) 很快收住。
-                    // 用 simulationRef 而不是闭包里的 simulation：节点元素建好后只在 enter 时绑过一次拖拽，
-                    // 重绘换过仿真后旧闭包指向的是已 stop 的仿真，拖起来不会跟手
-                    if (!event.active) simulationRef.current?.alpha(0.3).alphaTarget(0.1).restart();
+                    dragHeatPos.x = event.x;
+                    dragHeatPos.y = event.y;
+                    // 拖拽只「按需补热」：给一点 alpha 让邻居让路/跟随，但 alphaTarget 保持 0。
+                    // 手一停（140ms 没移动）主动降温，再由停稳判定收手；
+                    // 之前是 alphaTarget(0.1)，按住期间整张图一直参与布局，所以一直晃
+                    if (!event.active) {
+                        coastTokenRef.current++;
+                        heatStartRef.current = performance.now();
+                        clearDragSettleTimer();
+                        simulationRef.current?.velocityDecay(0.4);
+                        svg.selectAll<SVGGElement, any>("g.edge-label-group").style("display", "none");
+                    }
                     d.fx = d.x;
                     d.fy = d.y;
                     setIsDragging(true);
@@ -898,13 +995,39 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                 .on("drag", (event: any, d: any) => {
                     d.fx = event.x;
                     d.fy = event.y;
+                    d.x = event.x;
+                    d.y = event.y;
+                    dragPaintRef.current?.(d);
+                    // 指针真移动了才补热（避免按住时的细小抖动不停唤醒布局）
+                    const moved = Math.abs(event.x - dragHeatPos.x) + Math.abs(event.y - dragHeatPos.y);
+                    if (moved >= 3) {
+                        dragHeatPos.x = event.x;
+                        dragHeatPos.y = event.y;
+                        const sim = simulationRef.current;
+                        if (sim) {
+                            // 拖拽中保证有一档基础热量（约 0.12），邻居才会持续跟手
+                            if (sim.alpha() < 0.12) sim.alpha(0.12);
+                            sim.velocityDecay(0.4);
+                            sim.restart();
+                            heatStartRef.current = performance.now();
+                        }
+                        // 指针 140ms 没再移动 = 停住了：立刻降温，让布局在一两百毫秒内收住
+                        clearDragSettleTimer();
+                        dragSettleTimerRef.current = window.setTimeout(() => {
+                            dragSettleTimerRef.current = null;
+                            coolDrag();
+                        }, 140);
+                    }
                 })
                 .on("end", (event: any, d: any) => {
                     if (!event.active) simulationRef.current?.alphaTarget(0);
+                    clearDragSettleTimer();
+                    heatStartRef.current = performance.now();
 
                     const dx = event.x - dragStartPos.x;
                     const dy = event.y - dragStartPos.y;
                     const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist >= 5) coolDrag();
 
                     if (dist < 5) {
                         d.fx = null;
@@ -1015,7 +1138,7 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                         const next = !activeNodes || activeNodes.has(d.id);
                         const prev = !prevNodes || prevNodes.has(d.id);
                         if (next === prev) return;
-                        this.style.opacity = next ? '1' : '0.15';
+                        this.style.opacity = next ? '1' : String(HOVER_DIM_OPACITY);
                     });
             }
             if (prevEdges !== activeEdges) {
@@ -1027,8 +1150,12 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                         const nextCalm = !activeEdges;
                         const prevCalm = !prevEdges;
                         if (nextActive === prevActive && nextCalm === prevCalm) return;
-                        this.setAttribute('stroke-opacity', nextCalm ? '0.55' : nextActive ? '0.95' : '0.06');
+                        // 压暗走元素 opacity：箭头（marker）一起淡，不会只剩箭头挂在画布上
+                        this.style.opacity = nextActive ? '1' : String(HOVER_DIM_OPACITY);
+                        this.setAttribute('stroke-opacity', nextCalm ? '0.55' : nextActive ? '0.95' : '0.9');
                         this.setAttribute('stroke-width', nextCalm ? '1.5' : nextActive ? '2.2' : '1.5');
+                        // 箭头始终跟随线本身的颜色（邻域高亮只加粗提亮，不换色），避免颜色割裂
+                        this.setAttribute('marker-end', getEdgeMarker(d));
                     });
             }
             hoverActiveNodesRef.current = activeNodes;
@@ -1117,8 +1244,6 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                             .text(line.text);
                     });
 
-                    const offsetY = -(d.radius) - 12 - (lines.length * lineHeight) / 2;
-
                     setTimeout(() => {
                         // 背景矩形不参与测量：上一轮已撑大的 rect 会被 getBBox 计入，导致背景越悬停越大
                         tooltipBg.style("display", "none");
@@ -1133,8 +1258,22 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                                 .attr("height", textBBox.height + padding * 2);
                         }
                         const _nt = zoomTransformRef.current;
+                        const sx = _nt.applyX(d.x || 0);
+                        const sy = _nt.applyY(d.y || 0);
+                        // 悬浮卡只在节点周围找位置：默认贴上方，上方放不下就翻到下方，
+                        // 左右再夹进画布 —— 贴边/贴顶时不会被 SVG 裁掉，也不会压住节点本身
+                        const gap = d.radius * _nt.k + 12;
+                        const halfW = textBBox ? textBBox.width / 2 + 8 : 60;
+                        const halfH = textBBox ? textBBox.height / 2 + 8 : 30;
+                        let ty = sy - gap - halfH;
+                        if (ty - halfH < 6) ty = sy + gap + halfH;
+                        const vizH = sizeRef.current.height;
+                        const vizW = sizeRef.current.width;
+                        if (ty + halfH > vizH - 6) ty = vizH - 6 - halfH;
+                        if (ty - halfH < 6) ty = halfH + 6;
+                        const tx = Math.max(halfW + 6, Math.min(vizW - halfW - 6, sx));
                         labelGroup
-                            .attr("transform", `translate(${_nt.applyX(d.x || 0)}, ${_nt.applyY((d.y || 0) + offsetY)})`)
+                            .attr("transform", `translate(${tx}, ${ty})`)
                             .style("display", "block").raise();
                     }, 0);
                 }
@@ -1233,9 +1372,87 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                 this.setAttribute('d', `M${pts.sx},${pts.sy}L${pts.tx},${pts.ty}`);
             });
         };
+        // 静止渲染时也会新出现节点/边（展开已记住位置的实例）：它们没有 tick 来定位，
+        // 这里同步画一遍坐标和连线（只画这一次，不产生动画）
+        if (!heating && (newNodeIds.size > 0 || edgeAdded)) {
+            // 摆回原位后做一轮「只碰撞」的同步推挤：不产生动画，只把正好叠在一起的节点错开
+            // （例如拖动过类节点后再展开实例，实例可能压到别的节点上）
+            if (newNodeIds.size > 0) {
+                const resolver = forceSimulation(d3Nodes as any)
+                    .force("collision", forceCollide<any>((n: any) => n.radius + forceParams.collisionRadius)
+                        .strength(0.9)
+                        .iterations(2))
+                    .stop();
+                resolver.tick(8);
+                d3Nodes.forEach((n: any) => { n.vx = 0; n.vy = 0; });
+                resolver.stop();
+            }
+            paintLinks(tickSelsRef.current.links);
+            paintLinks(tickSelsRef.current.inv);
+            (tickSelsRef.current.nodes || g.selectAll<SVGGElement, any>("g.node-group"))
+                .attr("transform", (d: any) => `translate(${d.x || 0}, ${d.y || 0})`);
+        }
+
+        // 拖拽时的局部重绘：被拖节点 + 与它相连的边（可见 + 隐形命中），其他元素一律不碰。
+        // 这样拖拽既跟手，又不会有整图重排/重绘的晃动感
+        dragPaintRef.current = (node: any) => {
+            const sels = tickSelsRef.current;
+            const nodeSel = sels.nodes || g.selectAll<SVGGElement, any>("g.node-group");
+            if (nodeSel) {
+                nodeSel.filter((dd: any) => dd.id === node.id)
+                    .attr("transform", () => `translate(${node.x || 0}, ${node.y || 0})`);
+            }
+            const paintTouching = (sel: any) => {
+                if (!sel) return;
+                sel.filter((l: any) => {
+                    const src = typeof l.source === 'object' ? l.source.id : l.source;
+                    const tgt = typeof l.target === 'object' ? l.target.id : l.target;
+                    return src === node.id || tgt === node.id;
+                }).each(function (this: SVGPathElement, l: any) {
+                    const pts = computeEdgePath(l);
+                    if (!pts) return;
+                    this.setAttribute('d', `M${pts.sx},${pts.sy}L${pts.tx},${pts.ty}`);
+                });
+            };
+            paintTouching(sels.links);
+            paintTouching(sels.inv);
+        };
+
+        // 收手时的残余速度处理：不同 alpha 衰减下，密集实例的挤压可能在停手那一刻还有几 px/帧，
+        // 直接 freeze 会「啪」一下定住。这里再用 3~4 帧按 32% 递减把这点惯性放完，画面是慢慢停住。
+        const coastToRest = (maxV: number, sels: any) => {
+            if (maxV <= 0.5) {
+                paintLinks(sels.inv);
+                return;
+            }
+            const token = ++coastTokenRef.current;
+            let frame = 0;
+            const step = () => {
+                // 期间发生新渲染 / 拖拽重新加热，就让位给它们
+                if (coastTokenRef.current !== token || simulationRef.current !== simulation) return;
+                frame++;
+                const k = Math.pow(0.32, frame);
+                d3Nodes.forEach((n: any) => {
+                    if (n.fx == null) {
+                        n.x += (n.vx || 0) * 0.4 * k;
+                        n.y += (n.vy || 0) * 0.4 * k;
+                    }
+                    n.vx = 0;
+                    n.vy = 0;
+                });
+                paintLinks(sels.links || g.selectAll<SVGPathElement, any>("path.link"));
+                (sels.nodes || g.selectAll<SVGGElement, any>("g.node-group"))
+                    .attr("transform", (d: any) => `translate(${d.x || 0}, ${d.y || 0})`);
+                if (frame < 4) requestAnimationFrame(step);
+                else paintLinks(sels.inv || g.selectAll<SVGPathElement, any>("path.invisible-link"));
+            };
+            requestAnimationFrame(step);
+        };
+
         // 大图一帧多跑几步物理、只画一次：收敛程度不变，动画帧数和逐帧 DOM 更新按倍数减少
         const stepsPerFrame = d3Nodes.length > 150 ? 2 : 1;
         let frameNo = 0;
+        let lastMaxV = 0;
         simulation.on("tick", () => {
             const sels = tickSelsRef.current;
             if (stepsPerFrame > 1 && simulation.alphaTarget() === 0) simulation.tick(stepsPerFrame - 1);
@@ -1247,20 +1464,23 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                     if (v > maxV) maxV = v;
                     return `translate(${d.x || 0}, ${d.y || 0})`;
                 });
+            lastMaxV = maxV;
             if (++frameNo % 6 === 0) {
                 paintLinks(sels.inv || g.selectAll<SVGPathElement, any>("path.invisible-link"));
             }
             // 停稳判定：所有节点都慢到看不出来才收手 —— 还在整体移动时突然停住会「顿」一下；
             // 兜底最多动 2.6 秒（拖拽中 alphaTarget > 0，不打断）
             if (simulation.alphaTarget() === 0) {
-                const elapsed = performance.now() - heatStart;
+                const elapsed = performance.now() - heatStartRef.current;
                 if ((elapsed > 250 && maxV < 0.2) || elapsed > 2600) {
-                    paintLinks(sels.inv);
                     simulation.stop();
+                    coastToRest(maxV, sels);
+                    return;
                 }
             }
         });
-        simulation.on("end", () => paintLinks(tickSelsRef.current.inv));
+        // alpha 触底自停（密集图常见）也走同一套收尾，避免残余速度被一刀切掉
+        simulation.on("end", () => coastToRest(lastMaxV, tickSelsRef.current));
 
         svg.on("click", () => {
             selectedNodeIdRef.current = null;
@@ -1272,24 +1492,40 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
             svg.selectAll("g.edge-label-group").style("display", "none");
         });
 
-    }, [nodes, edges, width, height, getNodeRadius, isInstanceEdge, highlightNodeId, getAdaptiveForceParams, getEdgeColor, getEdgeDash, getEdgeMarker, getNodeColors, setupNodeContent, theme]);
+        // width/height 故意不进依赖：尺寸变化只更新 svg 视口，不重建整图（内部读 sizeRef 取最新值）
+    }, [nodes, edges, sizeReady, getNodeRadius, isInstanceEdge, highlightNodeId, getAdaptiveForceParams, getEdgeColor, getEdgeDash, getEdgeMarker, getNodeColors, setupNodeContent, theme]);
 
     useEffect(() => {
         if (!svgRef.current) return;
         const svg = select(svgRef.current);
+        let panTimer: number | null = null;
         const zoomBehavior = d3Zoom<SVGSVGElement, unknown>()
             .scaleExtent([0.1, 4])
             .on("zoom", (event: any) => {
                 const transform = event.transform;
                 zoomTransformRef.current = transform;
                 setZoomLevel(transform.k);
-                svg.select("g.main-group").attr("transform", transform.toString());
+                const mainG = svg.select("g.main-group");
+                mainG.attr("transform", transform.toString());
                 // 平移缩放时隐藏悬停提示/标签，避免停留陈旧位置
                 svg.selectAll("g.edge-label-group").style("display", "none");
+                // 大图手势期间临时收起节点文字和箭头：SVG 逐帧重绘时文字/marker 是最贵的部分，
+                // 手势结束 160ms 后恢复 —— 只影响手势过程中的画面，不改变任何交互
+                if (d3NodesRef.current.size > 150) {
+                    if (!mainG.classed("is-panning")) mainG.classed("is-panning", true);
+                    if (panTimer != null) window.clearTimeout(panTimer);
+                    panTimer = window.setTimeout(() => {
+                        panTimer = null;
+                        mainG.classed("is-panning", false);
+                    }, 160);
+                }
             });
         svg.call(zoomBehavior);
         zoomBehaviorRef.current = zoomBehavior;
-        return () => { svg.on(".zoom", null); };
+        return () => {
+            if (panTimer != null) window.clearTimeout(panTimer);
+            svg.on(".zoom", null);
+        };
     }, []);
 
     // 聚焦请求：把目标节点平移缩放到画布中心（seq 变化触发）
@@ -1357,12 +1593,15 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
                 d3NodesRef.current.clear();
                 prevNodeIdsRef.current.clear();
                 prevEdgeIdsRef.current.clear();
+                posCacheRef.current.clear();
+                instanceClassRef.current.clear();
             }
         }
     }, [nodes, edges, renderGraph, highlightNodeId]);
 
     useEffect(() => {
         return () => {
+            if (dragSettleTimerRef.current != null) window.clearTimeout(dragSettleTimerRef.current);
             if (simulationRef.current) simulationRef.current.stop();
         };
     }, []);
@@ -1391,8 +1630,16 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
         <div
             ref={containerRef}
             className={`relative w-full h-full ${className}`}
-            style={{ width: width || '100%', height: height || '100%', position: 'relative' }}
+            style={{ width: '100%', height: '100%', position: 'relative', overflow: 'hidden' }}
         >
+            {/* 大图平移/缩放手势期间临时收起文字与箭头（见 zoom 处理里的 is-panning） */}
+            <style>{`
+                .main-group.is-panning .node-label,
+                .main-group.is-panning .node-sublabel,
+                .main-group.is-panning .node-axiom-badge { display: none; }
+                .main-group.is-panning path.link { marker-end: none; }
+                .main-group.is-panning .invisible-link-group { display: none; }
+            `}</style>
             <svg
                 ref={svgRef}
                 width={width}
