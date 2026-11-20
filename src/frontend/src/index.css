@@ -1005,7 +1005,9 @@ body .ant-modal .ant-modal-title {
 /* 标题彩条（2026-11-18 全局规则）：和面板小标题同一枚 3×13px 蓝→紫竖条。
    注意必须作为标题流内的 flex 子项（间距 8px）——早先放在标题左侧的 padding
    留白里（left:-11px），弹窗一打开就像贴在边框上，和标题脱节（2026-11-18 反馈）。
-   关系详情等标题里已自带 .ap-mark 的自动跳过，避免出现双彩条 */
+   标题里已自带 .ap-mark 彩条的弹窗（关系详情）加 tk-title-marked 关掉这枚伪元素，
+   避免双彩条。不要用 :has() 判断——测试环境浏览器内核较老（Chrome < 105）不支持，
+   规则会静默失效直接双彩条（2026-11-21 线上反馈）。 */
 body .ant-modal .ant-modal-title::before {
   content: '';
   display: block;
@@ -1017,7 +1019,7 @@ body .ant-modal .ant-modal-title::before {
   background: linear-gradient(180deg, #5B8DEF 0%, #8B5CF6 100%);
 }
 
-body .ant-modal .ant-modal-title:has(.ap-mark)::before {
+body .tk-title-marked .ant-modal-title::before {
   display: none;
 }
 

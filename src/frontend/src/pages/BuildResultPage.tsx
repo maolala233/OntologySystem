@@ -861,7 +861,7 @@ const BuildResultPage: React.FC = () => {
                     onCancel={() => setSelectedEdge(null)}
                     footer={null}
                     width={440}
-                    rootClassName="tk-surface-immersive tk-surface-deco"
+                    rootClassName="tk-surface-immersive tk-surface-deco tk-title-marked"
                     title={
                         <span className="flex items-center gap-2 text-[15px] font-semibold text-[#0F172A]">
                             <span className="ap-mark" aria-hidden />
