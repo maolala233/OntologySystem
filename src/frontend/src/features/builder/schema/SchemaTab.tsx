@@ -1221,7 +1221,9 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
         return { displayNodes, displayEdges };
     }, [nodes, edges, expandedNodeIds, documentFilter]);
 
-    const { displayNodes, displayEdges } = getDisplayElements();
+    // 用 useMemo 稳住数组引用：否则本组件每次重渲染（点节点高亮、切面板等）都会给画布一串新数组，
+    // 触发画布整图重建；配合画布内「仅结构变化才热布局」的规则，点击时图谱不会被重排
+    const { displayNodes, displayEdges } = useMemo(() => getDisplayElements(), [getDisplayElements]);
 
     const addNewRelation = () => {
         relationForm.resetFields();
