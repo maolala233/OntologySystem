@@ -23,6 +23,27 @@
         text-size-adjust: 100%;
       }
     </style>
+    <script>
+      /*
+       * 老版本浏览器兼容（2026-11-21）：
+       * Chrome/Edge < 93、Safari < 15.4 没有 Object.hasOwn，而 react-markdown
+       * （本体问答的消息渲染、历史会话列表）在渲染时会直接调用它，缺失就抛
+       * TypeError → React 渲染中断 → 白屏。这里在任何模块加载之前补齐。
+       * 注意：esbuild 只降级语法，不会给运行时 API 打补丁，所以必须显式 polyfill。
+       */
+      if (typeof Object.hasOwn !== 'function') {
+        Object.defineProperty(Object, 'hasOwn', {
+          value: function hasOwn(target, key) {
+            if (target == null) {
+              throw new TypeError('Cannot convert undefined or null to object');
+            }
+            return Object.prototype.hasOwnProperty.call(Object(target), key);
+          },
+          writable: true,
+          configurable: true
+        });
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
