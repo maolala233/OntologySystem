@@ -27,7 +27,6 @@ import D3ForceGraph, { spacingLabel } from '../components/OntologyGraph/D3ForceG
 import DetailDrawer from '../features/graph-explorer/DetailDrawer';
 import Navbar from '../components/Layout/Navbar';
 import WorkspaceSkeleton from '../components/Layout/WorkspaceSkeleton';
-import Tip from '../shared/Tip';
 import EmptyState from '../components/EmptyState';
 
 const CLASS_TYPES = new Set(['owl:Class', 'Class']);
@@ -509,11 +508,9 @@ const BuildResultPage: React.FC = () => {
                         <div className="border-b px-5 pb-3.5 pt-4" style={{ borderColor: AP_DIV }}>
                             <div className="flex items-start justify-between gap-2">
                                 <div className="min-w-0">
-                                    <Tip text={projectReady ? projectName : undefined}>
-                                        <h1 className="line-clamp-2 text-[19px] font-semibold leading-7 text-[#F2F6FF]">
-                                            {projectReady && projectName ? projectName : '加载中…'}
-                                        </h1>
-                                    </Tip>
+                                    <h1 className="line-clamp-2 text-[19px] font-semibold leading-7 text-[#F2F6FF]">
+                                        {projectReady && projectName ? projectName : '加载中…'}
+                                    </h1>
                                     <div className="mt-1 text-[11.5px] text-[#8B94AB]">本体图谱 · 只读视图</div>
                                 </div>
                                 <Tag
@@ -578,11 +575,9 @@ const BuildResultPage: React.FC = () => {
                                     <span className="ap-mark" aria-hidden />
                                     项目描述
                                 </div>
-                                <Tip text={projectDescription}>
-                                    <p className="m-0 line-clamp-6 text-[13px] leading-6 text-[#A9B7D9]">
-                                        {projectDescription}
-                                    </p>
-                                </Tip>
+                                <p className="m-0 line-clamp-6 text-[13px] leading-6 text-[#A9B7D9]">
+                                    {projectDescription}
+                                </p>
                             </div>
                         )}
 

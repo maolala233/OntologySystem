@@ -607,11 +607,21 @@ export default function McpConsolePage() {
                 .mcp-surface .bg-white {
                     background-color: #FBFDFF !important;
                 }
-                /* 标签（HTTP Streamable / 数量 / MIME）：不再刷半透明白，
-                   统一成品牌淡蓝小胶囊，和页面冷调一致 */
+                /* 标签（2026-11-20）：基类只负责尺寸与中性色——计数、MIME 这类信息
+                   不该和「类型」抢视线；协议/类型走 .mcp-tag-type 的淡蓝档。
+                   底色用实色而不是 rgba：Tag 压在本身就是半透明的玻璃卡上，
+                   叠加后颜色会随面板漂移 */
                 .mcp-surface .ant-tag {
-                    background: rgba(91, 141, 239, 0.10) !important;
-                    border-color: rgba(91, 141, 239, 0.22) !important;
+                    margin-inline-end: 0;
+                    font-size: 10.5px;
+                    line-height: 20px;
+                    background: #EEF3FB;
+                    border-color: #E1E9F6;
+                    color: #52607A;
+                }
+                .mcp-surface .mcp-tag-type {
+                    background: rgba(91, 141, 239, 0.10);
+                    border-color: rgba(91, 141, 239, 0.22);
                     color: #2A57C6;
                 }
                 /* 面板：bg-white/30 在浅画布上几乎看不见，换成冷白玻璃，给控制台分区 */
@@ -669,7 +679,7 @@ export default function McpConsolePage() {
                         <section>
                             <div className="flex items-center justify-between mb-1.5">
                                 <span className="text-[12px] font-medium text-[#8A94AB]">端点</span>
-                                <Tag className="!m-0 !text-[10.5px]">HTTP Streamable</Tag>
+                                <Tag className="mcp-tag-type">HTTP Streamable</Tag>
                             </div>
                             <div className="flex gap-1.5">
                                 <Tooltip title="默认按页面地址自动推导；容器化/反向代理部署可直接改为实际可达地址（如 https://域名/mcp）">
@@ -839,7 +849,7 @@ export default function McpConsolePage() {
                                     {/* 当前配置速览 */}
                                     <div className="surface-card p-4">
                                         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                                            <Tag className="!m-0 !text-[10.5px]">HTTP Streamable</Tag>
+                                            <Tag className="mcp-tag-type">HTTP Streamable</Tag>
                                             <span className="font-mono text-xs text-[#52607A] break-all">{effEndpoint}</span>
                                             <span className="text-[#DCE3F0]">|</span>
                                             <span className="text-xs text-[#66738F]">
@@ -985,7 +995,7 @@ export default function McpConsolePage() {
                                     <div className="px-4 py-3 border-b border-[#F0F4FB] flex items-center justify-between gap-2">
                                         <div className="flex items-center gap-2 min-w-0">
                                             <span className="text-sm font-semibold text-[#1F2A44]">工具清单</span>
-                                            <Tag className="!m-0 !text-[10.5px]">{tools.length}</Tag>
+                                            <Tag>{tools.length}</Tag>
                                         </div>
                                         <div className="flex items-center gap-0.5">
                                             <Tooltip title="刷新工具列表（List Tools）">
@@ -1070,7 +1080,7 @@ export default function McpConsolePage() {
                                                         <div className="font-mono font-semibold text-[#1F2A44] text-base break-all">{selectedTool.name}</div>
                                                         <div className="text-[13px] text-[#66738F] mt-1 leading-relaxed">{selectedTool.description}</div>
                                                     </div>
-                                                    <Tag className="!m-0 shrink-0 !text-[10.5px]">{schemaProps.length} 个参数</Tag>
+                                                    <Tag className="shrink-0">{schemaProps.length} 个参数</Tag>
                                                 </div>
                                             </div>
 
@@ -1161,7 +1171,7 @@ export default function McpConsolePage() {
                                     <div className="px-4 py-3 border-b border-[#F0F4FB] flex items-center justify-between gap-2">
                                         <div className="flex items-center gap-2 min-w-0">
                                             <span className="text-sm font-semibold text-[#1F2A44]">资源清单</span>
-                                            <Tag className="!m-0 !text-[10.5px]">{resources.length}</Tag>
+                                            <Tag>{resources.length}</Tag>
                                         </div>
                                         <Tooltip title="刷新资源列表（List Resources）">
                                             <Button size="small" type="text" icon={<ReloadOutlined />}
@@ -1186,7 +1196,11 @@ export default function McpConsolePage() {
                                                     }`}>
                                                     <div className="flex items-center justify-between gap-2">
                                                         <span className="text-[13px] font-medium text-[#1F2A44] truncate">{r.name ?? r.uri}</span>
-                                                        {r.mimeType && <Tag className="!text-[10.5px] !m-0 shrink-0">{r.mimeType}</Tag>}
+                                                        {r.mimeType && (
+                                                            <Tooltip title={r.mimeType}>
+                                                                <Tag className="shrink-0 max-w-[120px] truncate">{r.mimeType}</Tag>
+                                                            </Tooltip>
+                                                        )}
                                                     </div>
                                                     <div className="font-mono text-[11px] text-[#66738F] mt-0.5 truncate">{r.uri}</div>
                                                     {r.description && <div className="text-[11px] leading-4 text-[#8A94AB] mt-0.5 line-clamp-2">{r.description}</div>}
@@ -1213,7 +1227,11 @@ export default function McpConsolePage() {
                                                     {selectedResource.name ?? selectedResource.uri}
                                                 </div>
                                                 <div className="font-mono text-xs text-[#66738F] mt-1 break-all">{selectedResource.uri}</div>
-                                                {selectedResource.mimeType && <Tag className="!mt-2 !text-[10.5px]">{selectedResource.mimeType}</Tag>}
+                                                {selectedResource.mimeType && (
+                                                    <Tooltip title={selectedResource.mimeType}>
+                                                        <Tag className="!mt-2 max-w-full truncate">{selectedResource.mimeType}</Tag>
+                                                    </Tooltip>
+                                                )}
                                             </div>
                                             <div className="surface-card p-4">
                                                 <div className="flex items-center gap-2 mb-2">
@@ -1305,7 +1323,7 @@ export default function McpConsolePage() {
                             <div className="h-10 shrink-0 px-4 border-b border-[#F0F4FB] flex items-center justify-between gap-2">
                                 <div className="flex items-center gap-2">
                                     <span className="text-sm font-semibold text-[#1F2A44]">调用历史</span>
-                                    <Tag className="!m-0 !text-[10.5px]">{history.length}</Tag>
+                                    <Tag>{history.length}</Tag>
                                 </div>
                                 <Button size="small" type="text" icon={<ClearOutlined />} disabled={history.length === 0}
                                     onClick={() => { setHistory([]); setExpandedHistory(null); }}>清空</Button>
@@ -1356,7 +1374,7 @@ export default function McpConsolePage() {
                         <div className="w-80 shrink-0 border-l border-[#F0F4FB] flex flex-col">
                             <div className="h-10 shrink-0 px-4 border-b border-[#F0F4FB] flex items-center justify-between gap-2">
                                 <span className="text-sm font-semibold text-[#1F2A44]">服务端通知</span>
-                                <Tag className="!m-0 !text-[10.5px]">0</Tag>
+                                <Tag>0</Tag>
                             </div>
                             <div className="flex-1 px-4 py-2">
                                 <div className="h-full flex flex-col items-center justify-center gap-1 text-xs text-[#A9B4C9] text-center">

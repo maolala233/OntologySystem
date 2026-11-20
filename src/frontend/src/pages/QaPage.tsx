@@ -102,6 +102,12 @@ export default function QaPage() {
     const [conversations, setConversations] = useState<QaConversationItem[]>([]);
     // 会话列表是否已就绪：未就绪时列表区留白（不画骨架/空状态），就绪后才下「暂无」的结论
     const [convsReady, setConvsReady] = useState(false);
+    // 当前会话列表属于哪个项目（2026-11-20）：切项目后的首帧还没跑 effect，
+    // 旧列表会短暂配着新项目名显示，看起来就是列表/数量闪一下；靠归属项目判断是否可展示
+    const [convProjectId, setConvProjectId] = useState<number | null>(null);
+    // 切换项目时先沿用切换前的数量（2026-11-20）：新列表回来前不出现「（…）」中间态，
+    // 数字直接从旧值换成真实值，标题行只变数字、不位移
+    const [convCount, setConvCount] = useState<number | null>(null);
     // 切项目时作废旧请求的响应，防止慢请求回来覆盖新项目的列表
     const convSeqRef = useRef(0);
     const [activeConvId, setActiveConvId] = useState<string | null>(null);
@@ -232,6 +238,7 @@ export default function QaPage() {
         setTurns([]);
         setActiveConvId(null);
         const cached = convCache[projectId];
+        setConvProjectId(projectId);
         setConversations(cached ?? []);
         setConvsReady(!!cached);
         loadConversations(projectId);
@@ -340,6 +347,8 @@ export default function QaPage() {
         if (projectId == null) return;
         try {
             await deleteQaConversation(projectId, convId);
+            // 删除不可恢复，给一条成功回执；和文档/项目/CQ 的删除提示保持同一套措辞
+            message.success('对话已删除');
             if (activeConvId === convId) newConversation();
             loadConversations(projectId);
         } catch (e) {
@@ -496,8 +505,10 @@ export default function QaPage() {
         ? `${activeProjectName.slice(0, 20)}…`
         : activeProjectName;
     const activeStatusMeta = activeProject ? projectStatusMeta(activeProject) : null;
-    // 列表加载中留白（不画骨架、不判「暂无」）；确定没有任何可用项目、或列表已就绪时才下结论
-    const convsReadyForUi = convsReady || (!projectsLoading && projectId == null);
+    // 列表加载中留白（不画骨架、不判「暂无」）；确定没有任何可用项目、或列表已就绪时才下结论。
+    // 还要求归属项目一致：切项目后的首帧不能拿旧项目的列表充数（2026-11-20）
+    const convsReadyForUi = (convsReady && convProjectId === projectId)
+        || (!projectsLoading && projectId == null);
 
     return (
         <div className="h-full flex flex-col app-canvas">
@@ -711,8 +722,13 @@ export default function QaPage() {
                     </div>
                     <div className="px-4 pb-2 select-none">
                         <div className="flex items-baseline gap-1">
+                            {/* 数量留固定槽位（2026-11-20）：切项目时列表尚未就绪，
+                                原来的写法会先摘掉「（N）」、项目名随即左移，数据回来再右移。
+                                现在槽位固定宽度，加载期间继续显示切换前的数量，拿到新列表后直接替换 */}
                             <span className="shrink-0 text-[11px] font-medium tracking-wide text-[#8A94AB]">
-                                历史对话{convsReadyForUi ? `（${conversations.length}）` : ''}
+                                历史对话<span className="inline-block w-[3.2em] tabular-nums">{convsReadyForUi
+                                    ? `（${conversations.length}）`
+                                    : (convCount !== null ? `（${convCount}）` : '')}</span>
                             </span>
                             {/* 会话按项目隔离，切项目后整列会换掉；标题里带上项目名，列表突然变化时不至于莫名其妙 */}
                             {/* 项目名在顶部选择器里本来就完整可见，这里不再挂悬停提示 */}
@@ -809,7 +825,11 @@ export default function QaPage() {
                                     <span className="shrink-0 text-[13px] font-semibold text-[#3D4B66]">项目</span>
                                     <Select
                                         value={projectId ?? undefined}
-                                        onChange={v => setProjectId(v)}
+                                        onChange={v => {
+                                            // 先记下切换前的数量，列表加载期间标题里的数字保持不变
+                                            setConvCount(conversations.length);
+                                            setProjectId(v);
+                                        }}
                                         placeholder="选择项目"
                                         showSearch
                                         optionFilterProp="label"

@@ -486,17 +486,15 @@ const LoginPage: React.FC = () => {
                     box-shadow:
                         inset 0 1px 0 rgba(255,255,255,0.30),
                         0 14px 26px -14px rgba(76,125,231,0.80) !important;
-                    transition: transform 0.18s ease, box-shadow 0.18s ease;
+                    transition: box-shadow 0.18s ease;
                 }
+                /* hover 只换渐变色和阴影，不做位移（2026-11-20）：
+                   1px 上移在感知上更像抖动，且全站按钮都没有这个动作 */
                 .login-submit.ant-btn-primary:not(:disabled):hover {
                     background: linear-gradient(135deg, #6B9BF5 0%, #5B8BF0 55%, #7E7BF5 100%) !important;
-                    transform: translateY(-1px);
                     box-shadow:
                         inset 0 1px 0 rgba(255,255,255,0.30),
                         0 18px 30px -14px rgba(76,125,231,0.90) !important;
-                }
-                .login-submit.ant-btn-primary:not(:disabled):active {
-                    transform: translateY(0);
                 }
                 .login-card-foot {
                     display: flex; align-items: center; justify-content: space-between; gap: 10px;

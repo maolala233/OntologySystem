@@ -11,7 +11,6 @@ import {
 } from '@ant-design/icons';
 import Navbar from '../components/Layout/Navbar';
 import WorkspaceSkeleton from '../components/Layout/WorkspaceSkeleton';
-import Tip from '../shared/Tip';
 import EmptyState from '../components/EmptyState';
 import { publishApi } from '../api/governance';
 import { ProjectData } from '../types/ontology';
@@ -483,12 +482,9 @@ const AssetDetailPage: React.FC = () => {
                         {/* 身份段：名称 + 发布状态 + 一行元信息（作者 · 知识域 · 发布时间 · 版本） */}
                         <div className="border-b px-5 pb-3.5 pt-4" style={{ borderColor: AP_DIV }}>
                             <div className="flex items-start justify-between gap-2">
-                                {/* 两行截断：悬停看全称（走全站统一 Tooltip，不用浏览器白框） */}
-                                <Tip text={project.name}>
-                                    <h1 className="line-clamp-2 text-[20px] font-semibold leading-7 text-[#F2F6FF]">
-                                        {project.name}
-                                    </h1>
-                                </Tip>
+                                <h1 className="line-clamp-2 text-[20px] font-semibold leading-7 text-[#F2F6FF]">
+                                    {project.name}
+                                </h1>
                                 <Tag
                                     className="!m-0 shrink-0"
                                     style={{ background: 'rgba(91,141,239,0.18)', color: '#9EC1FF', borderColor: 'rgba(91,141,239,0.36)' }}
@@ -565,11 +561,9 @@ const AssetDetailPage: React.FC = () => {
                                     <span className="ap-mark" aria-hidden />
                                     项目描述
                                 </div>
-                                <Tip text={project.description}>
-                                    <p className="m-0 line-clamp-6 text-[13px] leading-6 text-[#A9B7D9]">
-                                        {project.description}
-                                    </p>
-                                </Tip>
+                                <p className="m-0 line-clamp-6 text-[13px] leading-6 text-[#A9B7D9]">
+                                    {project.description}
+                                </p>
                             </div>
                         )}
 
