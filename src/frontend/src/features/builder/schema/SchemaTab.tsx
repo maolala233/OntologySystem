@@ -3,8 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { Drawer, Form, Input, Button, Space, Modal, Spin, Tabs, Tooltip, Select, AutoComplete, Tag, Divider, Switch, Segmented, InputNumber, Tree, Input as AntInput, Dropdown, Menu, Badge, Empty, Upload } from 'antd';
 import type { TreeProps } from 'antd';
-import { message, confirmModal } from '../../../shared/feedback';
+import { message, confirmModal, notifyError } from '../../../shared/feedback';
 import Tip from '../../../shared/Tip';
+import EmptyState from '../../../components/EmptyState';
 import {
     SaveOutlined,
     CloudUploadOutlined,
@@ -468,7 +469,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
     useEffect(() => {
         const onRefresh = () => {
             if (hasUnsavedRef.current) {
-                message.info('画布已被 Copilot 更新（manual 版本），保存当前修改后刷新即可看到');
+                message.info('画布已被 Copilot 更新，保存当前修改后刷新即可看到');
                 return;
             }
             loadProject();
@@ -502,8 +503,8 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
             setImportProjects(list
                 .filter((p) => p.id !== Number(projectId))
                 .map((p) => ({ id: p.id, name: p.name })));
-        } catch {
-            message.error('获取项目列表失败');
+        } catch (e) {
+            notifyError(e, '获取项目列表失败');
         }
     };
 
@@ -551,7 +552,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
             }
             setIsImportModalOpen(false);
         } catch (e: any) {
-            message.error(e?.response?.data?.error?.message || e?.response?.data?.detail || '框架导入失败');
+            notifyError(e, '框架导入失败');
         } finally {
             setImporting(false);
         }
@@ -584,7 +585,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
                 setIsAdmin(user.role === 'admin');
             }
         } catch (error: any) {
-            message.error('加载项目失败');
+            notifyError(error, '加载项目失败');
             navigate('/my-projects');
         } finally {
             setLoading(false);
@@ -923,7 +924,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
                 setIsDrawerOpen(false);
                 setSelectedElement(null);
                 pendingAutoSaveRef.current = true;  // 删除后自动落库（用户预期删除即生效）
-                message.success('删除成功');
+                message.success('元素已删除');
             },
         });
     };
@@ -932,12 +933,13 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
     useEffect(() => {
         if (pendingAutoSaveRef.current) {
             pendingAutoSaveRef.current = false;
-            handleSaveDraft();
+            handleSaveDraft({ silent: true });
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [nodes, edges]);
 
-    const handleSaveDraft = async () => {
+    // silent：属性修改/删除后的自动落库不弹成功提示，避免和「属性已更新」「元素已删除」连弹两条
+    const handleSaveDraft = async ({ silent = false }: { silent?: boolean } = {}) => {
         if (!projectId) return;
 
         setLoading(true);
@@ -953,9 +955,9 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
             setHasUnsavedChanges(false);
             setUnsavedNodeIds(new Set());  // 落库后详情面板可正常查到
 
-            message.success('草稿已保存，已自动同步到图数据库 (Neo4j)');
+            if (!silent) message.success('草稿已保存，并同步到图数据库');
         } catch (error) {
-            message.error('保存失败，请重试');
+            notifyError(error, '保存失败，请重试');
         } finally {
             setLoading(false);
         }
@@ -1023,7 +1025,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
                 setNodes(layoutedNodes);
                 setEdges(layoutedEdges);
                 
-                message.success(response.data.message || '骨架解析成功！');
+                message.success(response.data.message || '骨架解析完成');
                 
                 // 提示用户需要上传文档进行实例提取，提供上传按钮
                 confirmModal({
@@ -1074,9 +1076,9 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
                 setEdges(layoutedEdges);
             }
 
-            message.success(response.message || 'TTL 文件解析成功！');
+            message.success(response.message || 'TTL 文件解析完成');
         } catch (error: any) {
-            message.error(error.response?.data?.detail || 'TTL 文件解析失败');
+            notifyError(error, 'TTL 文件解析失败');
         } finally {
             setLoading(false);
         }
@@ -1115,12 +1117,9 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
 
         if (hasExpandedInstances) {
             setExpandedNodeIds(new Set());
-            message.success('已收起所有实例');
         } else {
             setExpandedNodeIds(classIdsWithInstances);
-            if (classIdsWithInstances.size > 0) {
-                message.success(`已展开 ${classIdsWithInstances.size} 个类的实例`);
-            } else {
+            if (classIdsWithInstances.size === 0) {
                 // 检查是否有实例节点存在
                 const instanceNodes = nodes.filter(n => n.data?.type === 'owl:NamedIndividual');
                 if (instanceNodes.length > 0) {
@@ -1278,7 +1277,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
             setUploadedDocuments(mappedDocs);
             return mappedDocs;
         } catch (error: any) {
-            message.error(error.response?.data?.detail || '加载文档列表失败');
+            notifyError(error, '加载文档列表失败');
             setUploadedDocuments([]);
             return [];
         } finally {
@@ -1311,7 +1310,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
                     // 重新加载文档列表
                     loadDocuments();
                 } catch (error: any) {
-                    message.error(error.response?.data?.detail || '删除文档失败');
+                    notifyError(error, '删除文档失败');
                 }
             },
         });
@@ -1334,7 +1333,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
                     setUploadedDocuments([]);
                     setIsDocumentModalOpen(false);
                 } catch (error: any) {
-                    message.error(error.response?.data?.detail || '清空文档失败');
+                    notifyError(error, '清空文档失败');
                 }
             },
         });
@@ -1527,7 +1526,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
             setTaskMessage('开始骨架提取...');
             setSsePendingReviews(null);
             connectToProgressStream(response.task_id);
-            message.info('任务已启动，请在进度窗口查看进度');
+            // 进度窗已同时打开，不再额外弹提示（2026-11-20）
         } catch (error: any) {
             const errorDetail = error.response?.data?.error?.message || error.response?.data?.detail || error.message || '未知错误';
             message.error(`Schema 提取失败：${errorDetail}`);
@@ -1607,6 +1606,14 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
         });
     }, [nodes, edges, treeSearchValue]);
 
+    // 列表树右上角只放一个「全部展开 / 全部收起」（2026-11-20）：按当前是否已全展开切换。
+    // 面板收起时不计算树数据，省掉一次整图遍历。
+    const listTreeData = isLeftPanelExpanded ? buildTreeData() : [];
+    // 只看有子节点的类：没有实例的类展开不了，不该让按钮永远停在「全部展开」
+    const listExpandableNodes = listTreeData.filter((n: any) => (n.children?.length ?? 0) > 0);
+    const listTreeAllExpanded = listExpandableNodes.length > 0
+        && listExpandableNodes.every((n: any) => manualExpandedKeys.has(n.key));
+
     // 树节点点击
     const onTreeSelect: TreeProps['onSelect'] = (selectedKeys) => {
         if (selectedKeys.length === 0) return;
@@ -1622,12 +1629,10 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
         // 展开所有节点（包括类和其实例）
         const allKeys = new Set(buildTreeData().map((node: any) => node.key));
         setManualExpandedKeys(allKeys);
-        message.success('已展开列表');
     };
 
     const collapseAllTreeNodes = () => {
         setManualExpandedKeys(new Set());
-        message.success('已收起列表');
     };
 
     // 处理单个节点的展开/收起
@@ -1673,7 +1678,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
                     setTaskMessage('任务已取消');
                 } catch (error: any) {
                     console.error('[取消任务] 错误:', error);
-                    message.error('取消任务失败：' + (error.response?.data?.error?.message || error.message || '未知错误'));
+                    notifyError(error, '取消任务失败');
                 }
             },
         });
@@ -1737,7 +1742,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
                     cancelText: '取消',
                     onOk: async () => {
                         try {
-                            await handleSaveDraft();
+                            await handleSaveDraft({ silent: true });
                             const now = new Date();
                             const stamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
                             const ver = await versionsApi.create(Number(projectId), {
@@ -1747,7 +1752,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
                             });
                             message.success(`已存为版本快照 v${ver.version_no}，实例抽取时可选用`);
                         } catch (e: any) {
-                            message.error(e?.response?.data?.error?.message || '版本快照保存失败');
+                            notifyError(e, '版本快照保存失败');
                         }
                     },
                 });
@@ -1801,7 +1806,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
                         // 清除 localStorage 中的 schema 数据
                         localStorage.removeItem(`project_${projectId}_schema_graph`);
                         localStorage.removeItem(`project_${projectId}_text_content`);
-                        message.success('已清空画布，请点击"保存"按钮同步到数据库');
+                        message.success('已清空画布，请点击「保存」同步到数据库');
                     },
                 });
                 break;
@@ -1912,7 +1917,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
                             <Tooltip title={hasUnsavedChanges ? '保存修改' : '已保存'}>
                                 <Button
                                     icon={<SaveOutlined />}
-                                    onClick={handleSaveDraft}
+                                    onClick={() => { handleSaveDraft(); }}
                                     loading={loading}
                                     type={hasUnsavedChanges ? 'primary' : 'default'}
                                     ghost={hasUnsavedChanges}
@@ -1992,11 +1997,11 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
                                         类与实例列表
                                     </h3>
                                     <div className="flex items-center gap-1">
-                                        <Tooltip title="全部展开">
-                                            <Button type="text" size="small" icon={<ExpandOutlined />} onClick={expandAllTreeNodes} style={{ color: '#C6CEDF' }} />
-                                        </Tooltip>
-                                        <Tooltip title="全部收起">
-                                            <Button type="text" size="small" icon={<ShrinkOutlined />} onClick={collapseAllTreeNodes} style={{ color: '#C6CEDF' }} />
+                                        <Tooltip title={listTreeAllExpanded ? '全部收起' : '全部展开'}>
+                                            <Button type="text" size="small"
+                                                icon={listTreeAllExpanded ? <ShrinkOutlined /> : <ExpandOutlined />}
+                                                onClick={listTreeAllExpanded ? collapseAllTreeNodes : expandAllTreeNodes}
+                                                style={{ color: '#C6CEDF' }} />
                                         </Tooltip>
                                     </div>
                                 </div>
@@ -2071,16 +2076,27 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
                                         line-height: 24px;
                                     }
                                 `}</style>
-                                <Tree
-                                    showIcon
-                                    expandedKeys={Array.from(manualExpandedKeys)}
-                                    onExpand={onTreeExpand}
-                                    selectedKeys={selectedElement ? [selectedElement.id] : []}
-                                    onSelect={onTreeSelect}
-                                    treeData={buildTreeData()}
-                                    blockNode
-                                    className="custom-tree"
-                                />
+                                {treeSearchValue.trim() && listTreeData.length === 0 ? (
+                                    <EmptyState
+                                        tone="dark"
+                                        className="h-full min-h-[220px]"
+                                        title="没有找到匹配的类或实例"
+                                        hint="换个关键词试试，或清除搜索查看全部"
+                                        actionText="清除搜索"
+                                        onAction={() => setTreeSearchValue('')}
+                                    />
+                                ) : (
+                                    <Tree
+                                        showIcon
+                                        expandedKeys={Array.from(manualExpandedKeys)}
+                                        onExpand={onTreeExpand}
+                                        selectedKeys={selectedElement ? [selectedElement.id] : []}
+                                        onSelect={onTreeSelect}
+                                        treeData={listTreeData}
+                                        blockNode
+                                        className="custom-tree"
+                                    />
+                                )}
                             </div>
                             
                             {/* 底部统计 */}
@@ -2204,13 +2220,8 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
                                     const classId = node.id;
                                     setExpandedNodeIds(prev => {
                                         const newSet = new Set(prev);
-                                        if (newSet.has(classId)) {
-                                            newSet.delete(classId);
-                                            message.info(`已收起 "${node.data?.label}" 的实例`);
-                                        } else {
-                                            newSet.add(classId);
-                                            message.success(`已展开 "${node.data?.label}" 的实例`);
-                                        }
+                                        if (newSet.has(classId)) newSet.delete(classId);
+                                        else newSet.add(classId);
                                         return newSet;
                                     });
                                 }}

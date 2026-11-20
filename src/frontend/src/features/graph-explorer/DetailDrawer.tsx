@@ -4,7 +4,7 @@
  * 边：谓词、两端实体、置信度、溯源证据。
  */
 import React, { useEffect, useRef, useState } from 'react';
-import { message } from '../../shared/feedback';
+import { notifyError } from '../../shared/feedback';
 import { Button, Descriptions, Drawer, Empty, Modal, Space, Spin, Table, Tag, Tooltip, Typography } from 'antd';
 import { FileTextOutlined, LinkOutlined, ReloadOutlined, SendOutlined, ExpandOutlined } from '@ant-design/icons';
 
@@ -40,7 +40,7 @@ const ChunkContextModal: React.FC<{
         setChunk(null);
         documentsApi.chunkContext(projectId, prov.document_id, prov.chunk_index)
             .then((res) => setChunk(res.chunk))
-            .catch(() => message.error('切片上下文加载失败'))
+            .catch((e) => notifyError(e, '切片上下文加载失败'))
             .finally(() => setLoading(false));
     }, [prov?.document_id, prov?.chunk_index, projectId]);
 
@@ -142,7 +142,7 @@ function EvidenceCards({ rows, projectId }: { projectId: number; rows: ProvRow[]
                             <a className="text-xs cursor-pointer"
                                onClick={() => {
                                    documentsApi.download(projectId, p.document_id!, p.document_name || undefined)
-                                       .catch(() => message.error('原文档下载失败'));
+                                       .catch((e) => notifyError(e, '原文档下载失败'));
                                }}>
                                 <LinkOutlined /> 查看原文档
                             </a>
@@ -301,7 +301,7 @@ const DetailDrawer: React.FC<Props> = ({ projectId, selection, onClose, onNaviga
             try {
                 setEdgeDetail(await graphApi.edgeDetail(projectId, selection.id));
             } catch (e: any) {
-                message.error(e.response?.data?.error?.message || '加载详情失败');
+                notifyError(e, '加载详情失败');
             }
         };
         load();
@@ -421,7 +421,7 @@ export const NodeDetailContent: React.FC<{
                 onLoaded?.(d);
             } catch (e: any) {
                 // 未保存节点（宿主已给提示）属预期 404：不再弹错误 toast
-                if (alive && !unsavedHint) message.error(e.response?.data?.error?.message || '加载详情失败');
+                if (alive && !unsavedHint) notifyError(e, '加载详情失败');
             } finally {
                 if (alive) setLoading(false);
             }

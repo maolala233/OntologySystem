@@ -3,7 +3,7 @@
 // 主题必填；主题建议由 LLM 生成；PPT 支持上传自定义模板（占位符协议自动填写）。
 import { useCallback, useEffect, useState } from 'react';
 import { Button, Checkbox, Input, InputNumber, Popconfirm, Select, Spin, Tag, Tooltip, Upload } from 'antd';
-import { message } from '../shared/feedback';
+import { message, notifyError } from '../shared/feedback';
 import {
     DownloadOutlined, FileTextOutlined, PlayCircleOutlined, QuestionCircleOutlined,
     UploadOutlined,
@@ -58,7 +58,7 @@ export default function ReportsPage() {
             setTemplateInfo({ exists: true, filename: r.filename });
             setUseTemplate(true);
         } catch (e: any) {
-            message.error(e?.response?.data?.error?.message || '模板上传失败');
+            notifyError(e, '模板上传失败');
         } finally {
             setTemplateUploading(false);
         }
@@ -70,8 +70,8 @@ export default function ReportsPage() {
             await deletePptTemplate(projectId);
             setTemplateInfo({ exists: false });
             message.success('模板已清除');
-        } catch {
-            message.error('清除失败');
+        } catch (e) {
+            notifyError(e, '清除失败');
         }
     }, [projectId]);
 
@@ -83,7 +83,7 @@ export default function ReportsPage() {
                 : await downloadSampleTemplate(projectId);
             window.open(url, '_blank');
         } catch (e: any) {
-            message.error(e?.response?.data?.error?.message || '获取下载链接失败');
+            notifyError(e, '获取下载链接失败');
         }
     }, [projectId]);
 
@@ -114,8 +114,8 @@ export default function ReportsPage() {
                     // 主题建议不自动生成（LLM 调用，网络抖动时挂几分钟）——点击「生成主题建议」按钮触发
                     loadTemplateInfo(pid);
                 }
-            } catch {
-                message.error('加载项目列表失败');
+            } catch (e) {
+                notifyError(e, '加载项目列表失败');
             } finally {
                 setProjectsLoading(false);
             }
@@ -161,7 +161,7 @@ export default function ReportsPage() {
             });
             setResult(r);
         } catch (e: any) {
-            message.error(e?.response?.data?.error?.message || e?.message || '生成失败');
+            notifyError(e, '生成失败');
         } finally {
             setBusy(false);
         }

@@ -4,7 +4,7 @@
 // 消息渲染复用问答页 MarkdownAnswer；SSE 契约同问答（stage/token/done/error）。
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
-import { message } from '../../shared/feedback';
+import { message, notifyError } from '../../shared/feedback';
 import { Button, Popover, Select, Tooltip } from 'antd';
 import {
     CaretUpOutlined,
@@ -308,7 +308,7 @@ export default function CopilotWidget() {
                 }
             }
             setMsgs(out);
-        } catch { message.error('加载会话失败'); }
+        } catch (e) { notifyError(e, '加载会话失败'); }
     }, [projectId]);
 
     const removeSession = useCallback(async (sid: number) => {
@@ -317,7 +317,7 @@ export default function CopilotWidget() {
             await deleteCopilotSession(projectId, sid);
             if (sessionId === sid) newSession();
             refreshSessions(projectId);
-        } catch { message.error('删除会话失败'); }
+        } catch (e) { notifyError(e, '删除会话失败'); }
     }, [projectId, sessionId, newSession, refreshSessions]);
 
     const send = useCallback(async (overrideText?: string) => {
@@ -413,7 +413,7 @@ export default function CopilotWidget() {
             message.success('已取消发布，继续处理你的调整请求');
             if (original) send(original);
         } catch (e: any) {
-            message.error(e?.response?.data?.detail || e?.message || '取消发布失败');
+            notifyError(e, '取消发布失败');
         }
     }, [projectId, msgs, send]);
 

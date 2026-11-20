@@ -3,7 +3,7 @@
  * 保存注入配置 → 获取知识库列表 → 将当前本体图谱注入 RAGFlow。
  */
 import React, { useState } from 'react';
-import { message } from '../../../shared/feedback';
+import { message, notifyError } from '../../../shared/feedback';
 import { Button, Form, Input, Modal, Select } from 'antd';
 import { InfoCircleOutlined } from '@ant-design/icons';
 
@@ -42,7 +42,7 @@ const RagSyncModal: React.FC<Props> = ({ projectId, open, onClose }) => {
             await projectsApi.saveInjectConfig(projectId, values);
             message.success('注入配置已保存');
         } catch (error: any) {
-            message.error(error.response?.data?.detail || '保存配置失败');
+            notifyError(error, '保存配置失败');
         }
     };
 
@@ -53,13 +53,13 @@ const RagSyncModal: React.FC<Props> = ({ projectId, open, onClose }) => {
             const res = await projectsApi.injectToRagflow(projectId);
             if (res.status === 'success') {
                 const data = res.data;
-                message.success(`注入成功！实体=${data.entities_created}，关系=${data.relations_created}，图谱=${data.graph_updated ? '已更新' : '未更新'}，类型映射=${data.ty2ents_updated ? '已更新' : '未更新'}`);
+                message.success(`已注入：实体 ${data.entities_created} 个、关系 ${data.relations_created} 条；图谱${data.graph_updated ? '已更新' : '未更新'}，类型映射${data.ty2ents_updated ? '已更新' : '未更新'}`);
                 onClose();
             } else {
                 message.error(res.message || '注入失败');
             }
         } catch (error: any) {
-            message.error(error.response?.data?.detail || '注入失败');
+            notifyError(error, '注入失败');
         } finally {
             setInjecting(false);
         }
@@ -82,12 +82,12 @@ const RagSyncModal: React.FC<Props> = ({ projectId, open, onClose }) => {
                 if (dsList.length === 1) {
                     injectForm.setFieldsValue({ kb_id: dsList[0].id });
                 }
-                message.success(`获取成功！知识库: ${dsList.length}个`);
+                message.success(`已获取 ${dsList.length} 个知识库`);
             } else {
                 message.error(res.message || '获取RAGFlow信息失败');
             }
         } catch (error: any) {
-            message.error(error.response?.data?.detail || '获取RAGFlow信息失败');
+            notifyError(error, '获取RAGFlow信息失败');
         } finally {
             setFetchingRagflow(false);
         }

@@ -50,7 +50,7 @@ const PublishDialog: React.FC<Props> = ({ projectId, open, onClose, onPublished 
         try {
             const r = await publishApi.publish(projectId, {});
             const warn = (r as any).warnings?.length ? `（${(r as any).warnings.length} 条警告）` : '';
-            message.success(`发布成功：v${r.version_no}${warn}`);
+            message.success(`已发布 v${r.version_no}${warn}`);
             onPublished();
             onClose();
         } catch (e: any) {

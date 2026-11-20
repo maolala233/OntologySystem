@@ -227,7 +227,7 @@ const AppLayout: React.FC = () => {
 
                 {/* 侧栏底部科技插画（2026-11-19）：绝对定位，不占布局高度，菜单区占满整列；
                     菜单内容变长时直接压在插画上层（菜单 z-10 / 插画 z-0）。
-                    pointer-events-none 保证不吃点击；只放图形、不配文案，折叠态用 56px 简化版 */}
+                    pointer-events-none 保证不吃点击；只放图形、不配文案，折叠态是同一幅插画的缩小版（64px） */}
                 <div
                     className={`pointer-events-none absolute inset-x-0 bottom-0 z-0 flex justify-center ${
                         collapsed ? 'px-2 pb-4' : 'px-4 pb-5'

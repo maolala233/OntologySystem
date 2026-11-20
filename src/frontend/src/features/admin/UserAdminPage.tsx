@@ -6,7 +6,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Button, Drawer, Empty, Modal, Form, Input, Popconfirm, Select, Space, Table, Tag, Typography } from 'antd';
 import { DeleteOutlined, FolderOpenOutlined, PlusOutlined, ReloadOutlined, TeamOutlined } from '@ant-design/icons';
-import { message } from '../../shared/feedback';
+import { message, notifyError } from '../../shared/feedback';
 import { adminApi, AdminUser } from '../../api/admin';
 import { useAuthStore } from '../../shared/auth/authStore';
 import { PROJECT_STATUS } from '../../shared/projectStatus';
@@ -57,8 +57,8 @@ const UserAdminPage: React.FC = () => {
         setLoading(true);
         try {
             setUsers(await adminApi.listUsers());
-        } catch {
-            message.error('获取用户列表失败');
+        } catch (e) {
+            notifyError(e, '获取用户列表失败');
         } finally {
             setLoading(false);
         }
@@ -70,12 +70,12 @@ const UserAdminPage: React.FC = () => {
         const values = await form.validateFields();
         try {
             await adminApi.createUser(values);
-            message.success(`用户 ${values.username} 创建成功`);
+            message.success(`用户 ${values.username} 已创建`);
             setCreateOpen(false);
             form.resetFields();
             load();
         } catch (err: any) {
-            message.error(err.response?.data?.error?.message || '创建失败');
+            notifyError(err, '创建失败');
         }
     };
 
@@ -85,7 +85,7 @@ const UserAdminPage: React.FC = () => {
             message.success(u.is_active ? `已停用 ${u.username}` : `已启用 ${u.username}`);
             load();
         } catch (err: any) {
-            message.error(err.response?.data?.error?.message || '操作失败');
+            notifyError(err, '操作失败');
         }
     };
 
@@ -96,7 +96,7 @@ const UserAdminPage: React.FC = () => {
             setOneTimePassword(resp.password || '');
             load();
         } catch (err: any) {
-            message.error(err.response?.data?.error?.message || '重置失败');
+            notifyError(err, '重置失败');
         }
     };
 
@@ -106,7 +106,7 @@ const UserAdminPage: React.FC = () => {
             message.success(`用户 ${u.username} 已删除`);
             load();
         } catch (err: any) {
-            message.error(err.response?.data?.error?.message || '删除失败');
+            notifyError(err, '删除失败');
         }
     };
 
@@ -159,8 +159,8 @@ const UserAdminPage: React.FC = () => {
         try {
             const resp = await adminApi.listUserProjects(u.id);
             setProjects(resp.items);
-        } catch {
-            message.error('获取用户项目失败');
+        } catch (e) {
+            notifyError(e, '获取用户项目失败');
         } finally {
             setProjectsLoading(false);
         }

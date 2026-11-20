@@ -4,7 +4,7 @@ import { Avatar, Breadcrumb, Dropdown, Input, Modal, Tag } from 'antd';
 import {
     DownOutlined, LockOutlined, LogoutOutlined, SettingOutlined, UserOutlined,
 } from '@ant-design/icons';
-import { message, confirmModal } from '../../shared/feedback';
+import { message, confirmModal, notifyError } from '../../shared/feedback';
 import { authAPI } from '../../api/auth';
 import { useAuthStore } from '../../shared/auth/authStore';
 import SiderToggle from './SiderToggle';
@@ -52,16 +52,16 @@ const Navbar: React.FC<NavbarProps> = ({ breadcrumbs = [] }) => {
             return;
         }
         if (newPwd.length < 6) {
-            message.error('新密码长度不能少于6位');
+            message.error('新密码长度不能少于 6 位');
             return;
         }
         setPwdSaving(true);
         try {
             await authAPI.changePassword({ old_password: oldPwd, new_password: newPwd });
-            message.success('密码修改成功');
+            message.success('密码已修改');
             closePwdModal();
         } catch (error: any) {
-            message.error(error?.response?.data?.detail || '密码修改失败');
+            notifyError(error, '密码修改失败');
         } finally {
             setPwdSaving(false);
         }

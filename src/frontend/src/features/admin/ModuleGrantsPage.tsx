@@ -7,7 +7,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button, Checkbox, Empty, Input, Modal, Popconfirm, Space, Tabs, Tag, Tooltip, Typography } from 'antd';
-import { message } from '../../shared/feedback';
+import { message, notifyError } from '../../shared/feedback';
 import {
     CheckOutlined, CloseOutlined, DeleteOutlined, EditOutlined, MinusOutlined,
     PlusOutlined, ReloadOutlined, SafetyOutlined, SaveOutlined, TeamOutlined, ToolOutlined, UserSwitchOutlined,
@@ -78,8 +78,8 @@ const ModuleGrantsPage: React.FC = () => {
             }
             setMatrix(next);
             setDirtyUsers(new Set());
-        } catch {
-            message.error('加载授权数据失败');
+        } catch (e) {
+            notifyError(e, '加载授权数据失败');
         } finally {
             setLoading(false);
         }
@@ -124,7 +124,7 @@ const ModuleGrantsPage: React.FC = () => {
             message.success(`已保存 ${targets.length} 个用户的授权`);
             setDirtyUsers(new Set());
         } catch (err: any) {
-            message.error(err.response?.data?.error?.message || '保存失败');
+            notifyError(err, '保存失败');
         } finally {
             setSaving(false);
         }
@@ -158,7 +158,7 @@ const ModuleGrantsPage: React.FC = () => {
             setRoleModalOpen(false);
             load();
         } catch (err: any) {
-            message.error(err.response?.data?.error?.message || '保存失败');
+            notifyError(err, '保存失败');
         }
     };
 
@@ -168,7 +168,7 @@ const ModuleGrantsPage: React.FC = () => {
             message.success(`角色「${role.name}」已删除`);
             load();
         } catch (err: any) {
-            message.error(err.response?.data?.error?.message || '删除失败');
+            notifyError(err, '删除失败');
         }
     };
 
@@ -183,7 +183,7 @@ const ModuleGrantsPage: React.FC = () => {
             setApplyRole(null);
             load();
         } catch (err: any) {
-            message.error(err.response?.data?.error?.message || '应用失败');
+            notifyError(err, '应用失败');
         } finally {
             setApplying(false);
         }

@@ -158,5 +158,7 @@ export const appTheme: ThemeConfig = {
                 '0 30px 80px -30px rgba(15, 23, 42, 0.38), 0 4px 14px rgba(15, 23, 42, 0.05)',
         },
         Dropdown: { paddingBlock: 6 },
+        // 全局提示（2026-11-20）：和卡片/弹窗同一档冷白纸面，不用纯白
+        Message: { contentBg: '#FBFDFF' },
     },
 };

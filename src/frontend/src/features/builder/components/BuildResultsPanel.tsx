@@ -7,7 +7,7 @@
  */
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { message } from '../../../shared/feedback';
+import { message, notifyError } from '../../../shared/feedback';
 import { Button, Card, Space, Tag } from 'antd';
 import {
   AppstoreOutlined, CloudUploadOutlined, NodeIndexOutlined,
@@ -43,12 +43,12 @@ const BuildResultsPanel: React.FC<Props> = ({ projectId, summary, checks, publis
       // 无知识域时弹选择器带域发布（2026-11-07：选域从构建期移到发布期）
       const r = await publishWithDomain(projectId, { hasDomain });
       if (r) {
-        message.success(`发布完成：v${r.version_no} 已进入资产中心`);
+        message.success(`已发布 v${r.version_no}，资产中心可查看`);
         onPublishedChange?.();
       }
     } catch (e: any) {
       const err = e.response?.data?.error || e.response?.data;
-      message.error(err?.message || '发布失败，请稍后重试');
+      notifyError(err, '发布失败，请稍后重试');
     } finally {
       setPublishing(false);
     }
@@ -60,7 +60,7 @@ const BuildResultsPanel: React.FC<Props> = ({ projectId, summary, checks, publis
       message.success('已取消发布（资产中心不再展示）');
       onPublishedChange?.();
     } catch (e: any) {
-      message.error(e.response?.data?.error?.message || '取消发布失败');
+      notifyError(e, '取消发布失败');
     }
   };
 

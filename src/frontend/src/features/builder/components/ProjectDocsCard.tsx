@@ -4,7 +4,7 @@
  * 数据源 documentsApi；构建进行中删除仍允许（管线按当时快照跑，删除不影响当轮）。
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { message } from '../../../shared/feedback';
+import { message, notifyError } from '../../../shared/feedback';
 import { Button, Card, Popconfirm, Space, Table, Tag, Tooltip, Upload } from 'antd';
 import type { UploadProps } from 'antd';
 import {
@@ -38,12 +38,6 @@ interface Props {
 }
 
 const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage, locked = false }) => {
-    /** 后端 409 PIPELINE_RUNNING 翻成人话，其余走后端 message（2026-11-16） */
-    const docErrorText = (e: any, fallback: string): string => {
-        const err = e?.response?.data?.error;
-        if (err?.code === 'PIPELINE_RUNNING') return '构建进行中，结束后才能修改文档';
-        return err?.message || e?.response?.data?.message || fallback;
-    };
     const [docs, setDocs] = useState<DocumentRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [uploading, setUploading] = useState(false);
@@ -131,7 +125,7 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage,
             await load();
             onChanged?.();
         } catch (e: any) {
-            message.error(docErrorText(e, '上传失败，请稍后重试'));
+            notifyError(e, '上传失败，请稍后重试');
         } finally {
             setUploading(false);
         }
@@ -178,7 +172,7 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage,
                               load();
                               onChanged?.();
                           } catch (e: any) {
-                              message.error(docErrorText(e, '删除失败'));
+                              notifyError(e, '删除失败');
                           }
                       }}>
                       <Tooltip title={locked ? '构建进行中，结束后可修改文档' : undefined}>

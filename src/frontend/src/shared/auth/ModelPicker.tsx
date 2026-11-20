@@ -9,7 +9,7 @@
  * 管理入口跳转 /admin/model-configs（普通用户可管理自己的项目级配置）。
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { message } from '../../shared/feedback';
+import { message, notifyError } from '../../shared/feedback';
 import { Button, Dropdown, Tag } from 'antd';
 import { ApiOutlined, RollbackOutlined, SettingOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
@@ -130,7 +130,7 @@ const ModelPicker: React.FC<Props> = ({ projectId }) => {
                 setPick({ purpose: 'extract', config_id: null, config: null });
                 message.success('已恢复默认：抽取将跟随项目/全局默认');
             } catch (err: any) {
-                message.error(err.response?.data?.error?.message || '恢复默认失败');
+                notifyError(err, '恢复默认失败');
             }
             return;
         }
@@ -151,7 +151,7 @@ const ModelPicker: React.FC<Props> = ({ projectId }) => {
             }
             load();
         } catch (err: any) {
-            message.error(err.response?.data?.error?.message || '切换失败');
+            notifyError(err, '切换失败');
         }
     };
 

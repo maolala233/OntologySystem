@@ -3,7 +3,7 @@
  * 支持下拉选择已有知识域，也支持输入新名称及描述并创建
  */
 import React, { useState, useEffect } from 'react';
-import { message } from '../shared/feedback';
+import { message, notifyError } from '../shared/feedback';
 import { Select, Input, Button, Space, Modal, Form, Tag } from 'antd';
 import { PlusOutlined, EditOutlined, DatabaseOutlined } from '@ant-design/icons';
 import { getDomains, createDomain, KnowledgeDomain } from '../api/domains';
@@ -49,7 +49,7 @@ const KnowledgeDomainSelector: React.FC<KnowledgeDomainSelectorProps> = ({
             const data = await getDomains();
             setDomains(data);
         } catch (error: any) {
-            message.error('加载知识域列表失败');
+            notifyError(error, '加载知识域列表失败');
         } finally {
             setLoading(false);
         }
@@ -63,7 +63,7 @@ const KnowledgeDomainSelector: React.FC<KnowledgeDomainSelectorProps> = ({
                 description: values.description,
             });
             
-            message.success(`知识域 "${values.name}" 创建成功`);
+            message.success(`知识域「${values.name}」已创建`);
             
             // 刷新列表
             await loadDomains();
@@ -80,7 +80,7 @@ const KnowledgeDomainSelector: React.FC<KnowledgeDomainSelectorProps> = ({
             if (error.response?.status === 400) {
                 message.warning('该知识域名称已存在');
             } else {
-                message.error('创建知识域失败');
+                notifyError(error, '创建知识域失败');
             }
         }
     };

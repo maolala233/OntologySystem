@@ -7,7 +7,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Card, Collapse, Drawer, Modal, Popconfirm, Radio, Select, Space, Table, Tag, Tooltip, Upload, Input } from 'antd';
 import { UPLOAD_ACCEPT, UPLOAD_EXTS, MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from './uploadFormats';
-import { message, infoModal } from '../../../shared/feedback';
+import { message, infoModal, notifyError } from '../../../shared/feedback';
 import {
     CloudUploadOutlined, DeleteOutlined, DownloadOutlined, FileTextOutlined,
     InboxOutlined, ReloadOutlined, ScissorOutlined, ThunderboltOutlined,
@@ -64,7 +64,7 @@ const DocumentsTab: React.FC<Props> = ({ projectId, onChanged }) => {
             const r = await documentsApi.list(projectId);
             setDocs(r.documents || []);
         } catch (e: any) {
-            message.error(e.response?.data?.error?.message || '加载文档列表失败');
+            notifyError(e, '加载文档列表失败');
         } finally {
             setLoading(false);
         }
@@ -113,7 +113,7 @@ const DocumentsTab: React.FC<Props> = ({ projectId, onChanged }) => {
                 setPendingFiles([]);
                 load();
             } else {
-                message.error(e.response?.data?.error?.message || e.response?.data?.detail || '上传失败');
+                notifyError(e, '上传失败');
             }
         } finally {
             uploadingRef.current = false;
@@ -127,7 +127,7 @@ const DocumentsTab: React.FC<Props> = ({ projectId, onChanged }) => {
             message.success('一键构建已启动，进度见上方「快速开始」面板');
             onChanged?.();
         } catch (e: any) {
-            message.error(e.response?.data?.error?.message || '启动失败');
+            notifyError(e, '启动失败');
         }
     };
 
@@ -141,7 +141,7 @@ const DocumentsTab: React.FC<Props> = ({ projectId, onChanged }) => {
             setParseDrawer(null);
             load();
         } catch (e: any) {
-            message.error(e.response?.data?.error?.message || '派发解析失败');
+            notifyError(e, '派发解析失败');
         }
     };
 
@@ -174,11 +174,11 @@ const DocumentsTab: React.FC<Props> = ({ projectId, onChanged }) => {
     const handleDelete = async (doc: DocumentRow) => {
         try {
             await documentsApi.remove(projectId, doc.id);
-            message.success('已删除');
+            message.success('文档已删除');
             load();
             onChanged?.();
         } catch (e: any) {
-            message.error('删除失败');
+            notifyError(e, '文档删除失败');
         }
     };
 
@@ -216,7 +216,7 @@ const DocumentsTab: React.FC<Props> = ({ projectId, onChanged }) => {
                     <Tooltip title="下载原件">
                         <Button size="small" icon={<DownloadOutlined />}
                                 disabled={!d.storage_key}
-                                onClick={() => documentsApi.download(projectId, d.id, d.filename).catch(() => message.error('原件下载失败'))} />
+                                onClick={() => documentsApi.download(projectId, d.id, d.filename).catch((e) => notifyError(e, '原件下载失败'))} />
                     </Tooltip>
                     <Popconfirm
                         title="确认删除该文档？"

@@ -8,7 +8,7 @@
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import { Button, Drawer, Empty, Input, Modal, Popconfirm, Segmented, Select, Space, Table, Tag, Tooltip, Typography } from 'antd';
-import { message, confirmModal } from '../../../shared/feedback';
+import { message, confirmModal, notifyError } from '../../../shared/feedback';
 import {
     CheckOutlined, CloseOutlined, EditOutlined, ReloadOutlined, UndoOutlined,
 } from '@ant-design/icons';
@@ -96,7 +96,7 @@ const ProjectReviewsTab: React.FC<Props> = ({ projectId }) => {
             setTotal(viewMode === 'auto' ? rows.length : (r.total ?? rows.length));
             setSelectedIds((prev) => prev.filter((id) => rows.some((i) => i.id === id)));
         } catch (e: any) {
-            message.error(e.response?.data?.error?.message || '加载审核队列失败');
+            notifyError(e, '加载审核队列失败');
         } finally {
             setLoading(false);
         }
@@ -139,7 +139,7 @@ const ProjectReviewsTab: React.FC<Props> = ({ projectId }) => {
             setDetail(null);
             load();
         } catch (e: any) {
-            message.error(e.response?.data?.error?.message || '裁决失败');
+            notifyError(e, '裁决失败');
         }
     };
 
@@ -186,7 +186,7 @@ const ProjectReviewsTab: React.FC<Props> = ({ projectId }) => {
                     setSelectedIds([]);
                     load();
                 } catch (e: any) {
-                    message.error(e.response?.data?.error?.message || '批量裁决失败');
+                    notifyError(e, '批量裁决失败');
                 }
             },
         });
@@ -219,7 +219,7 @@ const ProjectReviewsTab: React.FC<Props> = ({ projectId }) => {
             }
             load();
         } catch (e: any) {
-            message.error(e.response?.data?.error?.message || '撤销失败');
+            notifyError(e, '撤销失败');
         } finally {
             setUndoing(null);
         }
@@ -462,9 +462,9 @@ const ProjectReviewsTab: React.FC<Props> = ({ projectId }) => {
                         setEditOpen(false);
                     } catch (e: any) {
                         if (e instanceof SyntaxError) {
-                            message.error('payload 不是合法 JSON');
+                            message.error('提交内容不是合法 JSON');
                         } else {
-                            message.error(e.response?.data?.error?.message || '提交失败');
+                            notifyError(e, '提交失败');
                         }
                     }
                 }}

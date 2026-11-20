@@ -1,7 +1,7 @@
 // src/components/Copilot/SuggestionCard.tsx - 首轮诊断建议卡（O5-B27/F14，docs/design/14 §5）
 // 诊断来源徽标 + LLM 理由 + 证据展开 + 转审核项/忽略；applied/rejected 后展示终态。
 import { useState } from 'react';
-import { message } from '../../shared/feedback';
+import { message, notifyError } from '../../shared/feedback';
 import { Button, Tag, Tooltip } from 'antd';
 import {
     AuditOutlined,
@@ -52,7 +52,7 @@ export default function SuggestionCard({ projectId, item, onChanged }: Props) {
             message.success(`已转审核项 #${res.review_item_id}，可在本项目的「审核」页签裁决`);
             onChanged?.('applied', { converted_review_item_id: res.review_item_id });
         } catch (e: any) {
-            message.error(e?.response?.data?.error?.message || '转审核项失败');
+            notifyError(e, '转审核项失败');
         } finally {
             setBusy(false);
         }
@@ -66,7 +66,7 @@ export default function SuggestionCard({ projectId, item, onChanged }: Props) {
             message.success('已忽略该建议');
             onChanged?.('rejected');
         } catch (e: any) {
-            message.error(e?.response?.data?.error?.message || '忽略失败');
+            notifyError(e, '忽略失败');
         } finally {
             setBusy(false);
         }

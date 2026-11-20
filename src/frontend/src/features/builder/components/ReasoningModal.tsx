@@ -5,7 +5,7 @@
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import { Button, Empty, Input, InputNumber, Modal, Popconfirm, Radio, Select, Spin, Switch, Tag, Pagination, Dropdown } from 'antd';
-import { message } from '../../../shared/feedback';
+import { message, notifyError } from '../../../shared/feedback';
 import {
     DeleteOutlined, DownloadOutlined, ExperimentOutlined, PlusOutlined, ReloadOutlined, SettingOutlined,
 } from '@ant-design/icons';
@@ -125,7 +125,7 @@ const ReasoningModal: React.FC<{
             setItems(r.items);
             setTotal(r.total);
         } catch (e: any) {
-            message.error(e?.response?.data?.detail || '加载推理结果失败');
+            notifyError(e, '加载推理结果失败');
         } finally {
             setLoading(false);
         }
@@ -166,7 +166,7 @@ const ReasoningModal: React.FC<{
             setPage(1);
             await loadResults(undefined, 1);
         } catch (e: any) {
-            message.error(e?.response?.data?.detail || '推理运行失败');
+            notifyError(e, '推理运行失败');
         } finally {
             setRunning(false);
         }
@@ -220,7 +220,7 @@ const ReasoningModal: React.FC<{
             setEditingRule(null);
             await loadRules();
         } catch (e: any) {
-            message.error(e?.response?.data?.detail || '保存规则失败');
+            notifyError(e, '保存规则失败');
         } finally {
             setSavingRule(false);
         }
@@ -234,18 +234,18 @@ const ReasoningModal: React.FC<{
                 then_predicate: rule.then_predicate, enabled,
             });
             await loadRules();
-        } catch {
-            message.error('更新失败');
+        } catch (e) {
+            notifyError(e, '规则更新失败');
         }
     };
 
     const removeRule = async (rule: OntologyRule) => {
         try {
             await reasoningApi.deleteRule(projectId, rule.id);
-            message.success('已删除');
+            message.success('规则已删除');
             await loadRules();
-        } catch {
-            message.error('删除失败');
+        } catch (e) {
+            notifyError(e, '规则删除失败');
         }
     };
 
@@ -258,13 +258,13 @@ const ReasoningModal: React.FC<{
             const skipped = (r as { llm?: { skipped?: string } }).llm?.skipped;
             if (!r.items.length) {
                 message.info(skipped
-                    ? '未挖掘到候选规则：LLM 通道跳过（抽取模型未配置或调用失败），统计通道需「带 p 必带 q」的稳定伴随模式'
+                    ? '未挖掘到候选规则：LLM 通道已跳过（抽取模型未配置或调用失败），统计通道需「带 p 必带 q」的稳定伴随模式'
                     : '未挖掘到候选规则：需要实例关系间存在稳定伴随模式或 LLM 可提议的隐性关系');
             } else if (skipped) {
-                message.info('LLM 通道跳过（抽取模型未配置或调用失败），仅统计通道产出');
+                message.info('LLM 通道已跳过（抽取模型未配置或调用失败），本次仅使用统计通道');
             }
         } catch (e: any) {
-            message.error(e?.response?.data?.detail || '规则挖掘失败');
+            notifyError(e, '规则挖掘失败');
         } finally {
             setMining(false);
         }
@@ -284,7 +284,7 @@ const ReasoningModal: React.FC<{
             setSuggestions((prev) => (prev ? prev.filter((x) => x !== s) : null));
             await loadRules();
         } catch (e: any) {
-            message.error(e?.response?.data?.detail || '采纳失败');
+            notifyError(e, '采纳失败');
         }
     };
 
@@ -340,7 +340,7 @@ const ReasoningModal: React.FC<{
             await loadAxioms();
         } catch (e: any) {
             if (editingAxiom) await loadAxioms(); // 撤旧成功但声明失败时刷新，避免丢状态
-            message.error(e?.response?.data?.detail || '保存公理失败');
+            notifyError(e, '保存公理失败');
         } finally {
             setSavingAxiom(false);
         }
@@ -352,7 +352,7 @@ const ReasoningModal: React.FC<{
             message.success('公理已撤销');
             await loadAxioms();
         } catch (e: any) {
-            message.error(e?.response?.data?.detail || '撤销失败');
+            notifyError(e, '撤销失败');
         }
     };
 

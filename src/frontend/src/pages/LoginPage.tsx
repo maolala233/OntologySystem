@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { message } from '../shared/feedback';
+import { notifyError } from '../shared/feedback';
 import { Form, Input, Button } from 'antd';
 import {
     UserOutlined, LockOutlined, ArrowRightOutlined, SafetyCertificateOutlined,
@@ -40,10 +40,10 @@ const LoginPage: React.FC = () => {
             setTokens(response.access_token, response.refresh_token || '');
             await hydrate(); // M1：拉取 /auth/me（role + modules[]），驱动菜单与路由守卫
 
-            message.success('登录成功！');
+            // 登录后直接跳转，页面本身就是反馈，不再额外弹全局提示
             navigate('/');
         } catch (error: any) {
-            message.error(error.response?.data?.detail || '登录失败，请检查用户名和密码');
+            notifyError(error, '登录失败，请检查用户名和密码');
         } finally {
             setLoading(false);
         }
@@ -60,10 +60,9 @@ const LoginPage: React.FC = () => {
             setTokens(response.access_token, response.refresh_token || '');
             await hydrate();
 
-            message.success('注册成功！');
             navigate('/');
         } catch (error: any) {
-            message.error(error.response?.data?.detail || '注册失败，请稍后重试');
+            notifyError(error, '注册失败，请稍后重试');
         } finally {
             setLoading(false);
         }

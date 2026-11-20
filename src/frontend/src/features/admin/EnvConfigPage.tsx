@@ -5,7 +5,7 @@
  * MySQL 为平台自身元数据库，不开放修改。
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { message } from '../../shared/feedback';
+import { message, notifyError } from '../../shared/feedback';
 import { Alert, Button, Card, Empty, Input, Spin, Switch, Tag, Tooltip } from 'antd';
 import {
     ApiOutlined,
@@ -49,7 +49,7 @@ const EnvConfigPage: React.FC = () => {
             setDirty({});
             setTestResults({});
         } catch (err: any) {
-            message.error(err.response?.data?.error?.message || '加载环境配置失败');
+            notifyError(err, '加载环境配置失败');
         } finally {
             setLoading(false);
         }
@@ -72,7 +72,7 @@ const EnvConfigPage: React.FC = () => {
                 (result.skipped ? `，${result.skipped} 项（掩码/空值）未变更` : ''));
             await load();
         } catch (err: any) {
-            message.error(err.response?.data?.error?.message || '保存失败');
+            notifyError(err, '保存失败');
         } finally {
             setSaving(false);
         }

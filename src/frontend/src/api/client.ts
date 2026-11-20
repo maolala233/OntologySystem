@@ -1,5 +1,4 @@
 import axios from 'axios';
-import { message } from 'antd';
 
 // 运行时动态获取API基础URL - 不依赖构建时的环境变量
 const getApiBaseUrl = () => {
@@ -90,25 +89,14 @@ function refreshInFlight(): Promise<string | null> {
     return refreshPromise;
 }
 
-// ---- M1：403 按错误码分支提示（docs/design/03 §2.3）----
-function handle403(code: string | undefined) {
-    if (code === 'MODULE_NOT_GRANTED') {
-        message.error('未开通该功能模块，请联系管理员授权');
-    } else if (code === 'ADMIN_REQUIRED') {
-        message.error('该操作需要管理员权限');
-    } else if (code === 'PUBLISHED_READONLY') {
-        message.warning('公共资产为只读快照，如需修改请取消发布或另起新版本');
-    } else if (code === 'PROJECT_FORBIDDEN') {
-        message.error('无该项目访问权限');
-    }
-}
+// 403 不再在拦截器里弹提示（2026-11-20）：业务侧 catch 统一走 shared/feedback 的
+// notifyError(e, '…')，由 errorText 按错误码给出可行动文案，避免同一失败弹两条。
 
 // 响应拦截器 - 处理认证错误
 apiClient.interceptors.response.use(
     (response) => response,
     async (error) => {
         const status = error.response?.status;
-        const errCode: string | undefined = error.response?.data?.error?.code;
         const original = error.config || {};
 
         if (status === 401 && !original._retry) {
@@ -121,8 +109,6 @@ apiClient.interceptors.response.use(
             forceLogout();
         } else if (status === 401) {
             forceLogout();
-        } else if (status === 403) {
-            handle403(errCode);
         }
         return Promise.reject(error);
     }

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { PROJECT_STATUS, PUBLISHED_TAG } from '../shared/projectStatus';
 import { useParams, useNavigate } from 'react-router-dom';
-import { message } from '../shared/feedback';
+import { message, notifyError } from '../shared/feedback';
 import { Button, Tag, Modal, Input, Tooltip, Tree } from 'antd';
 import type { TreeProps } from 'antd';
 import {
@@ -12,6 +12,7 @@ import {
 import Navbar from '../components/Layout/Navbar';
 import WorkspaceSkeleton from '../components/Layout/WorkspaceSkeleton';
 import Tip from '../shared/Tip';
+import EmptyState from '../components/EmptyState';
 import { publishApi } from '../api/governance';
 import { ProjectData } from '../types/ontology';
 
@@ -83,7 +84,7 @@ const AssetDetailPage: React.FC = () => {
             setGraphNodes(data.graph_data?.nodes || []);
             setGraphEdges(data.graph_data?.edges || []);
         } catch (error: any) {
-            message.error('加载本体详情失败');
+            notifyError(error, '加载本体详情失败');
             navigate('/asset-center');
         } finally {
             setLoading(false);
@@ -207,23 +208,27 @@ const AssetDetailPage: React.FC = () => {
             .filter(Boolean);
     }, [graphNodes, graphEdges, treeSearchValue]);
 
+    // 列表树右上角只放一个「全部展开 / 全部收起」（2026-11-20）：按当前是否已全展开切换。
+    // 面板收起时不计算树数据，省掉一次整图遍历。
+    const listTreeData = isLeftPanelExpanded ? buildTreeData() : [];
+    // 只看有子节点的类：没有实例的类展开不了，不该让按钮永远停在「全部展开」
+    const listExpandableNodes = listTreeData.filter((n: any) => (n.children?.length ?? 0) > 0);
+    const listTreeAllExpanded = listExpandableNodes.length > 0
+        && listExpandableNodes.every((n: any) => manualExpandedKeys.has(n.key));
+
     const onTreeSelect: TreeProps['onSelect'] = (selectedKeys) => {
         if (selectedKeys.length === 0) return;
         setSelectedEdge(null);
         setSelectedNode({ type: 'node', id: selectedKeys[0] as string });
     };
 
+    // 展开/收起只改变视图，入口文案已随状态切换，不再弹全局提示（2026-11-20）
     const toggleExpand = (node: any) => {
         const classId = node.id;
         setExpandedNodeIds((prev) => {
             const next = new Set(prev);
-            if (next.has(classId)) {
-                next.delete(classId);
-                message.info(`已收起 "${node.data?.label}" 的实例`);
-            } else {
-                next.add(classId);
-                message.success(`已展开 "${node.data?.label}" 的实例`);
-            }
+            if (next.has(classId)) next.delete(classId);
+            else next.add(classId);
             return next;
         });
     };
@@ -236,12 +241,11 @@ const AssetDetailPage: React.FC = () => {
                 .map((e) => String(e.target))
         );
         setExpandedNodeIds(new Set(classIdsWithInstances));
-        message.success(classIdsWithInstances.size > 0 ? `已展开 ${classIdsWithInstances.size} 个类的实例` : '当前没有实例节点');
+        if (classIdsWithInstances.size === 0) message.info('当前没有实例节点');
     };
 
     const collapseAll = () => {
         setExpandedNodeIds(new Set());
-        message.info('已收起所有实例');
     };
 
     // DetailDrawer 导航/聚焦用的是行表 id（数字或 URI），画布节点 id 存于实体 uri 尾段 → 解析回画布并聚焦
@@ -707,13 +711,12 @@ const AssetDetailPage: React.FC = () => {
                                             类与实例列表
                                         </h3>
                                         <div className="flex items-center gap-0.5">
-                                            <Tooltip title="全部展开">
-                                                <Button type="text" size="small" className="ap-icon-btn" icon={<ExpandOutlined />}
-                                                    onClick={() => setManualExpandedKeys(new Set(buildTreeData().map((n: any) => n.key)))} />
-                                            </Tooltip>
-                                            <Tooltip title="全部收起">
-                                                <Button type="text" size="small" className="ap-icon-btn" icon={<ShrinkOutlined />}
-                                                    onClick={() => setManualExpandedKeys(new Set())} />
+                                            <Tooltip title={listTreeAllExpanded ? '全部收起' : '全部展开'}>
+                                                <Button type="text" size="small" className="ap-icon-btn"
+                                                    icon={listTreeAllExpanded ? <ShrinkOutlined /> : <ExpandOutlined />}
+                                                    onClick={() => setManualExpandedKeys(listTreeAllExpanded
+                                                        ? new Set()
+                                                        : new Set(listTreeData.map((n: any) => n.key)))} />
                                             </Tooltip>
                                         </div>
                                     </div>
@@ -794,16 +797,27 @@ const AssetDetailPage: React.FC = () => {
                                             white-space: nowrap;
                                         }
                                     `}</style>
-                                    <Tree
-                                        showIcon
-                                        expandedKeys={Array.from(manualExpandedKeys)}
-                                        onExpand={(keys) => setManualExpandedKeys(new Set(keys as string[]))}
-                                        selectedKeys={selectedNode ? [selectedNode.id] : []}
-                                        onSelect={onTreeSelect}
-                                        treeData={buildTreeData() as any}
-                                        blockNode
-                                        className="asset-inst-tree"
-                                    />
+                                    {treeSearchValue.trim() && listTreeData.length === 0 ? (
+                                        <EmptyState
+                                            tone="dark"
+                                            className="h-full min-h-[220px]"
+                                            title="没有找到匹配的类或实例"
+                                            hint="换个关键词试试，或清除搜索查看全部"
+                                            actionText="清除搜索"
+                                            onAction={() => setTreeSearchValue('')}
+                                        />
+                                    ) : (
+                                        <Tree
+                                            showIcon
+                                            expandedKeys={Array.from(manualExpandedKeys)}
+                                            onExpand={(keys) => setManualExpandedKeys(new Set(keys as string[]))}
+                                            selectedKeys={selectedNode ? [selectedNode.id] : []}
+                                            onSelect={onTreeSelect}
+                                            treeData={listTreeData as any}
+                                            blockNode
+                                            className="asset-inst-tree"
+                                        />
+                                    )}
                                 </div>
                                 <div className="p-3 border-t flex-shrink-0" style={{ borderColor: '#1A2233', background: 'rgba(15, 20, 32, 0.6)' }}>
                                     <div className="flex items-center justify-between text-xs" style={{ color: '#8B94AB' }}>

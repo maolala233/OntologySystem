@@ -39,8 +39,10 @@ const RedirectBuilder: React.FC = () => {
 function App() {
     return (
         <ConfigProvider locale={zhCN} theme={appTheme}>
-            {/* AntdApp + FeedbackBridge：让 message/Modal 静态调用消费主题上下文（消 console 告警） */}
-            <AntdApp>
+            {/* AntdApp + FeedbackBridge：让 message/Modal 静态调用消费主题上下文（消 console 告警）。
+                message 全局配置（2026-11-20）：贴顶显示（antd 默认 8px），最多同时 3 条，
+                批量操作连续触发时不再叠成一长列遮住内容。提示是浮层，压在顶栏上是正常的。 */}
+            <AntdApp message={{ duration: 3, maxCount: 3 }}>
                 <FeedbackBridge />
             <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
                 <Routes>

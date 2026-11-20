@@ -3,7 +3,7 @@
 // 复用 features/qa 下的 MarkdownAnswer（[n] 角标点击定位）与 SourceCard。
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { message } from '../shared/feedback';
+import { message, notifyError } from '../shared/feedback';
 import { Button, Input, Popconfirm, Select, Tag } from 'antd';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
 import { QA_LAST_PROJECT_ID_KEY } from '../shared/keys';
@@ -192,8 +192,8 @@ export default function QaPage() {
                 const initial = list.find(p => p.id === fromUrl)?.id
                     ?? list.find(p => p.id === saved)?.id ?? list[0]?.id ?? null;
                 setProjectId(initial);
-            } catch {
-                message.error('加载项目列表失败');
+            } catch (e) {
+                notifyError(e, '加载项目列表失败');
             } finally {
                 setProjectsLoading(false);
             }
@@ -323,8 +323,8 @@ export default function QaPage() {
                 },
                 streaming: false,
             })));
-        } catch {
-            message.error('加载对话失败');
+        } catch (e) {
+            notifyError(e, '加载对话失败');
         } finally {
             if (openSeq === convOpenSeqRef.current) {
                 if (convOpenTimerRef.current) {
@@ -342,8 +342,8 @@ export default function QaPage() {
             await deleteQaConversation(projectId, convId);
             if (activeConvId === convId) newConversation();
             loadConversations(projectId);
-        } catch {
-            message.error('删除对话失败');
+        } catch (e) {
+            notifyError(e, '删除对话失败');
         }
     }, [projectId, activeConvId, newConversation, loadConversations]);
 

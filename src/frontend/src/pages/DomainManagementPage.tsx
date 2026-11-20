@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { PROJECT_STATUS, PUBLISHED_TAG } from '../shared/projectStatus';
 import { Button, Spin, Modal, Form, Input, Tag, Space, Table, Select, Typography, Drawer } from 'antd';
-import { message } from '../shared/feedback';
+import { message, notifyError } from '../shared/feedback';
 import {
     PlusOutlined,
     EditOutlined,
@@ -51,7 +51,7 @@ const DomainManagementPage: React.FC = () => {
 
             setDomains(domainStats);
         } catch (error: any) {
-            message.error('加载知识域失败');
+            notifyError(error, '加载知识域失败');
         } finally {
             setLoading(false);
         }
@@ -61,17 +61,17 @@ const DomainManagementPage: React.FC = () => {
         try {
             if (editingDomain) {
                 await updateDomain(editingDomain.id, values);
-                message.success('知识域更新成功！');
+                message.success('知识域已更新');
             } else {
                 await createDomain(values);
-                message.success('知识域创建成功！');
+                message.success('知识域已创建');
             }
             setIsModalOpen(false);
             form.resetFields();
             setEditingDomain(null);
             loadDomains();
         } catch (error: any) {
-            message.error('操作失败，请稍后重试');
+            notifyError(error, '操作失败，请稍后重试');
         }
     };
 
@@ -98,7 +98,7 @@ const DomainManagementPage: React.FC = () => {
                 setDomainProjects(projects);
                 setIsMigrateDrawerOpen(true);
             } catch (error: any) {
-                message.error('加载项目列表失败');
+                notifyError(error, '加载项目列表失败');
             }
         } else {
             message.info('该知识域下没有项目，无需迁移');
@@ -121,7 +121,7 @@ const DomainManagementPage: React.FC = () => {
                 setDomainProjects(projects);
                 setIsMigrateDrawerOpen(true);
             } catch (error: any) {
-                message.error('加载项目列表失败');
+                notifyError(error, '加载项目列表失败');
             }
         } else {
             // 没有项目，直接确认删除
@@ -171,13 +171,7 @@ const DomainManagementPage: React.FC = () => {
             setDeletingDomain(null);
             loadDomains();
         } catch (error: any) {
-            if (error.response?.data?.detail) {
-                message.error(typeof error.response.data.detail === 'string' 
-                    ? error.response.data.detail 
-                    : error.response.data.detail.message);
-            } else {
-                message.error('操作失败，请稍后重试');
-            }
+            notifyError(error, '操作失败，请稍后重试');
         }
     };
 
@@ -206,17 +200,11 @@ const DomainManagementPage: React.FC = () => {
                     setDomainProjects(projects);
                     setIsMigrateDrawerOpen(true);
                 } catch (innerError: any) {
-                    message.error('加载项目列表失败');
+                    notifyError(innerError, '加载项目列表失败');
                 }
                 return;
             }
-            if (detail) {
-                message.error(typeof detail === 'string' 
-                    ? detail 
-                    : detail.message);
-            } else {
-                message.error('删除失败，请稍后重试');
-            }
+            notifyError(error, '删除失败，请稍后重试');
         }
     };
 

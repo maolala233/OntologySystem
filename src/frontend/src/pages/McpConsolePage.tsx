@@ -5,7 +5,8 @@
 // │ 底部编号调用历史（可展开请求/响应）+ 服务端通知占位。全部走平台 POST /mcp 网关。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Checkbox, Empty, Input, InputNumber, Modal, Select, Tabs, Tag, Tooltip } from 'antd';
-import { message } from '../shared/feedback';
+import { message, notifyError } from '../shared/feedback';
+import EmptyState from '../components/EmptyState';
 import {
     ApiOutlined, BookOutlined, CaretRightOutlined, CheckCircleFilled, ClearOutlined, CloseCircleFilled,
     CopyOutlined, DeleteOutlined, DisconnectOutlined, FolderOpenOutlined,
@@ -252,8 +253,8 @@ export default function McpConsolePage() {
             // 而且第一个令牌多半没有明文（明文只在签发时展示一次），选中了也连不上。
             // 只自动恢复当前标签页里还留着明文的令牌——只有这种能直接连
             setSelectedTokenId(prev => prev ?? alive.find(t => !!getPlainToken(t.id))?.id ?? null);
-        } catch {
-            message.error(isAdmin ? '加载 MCP 令牌失败（需 admin）' : '加载 MCP 令牌失败');
+        } catch (e) {
+            notifyError(e, isAdmin ? '加载 MCP 令牌失败（需 admin）' : '加载 MCP 令牌失败');
         }
     }, [isAdmin]);
 
@@ -450,7 +451,7 @@ export default function McpConsolePage() {
             await loadTokens();
             setSelectedTokenId(created.id);
         } catch (e: any) {
-            message.error(e?.response?.data?.error?.message || '签发失败');
+            notifyError(e, '签发失败');
         }
     }, [isAdmin, currentUser, issueForm, loadTokens]);
 
@@ -460,8 +461,8 @@ export default function McpConsolePage() {
             dropPlainToken(id);
             if (selectedTokenId === id) { setSelectedTokenId(null); disconnect(); }
             loadTokens();
-        } catch {
-            message.error('撤销失败');
+        } catch (e) {
+            notifyError(e, '撤销失败');
         }
     }, [isAdmin, selectedTokenId, loadTokens, disconnect]);
 
@@ -685,7 +686,7 @@ export default function McpConsolePage() {
                                 )}
                                 <Tooltip title="复制端点">
                                     <Button size="small" type="text" icon={<CopyOutlined />}
-                                        onClick={() => { navigator.clipboard.writeText(endpoint.trim() || defaultEndpoint); message.success('已复制'); }} />
+                                        onClick={() => { navigator.clipboard.writeText(endpoint.trim() || defaultEndpoint); message.success('已复制端点'); }} />
                                 </Tooltip>
                             </div>
                             <div className="text-[11px] text-[#8A94AB] mt-1">无状态 POST · 每次请求独立</div>
@@ -1005,11 +1006,21 @@ export default function McpConsolePage() {
                                     </div>
                                     <div className="flex-1 overflow-auto p-2 min-h-0">
                                         {filteredTools.length === 0 ? (
-                                            <Empty
-                                                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                                                description={connected ? '没有匹配的工具' : '连接后展示该令牌可见的 MCP 工具'}
-                                                className="!my-10"
-                                            />
+                                            connected && toolSearch.trim() ? (
+                                                <EmptyState
+                                                    compact
+                                                    title="没有匹配的工具"
+                                                    hint="换个关键词试试，或清除搜索"
+                                                    actionText="清除搜索"
+                                                    onAction={() => setToolSearch('')}
+                                                />
+                                            ) : (
+                                                <Empty
+                                                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                                                    description={connected ? '没有匹配的工具' : '连接后展示该令牌可见的 MCP 工具'}
+                                                    className="!my-10"
+                                                />
+                                            )
                                         ) : (
                                             filteredTools.map(t => (
                                                 <button key={t.name} type="button"
@@ -1372,7 +1383,7 @@ export default function McpConsolePage() {
                         <div className="flex gap-2">
                             <Input value={issuedPlain} readOnly className="font-mono !text-xs" />
                             <Button icon={<CopyOutlined />}
-                                onClick={() => { navigator.clipboard.writeText(issuedPlain); message.success('已复制'); }} />
+                                onClick={() => { navigator.clipboard.writeText(issuedPlain); message.success('已复制令牌'); }} />
                         </div>
                         <Button type="primary" onClick={() => { setIssueOpen(false); setIssuedPlain(null); }}>
                             我已保存

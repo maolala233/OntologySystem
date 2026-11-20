@@ -5,7 +5,7 @@
  * 发布时系统自动执行质量门控（结构机检 + 审核清零），未通过则旧版本继续生效。
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { message } from '../../../shared/feedback';
+import { message, notifyError } from '../../../shared/feedback';
 import { Alert, Button, Card, Space, Spin, Table, Tag, Typography } from 'antd';
 import InlineNotice from '../../../components/InlineNotice';
 import { CloudUploadOutlined, ArrowLeftOutlined } from '@ant-design/icons';
@@ -74,7 +74,7 @@ const PublishPanel: React.FC<Props> = ({ projectId, onBackToResults }) => {
             const r = await publishWithDomain(projectId);
             if (!r) return;
             const warn = (r as any).warnings?.length ? `（${(r as any).warnings.length} 条警告）` : '';
-            message.success(`发布成功：v${r.version_no}${warn}`);
+            message.success(`已发布 v${r.version_no}${warn}`);
             await load();
         } catch (e: any) {
             const err = e.response?.data?.error || e.response?.data;
@@ -104,7 +104,7 @@ const PublishPanel: React.FC<Props> = ({ projectId, onBackToResults }) => {
             message.success('已取消发布（资产中心不再展示）');
             await load();
         } catch (e: any) {
-            message.error(e.response?.data?.error?.message || '取消发布失败');
+            notifyError(e, '取消发布失败');
         }
     };
 

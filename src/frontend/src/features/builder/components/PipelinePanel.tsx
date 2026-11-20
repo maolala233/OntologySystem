@@ -14,7 +14,7 @@
  * - 完成后显示「还剩 N 个高优先级结果等你确认」并直跳审核 Tab。
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { message, confirmModal } from '../../../shared/feedback';
+import { message, confirmModal, notifyError } from '../../../shared/feedback';
 import InlineNotice from '../../../components/InlineNotice';
 import DecoConstellation from '../../../components/DecoConstellation';
 import { Button, Card, Popconfirm, Space, Tag } from 'antd';
@@ -689,9 +689,9 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
             if (r.already_running) {
                 message.info('构建已在进行中，下方进度条实时更新');
             } else if (restart) {
-                message.success('重头开始：全部文档重新解析并重新抽取');
+                message.success('已重新开始，全部文档将重新解析并抽取');
             } else {
-                message.success('一键构建已启动：解析 → AI 抽取本体 → 低风险结果由 AI 结果审查，完成后确认高优先级结果即可');
+                message.success('一键构建已启动，进度见下方');
             }
             if (r.task_id) {
                 localStorage.setItem(lastTaskKey(projectId), r.task_id);
@@ -713,7 +713,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                 await refresh();
             }
         } catch (e: any) {
-            message.error(e.response?.data?.error?.message || '启动失败');
+            notifyError(e, '启动失败');
         } finally {
             setStarting(false);
         }
@@ -724,10 +724,10 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
             const r = await pipelineApi.cancel(projectId);
             message.success(r.kind === 'scheduled'
                 ? '已取消定时构建（到点不再自动开始）'
-                : '已发出停止请求：等后台任务退出后转为「已中止」，期间不能重新构建');
+                : '已发出停止请求，后台任务退出后转为「已中止」');
             refresh();
         } catch (e: any) {
-            message.error(e.response?.data?.error?.message || '取消失败');
+            notifyError(e, '取消失败');
         }
     };
 

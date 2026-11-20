@@ -6,7 +6,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Card, Collapse, Descriptions, Empty, Input, Segmented, Select, Space, Spin, Table, Tag, Timeline as AntTimeline, Tooltip } from 'antd';
 import { RollbackOutlined, SearchOutlined, ThunderboltOutlined } from '@ant-design/icons';
-import { message, confirmModal } from '../../../shared/feedback';
+import { message, confirmModal, notifyError } from '../../../shared/feedback';
 
 import { GateEvaluationRow, ImpactSummary, gateApi, impactApi } from '../../../api/cqs';
 import {
@@ -227,7 +227,7 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
         try {
             setAudit(await listCopilotAudit(projectId));
         } catch (e: any) {
-            message.error(e.response?.data?.error?.message || '加载 AI 协同历史失败');
+            notifyError(e, '加载 AI 协同历史失败');
         } finally {
             setAuditLoading(false);
         }
@@ -239,7 +239,7 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
             const r = await versionsApi.list(projectId);
             setVersions(r.items || []);
         } catch (e: any) {
-            message.error(e.response?.data?.error?.message || '加载版本失败');
+            notifyError(e, '加载版本失败');
         } finally {
             setLoading(false);
         }
@@ -257,7 +257,7 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
             setGates(g.items || []);
             setImpact(imp);
         } catch (e: any) {
-            message.error(e.response?.data?.error?.message || '加载门控记录失败');
+            notifyError(e, '加载门控记录失败');
         } finally {
             setGateLoading(false);
         }
@@ -271,7 +271,7 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
             const d = await versionsApi.diff(projectId, a, b);
             setDiff(d);
         } catch (e: any) {
-            message.error(e.response?.data?.error?.message || 'diff 失败（快照缺失？）');
+            notifyError(e, 'diff 失败（快照缺失？）');
             setDiff(null);
         } finally {
             setDiffLoading(false);
@@ -298,11 +298,11 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
                 }
                 try {
                     const r = await versionsApi.restore(projectId, v.version_no);
-                    message.success(`已回滚：新版本 v${r.new_version_no}（kind=rollback）`);
+                    message.success(`已回滚：新版本 v${r.new_version_no}`);
                     load();
                     onChanged?.();
                 } catch (e: any) {
-                    message.error(e.response?.data?.error?.message || '回滚失败');
+                    notifyError(e, '回滚失败');
                 }
             },
         });
@@ -318,7 +318,7 @@ const TimelineTab: React.FC<Props> = ({ projectId, onChanged }) => {
             setEvents(r.events || []);
             if ((r.events || []).length === 0) message.info('无匹配事件');
         } catch (e: any) {
-            message.error(e.response?.data?.error?.message || '查询失败');
+            notifyError(e, '查询失败');
         } finally {
             setEntityLoading(false);
         }

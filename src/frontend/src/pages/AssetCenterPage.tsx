@@ -3,6 +3,7 @@ import { Empty, Spin, message, Input, Select, Button } from 'antd';
 import { UserOutlined, NodeIndexOutlined, DatabaseOutlined, ApartmentOutlined, ArrowLeftOutlined, ArrowRightOutlined, ReloadOutlined, SearchOutlined, ShareAltOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Layout/Navbar';
+import EmptyState from '../components/EmptyState';
 import TechHero from '../components/TechHero';
 import { projectsApi } from '../api/projects';
 import { getDomains, KnowledgeDomain } from '../api/domains';
@@ -347,22 +348,28 @@ const AssetCenterPage: React.FC = () => {
                     </Empty>
                 </div>
             ) : filteredProjects.length === 0 ? (
-                /* 空态收敛成一处：antd Empty 自带的插图 + 一句说明 + 一个次要操作。
-                   原来套了白卡，额外又画了圆形图标块，再叠 Empty 自己的图标，三层重复 */
-                <div className="flex items-center justify-center h-96 px-4">
-                    <Empty
-                        image={Empty.PRESENTED_IMAGE_SIMPLE}
-                        description={
-                            <span className="text-gray-500">
-                                {searchText ? '没有找到匹配的本体' : '该知识域下暂无公开本体'}
-                            </span>
-                        }
-                    >
-                        {selectedDomain && selectedDomain.id !== 0 && (
-                            <Button onClick={handleBackToDomains}>选择其他知识域</Button>
-                        )}
-                    </Empty>
-                </div>
+                searchText ? (
+                    /* 搜索无结果（2026-11-20）：与「我的项目」同一套空态 */
+                    <EmptyState
+                        className="min-h-[384px]"
+                        title="没有找到匹配的本体"
+                        hint="检查一下关键词，或清除搜索查看当前知识域的全部本体"
+                        actionText="清除搜索"
+                        onAction={() => setSearchText('')}
+                    />
+                ) : (
+                    /* 该域暂无本体：antd Empty + 一个返回其他知识域的次要操作 */
+                    <div className="flex items-center justify-center h-96 px-4">
+                        <Empty
+                            image={Empty.PRESENTED_IMAGE_SIMPLE}
+                            description={<span className="text-gray-500">该知识域下暂无公开本体</span>}
+                        >
+                            {selectedDomain && selectedDomain.id !== 0 && (
+                                <Button onClick={handleBackToDomains}>选择其他知识域</Button>
+                            )}
+                        </Empty>
+                    </div>
+                )
             ) : (
                 /* 项目卡片（2026-11-13 重排）：原来的 64px 缩略图是纯装饰——
                    每张卡都是同一张网格 + 同一层辉光 + 同一个图标，项目之间零差异，

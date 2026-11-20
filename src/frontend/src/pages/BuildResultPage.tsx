@@ -11,7 +11,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { message } from '../shared/feedback';
+import { message, notifyError } from '../shared/feedback';
 import { Button, Input, Modal, Tag, Tooltip, Tree } from 'antd';
 import type { TreeProps } from 'antd/es/tree';
 import {
@@ -28,6 +28,7 @@ import DetailDrawer from '../features/graph-explorer/DetailDrawer';
 import Navbar from '../components/Layout/Navbar';
 import WorkspaceSkeleton from '../components/Layout/WorkspaceSkeleton';
 import Tip from '../shared/Tip';
+import EmptyState from '../components/EmptyState';
 
 const CLASS_TYPES = new Set(['owl:Class', 'Class']);
 
@@ -81,7 +82,7 @@ const BuildResultPage: React.FC = () => {
             const [project, summaryData] = await Promise.all([
                 projectsApi.getProject(pid).catch(() => null),
                 pipelineApi.buildSummary(pid).catch((e: any) => {
-                    message.error(e?.response?.data?.error?.message || '加载构建结果失败');
+                    notifyError(e, '加载构建结果失败');
                     return null;
                 }),
             ]);
@@ -218,6 +219,14 @@ const BuildResultPage: React.FC = () => {
             .filter(Boolean);
     }, [graphNodes, graphEdges, treeSearchValue]);
 
+    // 列表树右上角只放一个「全部展开 / 全部收起」（2026-11-20）：按当前是否已全展开切换。
+    // 面板收起时不计算树数据，省掉一次整图遍历。
+    const listTreeData = isLeftPanelExpanded ? buildTreeData() : [];
+    // 只看有子节点的类：没有实例的类展开不了，不该让按钮永远停在「全部展开」
+    const listExpandableNodes = listTreeData.filter((n: any) => (n.children?.length ?? 0) > 0);
+    const listTreeAllExpanded = listExpandableNodes.length > 0
+        && listExpandableNodes.every((n: any) => manualExpandedKeys.has(n.key));
+
     const onTreeSelect: TreeProps['onSelect'] = (selectedKeys) => {
         if (selectedKeys.length === 0) return;
         setSelectedEdge(null);
@@ -232,12 +241,11 @@ const BuildResultPage: React.FC = () => {
                 .map((e) => String(e.target))
         );
         setExpandedNodeIds(new Set(classIdsWithInstances));
-        message.success(classIdsWithInstances.size > 0 ? `已展开 ${classIdsWithInstances.size} 个类的实例` : '当前没有实例节点');
+        if (classIdsWithInstances.size === 0) message.info('当前没有实例节点');
     };
 
     const collapseAllInstances = () => {
         setExpandedNodeIds(new Set());
-        message.info('已收起所有实例');
     };
 
     // 面包屑：项目名来自 store，未就绪时用「项目详情」占位，避免标题闪变
@@ -723,13 +731,12 @@ const BuildResultPage: React.FC = () => {
                                             类与实例列表
                                         </h3>
                                         <div className="flex items-center gap-0.5">
-                                            <Tooltip title="全部展开">
-                                                <Button type="text" size="small" className="ap-icon-btn" icon={<ExpandOutlined />}
-                                                    onClick={() => setManualExpandedKeys(new Set(buildTreeData().map((n: any) => n.key)))} />
-                                            </Tooltip>
-                                            <Tooltip title="全部收起">
-                                                <Button type="text" size="small" className="ap-icon-btn" icon={<ShrinkOutlined />}
-                                                    onClick={() => setManualExpandedKeys(new Set())} />
+                                            <Tooltip title={listTreeAllExpanded ? '全部收起' : '全部展开'}>
+                                                <Button type="text" size="small" className="ap-icon-btn"
+                                                    icon={listTreeAllExpanded ? <ShrinkOutlined /> : <ExpandOutlined />}
+                                                    onClick={() => setManualExpandedKeys(listTreeAllExpanded
+                                                        ? new Set()
+                                                        : new Set(listTreeData.map((n: any) => n.key)))} />
                                             </Tooltip>
                                         </div>
                                     </div>
@@ -744,16 +751,27 @@ const BuildResultPage: React.FC = () => {
                                     />
                                 </div>
                                 <div className="flex-1 overflow-auto p-2">
-                                    <Tree
-                                        showIcon
-                                        expandedKeys={Array.from(manualExpandedKeys)}
-                                        onExpand={(keys) => setManualExpandedKeys(new Set(keys as string[]))}
-                                        selectedKeys={selectedNode ? [selectedNode.id] : []}
-                                        onSelect={onTreeSelect}
-                                        treeData={buildTreeData() as any}
-                                        blockNode
-                                        className="asset-inst-tree"
-                                    />
+                                    {treeSearchValue.trim() && listTreeData.length === 0 ? (
+                                        <EmptyState
+                                            tone="dark"
+                                            className="h-full min-h-[220px]"
+                                            title="没有找到匹配的类或实例"
+                                            hint="换个关键词试试，或清除搜索查看全部"
+                                            actionText="清除搜索"
+                                            onAction={() => setTreeSearchValue('')}
+                                        />
+                                    ) : (
+                                        <Tree
+                                            showIcon
+                                            expandedKeys={Array.from(manualExpandedKeys)}
+                                            onExpand={(keys) => setManualExpandedKeys(new Set(keys as string[]))}
+                                            selectedKeys={selectedNode ? [selectedNode.id] : []}
+                                            onSelect={onTreeSelect}
+                                            treeData={listTreeData as any}
+                                            blockNode
+                                            className="asset-inst-tree"
+                                        />
+                                    )}
                                 </div>
                                 <div className="p-3 border-t flex-shrink-0" style={{ borderColor: '#1A2233', background: 'rgba(15, 20, 32, 0.6)' }}>
                                     <div className="flex items-center justify-between text-xs" style={{ color: '#8B94AB' }}>

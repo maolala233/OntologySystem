@@ -5,7 +5,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Empty, Form, Input, Modal, Popconfirm, Select, Space, Spin, Switch, Table, Tag, Tooltip, Typography } from 'antd';
-import { message } from '../../../shared/feedback';
+import { message, notifyError } from '../../../shared/feedback';
 import {
     ArrowDownOutlined, ArrowUpOutlined, CheckCircleOutlined, CloseCircleOutlined,
     PlusOutlined, QuestionCircleOutlined, ReloadOutlined, ThunderboltOutlined,
@@ -56,7 +56,7 @@ const CqPanel: React.FC<Props> = ({ projectId, open }) => {
             setEvaluations(evals.items || []);
             setActiveEvalId((prev) => prev ?? (evals.items || [])[0]?.id ?? null);
         } catch (e: any) {
-            message.error(e.response?.data?.error?.message || '加载 CQ 列表失败');
+            notifyError(e, '加载 CQ 列表失败');
         } finally {
             setLoading(false);
         }
@@ -89,7 +89,7 @@ const CqPanel: React.FC<Props> = ({ projectId, open }) => {
         try {
             if (editing) {
                 await cqApi.update(projectId, editing.id, values);
-                message.success('已保存');
+                message.success('CQ 已保存');
             } else {
                 // 支持批量：多行文本每行一条
                 const lines = String(batchText || '').split('\n').map((s) => s.trim()).filter(Boolean);
@@ -102,17 +102,17 @@ const CqPanel: React.FC<Props> = ({ projectId, open }) => {
             setEditModalOpen(false);
             load();
         } catch (e: any) {
-            message.error(e.response?.data?.error?.message || '保存失败');
+            notifyError(e, '保存失败');
         }
     };
 
     const handleDelete = async (row: CqRow) => {
         try {
             await cqApi.remove(projectId, row.id);
-            message.success('已删除');
+            message.success('CQ 已删除');
             load();
         } catch (e: any) {
-            message.error(e.response?.data?.error?.message || '删除失败');
+            notifyError(e, '删除失败');
         }
     };
 
@@ -122,7 +122,7 @@ const CqPanel: React.FC<Props> = ({ projectId, open }) => {
             setItems((prev) => prev.map((r) => (r.id === row.id ? { ...r, enabled } : r)));
             if (!enabled) message.info('已停用：该 CQ 不再注入抽取 guidance，也不参与评测与门控');
         } catch (e: any) {
-            message.error(e.response?.data?.error?.message || '操作失败');
+            notifyError(e, '操作失败');
         }
     };
 
@@ -136,7 +136,7 @@ const CqPanel: React.FC<Props> = ({ projectId, open }) => {
         try {
             await cqApi.reorder(projectId, next.map((r) => r.id));
         } catch (e: any) {
-            message.error(e.response?.data?.error?.message || '排序失败');
+            notifyError(e, '排序失败');
             load();
         }
     };
@@ -153,7 +153,7 @@ const CqPanel: React.FC<Props> = ({ projectId, open }) => {
             setActiveEvalId(ev.id);
             load();
         } catch (e: any) {
-            message.error(e.response?.data?.error?.message || '评测失败');
+            notifyError(e, '评测失败');
         } finally {
             setEvaluating(false);
         }

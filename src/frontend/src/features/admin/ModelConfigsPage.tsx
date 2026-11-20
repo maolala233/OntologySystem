@@ -9,7 +9,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Button, Card, Drawer, Form, Input, InputNumber, Select, Space, Switch, Tabs, Tag, Typography, Empty, Tooltip } from 'antd';
 import { ApiOutlined, PlusOutlined, QuestionCircleOutlined, ReloadOutlined, RobotOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
 import { modelConfigsApi, ModelConfigRow, ProviderMeta } from '../../api/model-configs';
-import { message, confirmModal } from '../../shared/feedback';
+import { message, confirmModal, notifyError } from '../../shared/feedback';
 import { useAuthStore } from '../../shared/auth/authStore';
 import { projectsApi } from '../../api/projects';
 import { ProjectData } from '../../types/ontology';
@@ -78,7 +78,7 @@ const ModelConfigsPage: React.FC = () => {
                 setProviders(ps);
             }
         } catch (err: any) {
-            message.error(err.response?.data?.error?.message || '加载失败');
+            notifyError(err, '加载失败');
         } finally {
             setLoading(false);
         }
@@ -165,7 +165,7 @@ const ModelConfigsPage: React.FC = () => {
             setDrawerOpen(false);
             load();
         } catch (err: any) {
-            message.error(err.response?.data?.error?.message || '保存失败');
+            notifyError(err, '保存失败');
         }
     };
 
@@ -201,7 +201,7 @@ const ModelConfigsPage: React.FC = () => {
             }
             load();
         } catch (err: any) {
-            message.error(err.response?.data?.error?.message || '测试请求失败');
+            notifyError(err, '测试请求失败');
         } finally {
             setTestingId(null);
         }
@@ -213,7 +213,7 @@ const ModelConfigsPage: React.FC = () => {
             message.success(`已设为 ${row.purpose} 默认`);
             load();
         } catch (err: any) {
-            message.error(err.response?.data?.error?.message || '操作失败');
+            notifyError(err, '操作失败');
         }
     };
 
@@ -225,10 +225,10 @@ const ModelConfigsPage: React.FC = () => {
             onOk: async () => {
                 try {
                     await modelConfigsApi.remove(row.id);
-                    message.success('已删除');
+                    message.success('配置已删除');
                     load();
                 } catch (err: any) {
-                    message.error(err.response?.data?.error?.message || '删除失败');
+                    notifyError(err, '删除失败');
                 }
             },
         });

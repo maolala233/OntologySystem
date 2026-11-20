@@ -8,7 +8,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Alert, Button, Card, Empty, Popover, Spin, Tag, Tooltip, Typography } from 'antd';
-import { message } from '../shared/feedback';
+import { notifyError } from '../shared/feedback';
 import {
     ArrowLeftOutlined, CheckCircleOutlined, CloseCircleOutlined, QuestionCircleOutlined, ReloadOutlined,
 } from '@ant-design/icons';
@@ -147,7 +147,7 @@ const ScorecardPage: React.FC = () => {
         try {
             setData(await scorecardApi.get(Number(projectId)));
         } catch (e: any) {
-            message.error(e?.response?.data?.error?.message || '记分卡加载失败');
+            notifyError(e, '记分卡加载失败');
         } finally {
             setLoading(false);
         }

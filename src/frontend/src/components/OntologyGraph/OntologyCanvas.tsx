@@ -18,7 +18,7 @@ import ReactFlow, {
     ConnectionMode
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { message } from '../../shared/feedback';
+import { message, notifyError } from '../../shared/feedback';
 import { Drawer, Form, Input, Button, Select, Space, Switch, Typography, Divider, Spin } from 'antd';
 import {
     DownloadOutlined,
@@ -221,7 +221,7 @@ const OntologyCanvas: React.FC<{ projectId: number }> = ({ projectId }) => {
                 }
             } catch (error) {
                 console.error("加载项目失败:", error);
-                message.error("加载项目数据失败");
+                notifyError(error, '加载项目数据失败');
             } finally {
                 setLoading(false);
             }
@@ -300,7 +300,7 @@ const OntologyCanvas: React.FC<{ projectId: number }> = ({ projectId }) => {
             }));
         }
         setIsDrawerOpen(false);
-        message.success('已更新本地视图，请记得点击"保存"同步到服务器');
+        message.success('已更新本地视图，请记得点击「保存」同步到服务器');
     };
 
     // 新增实体
@@ -343,11 +343,11 @@ const OntologyCanvas: React.FC<{ projectId: number }> = ({ projectId }) => {
             if (result.nodes && result.edges) {
                 // 上传成功后，应用自动布局
                 applyAutoLayout(result.nodes, result.edges);
-                message.success(`成功导入: ${result.nodes.length} 个节点`);
+                message.success(`已导入 ${result.nodes.length} 个节点`);
             }
         } catch (error) {
             console.error('上传失败', error);
-            message.error('文件处理失败');
+            notifyError(error, '文件处理失败');
         } finally {
             setLoading(false);
             // 清空 input 允许重复上传同名文件
@@ -371,7 +371,7 @@ const OntologyCanvas: React.FC<{ projectId: number }> = ({ projectId }) => {
             message.success('图谱已保存');
         } catch (error) {
             console.error('保存失败', error);
-            message.error('保存失败');
+            notifyError(error, '保存失败');
         } finally {
             setLoading(false);
         }
@@ -381,9 +381,9 @@ const OntologyCanvas: React.FC<{ projectId: number }> = ({ projectId }) => {
     const handleDownloadTTL = async () => {
         try {
             await projectsApi.downloadTTL(projectId);
-            message.success('正在下载 TTL 文件');
+            message.info('开始下载 TTL 文件');
         } catch (error) {
-            message.error('下载失败');
+            notifyError(error, '下载失败');
         }
     };
 

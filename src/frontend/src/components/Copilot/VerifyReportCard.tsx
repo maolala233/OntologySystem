@@ -1,7 +1,7 @@
 // src/components/Copilot/VerifyReportCard.tsx - 验证报告卡（O5-B28/F15，docs/design/14 §5）
 // 三段折叠（CQ 评测 / 一致性 / 抽样溯源）+ 样例展开 + 与上一版对比 + 存档到版本。
 import { useState } from 'react';
-import { message } from '../../shared/feedback';
+import { message, notifyError } from '../../shared/feedback';
 import { Button, Collapse, Tag, Tooltip } from 'antd';
 import {
     SaveOutlined,
@@ -63,7 +63,7 @@ export default function VerifyReportCard({ projectId, report, messageId }: Props
             setArchivedNo(r.version_no);
             message.success(`已存档为版本 v${r.version_no}，可在版本时间轴查看`);
         } catch (e: any) {
-            message.error(e?.response?.data?.error?.message || '存档失败');
+            notifyError(e, '存档失败');
         } finally {
             setArchiving(false);
         }

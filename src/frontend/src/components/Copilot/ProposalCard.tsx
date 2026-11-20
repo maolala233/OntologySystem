@@ -2,7 +2,7 @@
 // 渲染服务端确定性 diff（红删/绿增/蓝改）、影响面数字、高风险黄标；
 // 按钮：应用（高风险二次确认）/ 忽略 / 反问调整。应用成功广播画布刷新（manual 版本可回滚）。
 import { useState } from 'react';
-import { message } from '../../shared/feedback';
+import { message, notifyError } from '../../shared/feedback';
 import { Button, Popconfirm, Tag } from 'antd';
 import {
     CheckOutlined,
@@ -111,7 +111,7 @@ export default function ProposalCard({ projectId, proposal, onAdjust, onStatusCh
             }
             onStatusChange?.(status, res);
         } catch (e: any) {
-            message.error(e?.response?.data?.error?.message || e?.message || '提案应用失败');
+            notifyError(e, '提案应用失败');
         } finally {
             setApplying(false);
         }
@@ -123,7 +123,7 @@ export default function ProposalCard({ projectId, proposal, onAdjust, onStatusCh
             setStatus('rejected');
             setResult({ reason: '用户忽略' });
         } catch (e: any) {
-            message.error(e?.response?.data?.error?.message || '操作失败');
+            notifyError(e, '操作失败');
         }
     };
 

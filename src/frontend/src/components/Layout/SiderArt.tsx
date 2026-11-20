@@ -5,46 +5,19 @@ import React from 'react';
  * 三块半透明等距玻璃板 + 冷色辉光 + 浮尘点，参考「本体平台参考图例」左下角的图形——
  * 菜单本身保持简单，靠一块有体积感的图形把侧栏下半截「托」住。
  * 纯装饰：aria-hidden，不参与交互。
- * compact：侧栏折叠成 80px 时的简化版（两块板 + 亮核），免得下半截折叠后又空掉。
+ *
+ * compact：侧栏折叠成 80px 时，就是同一幅插画按比例缩小（2026-11-20 起大小图统一造型，不再另画简化版），
+ * 只把 viewBox 上下各收一点，让玻璃板在窄条里依然有分量。
  */
 interface SiderArtProps {
     compact?: boolean;
 }
 
-const CompactArt: React.FC = () => (
-    <svg width="56" height="56" viewBox="0 0 48 48" fill="none" aria-hidden="true" className="block">
-        <defs>
-            <radialGradient id="siderArtHaloMini" cx="0.5" cy="0.5" r="0.5">
-                <stop offset="0" stopColor="#5B8DEF" stopOpacity="0.34" />
-                <stop offset="1" stopColor="#5B8DEF" stopOpacity="0" />
-            </radialGradient>
-            <linearGradient id="siderArtPlateMini" x1="24" y1="12" x2="24" y2="38" gradientUnits="userSpaceOnUse">
-                <stop offset="0" stopColor="#F8FBFF" stopOpacity="0.98" />
-                <stop offset="0.6" stopColor="#A6C4FF" stopOpacity="0.9" />
-                <stop offset="1" stopColor="#8B5CF6" stopOpacity="0.45" />
-            </linearGradient>
-            <filter id="siderArtMiniBlur" x="-60%" y="-60%" width="220%" height="220%">
-                <feGaussianBlur stdDeviation="2.2" />
-            </filter>
-        </defs>
-        <ellipse cx="24" cy="24" rx="22" ry="20" fill="url(#siderArtHaloMini)" />
-        <polygon points="24,25 37,31.5 24,38 11,31.5" fill="#6E9BE4" opacity="0.34" transform="translate(0 3)" />
-        <polygon points="24,25 37,31.5 24,38 11,31.5" fill="url(#siderArtPlateMini)" stroke="#FFFFFF" strokeOpacity="0.8" strokeWidth="0.9" />
-        <ellipse cx="24" cy="23.5" rx="8.5" ry="3.6" fill="#FFFFFF" opacity="0.85" filter="url(#siderArtMiniBlur)" />
-        <polygon points="24,14 38,21 24,28 10,21" fill="#5F91DE" opacity="0.32" transform="translate(0 3)" />
-        <polygon points="24,14 38,21 24,28 10,21" fill="url(#siderArtPlateMini)" stroke="#FFFFFF" strokeOpacity="0.9" strokeWidth="1" />
-        <circle cx="11" cy="13" r="1.2" fill="#FFFFFF" opacity="0.8" />
-        <circle cx="37" cy="27" r="1" fill="#5B8DEF" opacity="0.6" />
-    </svg>
-);
-
-const SiderArt: React.FC<SiderArtProps> = ({ compact = false }) => {
-    if (compact) return <CompactArt />;
-    return (
+const SiderArt: React.FC<SiderArtProps> = ({ compact = false }) => (
     <svg
-        width="200"
-        height="134"
-        viewBox="0 50 200 134"
+        width={compact ? 64 : 200}
+        height={compact ? 48 : 134}
+        viewBox={compact ? '0 46 200 148' : '0 50 200 134'}
         fill="none"
         aria-hidden="true"
         className="mx-auto block"
@@ -156,7 +129,6 @@ const SiderArt: React.FC<SiderArtProps> = ({ compact = false }) => {
         <circle cx="152" cy="140" r="2" fill="#8B5CF6" opacity="0.45" filter="url(#siderArtBlurSoft)" />
         <circle cx="118" cy="50" r="1.4" fill="#FFFFFF" opacity="0.8" />
     </svg>
-    );
-};
+);
 
 export default SiderArt;

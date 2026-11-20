@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { message } from '../shared/feedback';
+import { message, notifyError } from '../shared/feedback';
 import { Badge, Button, Checkbox, Empty, Form, Input, Modal, Pagination, Radio, Select, Space, Spin, Statistic, Table, Tag, Tooltip, Upload, DatePicker } from 'antd';
 import {
      PlusOutlined,
@@ -275,11 +275,11 @@ const MyProjectsPage: React.FC = () => {
                 // 还让新项目直接显示「构建中」+全绿勾，与"还没构建"的事实相悖
                 const r = await pipelineApi.run(pid, options);
                 message.success(r.mode === 'scheduled'
-                    ? `项目已创建${docNote}；构建已定时，将在指定时间自动开始`
-                    : `项目已创建${docNote}；后台构建已启动，完成后在项目页确认结果即可`);
+                    ? `项目已创建${docNote}，构建已定时`
+                    : `项目已创建${docNote}，后台构建已启动`);
             } else {
                 buildNote = values.build_mode === 'scheduled'
-                    ? '；定时构建已跳过（无文档），上传文档后请手动发起'
+                    ? '；无文档，定时构建已跳过'
                     : '；上传文档后点「一键构建」即可开始';
                 message.success(`项目已创建${buildNote}`);
             }
@@ -314,7 +314,7 @@ const MyProjectsPage: React.FC = () => {
                 name: values.name,
                 description: values.description,
             });
-            message.success('项目信息更新成功！');
+            message.success('项目信息已更新');
             setIsEditModalOpen(false);
             setEditingProject(null);
             setProjects((prevProjects) =>
@@ -328,7 +328,7 @@ const MyProjectsPage: React.FC = () => {
                 window.scrollTo(0, scrollPositionRef.current);
             }, 50);
         } catch (error: any) {
-            message.error('更新失败，请稍后重试');
+            notifyError(error, '更新失败，请稍后重试');
         } finally {
             setUpdating(false);
         }
@@ -347,7 +347,7 @@ const MyProjectsPage: React.FC = () => {
             onOk: async () => {
                 try {
                     await projectsApi.deleteProject(projectId);
-                    message.success('删除成功');
+                    message.success('项目已删除');
                     setSelectedIds(prev => {
                         const next = new Set(prev);
                         next.delete(projectId);
@@ -355,7 +355,7 @@ const MyProjectsPage: React.FC = () => {
                     });
                     refreshAll();
                 } catch (error) {
-                    message.error('删除失败');
+                    notifyError(error, '删除失败');
                 }
             },
         });
@@ -387,7 +387,7 @@ const MyProjectsPage: React.FC = () => {
                     else if (r.deleted.length === 0) message.error(`删除失败：${failedNames.join('、')}`);
                     else message.warning(`成功删除 ${r.deleted.length} 个，失败 ${failedNames.length} 个：${failedNames.join('、')}`);
                 } catch (e: any) {
-                    message.error(e?.response?.data?.error?.message || e?.response?.data?.detail || '批量删除失败');
+                    notifyError(e, '批量删除失败');
                 }
             },
         });

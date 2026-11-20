@@ -7,7 +7,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom';
 import { AutoComplete, Button, Dropdown, Form, Input, Modal, Popconfirm, Radio, Select, Space, Tag, Tooltip, Tree } from 'antd';
 import type { MenuProps, TreeProps } from 'antd';
-import { message } from '../../../shared/feedback';
+import { message, notifyError } from '../../../shared/feedback';
 import {
     ApartmentOutlined, CheckCircleOutlined, CloudServerOutlined, ClusterOutlined, DeleteOutlined,
     EditOutlined, ExperimentOutlined, ExportOutlined, EyeOutlined, ExpandOutlined, LeftOutlined, MoreOutlined,
@@ -24,6 +24,7 @@ import { versionsApi } from '../../../api/governance';
 import { graphApi, graphEditApi, GraphEditResult } from '../../../api/graphview';
 import D3ForceGraph from '../../../components/OntologyGraph/D3ForceGraph';
 import DetailDrawer from '../../graph-explorer/DetailDrawer';
+import EmptyState from '../../../components/EmptyState';
 import RagSyncModal from '../components/RagSyncModal';
 import TaskProgressModal from '../components/TaskProgressModal';
 import ExportDialog from '../components/ExportDialog';
@@ -129,10 +130,10 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
             await projectsApi.updateProject(projectId, { graph_data: { nodes: graphNodes, edges: graphEdges } });
             await projectsApi.updateOntology(projectId, { nodes: graphNodes, edges: graphEdges });
             setHasUnsavedChanges(false);
-            message.success('抽取结果已保存，已同步到图数据库 (Neo4j)');
+            message.success('抽取结果已保存，并同步到图数据库');
             onChanged?.();
-        } catch {
-            message.error('保存失败，请重试');
+        } catch (e) {
+            notifyError(e, '保存失败，请重试');
         } finally {
             setIsSaving(false);
         }
@@ -184,7 +185,7 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
     }, [refresh]);
 
     const editErrMsg = (e: any, fallback: string) => {
-        message.error(e?.response?.data?.error?.message || e?.response?.data?.detail || fallback);
+        notifyError(e, fallback);
     };
 
     const openInstAdd = () => {
@@ -422,23 +423,27 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
             .filter(Boolean);
     }, [graphNodes, graphEdges, treeSearchValue]);
 
+    // 列表树右上角只放一个「全部展开 / 全部收起」（2026-11-20）：按当前是否已全展开切换。
+    // 面板收起时不计算树数据，省掉一次整图遍历。
+    const listTreeData = isLeftPanelExpanded ? buildTreeData() : [];
+    // 只看有子节点的类：没有实例的类展开不了，不该让按钮永远停在「全部展开」
+    const listExpandableNodes = listTreeData.filter((n: any) => (n.children?.length ?? 0) > 0);
+    const listTreeAllExpanded = listExpandableNodes.length > 0
+        && listExpandableNodes.every((n: any) => manualExpandedKeys.has(n.key));
+
     const onTreeSelect: TreeProps['onSelect'] = (selectedKeys) => {
         if (selectedKeys.length === 0) return;
         setSelectedEdge(null);
         setSelectedNode({ type: 'node', id: selectedKeys[0] as string });
     };
 
+    // 展开/收起只改变视图，入口文案已随状态切换，不再弹全局提示（2026-11-20）
     const toggleExpand = (node: any) => {
         const classId = node.id;
         setExpandedNodeIds((prev) => {
             const next = new Set(prev);
-            if (next.has(classId)) {
-                next.delete(classId);
-                message.info(`已收起 "${node.data?.label}" 的实例`);
-            } else {
-                next.add(classId);
-                message.success(`已展开 "${node.data?.label}" 的实例`);
-            }
+            if (next.has(classId)) next.delete(classId);
+            else next.add(classId);
             return next;
         });
     };
@@ -451,12 +456,11 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                 .map((e) => String(e.target))
         );
         setExpandedNodeIds(new Set(classIdsWithInstances));
-        message.success(classIdsWithInstances.size > 0 ? `已展开 ${classIdsWithInstances.size} 个类的实例` : '当前没有实例节点，请先抽取实例');
+        if (classIdsWithInstances.size === 0) message.info('当前没有实例节点，请先抽取实例');
     };
 
     const collapseAll = () => {
         setExpandedNodeIds(new Set());
-        message.info('已收起所有实例');
     };
 
     const startInstances = async () => {
@@ -486,7 +490,7 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
             setProgressOpen(true);
             setInstOpen(false);
         } catch (e: any) {
-            message.error(e.response?.data?.error?.message || '发起实例抽取失败');
+            notifyError(e, '发起实例抽取失败');
         } finally {
             setInstStarting(false);
         }
@@ -508,7 +512,7 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
             setTaskId(data.task_id);
             setProgressOpen(true);
         } catch (e: any) {
-            message.error(e.message || '消解分析失败');
+            notifyError(e, '消解分析失败');
         }
     };
 
@@ -530,7 +534,7 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
             setTaskId(data.task_id);
             setProgressOpen(true);
         } catch (e: any) {
-            message.error(e.message || '冲突检测失败');
+            notifyError(e, '冲突检测失败');
         }
     };
 
@@ -555,7 +559,7 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
             setTaskId(data.task_id);
             setProgressOpen(true);
         } catch (e: any) {
-            message.error(e.message || 'AI 公理扫描派发失败');
+            notifyError(e, 'AI 公理扫描派发失败');
         }
     };
 
@@ -584,7 +588,7 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                             setIsPublished(!!updated.is_published);
                             onChanged?.();
                         } catch (error: any) {
-                            message.error(error.response?.data?.error?.message || '取消发布失败');
+                            notifyError(error, '取消发布失败');
                         }
                     },
                 });
@@ -593,7 +597,7 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                 navigate(`/projects/${projectId}?stage=publish`);
             }
         } catch (e: any) {
-            message.error(e.message || '发布操作失败');
+            notifyError(e, '发布操作失败');
         }
     };
 
@@ -849,14 +853,12 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                                         类与实例列表
                                     </h3>
                                     <div className="flex items-center gap-1">
-                                        <Tooltip title="全部展开">
-                                            <Button type="text" size="small" icon={<ExpandOutlined />}
-                                                onClick={() => setManualExpandedKeys(new Set(buildTreeData().map((n: any) => n.key)))}
-                                                style={{ color: '#C6CEDF' }} />
-                                        </Tooltip>
-                                        <Tooltip title="全部收起">
-                                            <Button type="text" size="small" icon={<ShrinkOutlined />}
-                                                onClick={() => setManualExpandedKeys(new Set())}
+                                        <Tooltip title={listTreeAllExpanded ? '全部收起' : '全部展开'}>
+                                            <Button type="text" size="small"
+                                                icon={listTreeAllExpanded ? <ShrinkOutlined /> : <ExpandOutlined />}
+                                                onClick={() => setManualExpandedKeys(listTreeAllExpanded
+                                                    ? new Set()
+                                                    : new Set(listTreeData.map((n: any) => n.key)))}
                                                 style={{ color: '#C6CEDF' }} />
                                         </Tooltip>
                                     </div>
@@ -880,16 +882,27 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                                     .inst-tree .ant-tree-node-content-wrapper-selected { background: rgba(91, 141, 239, 0.28) !important; }
                                     .inst-tree .ant-tree-switcher { width: 20px; height: 24px; line-height: 24px; }
                                 `}</style>
-                                <Tree
-                                    showIcon
-                                    expandedKeys={Array.from(manualExpandedKeys)}
-                                    onExpand={(keys) => setManualExpandedKeys(new Set(keys as string[]))}
-                                    selectedKeys={selectedNode ? [selectedNode.id] : []}
-                                    onSelect={onTreeSelect}
-                                    treeData={buildTreeData() as any}
-                                    blockNode
-                                    className="inst-tree"
-                                />
+                                {treeSearchValue.trim() && listTreeData.length === 0 ? (
+                                    <EmptyState
+                                        tone="dark"
+                                        className="h-full min-h-[220px]"
+                                        title="没有找到匹配的类或实例"
+                                        hint="换个关键词试试，或清除搜索查看全部"
+                                        actionText="清除搜索"
+                                        onAction={() => setTreeSearchValue('')}
+                                    />
+                                ) : (
+                                    <Tree
+                                        showIcon
+                                        expandedKeys={Array.from(manualExpandedKeys)}
+                                        onExpand={(keys) => setManualExpandedKeys(new Set(keys as string[]))}
+                                        selectedKeys={selectedNode ? [selectedNode.id] : []}
+                                        onSelect={onTreeSelect}
+                                        treeData={listTreeData as any}
+                                        blockNode
+                                        className="inst-tree"
+                                    />
+                                )}
                             </div>
                             <div className="p-3 border-t flex-shrink-0" style={{ borderColor: '#1A2233', background: 'rgba(15, 20, 32, 0.6)' }}>
                                 <div className="flex items-center justify-between text-xs" style={{ color: '#8B94AB' }}>
