@@ -142,7 +142,7 @@ def strip_watermarks(text: str, *, min_repeat: int = MIN_REPEAT,
 
     candidates = {n for n, c in counts.items()
                   if c >= min_repeat and _looks_like_watermark(n, c)}
-    if not candidates:
+    if not candidates and not drop_placeholders:
         return text, stats
 
     # 待删除短语：候选行本身 + 行内嵌的水印尾段（按长度倒序，先长后短）

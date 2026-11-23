@@ -1,4 +1,4 @@
-# app/adapters/chunking.py - 中文切片（docs/design/04 §2.3）
+﻿# app/adapters/chunking.py - 中文切片（docs/design/04 §2.3）
 # 里程碑：M3 实现（分句状态机的边界逻辑已在 M0 落地并测试）。
 #
 # 修复缺陷 #13：semantica split 的分句正则只认英文句号，中文长文必须走
@@ -147,6 +147,98 @@ def _is_table_line(stripped: str) -> bool:
     return stripped.startswith("|") and stripped.rstrip().endswith("|")
 
 
+def _is_html_placeholder(stripped: str) -> bool:
+    """docling 的 HTML 注释占位符（`<!-- image -->` 等）。
+
+    它不是表格行，但也不能截断表格；少量（内容截图）归入相邻块，跨页高频的
+    背景图占位符已在 text_clean 层整行移除。
+    """
+    return stripped.startswith("<!--") and stripped.rstrip().endswith("-->")
+
+
+def _table_header(content: str) -> str | None:
+    """从表格块提取表头（首行 + 分隔行）。
+
+    容忍 docling 偶发的空行（`| | | |` 夹在表头与分隔行之间）：先过滤空行，
+    再在前 3 个非空行里找分隔行；找不到分隔行时退化为首行。
+    """
+    rows = [ln.strip() for ln in content.split("\n")
+            if ln.strip().startswith("|") and ln.replace("|", "").strip()]
+    if not rows:
+        return None
+    for i in range(1, min(3, len(rows))):
+        if set(rows[i].replace("|", "").strip()) <= set("-: "):
+            return rows[i - 1] + "\n" + rows[i]
+    return rows[0]
+
+
+def _col_count(table_line: str) -> int:
+    s = table_line.strip()
+    return max(0, s.count("|") - 1)
+
+
+def _starts_new_table(lines: list[str], i: int, cur_cols: int | None = None) -> bool:
+    """空行 i 之后是否跟着一张“新表”，而不是同表的续行/图片。
+
+    docling 在表格行之间插入空行/`<!-- image -->` 时，续行是数据行（没有分隔行）；
+    只有「下一段第一/二行是分隔行」才像新表表头。再比较列数：与当前表列数相同
+    时视为分页续片（docling 常丢表头，把首个数据行当表头），继续并入当前表；
+    列数不同才结束当前表块。
+    """
+    pipe_idxs = [k for k in range(i + 1, len(lines))
+                 if lines[k].lstrip().startswith("|") and lines[k].replace("|", "").strip()]
+    if not pipe_idxs:
+        return False
+    header_like = any(set(lines[k].replace("|", "").strip()) <= set("-: ")
+                      for k in pipe_idxs[1:3])
+    if not header_like:
+        return False
+    if cur_cols is not None and _col_count(lines[pipe_idxs[0]]) == cur_cols:
+        return False  # 同列数续片：并回当前表，避免续片丢表头/首行被误当表头
+    return True
+
+
+def _merge_small_blocks(blocks: list[tuple[int, int, str | None]], text: str,
+                        min_chars: int = 60) -> list[tuple[int, int, str | None]]:
+    """把 < min_chars 的碎片块并入相邻块（只在间隔是空白、不是两张不同表时）。
+
+    典型来源：`## 3.请求参数` 这类小节标题、孤立的 `<!-- image -->`——它们单独成片
+    只有 8~70 字符，白占一次 LLM 调用；并进下一块（标题+正文/表格/代码）或前一块。
+    """
+    out: list[tuple[int, int, str | None]] = []
+    i = 0
+    while i < len(blocks):
+        s, e, k = blocks[i]
+        if (e - s) < min_chars and i + 1 < len(blocks):
+            ns, ne, nk = blocks[i + 1]
+            mergeable = (not text[e:ns].strip() and k == nk
+                         and k in (None, "table") and nk in (None, "table"))
+            if mergeable and k == "table" and nk == "table":
+                mergeable = _table_header(text[s:e]) == _table_header(text[ns:ne])
+            if mergeable:
+                kind = "table" if (k == "table" or nk == "table") else (
+                    "code" if (k == "code" or nk == "code") else None)
+                out.append((s, ne, kind))
+                i += 2
+                continue
+        out.append((s, e, k))
+        i += 1
+    # 末尾碎块并入前一块
+    if len(out) >= 2:
+        s, e, k = out[-1]
+        if (e - s) < min_chars:
+            ps, pe, pk = out[-2]
+            mergeable = (not text[pe:s].strip() and pk == k
+                         and k in (None, "table"))
+            if mergeable and pk == "table" and k == "table":
+                mergeable = _table_header(text[ps:pe]) == _table_header(text[s:e])
+            if mergeable:
+                kind = "table" if (pk == "table" or k == "table") else (
+                    "code" if (pk == "code" or k == "code") else None)
+                out[-2:] = [(ps, e, kind)]
+    return out
+
+
 def _structural_blocks(text: str) -> list[tuple[int, str, str | None, str | None]]:
     """把文本切成结构块：markdown 表格（连续 | 行）与代码围栏整块保留，其余为普通块。
 
@@ -169,18 +261,29 @@ def _structural_blocks(text: str) -> list[tuple[int, str, str | None, str | None
     lines = text.split("\n")
     off = 0
     cur_kind: str | None = None
+    cur_cols: int | None = None  # 当前表块的列数（判断空行后的续片是否同表）
     buf_off: int | None = None
     pending_small: tuple[int, str] | None = None  # 未挂靠的短标题（偏移, 行）
+    pending_image: int | None = None  # 孤立图片占位符的起点（附到下一块，不单独成片）
     in_code = False
 
     def flush(end: int) -> None:
-        nonlocal buf_off, cur_kind
+        nonlocal buf_off, cur_kind, cur_cols
         if buf_off is not None and end > buf_off and text[buf_off:end].strip():
             raw.append((buf_off, end, cur_kind))
         buf_off = None
         cur_kind = None
+        cur_cols = None
 
-    for line in lines:
+    def absorb_start(fallback: int) -> int:
+        """新块起点：优先带上挂起的短标题/图片占位符，保证它们不成为碎片切片。"""
+        nonlocal pending_small, pending_image
+        starts = [x for x in (pending_small[0] if pending_small else None, pending_image) if x is not None]
+        pending_small = None
+        pending_image = None
+        return min(starts) if starts else fallback
+
+    for i, line in enumerate(lines):
         stripped = line.lstrip()
         if stripped.startswith("```"):
             if in_code:  # 收尾围栏行并入代码块
@@ -192,6 +295,9 @@ def _structural_blocks(text: str) -> list[tuple[int, str, str | None, str | None
                 # 短标题后紧跟代码围栏：标题先单独落块，不能清掉 pending 把它一起吞了
                 buf_off = pending_small[0]
                 pending_small = None
+            elif pending_image is not None:
+                buf_off = pending_image
+                pending_image = None
             flush(off)  # 把围栏前的普通正文/孤立标题封口
             cur_kind, in_code, buf_off = "code", True, off
             off += len(line) + 1
@@ -199,38 +305,56 @@ def _structural_blocks(text: str) -> list[tuple[int, str, str | None, str | None
         if not in_code and _is_table_line(stripped):
             if cur_kind != "table":
                 flush(off)
-                # 表格块吸收紧邻短标题：起点=标题偏移，中间空行由原文切片自然保留
-                buf_off = pending_small[0] if pending_small is not None else off
-                pending_small = None
+                # 表格块吸收紧邻短标题/图片占位符：起点=挂起偏移，中间内容由原文切片自然保留
+                buf_off = absorb_start(off)
                 cur_kind = "table"
+                cur_cols = None
+            if cur_cols is None:
+                cur_cols = _col_count(stripped)
             off += len(line) + 1
+            continue
+        if not in_code and _is_html_placeholder(stripped):
+            # 图片占位符不能把表格截断（docling 会把图注/截图夹在表格行之间）：
+            # - 表格内：直接归入表格块；
+            # - 标题/正文后：归入当前块；
+            # - 孤立图片：挂起附到下一块，避免 10 token 的碎片切片。
+            if cur_kind == "table" or buf_off is not None or pending_small is not None:
+                off += len(line) + 1
+                continue
+            if pending_image is None:
+                pending_image = off
+            off += len(line) + 1
+            continue
+        if not stripped:
+            # 表格内的空行不截断表格：docling 常在行间插入空行/图片；
+            # 仅当空行后面第一张表是“新表”（表头 + 分隔行）时才结束当前表。
+            if cur_kind == "table" and not _starts_new_table(lines, i, cur_cols):
+                off += len(line) + 1
+                continue
+            if cur_kind == "table":
+                flush(off)
+            off += len(line) + 1  # 空行不单独成块；切片按原文偏移取，内容不会丢
             continue
         if cur_kind == "table":
             flush(off)
-        if not in_code and stripped.startswith("<!--") and stripped.endswith("-->"):
-            # docling 图片占位符行（<!-- image --> 等）按空行处理：先封口再跳过，
-            # 不让它认领挂起的短标题（否则「## 3.请求参数」+ 占位符落成孤儿切片，
-            # 标题与它所属的表格分离），也不单独成块
-            flush(off)
-            off += len(line) + 1
-            continue
-        if not stripped:  # 空行不单独成块；后续切片按原文偏移取，内容不会丢
-            off += len(line) + 1
-            continue
         if (pending_small is None and cur_kind is None and not in_code
                 and stripped.startswith("#") and len(stripped) < 80):
             flush(off)  # 先封口，保证挂起标题一定是新块的开头
-            pending_small = (off, line)
+            start = pending_image if pending_image is not None else off
+            pending_image = None
+            pending_small = (start, line)
             off += len(line) + 1
             continue
         if buf_off is None:
-            buf_off = pending_small[0] if pending_small is not None else off
-            pending_small = None
+            buf_off = absorb_start(off)
             cur_kind = None
         off += len(line) + 1
     if pending_small is not None and buf_off is None:
         buf_off = pending_small[0]  # EOF 的孤立短标题：单独成块，不再丢弃
         pending_small = None
+    elif pending_image is not None and buf_off is None and pending_small is None:
+        buf_off = pending_image  # EOF 的孤立图片占位符：保留（不丢内容）
+        pending_image = None
     flush(off)
 
     # 相邻普通块合并（间隔只有空白）：标题与后续正文回到同一块，
@@ -244,18 +368,14 @@ def _structural_blocks(text: str) -> list[tuple[int, str, str | None, str | None
         else:
             merged.append((s, e, k))
 
+    merged = _merge_small_blocks(merged, text)
+
     out: list[tuple[int, str, str | None, str | None]] = []
     for s, e, k in merged:
         content = text[s:e].rstrip("\n")  # 精确子串：text[s:e] 即块内容
         if not content.strip():
             continue
-        header = None
-        if k == "table":
-            tlines = [ln for ln in content.split("\n") if ln.strip().startswith("|")]
-            if len(tlines) >= 2 and set(tlines[1].replace("|", "").strip()) <= set("-: "):
-                header = tlines[0].strip() + "\n" + tlines[1].strip()
-            elif tlines:
-                header = tlines[0].strip()
+        header = _table_header(content) if k == "table" else None
         out.append((s, content, k, header))
     return out
 
@@ -330,14 +450,17 @@ def _table_spans(text: str, base: int, size: int, overlap: int) -> list[tuple[in
         """物理行 k 是否逻辑行起点：以 | 开头（新 md 行）或为空行。"""
         return lines[k].lstrip().startswith("|") or not lines[k].strip()
 
-    # 数据行 = 表头行 + 分隔行之后的所有 | 行（块内容可能前置标题/空行）
-    first_pipe = next((i for i, ln in enumerate(lines) if ln.lstrip().startswith("|")), None)
-    if first_pipe is None:
+    # 数据行 = 表头行 + 分隔行之后的所有 | 行（块内容可能前置标题/空行/图片占位符）
+    pipe_idxs = [i for i, ln in enumerate(lines)
+                 if ln.lstrip().startswith("|") and ln.replace("|", "").strip()]
+    if not pipe_idxs:
         return [(base, base + len(text.rstrip()))]
-    if len(lines) >= first_pipe + 2 and set(lines[first_pipe + 1].replace("|", "").strip()) <= set("-: "):
-        data_start = first_pipe + 2
-    else:
-        data_start = first_pipe + 1
+    data_start = pipe_idxs[0] + 1
+    for k in range(1, min(3, len(pipe_idxs))):
+        cand = lines[pipe_idxs[k]].replace("|", "").strip()
+        if set(cand) <= set("-: "):
+            data_start = pipe_idxs[k] + 1
+            break
     if len(text) <= size or data_start >= len(lines):
         return [(base, base + len(text.rstrip()))]
 
@@ -415,3 +538,4 @@ __all__ = [
     "CHINESE_SEPARATORS", "DEFAULT_CHUNK_SIZE", "DEFAULT_CHUNK_OVERLAP_RATIO",
     "Chunk", "ChunkParams", "split_sentences_cn", "chunk_text", "_table_spans",
 ]
+

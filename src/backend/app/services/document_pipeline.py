@@ -120,7 +120,10 @@ def _default_chunk_params(project_id: int | None = None) -> ChunkParams:
 # CRLF 表格识别与 EOF 孤标题；旧 v6 及更早切片必须重解析，否则构建仍用坏切片。
 # v8（2026-11-23）：解析后水印/版式文字清洗（跨页高频重复短串）+ PDF 背景图不再误触发
 # OCR；清洗会改变 text_content，旧 v7 切片必须重解析才能去掉水印噪声。
-PARSE_FINGERPRINT_VERSION = 8
+# v9（2026-11-23）：表格切片修复——图片占位符不再截断表格（docling 把截图/图注夹在
+# 表格行之间会把一张表拆成两片、续片丢表头/误把数据行当表头）；容忍表头与分隔行之间
+# 的空行；孤立图片占位符不再单独成 10 token 碎片。旧 v8 切片需重解析。
+PARSE_FINGERPRINT_VERSION = 9
 
 
 def _hash_signature(payload: dict) -> str:
