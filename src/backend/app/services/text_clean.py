@@ -28,6 +28,7 @@ MAX_PHRASE_LEN = 60         # 行内嵌短语的长度上限
 MAX_AMBIGUOUS_RATIO = 0.30  # 无提示词的可疑重复串：删除行占比上限
 MAX_REMOVED_CHAR_RATIO = 0.75  # 删除字符占比上限（超过视为误判，整体放弃）
 STRONG_FREQUENCY = 20      # 无提示词但高频重复的短串（如整页图片水印被 OCR 读出）
+MIN_BG_IMAGE_REPEAT = 6    # 图片占位符整行重复≥该次数=背景图/水印图（每页一张），整行移除
 
 
 def _norm(line: str) -> str:
@@ -94,6 +95,12 @@ def _phrase_from_line(norm: str) -> str | None:
     return None
 
 
+def _is_comment_placeholder(raw: str) -> bool:
+    """整行只是一个 HTML 注释占位符（docling 的 `<!-- image -->` 等）。"""
+    s = raw.strip()
+    return s.startswith("<!--") and s.endswith("-->")
+
+
 def strip_watermarks(text: str, *, min_repeat: int = MIN_REPEAT,
                      max_line_len: int = MAX_LINE_LEN) -> tuple[str, dict]:
     """移除跨页高频重复的水印/版式短串。
@@ -101,8 +108,12 @@ def strip_watermarks(text: str, *, min_repeat: int = MIN_REPEAT,
     返回 (清洗后文本, 统计)。统计含 lines_removed / phrases_removed / skipped。
     不变量：表格行（以 | 开头）、代码围栏内内容一律不修改；标题保留标题本身，
     只剔除行尾被拼进来的水印。
+    `<!-- image -->` 类占位符：少量（内容截图）保留；跨页高频重复（每页一张的
+    背景图/水印图）零语义价值，且会在切片层截和短标题（标题被占位符行抢先认领，
+    与其表格/正文分离），整行移除。
     """
-    stats = {"lines_removed": 0, "phrases_removed": 0, "skipped": False}
+    stats = {"lines_removed": 0, "phrases_removed": 0, "placeholders_removed": 0,
+             "skipped": False}
     if not text or not text.strip():
         return text, stats
 
@@ -110,13 +121,24 @@ def strip_watermarks(text: str, *, min_repeat: int = MIN_REPEAT,
     norms = [_norm(ln) for ln in lines]
 
     counts: Counter[str] = Counter()
+    placeholder_count = 0
+    in_code_count = False
     for raw, n in zip(lines, norms):
         s = raw.lstrip()
-        if not n or s.startswith(("|", "#", "```", "<!--")):
+        if s.startswith("```"):
+            in_code_count = not in_code_count
+            continue
+        if in_code_count:
+            continue
+        if _is_comment_placeholder(raw):
+            placeholder_count += 1
+            continue
+        if not n or s.startswith(("|", "#")):
             continue
         if len(n) > max_line_len:
             continue
         counts[n] += 1
+    drop_placeholders = placeholder_count >= MIN_BG_IMAGE_REPEAT
 
     candidates = {n for n, c in counts.items()
                   if c >= min_repeat and _looks_like_watermark(n, c)}
@@ -140,7 +162,13 @@ def strip_watermarks(text: str, *, min_repeat: int = MIN_REPEAT,
             in_code = not in_code
             out.append(raw)
             continue
-        if in_code or s.startswith(("|", ">", "<!--")):
+        if in_code or s.startswith(("|", ">")):
+            out.append(raw)
+            continue
+        if _is_comment_placeholder(raw):
+            if drop_placeholders:
+                stats["placeholders_removed"] += 1
+                continue
             out.append(raw)
             continue
         if s.startswith("#"):

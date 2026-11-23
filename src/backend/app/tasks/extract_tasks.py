@@ -669,11 +669,11 @@ def run_instance_extraction(self, project_id: int,
                 _cancel_check()
                 if phase == "coref":
                     pct = 80 + int(4 * done / max(total, 1))
-                    msg = (f"指代消解 {done}/{total}（合并代词与简称）"
+                    msg = (f"指代消解 {done}/{total}"
                            if total else "指代消解：正在准备…")
                 else:
                     pct = 84
-                    msg = "整理抽取结果（闸门校验与结构映射）…"
+                    msg = "整理抽取结果…"
                 set_task_progress(
                     task_id, phase, pct, msg,
                     {"project_id": project_id, "phase": phase,

@@ -207,6 +207,13 @@ def _structural_blocks(text: str) -> list[tuple[int, str, str | None, str | None
             continue
         if cur_kind == "table":
             flush(off)
+        if not in_code and stripped.startswith("<!--") and stripped.endswith("-->"):
+            # docling 图片占位符行（<!-- image --> 等）按空行处理：先封口再跳过，
+            # 不让它认领挂起的短标题（否则「## 3.请求参数」+ 占位符落成孤儿切片，
+            # 标题与它所属的表格分离），也不单独成块
+            flush(off)
+            off += len(line) + 1
+            continue
         if not stripped:  # 空行不单独成块；后续切片按原文偏移取，内容不会丢
             off += len(line) + 1
             continue
