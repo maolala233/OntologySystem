@@ -44,15 +44,39 @@ def finish_task_progress(task_id: str, status: str,
                          message: str = "", stats: Optional[dict[str, Any]] = None) -> None:
     """任务终态：completed | failed | cancelled。"""
     current = get_task_progress(task_id) or {}
+    merged_stats = stats if stats is not None else current.get("stats")
+    percent = 100 if status == "completed" else current.get("percent", 0)
     set_task_progress(
         task_id,
         stage=current.get("stage", "done"),
-        percent=100 if status == "completed" else current.get("percent", 0),
+        percent=percent,
         message=message,
-        stats=stats if stats is not None else current.get("stats"),
+        stats=merged_stats,
         queue=current.get("queue", ""),
         status=status,
     )
+    # 一键构建落终态时留一份 MySQL 快照（8 阶段时间线 + 各阶段耗时）：
+    # Redis 进度键 24h 过期后 /pipeline/status 仍能回放上一次构建，
+    # 不再显示成「没有进行中的构建」。文档解析任务的 stats 没有 pipeline 标记，不会误写。
+    if status in ("completed", "failed", "cancelled"):
+        _persist_pipeline_snapshot(task_id, status, message, merged_stats,
+                                   stage=current.get("stage", "") or "",
+                                   percent=percent)
+
+
+def _persist_pipeline_snapshot(task_id: str, status: str, message: str,
+                               stats: Any, *, stage: str, percent: int) -> None:
+    """写构建快照（非管线任务/写失败都不影响主流程）。"""
+    # 先做一次廉价过滤：文档解析等非管线任务不导入服务、不开数据库会话
+    if not isinstance(stats, dict) or not stats.get("pipeline") or not stats.get("stages"):
+        return
+    try:
+        from app.services.pipeline_snapshot import save_pipeline_snapshot
+
+        save_pipeline_snapshot(task_id=task_id, status=status, message=message,
+                               stats=stats, stage=stage, percent=percent)
+    except Exception:  # noqa: BLE001 —— 留痕失败不能反过来打断任务收尾
+        pass
 
 
 def get_task_progress(task_id: str) -> Optional[dict[str, Any]]:

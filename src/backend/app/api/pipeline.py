@@ -30,6 +30,7 @@ from app.tasks.pipeline_tasks import (
     pipeline_schedule_for,
     release_pipeline_lock,
 )
+from app.services.pipeline_snapshot import load_pipeline_snapshot
 from app.tasks.progress import finish_task_progress, get_task_progress
 
 router = APIRouter(prefix="/api/projects/{project_id}/pipeline", tags=["pipeline"])
@@ -187,6 +188,19 @@ def pipeline_status_endpoint(
             return {"status": "scheduled", "task_id": None, "stages": [],
                     "scheduled_at": sched.get("fire_at"), "schedule": sched,
                     "reviews": summary}
+        # Redis 进度键 24h 过期 / 清库后：回退 MySQL 里「最近一次构建」的 8 阶段
+        # 时间线（终态时写，一次构建一次）。否则页面会显示成「没有进行中的构建」，
+        # 用户以为项目从没构建过。
+        snap = load_pipeline_snapshot(project_id)
+        if snap:
+            return {"status": snap.get("status") or "completed",
+                    "task_id": snap.get("task_id"),
+                    "stage": snap.get("stage") or "",
+                    "percent": snap.get("percent"),
+                    "message": snap.get("message") or "",
+                    "stages": snap.get("stages") or [],
+                    "reviews": summary,
+                    "from_snapshot": True}
         return {"status": "idle", "task_id": None, "stages": [], "reviews": summary}
     if int((prog.get("stats") or {}).get("project_id") or -1) != project_id:
         raise NotFoundError(f"任务不存在: {tid}")  # 不泄露他项目任务

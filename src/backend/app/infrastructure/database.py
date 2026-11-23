@@ -52,6 +52,9 @@ class Project(Base):
     status = Column(Enum("draft", "building", "ready", "published", name="project_status"),
                     nullable=False, server_default="draft")
     current_version_id = Column(Integer, nullable=True)
+    # 最近一次一键构建的 8 阶段时间线快照（约 1KB；Redis 24h 过期后详情页回退展示）。
+    # 列随迁移 b2c3d4e5f6a7 已存在，这里补上 ORM 声明；读写都在 services/pipeline_snapshot.py。
+    build_progress = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
