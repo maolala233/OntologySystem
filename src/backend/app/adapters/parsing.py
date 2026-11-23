@@ -38,14 +38,33 @@ class ParsedDocument(BaseModel):
 
 
 def looks_like_scanned(pages_text: list[str], image_ratio: float = 0.0) -> bool:
-    """扫描件判定（04 §2.2）：平均每页可见字符 < 50 或图片占比 > 60%。
+    """扫描件判定（04 §2.2）：平均每页可见字符 < 50，或图片占比高且文字层稀疏。
+
+    2026-11-23 修正：旧规则“图片占比 > 60% 即扫描件”会把「文字层完整 + 整页背景图/
+    水印图」误判成扫描件（实测带整页水印的文本 PDF，image_ratio=0.94），进而走 OCR：
+    慢一倍，还把水印文字读进正文。现在要求“图片大 + 文字层稀疏（<150 字/页）”才算扫描件。
 
     本函数为纯逻辑，M0 即可测试；调用链在 M3 接入。
     """
     if not pages_text:
         return False
     avg_chars = sum(len(t.strip()) for t in pages_text) / len(pages_text)
-    return avg_chars < 50 or image_ratio > 0.6
+    if avg_chars < 50:
+        return True
+    return image_ratio > 0.6 and avg_chars < 150
+
+
+def looks_like_background_image(pages_text: list[str], image_ratio: float = 0.0) -> bool:
+    """整页背景图/整页水印判定：图片几乎铺满页面，但文字层是完整的。
+
+    这种页面不应触发 OCR（OCR 只会把水印文字读进正文，并把耗时翻倍）。
+    阈值取 150 字/页：与 looks_like_scanned 的“稀疏”边界对齐——
+    低于 150 仍按扫描件/混排处理，≥150 说明文字层可用，走文本路径。
+    """
+    if not pages_text or image_ratio <= 0.6:
+        return False
+    avg_chars = sum(len(t.strip()) for t in pages_text) / len(pages_text)
+    return avg_chars >= 150
 
 
 def parse_document(content: bytes, filename: str,
@@ -299,12 +318,16 @@ def _parse_pdf_auto(content: bytes, filename: str) -> ParsedDocument:
     S14：图文混排（图片占比 >0.05 但文字层仍为主）也走 docling OCR——
     OCR 作用于整页位图，页面内嵌图片里的文字（截图条款/表单照片）随之提取；
     纯文本页 OCR 无额外收益但 docling 版式模型本就要跑位图，代价可接受。
+
+    2026-11-23：整页背景图/整页水印（图片铺满但文字层完整）不再当图文混排走 OCR——
+    否则 OCR 会把水印文字读进正文、耗时翻倍；这类页面走文本路径即可。
     """
     from app.adapters.errors import AdapterError
 
     pages_text, image_ratio = _pdf_fast_layer(content)
     scanned = looks_like_scanned(pages_text, image_ratio)
-    mixed = (not scanned) and image_ratio > 0.05
+    background = looks_like_background_image(pages_text, image_ratio)
+    mixed = (not scanned) and (not background) and image_ratio > 0.05
     if scanned or mixed:
         doc = _parse_docling(content, filename, ocr=True)
         if doc is not None:

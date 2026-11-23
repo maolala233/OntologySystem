@@ -17,6 +17,7 @@ from app.core.logging import logger
 from app.infrastructure.database import DocumentChunk, SessionLocal, UploadedDocument
 from app.infrastructure.minio_client import get_minio_client
 from app.services.pipeline_profiler import profile_metric
+from app.services.text_clean import strip_watermarks
 from app.tasks.progress import finish_task_progress, set_task_progress
 
 
@@ -117,7 +118,9 @@ def _default_chunk_params(project_id: int | None = None) -> ChunkParams:
 # v7（2026-11-23）：切片结构块改为按原文偏移切片（修复短 # 行导致的切头丢内容：
 # md 标题 / shell 注释 / .doc 乱码行都会让块起点后跳，实测丢 19%~96%），并修复
 # CRLF 表格识别与 EOF 孤标题；旧 v6 及更早切片必须重解析，否则构建仍用坏切片。
-PARSE_FINGERPRINT_VERSION = 7
+# v8（2026-11-23）：解析后水印/版式文字清洗（跨页高频重复短串）+ PDF 背景图不再误触发
+# OCR；清洗会改变 text_content，旧 v7 切片必须重解析才能去掉水印噪声。
+PARSE_FINGERPRINT_VERSION = 8
 
 
 def _hash_signature(payload: dict) -> str:
@@ -304,6 +307,15 @@ def run_parse(document_id: int, backend: str = "auto",
             raise ValueError(
                 f"解析结果为空（backend={parsed.backend.value if hasattr(parsed.backend, 'value') else parsed.backend}，"
                 f"文件={doc.filename}）：可能是扫描件/加密/损坏或解析后端不支持该格式")
+        # 水印/版式文字清洗（2026-11-23）：带水印 PDF 会把「内部资料/禁止外传/姓名/日期」
+        # 混进正文（docling 文本路径与 OCR 路径都会），污染切片/抽取/向量化。
+        # 只删跨页高频重复的短版式串，表格行/标题/代码块不动；删太多则整体放弃。
+        full_text, wm_stats = strip_watermarks(full_text)
+        if wm_stats.get("lines_removed") or wm_stats.get("phrases_removed"):
+            logger.info(
+                f"[pipeline] 文档 {doc.id} 水印/版式文字清洗: 删行={wm_stats['lines_removed']} "
+                f"删短语={wm_stats['phrases_removed']}")
+        parsed.full_text_md = full_text
         minio.put_bytes(settings.MINIO_BUCKET_PARSED, text_key, full_text.encode("utf-8"),
                         content_type="text/markdown")
         _mark("store_text")
@@ -312,6 +324,8 @@ def run_parse(document_id: int, backend: str = "auto",
         params = effective_chunk_params(doc.project_id, chunk_params)
         chunks = chunk_text(full_text, params)
         quality = assess_parse_quality(full_text, chunks)
+        quality["watermark_lines_removed"] = wm_stats.get("lines_removed", 0)
+        quality["watermark_cleaning_skipped"] = bool(wm_stats.get("skipped"))
         _mark("chunk")
 
         # 本次解析产物的复用指纹（首切片携带；下次构建据此决定跳过/重嵌入）
