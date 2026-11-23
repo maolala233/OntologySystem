@@ -26,7 +26,8 @@ MIN_REPEAT = 3              # 最少重复次数
 MAX_LINE_LEN = 90           # 只处理短行（水印/页眉页脚级别）
 MAX_PHRASE_LEN = 60         # 行内嵌短语的长度上限
 MAX_AMBIGUOUS_RATIO = 0.30  # 无提示词的可疑重复串：删除行占比上限
-MAX_REMOVED_CHAR_RATIO = 0.60  # 删除字符占比上限（超过视为误判，整体放弃）
+MAX_REMOVED_CHAR_RATIO = 0.75  # 删除字符占比上限（超过视为误判，整体放弃）
+STRONG_FREQUENCY = 20      # 无提示词但高频重复的短串（如整页图片水印被 OCR 读出）
 
 
 def _norm(line: str) -> str:
@@ -43,11 +44,20 @@ def _has_hint(text: str) -> bool:
     return len(text) <= WEAK_HINT_MAX_LEN and any(h in text for h in WEAK_WATERMARK_HINTS)
 
 
+def _is_strong(norm: str, count: int) -> bool:
+    """强信号：带提示词，或“极短 + 极高频”（整页图片水印被 OCR 读出的典型形态）。"""
+    if _has_hint(norm):
+        return True
+    return count >= STRONG_FREQUENCY and len(norm) <= 24
+
+
 def _looks_like_watermark(norm: str, count: int) -> bool:
     """判断一条重复短串是否像版式文字（而不是业务内容）。"""
     if not norm or len(norm) < 4:
         return False
     if _has_hint(norm):
+        return True
+    if count >= STRONG_FREQUENCY and len(norm) <= 24:
         return True
     # 无提示词时保守：只有「短 + 多次重复 + 含数字（日期/编号）」才认
     if count >= 6 and len(norm) <= 40 and _has_digit(norm):
@@ -102,7 +112,7 @@ def strip_watermarks(text: str, *, min_repeat: int = MIN_REPEAT,
     counts: Counter[str] = Counter()
     for raw, n in zip(lines, norms):
         s = raw.lstrip()
-        if not n or s.startswith(("|", "#", "```")):
+        if not n or s.startswith(("|", "#", "```", "<!--")):
             continue
         if len(n) > max_line_len:
             continue
@@ -130,7 +140,7 @@ def strip_watermarks(text: str, *, min_repeat: int = MIN_REPEAT,
             in_code = not in_code
             out.append(raw)
             continue
-        if in_code or s.startswith(("|", ">")):
+        if in_code or s.startswith(("|", ">", "<!--")):
             out.append(raw)
             continue
         if s.startswith("#"):
@@ -181,7 +191,7 @@ def strip_watermarks(text: str, *, min_repeat: int = MIN_REPEAT,
         if n in candidates and _looks_like_watermark(n, counts[n]):
             stats["lines_removed"] += 1
             removed_chars += len(n)
-            if _has_hint(n):
+            if _is_strong(n, counts[n]):
                 removed_hinted += 1
             else:
                 removed_ambiguous += 1
