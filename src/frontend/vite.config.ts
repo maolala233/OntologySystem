@@ -19,6 +19,14 @@ export default defineConfig({
             '/mcp': {
                 target: process.env.VITE_API_TARGET || 'http://127.0.0.1:3001',
                 changeOrigin: true,
+            },
+            // MinIO 下载（报告/PPT 模板等）：后端把预签名 URL 改写成同域 /minio/...，
+            // 生产由 nginx 的 location /minio/ 转发并剥掉前缀；本地 vite 必须同样处理，
+            // 否则 /minio/... 会落到 SPA 回退，点下载直接打开工作台（2026-11-23 实测）
+            '/minio': {
+                target: process.env.VITE_MINIO_TARGET || 'http://127.0.0.1:9010',
+                changeOrigin: true,
+                rewrite: (path) => path.replace(/^\/minio/, ''),
             }
         }
     },

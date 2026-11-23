@@ -265,6 +265,7 @@ export default function ReportsPage() {
                                     disabled={busy}
                                     allowClear
                                     onPressEnter={run}
+                                    className="!text-[14px]"
                                 />
                             </div>
 
@@ -444,7 +445,7 @@ export default function ReportsPage() {
                                     onClick={run}
                                     loading={busy}
                                     disabled={projectId == null || (isPpt && templateLoading)}
-                                    className="tk-primary-btn flex-1"
+                                    className="tk-primary-btn flex-1 !text-[14px]"
                                 >
                                     {busy
                                         ? <>生成中…（<span className="tk-mono">{elapsed}s</span>）</>

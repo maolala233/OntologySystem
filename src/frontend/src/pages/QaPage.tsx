@@ -55,9 +55,7 @@ interface QaTurn {
     streaming: boolean;
     /** 用户手动停止生成（保留已产出的部分内容） */
     stopped?: boolean;
-    /** 溯源引用是否整块展开（5~6 条时逐卡点开太累，见下方头部开关） */
-    sourcesExpanded?: boolean;
-    /** 溯源引用整块是否展开（默认收起，避免回答下面拖很长） */
+    /** 溯源引用整块是否展开：只有「全部折叠 / 全部展开」两态（默认折叠） */
     sourcesOpen?: boolean;
 }
 
@@ -268,11 +266,6 @@ export default function QaPage() {
         if (flushTimerRef.current !== null) clearTimeout(flushTimerRef.current);
     }, []);
 
-    /** 整块展开/收起某一轮的全部引用卡；单卡之后仍可各自切换 */
-    const toggleAllSources = useCallback((turnIdx: number) => {
-        setTurns(prev => prev.map((t, k) => (k === turnIdx ? { ...t, sourcesExpanded: !t.sourcesExpanded } : t)));
-    }, []);
-
     const toggleSourcesSection = useCallback((turnIdx: number) => {
         setTurns(prev => prev.map((t, k) =>
             (k === turnIdx ? { ...t, sourcesOpen: !t.sourcesOpen } : t)));
@@ -283,8 +276,7 @@ export default function QaPage() {
         // 引用区默认收起；点正文角标时先展开引用区，再滚动到对应卡片
         setTurns(prev => prev.map((t, k) =>
             (k === turnIdx ? { ...t, sourcesOpen: true } : t)));
-        // 定位过去的同时那条证据会自动展开（见 SourceCard），卡片高度要等这一帧
-        // 渲染完才定下来；立刻滚只会停在折叠态的位置，所以延后一拍再滚
+        // 引用区展开即全文；卡片高度要等这一帧渲染完才定下来，延后一拍再滚
         const targetId = `qa-source-${turnIdx}-${n - 1}`;
         window.setTimeout(() => {
             document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -1044,12 +1036,12 @@ export default function QaPage() {
                                                原来 #F4F8FE 和回答卡底部几乎同色，这层读起来像卡片拖出来的尾巴，
                                                现在它是卡片里一块压下去的凹槽，引用行浮在里面 */
                                             <div className="mt-4 rounded-xl border border-[rgba(91,141,239,0.16)] bg-[#EDF3FE] p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]">
-                                                <div className="mb-2 flex items-center gap-2 text-[11.5px] text-[#66738F]">
+                                                <div className="flex items-center gap-2 text-[11.5px] text-[#66738F]">
                                                     <span className="tk-mark" aria-hidden />
                                                     <span className="font-medium text-[#3B4A63]">溯源引用</span>
                                                     <span className="tk-mono text-[10.5px] text-[#8A94AB]">{turn.sources.length} 条证据</span>
-                                                    {/* 引用区默认收起：回答下面不再一开始就拖出十几张长卡；
-                                                        点正文 [n] 会自动展开并滚到对应证据 */}
+                                                    {/* 引用区只有两态：整块折叠 / 整块展开（展开即全部卡片全文）；
+                                                        点正文 [n] 会展开引用区并滚到对应证据 */}
                                                     <button
                                                         type="button"
                                                         className="ml-auto -mr-1 flex items-center gap-1 rounded-[7px] px-1.5 py-0.5 text-[11px] text-[#2A57C6] transition-colors hover:bg-[rgba(91,141,239,0.12)] hover:text-[#1F47A8] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(91,141,239,0.35)]"
@@ -1058,26 +1050,15 @@ export default function QaPage() {
                                                         {turn.sourcesOpen ? <UpOutlined /> : <DownOutlined />}
                                                         <span>{turn.sourcesOpen ? '收起引用' : '展开引用'}</span>
                                                     </button>
-                                                    {turn.sourcesOpen && (
-                                                        <button
-                                                            type="button"
-                                                            className="flex items-center gap-1 rounded-[7px] px-1.5 py-0.5 text-[11px] text-[#2A57C6] transition-colors hover:bg-[rgba(91,141,239,0.12)] hover:text-[#1F47A8] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(91,141,239,0.35)]"
-                                                            onClick={() => toggleAllSources(i)}
-                                                        >
-                                                            {turn.sourcesExpanded ? <UpOutlined /> : <DownOutlined />}
-                                                            <span>{turn.sourcesExpanded ? '全部收起' : '全部展开'}</span>
-                                                        </button>
-                                                    )}
                                                 </div>
                                                 {turn.sourcesOpen && (
-                                                <div className="divide-y divide-[rgba(91,141,239,0.12)]">
+                                                <div className="mt-2 divide-y divide-[rgba(91,141,239,0.12)]">
                                                     {turn.sources.map((s, k) => (
                                                         <div key={k} id={`qa-source-${i}-${k}`} className="py-0.5 first:pt-0 last:pb-0">
                                                             <SourceCard
                                                                 index={k}
                                                                 source={s}
                                                                 highlighted={highlightSource?.turn === i && highlightSource.n === k + 1}
-                                                                expandAll={turn.sourcesExpanded}
                                                             />
                                                         </div>
                                                     ))}
