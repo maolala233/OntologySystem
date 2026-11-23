@@ -138,6 +138,15 @@ def _merge_adjacent_tables(spans: list[tuple[int, int, str | None, str | None]],
     return out
 
 
+def _is_table_line(stripped: str) -> bool:
+    """md 表格行判定：首尾都是 |（右侧容忍 \\r 与行尾空格，兼容 Windows 换行）。
+
+    旧实现用 `stripped.endswith("|")`：CRLF 文本的行尾是 "|\r"，永远判定失败，
+    整张表退化成普通正文（丢列语义、可能被按句切开）。
+    """
+    return stripped.startswith("|") and stripped.rstrip().endswith("|")
+
+
 def _structural_blocks(text: str) -> list[tuple[int, str, str | None, str | None]]:
     """把文本切成结构块：markdown 表格（连续 | 行）与代码围栏整块保留，其余为普通块。
 
@@ -145,84 +154,102 @@ def _structural_blocks(text: str) -> list[tuple[int, str, str | None, str | None
     表头不重复出现，抽取 prompt 靠 meta 补列语义）。
     表格块偏移向前吞并紧邻的短标题/说明行（<80 字符的 # 标题），避免
     「### Sheet: X」落成 20 字符的孤儿切片。
+
+    2026-11-23 修复（切头丢内容，实测 pdf/pptx/doc 丢 19%~96%）：
+    - **块内容一律用原文切片 text[start:end] 生成**，不再用行数组 join 重建。
+      旧实现把“短标题”插到缓冲区头部、并把块起点回退到该标题偏移：只要正文里
+      出现任何以 # 开头且 <80 字的行（md 标题 / shell 注释 / .doc 乱码行），
+      整块普通正文就被重排成「最后一个小标题 + 前面的内容」，块起点跳到全文
+      最后一个 # 行，它之前的内容永远进不了切片。
+    - 短标题先 flush 再挂起：挂起时缓冲区必为空，认领时起点就是标题偏移。
+    - 代码围栏开始时丢弃挂起标题（避免围栏内吞内容）；EOF 仍挂着的标题单独成块。
+    - 相邻普通块（间隔仅为空白）合并回一块，避免每个小标题切出一个碎片切片。
     """
-    blocks: list[tuple[int, str, str | None, str | None]] = []
+    raw: list[tuple[int, int, str | None]] = []  # (start, end, kind)
     lines = text.split("\n")
     off = 0
-    kind: str | None = None
-    buf: list[str] = []
-    buf_off = 0
+    cur_kind: str | None = None
+    buf_off: int | None = None
     pending_small: tuple[int, str] | None = None  # 未挂靠的短标题（偏移, 行）
     in_code = False
 
-    def flush():
-        nonlocal buf
-        if buf:
-            blocks.append((buf_off, "\n".join(buf), kind, None))
-            buf = []
+    def flush(end: int) -> None:
+        nonlocal buf_off, cur_kind
+        if buf_off is not None and end > buf_off and text[buf_off:end].strip():
+            raw.append((buf_off, end, cur_kind))
+        buf_off = None
+        cur_kind = None
 
     for line in lines:
         stripped = line.lstrip()
         if stripped.startswith("```"):
             if in_code:  # 收尾围栏行并入代码块
-                buf.append(line)
                 off += len(line) + 1
-                flush()
-                kind = None
+                flush(off)
                 in_code = False
                 continue
-            flush()
-            kind, in_code, buf_off = "code", True, off
-            buf = [line]
+            if pending_small is not None:
+                # 短标题后紧跟代码围栏：标题先单独落块，不能清掉 pending 把它一起吞了
+                buf_off = pending_small[0]
+                pending_small = None
+            flush(off)  # 把围栏前的普通正文/孤立标题封口
+            cur_kind, in_code, buf_off = "code", True, off
             off += len(line) + 1
             continue
-        if not in_code and stripped.startswith("|") and stripped.endswith("|"):
-            if kind != "table":
-                flush()
-                kind, buf_off = "table", off
-                # 表格块吸收紧邻短标题（孤儿标题块防御）：标题行真并入内容，
-                # 块起点=标题行起点（偏移与内容一致，精确子串不变量不破）
-                if pending_small is not None:
-                    buf_off, title_line = pending_small
-                    buf.insert(0, title_line)
-                    if buf_off < off:
-                        buf.insert(1, "")  # 标题与表格间原有空行
-                    pending_small = None
-            buf.append(line)
+        if not in_code and _is_table_line(stripped):
+            if cur_kind != "table":
+                flush(off)
+                # 表格块吸收紧邻短标题：起点=标题偏移，中间空行由原文切片自然保留
+                buf_off = pending_small[0] if pending_small is not None else off
+                pending_small = None
+                cur_kind = "table"
             off += len(line) + 1
             continue
-        if kind == "table":
-            flush()
-            kind = None
-        if not stripped and pending_small is not None:
+        if cur_kind == "table":
+            flush(off)
+        if not stripped:  # 空行不单独成块；后续切片按原文偏移取，内容不会丢
             off += len(line) + 1
-            continue  # 标题后的空行不认领挂起标题（让标题并进下一个内容块）
-        if (pending_small is None and kind is None and not in_code
+            continue
+        if (pending_small is None and cur_kind is None and not in_code
                 and stripped.startswith("#") and len(stripped) < 80):
-            pending_small = (off, line)  # 短标题暂挂，等下一块来认领
+            flush(off)  # 先封口，保证挂起标题一定是新块的开头
+            pending_small = (off, line)
             off += len(line) + 1
             continue
-        if pending_small is not None:
-            buf_off, title_line = pending_small
-            buf.insert(0, title_line)
-            if buf_off < off:
-                buf.insert(1, "")
+        if buf_off is None:
+            buf_off = pending_small[0] if pending_small is not None else off
             pending_small = None
-        buf.append(line)
+            cur_kind = None
         off += len(line) + 1
-    flush()
-    out = []
-    for o, c, k, _header in blocks:
-        if not c.strip():
+    if pending_small is not None and buf_off is None:
+        buf_off = pending_small[0]  # EOF 的孤立短标题：单独成块，不再丢弃
+        pending_small = None
+    flush(off)
+
+    # 相邻普通块合并（间隔只有空白）：标题与后续正文回到同一块，
+    # 不因每个短标题多切一个碎片切片
+    merged: list[tuple[int, int, str | None]] = []
+    for s, e, k in raw:
+        if (merged and k is None and merged[-1][2] is None
+                and not text[merged[-1][1]:s].strip()):
+            ps, _pe, pk = merged[-1]
+            merged[-1] = (ps, e, pk)
+        else:
+            merged.append((s, e, k))
+
+    out: list[tuple[int, str, str | None, str | None]] = []
+    for s, e, k in merged:
+        content = text[s:e].rstrip("\n")  # 精确子串：text[s:e] 即块内容
+        if not content.strip():
             continue
         header = None
         if k == "table":
-            tlines = [ln for ln in c.split("\n") if ln.strip().startswith("|")]
+            tlines = [ln for ln in content.split("\n") if ln.strip().startswith("|")]
             if len(tlines) >= 2 and set(tlines[1].replace("|", "").strip()) <= set("-: "):
                 header = tlines[0].strip() + "\n" + tlines[1].strip()
             elif tlines:
                 header = tlines[0].strip()
-        out.append((o, c.rstrip("\n"), k, header))
+        out.append((s, content, k, header))
     return out
 
 
@@ -355,7 +382,12 @@ def _hard_spans(text: str, base: int, size: int, overlap: int) -> list[tuple[int
     while j < len(text):
         span = text[j:j + size]
         if not span.strip():
-            break
+            # 空白窗（超长空白/换行带）不能直接 break：那样后面的正文整段不再切，
+            # 等于静默丢内容。原地前进一格继续，最后一段纯空白自然收尾。
+            if j + 1 >= len(text):
+                break
+            j += 1
+            continue
         end = j + size
         if end < len(text):
             # 切点回退到最近行边界：end 处向前找 \n，切点放行尾（含该行）

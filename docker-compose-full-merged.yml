@@ -564,6 +564,7 @@ services:
       VLLM_API_KEY: EMPTY
       VLLM_BASE_URL: ""
       VLLM_MODEL: ""
+      DOCLING_ARTIFACTS_PATH: /opt/docling-models
     image: ontology-backend:latest
     networks:
       default: null
@@ -572,6 +573,13 @@ services:
       - type: bind
         source: ./logs
         target: /app/logs
+        bind:
+          create_host_path: true
+      # docling 离线模型：一键构建的解析在本 worker 内联执行，必须与 backend 同源
+      - type: bind
+        source: ${DOCKER_VOLUME_DIRECTORY:-.}/models
+        target: /opt/docling-models
+        read_only: true
         bind:
           create_host_path: true
   worker-graph:

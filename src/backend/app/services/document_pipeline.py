@@ -114,7 +114,10 @@ def _default_chunk_params(project_id: int | None = None) -> ChunkParams:
 # 旧 v1 产物存在切片拦腰断行/续片无上下文，必须重解析
 # v3（2026-11-19）：解析/切片质量修复——Excel 表头周期合并、接口明细补「接口编号」列、
 # 表格与硬切 overlap 真正生效；旧 v2 切片必须重解析，否则构建仍用旧切片。
-PARSE_FINGERPRINT_VERSION = 6
+# v7（2026-11-23）：切片结构块改为按原文偏移切片（修复短 # 行导致的切头丢内容：
+# md 标题 / shell 注释 / .doc 乱码行都会让块起点后跳，实测丢 19%~96%），并修复
+# CRLF 表格识别与 EOF 孤标题；旧 v6 及更早切片必须重解析，否则构建仍用坏切片。
+PARSE_FINGERPRINT_VERSION = 7
 
 
 def _hash_signature(payload: dict) -> str:

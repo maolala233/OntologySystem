@@ -1345,7 +1345,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                         : {
                             icon: <NodeIndexOutlined />,
                             title: '尚未构建本体',
-                            hint: '上传文档后点右上角「一键构建」：解析 → AI 抽取 → 自动审查，完成后这里显示各阶段耗时。',
+                            hint: '上传文档后会自动解析并构建本体（解析 → AI 抽取 → 自动审查），完成后这里显示各阶段耗时。',
                         };
                 return (
                     <div

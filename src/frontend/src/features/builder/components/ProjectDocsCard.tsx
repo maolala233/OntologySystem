@@ -13,6 +13,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 
 import { documentsApi, DocumentRow } from '../../../api/documents';
+import { pipelineApi } from '../../../api/pipeline';
 import { UPLOAD_ACCEPT, UPLOAD_EXTS, MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from '../documents/uploadFormats';
 
 // 解析状态标签：用冷调淡底代替 antd 的语义色（绿/蓝/红在一屏里过于抢眼）。
@@ -121,7 +122,15 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage,
         setUploading(true);
         try {
             await documentsApi.upload(projectId, files, true);
-            message.success(`已上传 ${files.length} 个文档，解析中…；抽取本体请点上方「一键构建」`);
+            // 上传即接管整条链（2026-11-23）：解析 → 抽取 → 自动审查，用户不需要再点
+            // 「一键构建」。后端幂等：已有进行中的管线会返回同一条 task_id，不会重复起跑；
+            // 模块未开通/只读项目等启动失败只影响构建，解析本身照常进行。
+            try {
+                await pipelineApi.run(projectId);
+                message.success(`已上传 ${files.length} 个文档：自动解析并开始构建本体…`);
+            } catch {
+                message.success(`已上传 ${files.length} 个文档，解析中…`);
+            }
             await load();
             onChanged?.();
         } catch (e: any) {

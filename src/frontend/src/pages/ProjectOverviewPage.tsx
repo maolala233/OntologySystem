@@ -94,6 +94,11 @@ const ProjectOverviewPage: React.FC = () => {
     }, [pid, loadProject]);
     useEffect(() => { load(); }, [load, pipelineSignal]);
 
+    // 上传后自动起构建（2026-11-23）：文档卡上传成功即调用 pipelineApi.run，
+    // 这里把信号 +1 让进度面板立刻重查并订上 SSE——不需要用户再点「一键构建」，
+    // 也不需要人工确认构建有没有真的跑起来。
+    const bumpPipelineSignal = useCallback(() => setPipelineSignal((v) => v + 1), []);
+
     // 生命周期状态只分 draft/building/ready/published，没有「中止/失败」——
     // 构建被中止或失败后只要已产出骨架，后端仍标 ready（已构建），语义上会误导。
     // 这里以最近一次管线终态覆盖显示：已发布优先，其次中止/失败。
@@ -442,7 +447,8 @@ const ProjectOverviewPage: React.FC = () => {
                     {/* 不再挂 onChanged：「解析告一段落」不改变构建产物，摘要由终态跃迁统一刷新；
                         挂了只会在构建结束那一秒和终态刷新撞车，白拉一次 summary（2026-11-19） */}
                     <ProjectDocsCard projectId={pid} pipelineStage={pipeStage}
-                                     locked={docsLocked} />
+                                     locked={docsLocked}
+                                     onChanged={bumpPipelineSignal} />
 
                     {!building && summary && summary.schema.classes_total > 0 && (
                         <BuildResultsPanel projectId={pid} summary={summary} checks={summary.checks}
