@@ -93,14 +93,14 @@ const STAGE_STATUS_TEXT: Record<string, string> = {
 
 /** 面向业务用户的阶段名：内部仍用 key，展示不出现“抽取/消解”这类实现词 */
 const STAGE_LABEL_SIMPLE: Record<string, string> = {
-    parse: '读取文档',
-    schema: '提炼概念',
-    instances: '识别业务数据',
-    resolution: '合并重复项',
-    conflicts: '核对冲突',
-    selfcheck: '检查结构',
-    axioms: '补充规则',
-    adjudicate: '检查结果',
+    parse: '资料归集',
+    schema: '语义提炼',
+    instances: '角色识别',
+    resolution: '同义收敛',
+    conflicts: '分歧调和',
+    selfcheck: '语义编排',
+    axioms: '逻辑增补',
+    adjudicate: '结果核检',
 };
 
 function stageLabel(st?: { key?: string; label?: string } | null): string {
@@ -1317,35 +1317,6 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                                 <span className="min-w-0 leading-5">{detailMessage(activeStage, shown)}</span>
                                             </div>
 
-                                            {/* 分步明细（2026-11-17）：阶段结束 / 失败 / 中止后留一行步骤名。
-                                                定时构建晚进入、刷新、换浏览器时，早期阶段没有本机帧缓存，
-                                                数据来自后端 status 的 stage_subs 回放——否则点进来只剩一句
-                                                「本阶段已完成」，看不出这一段到底做了哪几步 */}
-                                            {shown !== 'running' && detailSteps.length > 1 && (
-                                                <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px]">
-                                                    <span className="text-[#A3ADC2]">步骤</span>
-                                                    {detailSteps.map((step) => {
-                                                        const tone = step.state === 'failed' ? '#B42318'
-                                                            : step.state === 'cancelled' ? '#B8790F'
-                                                                : step.state === 'skipped' ? '#C2C7CF'
-                                                                    : step.state === 'done' ? '#1B87AD' : '#CFD6E4';
-                                                        const ink = step.state === 'failed' ? '#B42318'
-                                                            : step.state === 'cancelled' ? '#B8790F'
-                                                                : step.state === 'pending' || step.state === 'skipped'
-                                                                    ? '#A3ADC2' : '#66738F';
-                                                        return (
-                                                            <span key={step.key} className="inline-flex items-center gap-1">
-                                                                <span className="h-[5px] w-[5px] flex-none rounded-full"
-                                                                      style={{ background: tone }} />
-                                                                <span style={{ color: ink }}
-                                                                      className={step.state === 'skipped' ? 'line-through' : ''}>
-                                                                    {step.label}
-                                                                </span>
-                                                            </span>
-                                                        );
-                                                    })}
-                                                </div>
-                                            )}
                                         </div>
                                     </div>
                                 </>
