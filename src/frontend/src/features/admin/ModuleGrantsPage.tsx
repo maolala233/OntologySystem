@@ -334,7 +334,7 @@ const ModuleGrantsPage: React.FC = () => {
         <div>
             <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                 <SectionHead title="角色预设" hint="角色 = 一组模块开通预设；应用时会全量覆盖所选用户的模块授权" />
-                <Button type="primary" icon={<PlusOutlined />} onClick={() => openRoleModal(null)}>新建角色</Button>
+                <Button type="primary" className="tk-primary-btn" icon={<PlusOutlined />} onClick={() => openRoleModal(null)}>新建角色</Button>
             </div>
             {roles.length === 0 ? (
                 <div className="surface-card flex flex-col items-center px-4 py-14 text-center">
@@ -579,7 +579,7 @@ const ModuleGrantsPage: React.FC = () => {
                         >
                             <Button size="small" icon={<UndoOutlined />} disabled={saving}>放弃修改</Button>
                         </Popconfirm>
-                        <Button type="primary" size="small" icon={<SaveOutlined />} loading={saving} onClick={saveAll}>
+                        <Button type="primary" size="small" className="tk-primary-btn" icon={<SaveOutlined />} loading={saving} onClick={saveAll}>
                             保存全部
                         </Button>
                     </div>

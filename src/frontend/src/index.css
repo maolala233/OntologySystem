@@ -1976,6 +1976,27 @@ h4.ant-typography {
   background: rgba(91, 141, 239, 0.10) !important;
 }
 
+/* ---------- 页面级主按钮 ----------
+   与「我的项目 / 项目概览」同一支上亮下深的品牌竖向渐变：
+   比 antd 纯色 #5B8DEF 更「实」，和冷蓝纸面同一件材质。
+   只用于页面 / 面板级主操作（生成、新建、保存）；弹窗按钮继续走
+   .ant-modal 的 135° 渐变，两者不混用 */
+.tk-primary-btn.ant-btn-primary:not(.ant-btn-background-ghost):not(:disabled) {
+  border-color: transparent !important;
+  background: linear-gradient(180deg, #5B8DEF 0%, #3F6FD8 100%) !important;
+  box-shadow:
+    0 8px 18px -12px rgba(47, 98, 216, 0.65),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22) !important;
+}
+.tk-primary-btn.ant-btn-primary:not(.ant-btn-background-ghost):not(:disabled):hover {
+  border-color: transparent !important;
+  background: linear-gradient(180deg, #5486EC 0%, #3865CE 100%) !important;
+}
+.tk-primary-btn.ant-btn-primary:not(.ant-btn-background-ghost):not(:disabled):active {
+  border-color: transparent !important;
+  background: linear-gradient(180deg, #4E7FE4 0%, #335DC0 100%) !important;
+}
+
 /* ---------- 吸底保存条 ----------
    模块授权这类长矩阵：改动后保存入口一直贴在视口底部，
    不必滚回页头 */

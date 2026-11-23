@@ -79,9 +79,13 @@ function App() {
                         <Route path="asset-center/:projectId" element={<RequireModule module="asset_center"><AssetDetailPage /></RequireModule>} />
                         {/* M5 R8 本体问答独立页面（对话分组 + 模型选择） */}
                         <Route path="qa" element={<RequireModule module="qa"><QaPage /></RequireModule>} />
-                        {/* R8 工具层：报告/PPT 生成 + MCP 服务控制台 */}
-                        <Route path="tools/reports" element={<RequireModule module="report"><ReportsPage /></RequireModule>} />
-                        <Route path="tools/ppt" element={<RequireModule module="ppt"><ReportsPage /></RequireModule>} />
+                        {/* R8 工具层：报告/PPT 生成 + MCP 服务控制台。
+                            报告与 PPT 复用同一个 ReportsPage：显式 key 强制换页重挂载，
+                            否则两个路由会复用组件实例——在报告页生成的主题建议、主题、结果、
+                            正在生成状态会原样带到 PPT 页（2026-11-23 反馈）。项目选择走
+                            localStorage，重挂载后仍沿用。 */}
+                        <Route path="tools/reports" element={<RequireModule module="report"><ReportsPage key="report" /></RequireModule>} />
+                        <Route path="tools/ppt" element={<RequireModule module="ppt"><ReportsPage key="ppt" /></RequireModule>} />
                         <Route path="tools/mcp" element={<RequireModule module="mcp"><McpConsolePage /></RequireModule>} />
                         <Route path="domain-management" element={<DomainManagementPage />} />
                         {/* M1 管理后台（admin） */}

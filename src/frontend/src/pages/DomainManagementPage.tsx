@@ -374,7 +374,7 @@ const DomainManagementPage: React.FC = () => {
                             <Button icon={<ReloadOutlined />} onClick={loadDomains} loading={loading}>
                                 刷新
                             </Button>
-                            <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>
+                            <Button type="primary" className="tk-primary-btn" icon={<PlusOutlined />} onClick={openCreateModal}>
                                 新建知识域
                             </Button>
                         </>
@@ -393,7 +393,7 @@ const DomainManagementPage: React.FC = () => {
 
                 {/* 查询条：知识域数量不多，但名称/描述搜索能省掉整表扫视 */}
                 <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
-                    <div className="tk-query-bar tk-controls flex items-center gap-1 p-1">
+                    <div className="tk-controls">
                         <Input
                             allowClear
                             value={searchText}

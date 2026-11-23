@@ -40,22 +40,38 @@ export default function ReportsPage() {
     const [elapsed, setElapsed] = useState(0);
     const [templateInfo, setTemplateInfo] = useState<{ exists: boolean; filename?: string }>({ exists: false });
     const [templateUploading, setTemplateUploading] = useState(false);
+    // 模板信息是异步读取的：首帧先给「读取中」，避免先显示『未上传』再跳成『已上传』
+    const [templateLoading, setTemplateLoading] = useState(false);
     // 项目列表未回来前不判定「还没有可用项目」，避免提示文案先错后对
     const [projectsLoading, setProjectsLoading] = useState(true);
     const [useTemplate, setUseTemplate] = useState(true);
     const resultRef = useRef<HTMLElement | null>(null);
 
     const isPpt = kind === 'ppt';
+    // 模板块的稳定文案：项目未选中 / 模板信息读取中 / 已上传 / 未上传 四态，
+    // 文案在首帧就占位，避免块从无到有、按钮被顶下去
+    const templateReady = projectId != null && !templateLoading;
+    const templateTitle = projectId == null
+        ? (projectsLoading ? '正在加载项目…' : '选择项目后可上传模板')
+        : templateLoading
+            ? '正在读取模板…'
+            : templateInfo.exists
+                ? (templateInfo.filename || '已上传模板')
+                : '未上传 · 使用系统默认模板';
+    const templateTagText = projectId == null ? '待选项目' : templateLoading ? '读取中' : templateInfo.exists ? '已上传' : '未上传';
     const activeProject = useMemo(
         () => projects.find(p => p.id === projectId) ?? null,
         [projects, projectId],
     );
 
     const loadTemplateInfo = useCallback(async (pid: number) => {
+        setTemplateLoading(true);
         try {
             setTemplateInfo(await getPptTemplate(pid));
         } catch {
             setTemplateInfo({ exists: false });
+        } finally {
+            setTemplateLoading(false);
         }
     }, []);
 
@@ -199,7 +215,7 @@ export default function ReportsPage() {
                 <TechHero
                     compact
                     tone="light"
-                    className="!mb-4 mx-auto max-w-6xl"
+                    className="!mb-4"
                     title={isPpt ? 'PPT 演示生成' : '主题分析报告'}
                     titleSuffix={isPpt ? 'SLIDE STUDIO' : 'REPORT STUDIO'}
                     subtitle={isPpt
@@ -208,8 +224,8 @@ export default function ReportsPage() {
                     showConstellation={projects.length > 0}
                     actions={
                         <div className="flex flex-wrap items-center gap-2">
-                            <div className="tk-query-bar tk-controls flex items-center gap-1 p-1">
-                                <span className="pl-2 text-[12.5px] whitespace-nowrap text-[#66738F]">项目</span>
+                            <div className="tk-controls flex items-center gap-2">
+                                <span className="text-[12.5px] whitespace-nowrap text-[#66738F]">项目</span>
                                 <Select
                                     value={projectId ?? undefined}
                                     onChange={onProjectChange}
@@ -229,7 +245,7 @@ export default function ReportsPage() {
                     }
                 />
 
-                <div className="mx-auto grid max-w-6xl gap-4 xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
+                <div className="grid gap-4 xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
                     {/* ── 左栏：生成配置 ── */}
                     <div className="tk-controls min-w-0 space-y-4">
                         <section className="surface-card p-5">
@@ -340,8 +356,10 @@ export default function ReportsPage() {
                                 </div>
                             </div>
 
-                            {/* PPT 自定义模板上传（占位符协议自动填写） */}
-                            {isPpt && projectId != null && (
+                            {/* PPT 自定义模板上传（占位符协议自动填写）。
+                                始终渲染（不随 projectId 到位才出现）：否则进入页面时这块会迟到，
+                                下面的「生成 PPT」按钮会被顶下去——2026-11-23 反馈 */}
+                            {isPpt && (
                                 <div className="mt-3 rounded-xl border border-[rgba(91,141,239,0.16)] bg-[rgba(91,141,239,0.04)] p-3">
                                     <div className="flex items-center justify-between gap-2">
                                         <div className="flex min-w-0 items-center gap-2">
@@ -359,12 +377,12 @@ export default function ReportsPage() {
                                                     </Tooltip>
                                                 </div>
                                                 <div className="max-w-[220px] truncate text-[11px] text-[#8A94AB]">
-                                                    {templateInfo.exists ? templateInfo.filename : '未上传 · 使用系统默认模板'}
+                                                    {templateTitle}
                                                 </div>
                                             </div>
                                         </div>
-                                        <TkTag tone={templateInfo.exists ? 'violet' : 'quiet'}>
-                                            {templateInfo.exists ? '已上传' : '未上传'}
+                                        <TkTag tone={templateReady && templateInfo.exists ? 'violet' : 'quiet'}>
+                                            {templateTagText}
                                         </TkTag>
                                     </div>
 
@@ -373,17 +391,17 @@ export default function ReportsPage() {
                                             accept=".pptx"
                                             showUploadList={false}
                                             beforeUpload={() => false}
-                                            disabled={busy || templateUploading}
+                                            disabled={busy || templateUploading || projectId == null || templateLoading}
                                             onChange={({ file }) => {
                                                 if (file.status === 'removed' || !file.originFileObj) return;
                                                 handleTemplateUpload(file.originFileObj as File);
                                             }}
                                         >
-                                            <Button size="small" icon={<UploadOutlined />} loading={templateUploading} disabled={busy}>
+                                            <Button size="small" icon={<UploadOutlined />} loading={templateUploading} disabled={busy || projectId == null || templateLoading}>
                                                 上传模板
                                             </Button>
                                         </Upload>
-                                        {templateInfo.exists && (
+                                        {templateReady && templateInfo.exists && (
                                             <>
                                                 <Checkbox checked={useTemplate} disabled={busy} onChange={e => setUseTemplate(e.target.checked)}>
                                                     生成时使用
@@ -397,11 +415,21 @@ export default function ReportsPage() {
                                             </>
                                         )}
                                     </div>
-                                    <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
+                                    <div className="mt-1.5 flex min-h-[35px] flex-wrap items-center justify-between gap-2">
                                         <span className="text-[11px] text-[#8A94AB]">
-                                            {templateInfo.exists ? '不勾选「生成时使用」时仍走系统默认模板' : '未上传时使用系统默认模板（深蓝商务风）'}
+                                            {projectId == null
+                                                ? '选择项目后可上传自定义模板'
+                                                : templateInfo.exists
+                                                    ? '不勾选「生成时使用」时仍走系统默认模板'
+                                                    : '未上传时使用系统默认模板（深蓝商务风）'}
                                         </span>
-                                        <Button size="small" type="link" className="!px-0 !text-[11px]" onClick={() => handleDownload('sample')}>
+                                        <Button
+                                            size="small"
+                                            type="link"
+                                            className="!px-0 !text-[11px]"
+                                            disabled={projectId == null}
+                                            onClick={() => handleDownload('sample')}
+                                        >
                                             下载示例模板（内含使用说明）
                                         </Button>
                                     </div>
@@ -415,10 +443,12 @@ export default function ReportsPage() {
                                     icon={<PlayCircleOutlined />}
                                     onClick={run}
                                     loading={busy}
-                                    disabled={projectId == null}
-                                    className="flex-1"
+                                    disabled={projectId == null || (isPpt && templateLoading)}
+                                    className="tk-primary-btn flex-1"
                                 >
-                                    {busy ? `生成中…（${elapsed}s）` : (isPpt ? '生成 PPT' : '生成报告')}
+                                    {busy
+                                        ? <>生成中…（<span className="tk-mono">{elapsed}s</span>）</>
+                                        : (isPpt ? '生成 PPT' : '生成报告')}
                                 </Button>
                                 {busy && (
                                     <span className="text-[11px] leading-4 text-[#66738F]">
@@ -505,6 +535,7 @@ export default function ReportsPage() {
                                             </div>
                                         </div>
 
+                                        <div className="grid gap-3 2xl:grid-cols-2">
                                         {result.outline.slides.map((s, i) => (
                                             <div key={i} className="rounded-xl border border-[#E7EEF9] bg-[#F7F9FD] p-3.5">
                                                 <div className="mb-1.5 flex items-start gap-2.5">
@@ -526,6 +557,7 @@ export default function ReportsPage() {
                                                 </ul>
                                             </div>
                                         ))}
+                                        </div>
                                     </div>
                                 )}
                             </section>

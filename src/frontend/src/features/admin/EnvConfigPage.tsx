@@ -129,6 +129,7 @@ const EnvConfigPage: React.FC = () => {
                     <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>刷新</Button>
                     <Button
                         type="primary"
+                        className="tk-primary-btn"
                         icon={<SaveOutlined />}
                         onClick={handleSave}
                         loading={saving}
@@ -327,7 +328,7 @@ const EnvConfigPage: React.FC = () => {
                         <span className="tk-mono text-[14px] font-semibold text-[#B8790F]">{dirtyCount}</span> 项修改待保存
                     </span>
                     <Button size="small" icon={<ReloadOutlined />} onClick={load} disabled={saving}>放弃修改</Button>
-                    <Button type="primary" size="small" icon={<SaveOutlined />} loading={saving} onClick={handleSave}>
+                    <Button type="primary" size="small" className="tk-primary-btn" icon={<SaveOutlined />} loading={saving} onClick={handleSave}>
                         保存全部
                     </Button>
                 </div>

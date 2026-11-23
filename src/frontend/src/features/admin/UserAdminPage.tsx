@@ -297,7 +297,7 @@ const UserAdminPage: React.FC = () => {
                     actions={
                         <>
                             <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>刷新</Button>
-                            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>新建用户</Button>
+                            <Button type="primary" className="tk-primary-btn" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>新建用户</Button>
                         </>
                     }
                 />
@@ -314,7 +314,7 @@ const UserAdminPage: React.FC = () => {
 
                 {/* 查询条 */}
                 <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2">
-                    <div className="tk-query-bar tk-controls flex items-center gap-1 p-1">
+                    <div className="tk-controls">
                         <Input
                             allowClear
                             value={searchText}

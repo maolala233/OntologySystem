@@ -303,7 +303,7 @@ const ModelConfigsPage: React.FC = () => {
                     actions={
                         <>
                             <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>刷新</Button>
-                            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建配置</Button>
+                            <Button type="primary" className="tk-primary-btn" icon={<PlusOutlined />} onClick={openCreate}>新建配置</Button>
                         </>
                     }
                 />
