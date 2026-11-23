@@ -548,6 +548,37 @@ input[type="range"]::-moz-range-track {
   background: linear-gradient(180deg, #FFFFFF 0%, rgba(242, 185, 80, 0.30) 100%) !important;
 }
 
+/* 轻量危险按钮（2026-11-23）：批量删除这类破坏性操作——
+   冷调红纸面 + 同色文字，比纯白红边清楚，又不像实心红那样抢视线 */
+.tk-danger-soft-btn.ant-btn-default {
+  color: #B42318 !important;
+  border-color: rgba(180, 35, 24, 0.26) !important;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(180, 35, 24, 0.07) 100%) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 1px 2px rgba(15, 23, 42, 0.04) !important;
+  transition: color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.tk-danger-soft-btn.ant-btn-default:not(:disabled):hover {
+  color: #D92D20 !important;
+  border-color: rgba(180, 35, 24, 0.50) !important;
+  background: linear-gradient(180deg, #FFFFFF 0%, rgba(180, 35, 24, 0.14) 100%) !important;
+  box-shadow: inset 0 1px 0 #FFFFFF, 0 4px 10px -8px rgba(180, 35, 24, 0.55) !important;
+}
+.tk-danger-soft-btn.ant-btn-default:not(:disabled):active {
+  color: #B42318 !important;
+  border-color: rgba(180, 35, 24, 0.65) !important;
+  background: linear-gradient(180deg, #FFFFFF 0%, rgba(180, 35, 24, 0.20) 100%) !important;
+}
+
+/* 软按钮的禁用态：上面的渐变底会盖住 antd 的禁用样式，这里统一压回去 */
+.tk-soft-btn.ant-btn-default:disabled,
+.tk-warn-soft-btn.ant-btn-default:disabled,
+.tk-danger-soft-btn.ant-btn-default:disabled {
+  color: #A9B5CC !important;
+  border-color: #E6ECF6 !important;
+  background: #F4F7FC !important;
+  box-shadow: none !important;
+}
+
 /* 查询条（2026-11-18）：我的项目 / 资产中心 / 问答共用。
    外框用一档更深的冷蓝作容器；控件与表单字段统一成 #EFF5FF 浅冷蓝，
    始终比容器浅——不再用半透明白（那会在条子上显得比表单更轻）。 */
@@ -975,6 +1006,15 @@ body .ant-drawer-mask {
   backdrop-filter: saturate(140%) blur(4px);
 }
 
+/* 弹窗 / 抽屉的滚动条槽位固定（2026-11-23）：
+   表单校验错误撑高内容时，.ant-modal-wrap 会多出一条纵向滚动条，
+   居中弹窗的可用宽度随之变小，整张卡片看起来会向左跳一下。
+   预留 gutter 后，滚动条出现 / 消失都不再改变内容宽度 */
+body .ant-modal-wrap,
+body .ant-drawer-body {
+  scrollbar-gutter: stable;
+}
+
 /* 弹窗主体：与卡片同族的冷白渐变。不再在顶部铺满宽彩线（2026-11-18 用户反馈）：
    弹窗已经有描边/投影/圆角把层次拉开，全宽线落在每个小弹窗上反而显碎；
    品牌彩条只留给小标题前的 3×13px 点缀（面板装饰语言） */
@@ -1050,29 +1090,57 @@ body .ant-modal .ant-modal-footer {
   border-top: 1px solid rgba(91, 141, 239, 0.12);
 }
 
+/* 紧凑表单弹窗（2026-11-23）：与「我的项目 · 创建项目」同一套行距——
+   字段之间 10px、标签下 4px，避免 5 个字段的表单在 500px 弹窗里散成一片。
+   给 Modal 加 className="tk-form-compact" 即可 */
+body .ant-modal.tk-form-compact .ant-modal-content {
+  padding: 20px 24px 20px;
+}
+body .ant-modal.tk-form-compact .ant-modal-header {
+  margin-bottom: 12px;
+}
+body .ant-modal.tk-form-compact .ant-form-item {
+  margin-bottom: 10px;
+}
+body .ant-modal.tk-form-compact .ant-form-item:last-child {
+  margin-bottom: 0;
+}
+body .ant-modal.tk-form-compact .ant-form-item-label {
+  padding-bottom: 4px;
+}
+body .ant-modal.tk-form-compact .ant-form-item-label > label {
+  height: auto;
+  font-size: 13px;
+  color: #52607A;
+}
+
 /* ---------- 弹窗按钮：主按钮品牌渐变，次按钮冷白纸面 ---------- */
-body .ant-modal .ant-btn {
+body .ant-modal .ant-btn,
+body .ant-drawer-footer .ant-btn {
   font-weight: 500;
   /* 不要过渡 background：我们的底色是渐变（background-image），antd hover 用
      background 简写切纯色时无法插值，会在 hover 瞬间闪一下（2026-11-18 反馈） */
   transition: color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
-body .ant-modal .ant-btn-default {
+body .ant-modal .ant-btn-default,
+body .ant-drawer-footer .ant-btn-default {
   color: #33415C;
   border-color: rgba(91, 141, 239, 0.22);
   background: linear-gradient(180deg, #FFFFFF 0%, #F7FAFF 100%);
   box-shadow: inset 0 1px 0 #FFFFFF, 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
-body .ant-modal .ant-btn-default:not(:disabled):hover {
+body .ant-modal .ant-btn-default:not(:disabled):hover,
+body .ant-drawer-footer .ant-btn-default:not(:disabled):hover {
   color: #2A57C6 !important;
   border-color: rgba(91, 141, 239, 0.55) !important;
   background: linear-gradient(180deg, #FFFFFF 0%, #F0F6FF 100%) !important;
   box-shadow: inset 0 1px 0 #FFFFFF, 0 1px 2px rgba(15, 23, 42, 0.04) !important;
 }
 
-body .ant-modal .ant-btn-primary {
+body .ant-modal .ant-btn-primary,
+body .ant-drawer-footer .ant-btn-primary {
   border-color: transparent;
   background: linear-gradient(135deg, #5B8DEF 0%, #4C7DE7 55%, #6E6BF0 100%);
   box-shadow:
@@ -1080,25 +1148,29 @@ body .ant-modal .ant-btn-primary {
     0 10px 20px -12px rgba(76, 125, 231, 0.75);
 }
 
-body .ant-modal .ant-btn-primary:not(:disabled):hover {
+body .ant-modal .ant-btn-primary:not(:disabled):hover,
+body .ant-drawer-footer .ant-btn-primary:not(:disabled):hover {
   border-color: transparent !important;
   background: linear-gradient(135deg, #6B9BF5 0%, #5B8BF0 55%, #7E7BF5 100%) !important;
 }
 
-body .ant-modal .ant-btn-primary:not(:disabled):active {
+body .ant-modal .ant-btn-primary:not(:disabled):active,
+body .ant-drawer-footer .ant-btn-primary:not(:disabled):active {
   border-color: transparent !important;
   background: linear-gradient(135deg, #4C7DE7 0%, #3E6CD6 55%, #5B57E6 100%) !important;
 }
 
 /* ghost 主按钮（次级强调）：保留镂空形态，不铺渐变 */
-body .ant-modal .ant-btn-primary.ant-btn-background-ghost {
+body .ant-modal .ant-btn-primary.ant-btn-background-ghost,
+body .ant-drawer-footer .ant-btn-primary.ant-btn-background-ghost {
   color: #2A57C6;
   border-color: rgba(91, 141, 239, 0.45);
   background: transparent;
   box-shadow: none;
 }
 
-body .ant-modal .ant-btn-primary.ant-btn-background-ghost:not(:disabled):hover {
+body .ant-modal .ant-btn-primary.ant-btn-background-ghost:not(:disabled):hover,
+body .ant-drawer-footer .ant-btn-primary.ant-btn-background-ghost:not(:disabled):hover {
   color: #1F4FB3 !important;
   border-color: rgba(91, 141, 239, 0.70) !important;
   background: rgba(91, 141, 239, 0.08) !important;
@@ -1106,19 +1178,22 @@ body .ant-modal .ant-btn-primary.ant-btn-background-ghost:not(:disabled):hover {
 }
 
 /* 危险操作：保留语义红，但同样走浅纸面 / 渐变，不再是一块生红 */
-body .ant-modal .ant-btn-dangerous:not(.ant-btn-primary) {
+body .ant-modal .ant-btn-dangerous:not(.ant-btn-primary),
+body .ant-drawer-footer .ant-btn-dangerous:not(.ant-btn-primary) {
   color: #B42318;
   border-color: rgba(180, 35, 24, 0.26);
   background: linear-gradient(180deg, #FFFFFF 0%, #FFF6F5 100%);
 }
 
-body .ant-modal .ant-btn-dangerous:not(.ant-btn-primary):not(:disabled):hover {
+body .ant-modal .ant-btn-dangerous:not(.ant-btn-primary):not(:disabled):hover,
+body .ant-drawer-footer .ant-btn-dangerous:not(.ant-btn-primary):not(:disabled):hover {
   color: #D92D20 !important;
   border-color: rgba(180, 35, 24, 0.50) !important;
   background: linear-gradient(180deg, #FFFFFF 0%, #FFEFED 100%) !important;
 }
 
-body .ant-modal .ant-btn-primary.ant-btn-dangerous {
+body .ant-modal .ant-btn-primary.ant-btn-dangerous,
+body .ant-drawer-footer .ant-btn-primary.ant-btn-dangerous {
   border-color: transparent;
   background: linear-gradient(135deg, #E4574C 0%, #C43A30 100%);
   box-shadow:
@@ -1126,32 +1201,37 @@ body .ant-modal .ant-btn-primary.ant-btn-dangerous {
     0 10px 20px -12px rgba(196, 58, 48, 0.70);
 }
 
-body .ant-modal .ant-btn-primary.ant-btn-dangerous:not(:disabled):hover {
+body .ant-modal .ant-btn-primary.ant-btn-dangerous:not(:disabled):hover,
+body .ant-drawer-footer .ant-btn-primary.ant-btn-dangerous:not(:disabled):hover {
   border-color: transparent !important;
   background: linear-gradient(135deg, #EB6A5F 0%, #D0443A 100%) !important;
 }
 
-body .ant-modal .ant-btn-primary.ant-btn-dangerous:not(:disabled):active {
+body .ant-modal .ant-btn-primary.ant-btn-dangerous:not(:disabled):active,
+body .ant-drawer-footer .ant-btn-primary.ant-btn-dangerous:not(:disabled):active {
   border-color: transparent !important;
   background: linear-gradient(135deg, #D0443A 0%, #B22F27 100%) !important;
 }
 
 /* 禁用态放在最后，压过上面的渐变 */
-body .ant-modal .ant-btn-default:disabled {
+body .ant-modal .ant-btn-default:disabled,
+body .ant-drawer-footer .ant-btn-default:disabled {
   color: #A9B5CC;
   border-color: #E6ECF6;
   background: #F4F7FC;
   box-shadow: none;
 }
 
-body .ant-modal .ant-btn-primary:disabled {
+body .ant-modal .ant-btn-primary:disabled,
+body .ant-drawer-footer .ant-btn-primary:disabled {
   color: #FFFFFF;
   border-color: transparent;
   background: #C5D5EE;
   box-shadow: none;
 }
 
-body .ant-modal .ant-btn-primary.ant-btn-dangerous:disabled {
+body .ant-modal .ant-btn-primary.ant-btn-dangerous:disabled,
+body .ant-drawer-footer .ant-btn-primary.ant-btn-dangerous:disabled {
   background: #F0C4C0;
 }
 

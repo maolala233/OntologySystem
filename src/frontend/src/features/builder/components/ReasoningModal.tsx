@@ -67,7 +67,8 @@ const axiomText = (a: DeclaredAxiom): string => {
     }
 };
 
-const PAGE_SIZE = 50;
+// 只读表格：弹窗空间有限，一页 20 条；批量操作型表格（用户/审核）才用 50
+const PAGE_SIZE = 20;
 /** 「蕴含」Tab = OWL-RL + RDFS 蕴含合并（旧批次/RDFS profile 的整批 rdfs 标注也在其中） */
 const ENTAILMENT_SOURCES = 'owlrl,rdfs';
 

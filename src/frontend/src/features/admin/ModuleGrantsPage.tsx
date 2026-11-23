@@ -8,7 +8,7 @@
  * 未保存行带左侧品牌竖条；改动后吸底保存条一直可见，不必滚回页头。
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Button, Checkbox, Input, Modal, Popconfirm, Space, Tabs, Tooltip } from 'antd';
+import { Button, Checkbox, Input, Modal, Popconfirm, Space, Spin, Tabs, Tooltip } from 'antd';
 import { message, notifyError } from '../../shared/feedback';
 import {
     CheckOutlined, CloseOutlined, DeleteOutlined, EditOutlined, MinusOutlined, PlusOutlined,
@@ -46,6 +46,8 @@ const ModuleGrantsPage: React.FC = () => {
     const [dirtyUsers, setDirtyUsers] = useState<Set<number>>(new Set());
     const [saving, setSaving] = useState(false);
     const [loading, setLoading] = useState(true);
+    // 刷新按钮只在手动点击时转圈；首屏由骨架屏表达
+    const [refreshing, setRefreshing] = useState(false);
 
     // 角色编辑/应用弹窗
     const [roleModalOpen, setRoleModalOpen] = useState(false);
@@ -94,6 +96,15 @@ const ModuleGrantsPage: React.FC = () => {
     }, []);
 
     useEffect(() => { load(); }, [load]);
+
+    const refresh = useCallback(async () => {
+        setRefreshing(true);
+        try {
+            await load();
+        } finally {
+            setRefreshing(false);
+        }
+    }, [load]);
 
     const cycleCell = (userId: number, code: string) => {
         const target = users.find((u) => u.id === userId);
@@ -479,7 +490,7 @@ const ModuleGrantsPage: React.FC = () => {
                     showConstellation={users.length > 0}
                     actions={
                         <>
-                            <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>刷新</Button>
+                            <Button className="tk-soft-btn" icon={<ReloadOutlined />} onClick={refresh} loading={refreshing}>刷新</Button>
                             {dirtyCount > 0 && (
                                 <TkTag tone="amber">
                                     <Dot tone="amber" className="!h-[5px] !w-[5px]" />
@@ -500,6 +511,8 @@ const ModuleGrantsPage: React.FC = () => {
                     ]}
                 />
 
+                {/* 刷新时旧矩阵保留在 Spin 遮罩下（与用户管理的 Table loading 同一观感） */}
+                <Spin spinning={loading && users.length > 0}>
                 {loading && users.length === 0 ? (
                     <div className="surface-card p-4">
                         <div className="flex items-center gap-2">
@@ -563,6 +576,7 @@ const ModuleGrantsPage: React.FC = () => {
                     ]}
                 />
                 )}
+                </Spin>
 
                 {/* 吸底保存条：矩阵很长时改动后的保存入口一直贴在视口底部 */}
                 {dirtyCount > 0 && (

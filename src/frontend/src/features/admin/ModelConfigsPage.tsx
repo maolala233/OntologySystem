@@ -9,7 +9,7 @@
  * 测试结果直接回显在抽屉底部，不再只靠顶部 message。
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { Button, Card, Drawer, Form, Input, InputNumber, Select, Space, Switch, Tabs, Tooltip } from 'antd';
+import { Button, Card, Drawer, Form, Input, InputNumber, Select, Space, Spin, Switch, Tabs, Tooltip } from 'antd';
 import {
     ApiOutlined, CloudOutlined, DeploymentUnitOutlined, EyeOutlined, MessageOutlined,
     PlusOutlined, QuestionCircleOutlined, ReloadOutlined, RobotOutlined, StarFilled,
@@ -50,6 +50,8 @@ const ModelConfigsPage: React.FC = () => {
     const [myProjects, setMyProjects] = useState<ProjectData[]>([]);
     const [activePurpose, setActivePurpose] = useState<string>('extract');
     const [loading, setLoading] = useState(true);
+    // 刷新按钮只在手动点击时转圈；首屏由骨架屏表达
+    const [refreshing, setRefreshing] = useState(false);
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [editing, setEditing] = useState<ModelConfigRow | null>(null);
     const [testingId, setTestingId] = useState<number | 'form' | null>(null);
@@ -104,6 +106,15 @@ const ModelConfigsPage: React.FC = () => {
     };
 
     useEffect(() => { if (projectsReady) void load(); }, [activePurpose, isAdmin, myProjects, projectsReady]);
+
+    const refresh = async () => {
+        setRefreshing(true);
+        try {
+            await load();
+        } finally {
+            setRefreshing(false);
+        }
+    };
 
     // 权限判定：该行当前用户是否可管理（编辑/设默认/删除）
     const canManage = (row: ModelConfigRow) =>
@@ -302,7 +313,7 @@ const ModelConfigsPage: React.FC = () => {
                     showConstellation={rows.length > 0}
                     actions={
                         <>
-                            <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>刷新</Button>
+                            <Button className="tk-soft-btn" icon={<ReloadOutlined />} onClick={refresh} loading={refreshing}>刷新</Button>
                             <Button type="primary" className="tk-primary-btn" icon={<PlusOutlined />} onClick={openCreate}>新建配置</Button>
                         </>
                     }
@@ -339,6 +350,8 @@ const ModelConfigsPage: React.FC = () => {
                     ]}
                 />
 
+                {/* 刷新 / 切用途时旧卡片保留在 Spin 遮罩下，和用户管理的 Table loading 同一观感 */}
+                <Spin spinning={loading && rows.length > 0}>
                 {loading && rows.length === 0 ? (
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 16 }}>
                         {[0, 1, 2, 3].map((i) => (
@@ -475,6 +488,7 @@ const ModelConfigsPage: React.FC = () => {
                         })}
                     </div>
                 )}
+                </Spin>
 
                 <Drawer
                     title={editing ? '编辑模型配置' : '新建模型配置'}

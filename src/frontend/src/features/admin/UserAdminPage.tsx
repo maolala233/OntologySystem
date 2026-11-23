@@ -6,20 +6,20 @@
  * 一次性密码用独立纸面卡片承载。
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { Button, Drawer, Form, Input, Modal, Popconfirm, Select, Space, Table, Typography } from 'antd';
+import { Button, Drawer, Form, Input, Modal, Popconfirm, Select, Space, Table } from 'antd';
 import {
-    CheckCircleOutlined, DeleteOutlined, FolderOpenOutlined, PlusOutlined,
-    ReloadOutlined, SafetyCertificateOutlined, SearchOutlined, StopOutlined, TeamOutlined, UserOutlined,
+    CheckCircleOutlined, CopyOutlined, DeleteOutlined, FolderOpenOutlined, PlusOutlined,
+    ReloadOutlined, SafetyCertificateOutlined, StopOutlined, TeamOutlined, UserOutlined,
+    WarningOutlined,
 } from '@ant-design/icons';
-import { message, notifyError } from '../../shared/feedback';
+import { confirmModal, message, notifyError } from '../../shared/feedback';
 import { adminApi, AdminUser } from '../../api/admin';
 import { useAuthStore } from '../../shared/auth/authStore';
 import { PROJECT_STATUS, statusChip } from '../../shared/projectStatus';
 import Navbar from '../../components/Layout/Navbar';
 import TechHero from '../../components/TechHero';
-import { Dot, Note, StatBand, TkTag } from '../../shared/consoleUi';
-
-const { Text } = Typography;
+import { Dot, StatBand, TkTag } from '../../shared/consoleUi';
+import Tip from '../../shared/Tip';
 
 interface UserProject {
     id: number;
@@ -45,11 +45,12 @@ const UserAdminPage: React.FC = () => {
     const me = useAuthStore((s) => s.user);
     const [users, setUsers] = useState<AdminUser[]>([]);
     const [loading, setLoading] = useState(true);
+    // 刷新按钮只在手动点击时转圈；首屏由表格 loading 表达
+    const [refreshing, setRefreshing] = useState(false);
     const [createOpen, setCreateOpen] = useState(false);
     const [form] = Form.useForm();
     const [resetTarget, setResetTarget] = useState<AdminUser | null>(null);
     const [oneTimePassword, setOneTimePassword] = useState<string>('');
-    const [searchText, setSearchText] = useState('');
 
     // 批量操作
     const [selectedIds, setSelectedIds] = useState<React.Key[]>([]);
@@ -72,6 +73,15 @@ const UserAdminPage: React.FC = () => {
     };
 
     useEffect(() => { load(); }, []);
+
+    const refresh = async () => {
+        setRefreshing(true);
+        try {
+            await load();
+        } finally {
+            setRefreshing(false);
+        }
+    };
 
     const handleCreate = async () => {
         let values: any;
@@ -101,14 +111,33 @@ const UserAdminPage: React.FC = () => {
         }
     };
 
-    const handleResetPassword = async (u: AdminUser) => {
+    const handleResetPassword = (u: AdminUser) => {
+        // 重置会立即让旧密码失效，属于敏感操作：先确认，再调接口
+        confirmModal({
+            title: `重置密码 · ${u.username}`,
+            content: '重置后该用户的旧密码立即失效，系统会生成一个一次性新密码（仅本次显示）。确定要重置吗？',
+            okText: '确认重置',
+            cancelText: '取消',
+            onOk: async () => {
+                try {
+                    const resp = await adminApi.patchUser(u.id, { reset_password: true });
+                    setResetTarget(u);
+                    setOneTimePassword(resp.password || '');
+                    load();
+                } catch (err: any) {
+                    notifyError(err, '重置失败');
+                }
+            },
+        });
+    };
+
+    const copyOneTimePassword = async () => {
+        if (!oneTimePassword) return;
         try {
-            const resp = await adminApi.patchUser(u.id, { reset_password: true });
-            setResetTarget(u);
-            setOneTimePassword(resp.password || '');
-            load();
-        } catch (err: any) {
-            notifyError(err, '重置失败');
+            await navigator.clipboard.writeText(oneTimePassword);
+            message.success('新密码已复制');
+        } catch {
+            message.warning('复制失败，请手动选择密码复制');
         }
     };
 
@@ -185,47 +214,21 @@ const UserAdminPage: React.FC = () => {
         inactive: users.filter((u) => !u.is_active).length,
     }), [users]);
 
-    const filteredUsers = useMemo(() => {
-        const q = searchText.trim().toLowerCase();
-        if (!q) return users;
-        return users.filter((u) =>
-            u.username.toLowerCase().includes(q)
-            || (u.display_name ?? '').toLowerCase().includes(q)
-            || (u.email ?? '').toLowerCase().includes(q)
-            || (u.app_role_name ?? '').toLowerCase().includes(q));
-    }, [users, searchText]);
-
     const columns = [
         {
-            title: 'ID', dataIndex: 'id', width: 70,
+            title: 'ID', dataIndex: 'id', width: 60,
             render: (id: number) => <span className="tk-mono text-xs text-[#8A94AB]">#{id}</span>,
         },
         {
-            title: '用户', dataIndex: 'username', width: 220,
-            render: (name: string, record: AdminUser) => (
-                <div className="flex min-w-0 items-center gap-2.5">
-                    <span
-                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[12px] font-semibold text-white"
-                        style={{
-                            background: record.role === 'admin'
-                                ? 'linear-gradient(135deg, #E0A02A, #B8790F)'
-                                : 'linear-gradient(135deg, #5B8DEF, #8B5CF6)',
-                            boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.28)',
-                        }}
-                    >
-                        {name.slice(0, 1).toUpperCase()}
-                    </span>
-                    <div className="min-w-0">
-                        <div className="truncate text-[13px] font-medium text-[#1F2A44]">{name}</div>
-                        {record.display_name && (
-                            <div className="truncate text-[11px] text-[#8A94AB]">{record.display_name}</div>
-                        )}
-                    </div>
-                </div>
+            title: '用户', dataIndex: 'username', width: 210,
+            render: (name: string) => (
+                <Tip text={name}>
+                    <span className="block truncate text-[13px] font-medium text-[#1F2A44]">{name}</span>
+                </Tip>
             ),
         },
         {
-            title: '角色', dataIndex: 'role', width: 170,
+            title: '角色', dataIndex: 'role', width: 150,
             render: (role: string, record: AdminUser) => (
                 <Space size={4} className="!flex-wrap">
                     <TkTag tone={role === 'admin' ? 'amber' : 'brand'}>
@@ -238,11 +241,19 @@ const UserAdminPage: React.FC = () => {
             ),
         },
         {
-            title: '邮箱', dataIndex: 'email',
+            title: '显示名', dataIndex: 'display_name', width: 140,
+            render: (v: string | null) => (
+                <Tip text={v || undefined}>
+                    <span className="block truncate text-[12.5px] text-[#66738F]">{v || '—'}</span>
+                </Tip>
+            ),
+        },
+        {
+            title: '邮箱', dataIndex: 'email', width: 190,
             render: (v: string | null) => <span className="text-[12.5px] text-[#66738F]">{v || '—'}</span>,
         },
         {
-            title: '状态', dataIndex: 'is_active', width: 96,
+            title: '状态', dataIndex: 'is_active', width: 84,
             render: (active: boolean) => (
                 <span className="inline-flex items-center gap-1.5">
                     <Dot tone={active ? 'cyan' : 'quiet'} />
@@ -253,17 +264,30 @@ const UserAdminPage: React.FC = () => {
             ),
         },
         {
-            title: '操作', key: 'action', width: 290,
+            title: '操作', key: 'action', width: 270,
             render: (_: any, record: AdminUser) => (
                 <Space size={0}>
                     <Button size="small" type="link" icon={<FolderOpenOutlined />}
                         onClick={() => openProjects(record)}>项目</Button>
                     <Button size="small" type="link" onClick={() => handleResetPassword(record)}>重置密码</Button>
-                    <Button size="small" type="link" danger={record.is_active}
-                            disabled={record.role === 'admin'}
-                            onClick={() => handleToggleActive(record)}>
-                        {record.is_active ? '停用' : '启用'}
-                    </Button>
+                    <Popconfirm
+                        title={record.is_active
+                            ? `确定停用用户 ${record.username}？`
+                            : `确定启用用户 ${record.username}？`}
+                        description={record.is_active
+                            ? '停用后该用户将无法登录，可随时重新启用。'
+                            : '启用后该用户可以重新登录。'}
+                        okText={record.is_active ? '停用' : '启用'}
+                        cancelText="取消"
+                        okButtonProps={{ danger: record.is_active }}
+                        onConfirm={() => handleToggleActive(record)}
+                        disabled={record.role === 'admin'}
+                    >
+                        <Button size="small" type="link" danger={record.is_active}
+                                disabled={record.role === 'admin'}>
+                            {record.is_active ? '停用' : '启用'}
+                        </Button>
+                    </Popconfirm>
                     <Popconfirm
                         title={`确定删除用户 ${record.username}？`}
                         description="将同时清除其模块授权与 MCP 令牌，不可恢复；名下有项目时会删除失败。"
@@ -296,7 +320,7 @@ const UserAdminPage: React.FC = () => {
                     showConstellation={users.length > 0}
                     actions={
                         <>
-                            <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>刷新</Button>
+                            <Button className="tk-soft-btn" icon={<ReloadOutlined />} onClick={refresh} loading={refreshing}>刷新</Button>
                             <Button type="primary" className="tk-primary-btn" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>新建用户</Button>
                         </>
                     }
@@ -312,57 +336,57 @@ const UserAdminPage: React.FC = () => {
                     ]}
                 />
 
-                {/* 查询条 */}
-                <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2">
-                    <div className="tk-controls">
-                        <Input
-                            allowClear
-                            value={searchText}
-                            onChange={e => { setSearchText(e.target.value); setSelectedIds([]); }}
-                            placeholder="搜索用户名 / 显示名 / 邮箱 / 角色…"
-                            prefix={<SearchOutlined className="text-[#5B8DEF]" />}
-                            className="w-[300px]"
-                        />
-                    </div>
-                    {searchText && (
-                        <span className="inline-flex items-center gap-1.5 text-[11.5px] text-[#66738F]">
-                            <Dot tone="brand" />
-                            匹配 <span className="tk-mono font-semibold text-[#2A57C6]">{filteredUsers.length}</span> 个用户
-                        </span>
-                    )}
-                </div>
-
-                {/* 批量操作条：吸顶，勾选后一直可见；用发光圆点 + 等宽计数回答"选了几个" */}
+                {/* 批量操作条：不再套长条卡片，直接一条左对齐的普通行；
+                    用发光圆点 + 等宽计数回答"选了几个" */}
                 {selectedIds.length > 0 && (
-                    <div className="tk-save-bar mb-3 !bottom-auto top-0">
+                    <div className="mb-3 flex flex-wrap items-center gap-1.5">
                         <Dot tone="brand" />
                         <span className="inline-flex items-baseline gap-1 text-[12.5px] text-[#3D4B66]">
                             已选
                             <span className="tk-mono text-[14px] font-semibold text-[#2A57C6]">{selectedIds.length}</span>
                             个用户
                         </span>
-                        <Button size="small" disabled={batchBusy} onClick={batchEnable}>批量启用</Button>
-                        <Button size="small" disabled={batchBusy} onClick={batchDisable}>批量停用</Button>
+                        <span className="mx-0.5 h-4 w-px shrink-0 bg-[#E4EBF7]" aria-hidden />
+                        <Popconfirm
+                            title={`确定批量启用选中的 ${selectedIds.length} 个用户？`}
+                            description="启用后这些用户可以重新登录；管理员会被跳过。"
+                            okText="启用" cancelText="取消"
+                            onConfirm={batchEnable}
+                        >
+                            <Button size="small" className="tk-soft-btn" icon={<CheckCircleOutlined />} disabled={batchBusy}>批量启用</Button>
+                        </Popconfirm>
+                        <Popconfirm
+                            title={`确定批量停用选中的 ${selectedIds.length} 个用户？`}
+                            description="停用后这些用户将无法登录；管理员会被跳过，可随时重新启用。"
+                            okText="停用" cancelText="取消" okButtonProps={{ danger: true }}
+                            onConfirm={batchDisable}
+                        >
+                            <Button size="small" className="tk-warn-soft-btn" icon={<StopOutlined />} disabled={batchBusy}>批量停用</Button>
+                        </Popconfirm>
                         <Popconfirm
                             title={`确定批量删除 ${selectedIds.length} 个用户？`}
                             description="不可恢复；名下有项目的用户会删除失败并逐个报告原因。"
                             okText="删除" cancelText="取消" okButtonProps={{ danger: true }}
                             onConfirm={batchDelete}
                         >
-                            <Button size="small" danger icon={<DeleteOutlined />} disabled={batchBusy}>批量删除</Button>
+                            <Button size="small" className="tk-danger-soft-btn" icon={<DeleteOutlined />} disabled={batchBusy}>批量删除</Button>
                         </Popconfirm>
-                        <Button size="small" type="text" className="ml-auto" onClick={() => setSelectedIds([])}>取消选择</Button>
+                        <Button size="small" type="link" className="!px-1 text-[#66738F]" onClick={() => setSelectedIds([])}>取消选择</Button>
                     </div>
                 )}
 
                 <div className="surface-card tk-table">
+                    {/* 与知识域管理同一套加载方式：表头始终是真实表头，
+                        数据未到时用 Table 自己的 loading 遮罩，不再先出现一套骨架表头。
+                        列宽全部显式给出 + fixed 布局，表头从第一帧起就是确定的位置。 */}
                     <Table
                         rowKey="id"
                         size="middle"
                         loading={loading}
-                        scroll={{ x: 1020 }}
+                        tableLayout="fixed"
+                        scroll={{ x: 1150 }}
                         columns={columns as any}
-                        dataSource={filteredUsers}
+                        dataSource={users}
                         locale={{
                             emptyText: (
                                 <div className="flex flex-col items-center px-4 py-12">
@@ -372,28 +396,20 @@ const UserAdminPage: React.FC = () => {
                                     >
                                         <UserOutlined />
                                     </span>
-                                    <div className="mt-3 text-[13px] font-semibold text-[#0F172A]">
-                                        {searchText ? '没有找到匹配的用户' : '暂无用户'}
-                                    </div>
-                                    <div className="mt-1 text-[12px] text-[#66738F]">
-                                        {searchText ? '检查一下关键词，或清除搜索查看全部用户' : '新建用户后可在此管理账号与授权'}
-                                    </div>
-                                    {searchText && (
-                                        <Button size="small" className="tk-soft-btn mt-3" onClick={() => setSearchText('')}>
-                                            清除搜索
-                                        </Button>
-                                    )}
+                                    <div className="mt-3 text-[13px] font-semibold text-[#0F172A]">暂无用户</div>
+                                    <div className="mt-1 text-[12px] text-[#66738F]">新建用户后可在此管理账号与授权</div>
                                 </div>
                             ),
                         }}
                         pagination={{
                             pageSize: 50,
-                            pageSizeOptions: [50, 100, 200],
-                            showSizeChanger: true,
+                            showSizeChanger: false,
                             showTotal: (t) => `共 ${t} 个用户（${counts.admins} 个管理员）`,
                         }}
                         rowSelection={{
                             selectedRowKeys: selectedIds,
+                            // 显式给宽度：避免多选框列在首次挂载时由内容测量出宽度再回填
+                            columnWidth: 40,
                             onChange: (keys) => setSelectedIds(keys),
                             getCheckboxProps: (record: AdminUser) => ({
                                 disabled: record.id === me?.id, // 自己不可批量操作（防自锁）
@@ -409,6 +425,7 @@ const UserAdminPage: React.FC = () => {
                     onCancel={() => setCreateOpen(false)}
                     destroyOnHidden
                     width={520}
+                    className="tk-form-compact"
                 >
                     <Form form={form} layout="vertical" className="pt-1">
                         <Form.Item name="username" label="用户名" rules={[{ required: true, min: 2 }]}>
@@ -433,39 +450,34 @@ const UserAdminPage: React.FC = () => {
                     title={`重置密码 · ${resetTarget?.username ?? ''}`}
                     open={!!resetTarget}
                     onCancel={() => { setResetTarget(null); setOneTimePassword(''); }}
+                    maskClosable={false}
+                    width={460}
                     footer={<Button type="primary" onClick={() => { setResetTarget(null); setOneTimePassword(''); }}>我已保存</Button>}
                 >
                     <div className="space-y-3">
-                        <Note tone="amber">
-                            请立即保存新密码：仅本次显示，关闭后将无法再次查看。
-                        </Note>
-                        <div className="rounded-xl border border-[rgba(91,141,239,0.16)] bg-[#FBFDFF] px-3.5 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
+                        <div className="flex items-start gap-2 text-[12.5px] leading-[1.65] text-[#52607A]">
+                            <WarningOutlined className="mt-0.5 shrink-0 text-[14px] text-[#B8790F]" />
+                            <span>关闭后无法再次查看，请立即保存并告知该用户。</span>
+                        </div>
+
+                        {/* 密码展示做成一块只读字段（和弹窗里的输入框同一支浅冷蓝），
+                            不再套一层白色小卡，避免「卡片包卡片」 */}
+                        <div className="rounded-xl border border-[rgba(91,141,239,0.20)] bg-[#EFF5FF] px-3.5 py-3">
                             <div className="flex items-center justify-between gap-2">
-                                <span className="text-[11.5px] text-[#8A94AB]">新密码</span>
+                                <span className="tk-field-label !mb-0">一次性新密码</span>
                                 <TkTag tone="amber">仅显示一次</TkTag>
                             </div>
-                            <div className="mt-2">
-                                <Text
-                                    copyable
-                                    code
-                                    style={{
-                                        display: 'inline-block',
-                                        margin: 0,
-                                        padding: '6px 10px',
-                                        fontSize: 16,
-                                        color: '#0F172A',
-                                        background: '#EFF5FF',
-                                        border: '1px solid rgba(91,141,239,0.20)',
-                                        borderRadius: 8,
-                                    }}
-                                >
+                            <div className="mt-2 flex items-center gap-3">
+                                <span className="tk-mono min-w-0 flex-1 select-all break-all text-[20px] font-semibold leading-7 tracking-[0.04em] text-[#0F172A]">
                                     {oneTimePassword}
-                                </Text>
+                                </span>
+                                <Button size="small" className="shrink-0" icon={<CopyOutlined />} onClick={copyOneTimePassword}>
+                                    复制
+                                </Button>
                             </div>
                         </div>
-                        <div className="text-[12px] leading-[1.65] text-[#66738F]">
-                            请告知该用户并提醒其尽快修改。
-                        </div>
+
+                        <div className="text-[11.5px] text-[#8A94AB]">建议提醒用户首次登录后立即修改密码。</div>
                     </div>
                 </Modal>
 

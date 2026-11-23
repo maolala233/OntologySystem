@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Button, Spin, Modal, Form, Input, Space, Table, Select, Typography, Drawer } from 'antd';
+import { Button, Modal, Form, Input, Space, Table, Select, Typography, Drawer } from 'antd';
 import { message, notifyError } from '../shared/feedback';
 import {
     ApartmentOutlined,
@@ -10,13 +10,12 @@ import {
     ExclamationCircleOutlined,
     PlusOutlined,
     ReloadOutlined,
-    SearchOutlined,
     SwapOutlined,
 } from '@ant-design/icons';
 import Navbar from '../components/Layout/Navbar';
 import TechHero from '../components/TechHero';
 import { Dot, Note, StatBand, TkTag } from '../shared/consoleUi';
-import { getDomains, createDomain, updateDomain, deleteDomain, getDomainProjects, migrateProjectsBatch, KnowledgeDomain, ProjectInDomain } from '../api/domains';
+import { getDomains, invalidateDomains, createDomain, updateDomain, deleteDomain, getDomainProjects, migrateProjectsBatch, KnowledgeDomain, ProjectInDomain } from '../api/domains';
 
 const { TextArea } = Input;
 const { Text } = Typography;
@@ -31,6 +30,8 @@ const fmtDay = (v?: string | null) => (v ? v.slice(0, 10) : '—');
 const DomainManagementPage: React.FC = () => {
     const [domains, setDomains] = useState<DomainWithCount[]>([]);
     const [loading, setLoading] = useState(true);
+    // 刷新按钮的 loading 只在手动点击时出现：首屏加载由表格自己显示，按钮不动
+    const [refreshing, setRefreshing] = useState(false);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [isMigrateDrawerOpen, setIsMigrateDrawerOpen] = useState(false);
@@ -39,14 +40,15 @@ const DomainManagementPage: React.FC = () => {
     const [migratingDomain, setMigratingDomain] = useState<DomainWithCount | null>(null);
     const [domainProjects, setDomainProjects] = useState<ProjectInDomain[]>([]);
     const [projectTargetDomains, setProjectTargetDomains] = useState<Record<number, number>>({}); // projectId -> targetDomainId
-    const [searchText, setSearchText] = useState('');
     const [form] = Form.useForm();
 
     useEffect(() => {
         loadDomains();
     }, []);
 
-    const loadDomains = async () => {
+    const loadDomains = async (force = false) => {
+        // force：手动刷新时绕过 60s 缓存，真正回源
+        if (force) invalidateDomains();
         setLoading(true);
         try {
             const allDomains = await getDomains();
@@ -65,12 +67,14 @@ const DomainManagementPage: React.FC = () => {
         }
     };
 
-    const filteredDomains = useMemo(() => {
-        const q = searchText.trim().toLowerCase();
-        if (!q) return domains;
-        return domains.filter(d =>
-            d.name.toLowerCase().includes(q) || (d.description ?? '').toLowerCase().includes(q));
-    }, [domains, searchText]);
+    const refresh = async () => {
+        setRefreshing(true);
+        try {
+            await loadDomains(true);
+        } finally {
+            setRefreshing(false);
+        }
+    };
 
     const stats = useMemo(() => {
         const covered = domains.reduce((sum, d) => sum + d.projectCount, 0);
@@ -371,7 +375,7 @@ const DomainManagementPage: React.FC = () => {
                     showConstellation={domains.length > 0}
                     actions={
                         <>
-                            <Button icon={<ReloadOutlined />} onClick={loadDomains} loading={loading}>
+                            <Button className="tk-soft-btn" icon={<ReloadOutlined />} onClick={refresh} loading={refreshing}>
                                 刷新
                             </Button>
                             <Button type="primary" className="tk-primary-btn" icon={<PlusOutlined />} onClick={openCreateModal}>
@@ -391,72 +395,40 @@ const DomainManagementPage: React.FC = () => {
                     ]}
                 />
 
-                {/* 查询条：知识域数量不多，但名称/描述搜索能省掉整表扫视 */}
-                <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
-                    <div className="tk-controls">
-                        <Input
-                            allowClear
-                            value={searchText}
-                            onChange={e => setSearchText(e.target.value)}
-                            placeholder="搜索知识域名称或描述…"
-                            prefix={<SearchOutlined className="text-[#5B8DEF]" />}
-                            className="w-[260px]"
-                        />
-                    </div>
-                    {searchText && (
-                        <span className="inline-flex items-center gap-1.5 text-[11.5px] text-[#66738F]">
-                            <Dot tone="brand" />
-                            匹配 <span className="tk-mono font-semibold text-[#2A57C6]">{filteredDomains.length}</span> 个知识域
-                        </span>
-                    )}
-                </div>
-
                 {/* 知识域列表：与「我的项目」列表同一套冷蓝表体 / 行 hover / 分页留白 */}
                 <div className="surface-card tk-table">
-                    {loading && domains.length === 0 ? (
-                        <div className="flex h-64 items-center justify-center">
-                            <Spin size="large" />
-                        </div>
-                    ) : domains.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center px-4 py-16">
-                            <div
-                                className="flex h-14 w-14 items-center justify-center rounded-2xl text-[22px] text-[#2F62D8]"
-                                style={{ background: 'linear-gradient(135deg, rgba(91,141,239,0.16), rgba(139,92,246,0.10))' }}
-                            >
-                                <ClusterOutlined />
-                            </div>
-                            <div className="mt-3 text-[14px] font-semibold text-[#0F172A]">暂无知识域</div>
-                            <div className="mt-1 text-[12.5px] text-[#66738F]">创建后可用于归类本体项目</div>
-                            <Button className="tk-soft-btn mt-4" icon={<PlusOutlined />} onClick={openCreateModal}>
-                                创建知识域
-                            </Button>
-                        </div>
-                    ) : filteredDomains.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center px-4 py-16">
-                            <div
-                                className="flex h-14 w-14 items-center justify-center rounded-2xl text-[22px] text-[#2F62D8]"
-                                style={{ background: 'linear-gradient(135deg, rgba(91,141,239,0.16), rgba(139,92,246,0.10))' }}
-                            >
-                                <SearchOutlined />
-                            </div>
-                            <div className="mt-3 text-[14px] font-semibold text-[#0F172A]">没有找到匹配的知识域</div>
-                            <div className="mt-1 text-[12.5px] text-[#66738F]">检查一下关键词，或清除搜索查看全部</div>
-                            <Button className="tk-soft-btn mt-4" onClick={() => setSearchText('')}>清除搜索</Button>
-                        </div>
-                    ) : (
-                        <Table
-                            size="middle"
-                            columns={columns}
-                            dataSource={filteredDomains}
-                            rowKey="id"
-                            scroll={{ x: 960 }}
-                            pagination={{
-                                pageSize: 10,
-                                showSizeChanger: false,
-                                showTotal: (t) => `共 ${t} 个知识域`,
-                            }}
-                        />
-                    )}
+                    {/* 加载态与用户管理同款：交给 antd Table 的 loading 遮罩，
+                        刷新时旧数据保留在遮罩下面，不再整块消失 */}
+                    <Table
+                        size="middle"
+                        loading={loading}
+                        columns={columns}
+                        dataSource={domains}
+                        rowKey="id"
+                        scroll={{ x: 960 }}
+                        locale={{
+                            emptyText: (
+                                <div className="flex flex-col items-center justify-center px-4 py-14">
+                                    <div
+                                        className="flex h-14 w-14 items-center justify-center rounded-2xl text-[22px] text-[#2F62D8]"
+                                        style={{ background: 'linear-gradient(135deg, rgba(91,141,239,0.16), rgba(139,92,246,0.10))' }}
+                                    >
+                                        <ClusterOutlined />
+                                    </div>
+                                    <div className="mt-3 text-[14px] font-semibold text-[#0F172A]">暂无知识域</div>
+                                    <div className="mt-1 text-[12.5px] text-[#66738F]">创建后可用于归类本体项目</div>
+                                    <Button className="tk-soft-btn mt-4" icon={<PlusOutlined />} onClick={openCreateModal}>
+                                        创建知识域
+                                    </Button>
+                                </div>
+                            ),
+                        }}
+                        pagination={{
+                            pageSize: 10,
+                            showSizeChanger: false,
+                            showTotal: (t) => `共 ${t} 个知识域`,
+                        }}
+                    />
                 </div>
             </div>
 
@@ -467,6 +439,7 @@ const DomainManagementPage: React.FC = () => {
                 onCancel={closeCreateModal}
                 footer={null}
                 width={500}
+                className="tk-form-compact"
                 destroyOnHidden
             >
                 <Form form={form} layout="vertical" onFinish={handleCreateOrUpdateDomain} className="pt-1">
@@ -632,7 +605,9 @@ const DomainManagementPage: React.FC = () => {
                                 dataSource={domainProjects}
                                 rowKey="id"
                                 pagination={false}
-                                scroll={{ y: 400 }}
+                                /* 只有项目较多时才封顶高度：antd 在固定 scroll.y 下会常驻一条
+                                   纵向滚动条（Windows 上只看到上下箭头），两三条数据时非常多余 */
+                                scroll={domainProjects.length > 8 ? { y: 400 } : undefined}
                                 size="small"
                             />
                         </div>

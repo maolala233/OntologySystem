@@ -8,7 +8,7 @@
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import { message, notifyError } from '../../shared/feedback';
-import { Button, Card, Input, Switch, Tooltip } from 'antd';
+import { Button, Card, Input, Spin, Switch, Tooltip } from 'antd';
 import {
     ApiOutlined,
     ApartmentOutlined,
@@ -41,6 +41,8 @@ const BREADCRUMBS = [
 const EnvConfigPage: React.FC = () => {
     const [data, setData] = useState<EnvConfigResponse | null>(null);
     const [loading, setLoading] = useState(true);
+    // 刷新按钮只在手动点击时转圈；首屏由骨架屏表达
+    const [refreshing, setRefreshing] = useState(false);
     const [saving, setSaving] = useState(false);
     const [dirty, setDirty] = useState<Record<string, string | boolean>>({});
     const [testing, setTesting] = useState<string | null>(null);
@@ -61,6 +63,15 @@ const EnvConfigPage: React.FC = () => {
     };
 
     useEffect(() => { load(); }, []);
+
+    const refresh = async () => {
+        setRefreshing(true);
+        try {
+            await load();
+        } finally {
+            setRefreshing(false);
+        }
+    };
 
     const dirtyCount = useMemo(() => Object.keys(dirty).length, [dirty]);
 
@@ -126,7 +137,7 @@ const EnvConfigPage: React.FC = () => {
             showConstellation={!!data}
             actions={
                 <>
-                    <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>刷新</Button>
+                    <Button className="tk-soft-btn" icon={<ReloadOutlined />} onClick={refresh} loading={refreshing}>刷新</Button>
                     <Button
                         type="primary"
                         className="tk-primary-btn"
@@ -214,6 +225,8 @@ const EnvConfigPage: React.FC = () => {
                 </ul>
             </Note>
 
+            {/* 刷新时旧卡片保留在 Spin 遮罩下（与用户管理的 Table loading 同一观感） */}
+            <Spin spinning={loading}>
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 {Object.entries(data.services).map(([service, fields]) => {
                     const meta = SERVICE_META[service] || {
@@ -319,6 +332,7 @@ const EnvConfigPage: React.FC = () => {
                     );
                 })}
             </div>
+            </Spin>
 
             {/* 吸底保存条：页面较长时，改动后的保存入口一直可见 */}
             {dirtyCount > 0 && (
