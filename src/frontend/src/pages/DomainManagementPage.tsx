@@ -1,17 +1,21 @@
-import React, { useEffect, useState } from 'react';
-import { PROJECT_STATUS, PUBLISHED_TAG } from '../shared/projectStatus';
-import { Button, Spin, Modal, Form, Input, Tag, Space, Table, Select, Typography, Drawer } from 'antd';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Button, Spin, Modal, Form, Input, Space, Table, Select, Typography, Drawer } from 'antd';
 import { message, notifyError } from '../shared/feedback';
 import {
-    PlusOutlined,
-    EditOutlined,
-    DeleteOutlined,
-    SwapOutlined,
-    ExclamationCircleOutlined,
+    ApartmentOutlined,
+    ClockCircleOutlined,
     ClusterOutlined,
+    DeleteOutlined,
+    EditOutlined,
+    ExclamationCircleOutlined,
+    PlusOutlined,
+    ReloadOutlined,
+    SearchOutlined,
+    SwapOutlined,
 } from '@ant-design/icons';
 import Navbar from '../components/Layout/Navbar';
-import PageHeader from '../components/Layout/PageHeader';
+import TechHero from '../components/TechHero';
+import { Dot, Note, StatBand, TkTag } from '../shared/consoleUi';
 import { getDomains, createDomain, updateDomain, deleteDomain, getDomainProjects, migrateProjectsBatch, KnowledgeDomain, ProjectInDomain } from '../api/domains';
 
 const { TextArea } = Input;
@@ -20,6 +24,9 @@ const { Text } = Typography;
 interface DomainWithCount extends KnowledgeDomain {
     projectCount: number;
 }
+
+/** 表格里的日期只到天：知识域是慢变参考数据，精确到秒没有信息量 */
+const fmtDay = (v?: string | null) => (v ? v.slice(0, 10) : '—');
 
 const DomainManagementPage: React.FC = () => {
     const [domains, setDomains] = useState<DomainWithCount[]>([]);
@@ -32,6 +39,7 @@ const DomainManagementPage: React.FC = () => {
     const [migratingDomain, setMigratingDomain] = useState<DomainWithCount | null>(null);
     const [domainProjects, setDomainProjects] = useState<ProjectInDomain[]>([]);
     const [projectTargetDomains, setProjectTargetDomains] = useState<Record<number, number>>({}); // projectId -> targetDomainId
+    const [searchText, setSearchText] = useState('');
     const [form] = Form.useForm();
 
     useEffect(() => {
@@ -56,6 +64,20 @@ const DomainManagementPage: React.FC = () => {
             setLoading(false);
         }
     };
+
+    const filteredDomains = useMemo(() => {
+        const q = searchText.trim().toLowerCase();
+        if (!q) return domains;
+        return domains.filter(d =>
+            d.name.toLowerCase().includes(q) || (d.description ?? '').toLowerCase().includes(q));
+    }, [domains, searchText]);
+
+    const stats = useMemo(() => {
+        const covered = domains.reduce((sum, d) => sum + d.projectCount, 0);
+        const empty = domains.filter(d => d.projectCount === 0).length;
+        const latest = domains.reduce((max, d) => (d.updated_at && d.updated_at > max ? d.updated_at : max), '');
+        return { covered, empty, latest };
+    }, [domains]);
 
     const handleCreateOrUpdateDomain = async (values: any) => {
         try {
@@ -90,7 +112,7 @@ const DomainManagementPage: React.FC = () => {
     const handleMigrateClick = async (domain: DomainWithCount) => {
         setMigratingDomain(domain);
         setProjectTargetDomains({});
-        
+
         if (domain.projectCount > 0) {
             // 加载该知识域下的项目
             try {
@@ -112,7 +134,7 @@ const DomainManagementPage: React.FC = () => {
     const handleDeleteClick = async (domain: DomainWithCount) => {
         setDeletingDomain(domain);
         setProjectTargetDomains({});
-        
+
         if (domain.projectCount > 0) {
             // 有项目，进入迁移流程
             setMigratingDomain(domain);
@@ -139,24 +161,24 @@ const DomainManagementPage: React.FC = () => {
         try {
             // 检查是否有项目指定了目标知识域
             const hasTargetDomains = Object.keys(projectTargetDomains).length > 0;
-            
+
             if (!hasTargetDomains) {
                 message.warning('请为至少一个项目指定目标知识域');
                 return;
             }
-            
+
             // 使用批量迁移 API
             const migrationItems = Object.entries(projectTargetDomains).map(([projectId, targetDomainId]) => ({
                 project_id: Number(projectId),
                 target_domain_id: targetDomainId,
             }));
-            
+
             await migrateProjectsBatch(targetDomain.id, {
                 items: migrationItems,
             });
-            
+
             const isDeleteFlow = !!(deletingDomain && deletingDomain.id === targetDomain.id);
-            
+
             if (isDeleteFlow) {
                 // 删除流程：项目迁移完成后域内已清空，随即删除知识域
                 await deleteDomain(targetDomain.id);
@@ -164,7 +186,7 @@ const DomainManagementPage: React.FC = () => {
             } else {
                 message.success(`已迁移 ${migrationItems.length} 个项目`);
             }
-            
+
             setIsMigrateDrawerOpen(false);
             setIsDeleteModalOpen(false);
             setMigratingDomain(null);
@@ -184,7 +206,7 @@ const DomainManagementPage: React.FC = () => {
         try {
             await deleteDomain(deletingDomain.id);
             message.success('知识域已删除');
-            
+
             setIsDeleteModalOpen(false);
             setDeletingDomain(null);
             loadDomains();
@@ -214,6 +236,19 @@ const DomainManagementPage: React.FC = () => {
         setIsModalOpen(true);
     };
 
+    const closeCreateModal = () => {
+        setIsModalOpen(false);
+        form.resetFields();
+        setEditingDomain(null);
+    };
+
+    const closeMigrateDrawer = () => {
+        setIsMigrateDrawerOpen(false);
+        setDomainProjects([]);
+        setProjectTargetDomains({});
+        setMigratingDomain(null);
+    };
+
     const breadcrumbs = [
         { title: '首页', path: '/' },
         { title: '系统配置' },
@@ -226,14 +261,24 @@ const DomainManagementPage: React.FC = () => {
             dataIndex: 'id',
             key: 'id',
             width: 80,
-            render: (id: number) => <span className="font-mono text-xs text-[#8A94AB]">#{id}</span>,
+            render: (id: number) => <span className="tk-mono text-xs text-[#8A94AB]">#{id}</span>,
         },
         {
             title: '知识域名称',
             dataIndex: 'name',
             key: 'name',
             width: 240,
-            render: (name: string) => <Text strong>{name}</Text>,
+            render: (name: string) => (
+                <div className="flex items-center gap-2 min-w-0">
+                    <span
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[13px]"
+                        style={{ background: 'rgba(91,141,239,0.10)', color: '#2A57C6' }}
+                    >
+                        <ClusterOutlined />
+                    </span>
+                    <Text strong ellipsis={{ tooltip: name }} className="!m-0">{name}</Text>
+                </div>
+            ),
         },
         {
             title: '描述',
@@ -250,8 +295,17 @@ const DomainManagementPage: React.FC = () => {
             width: 120,
             align: 'center' as const,
             render: (_: any, record: DomainWithCount) => (
-                <Tag className="!m-0" style={{ background: 'rgba(91,141,239,0.12)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.28)' }}>{record.projectCount} 个</Tag>
+                <TkTag tone={record.projectCount > 0 ? 'brand' : 'quiet'} mono>
+                    {record.projectCount} 个
+                </TkTag>
             ),
+        },
+        {
+            title: '更新时间',
+            dataIndex: 'updated_at',
+            key: 'updated_at',
+            width: 130,
+            render: (v?: string) => <span className="tk-mono text-[12px] text-[#8A94AB]">{fmtDay(v)}</span>,
         },
         {
             title: '操作',
@@ -300,54 +354,102 @@ const DomainManagementPage: React.FC = () => {
             }));
     };
 
+    const assignedCount = Object.keys(projectTargetDomains).length;
+
     return (
         <div className="h-full flex flex-col app-canvas">
             <Navbar breadcrumbs={breadcrumbs} />
 
             <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
-                <PageHeader
-                    icon={<ClusterOutlined />}
+                <TechHero
+                    compact
+                    tone="light"
+                    className="!mb-4"
                     title="知识域管理"
+                    titleSuffix="DOMAIN REGISTRY"
                     subtitle="管理系统中的知识域分类：新建、编辑、删除，以及知识域之间的项目迁移"
-                    extra={
-                        <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>
-                            新建知识域
-                        </Button>
+                    showConstellation={domains.length > 0}
+                    actions={
+                        <>
+                            <Button icon={<ReloadOutlined />} onClick={loadDomains} loading={loading}>
+                                刷新
+                            </Button>
+                            <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>
+                                新建知识域
+                            </Button>
+                        </>
                     }
                 />
 
-                {/* 知识域列表：与「我的项目」列表同一套浮起面板 / 行高 / 分页留白 */}
-                <div className="surface-card">
-                    {loading ? (
-                        <div className="flex justify-center items-center h-64">
+                <StatBand
+                    className="mb-4"
+                    items={[
+                        { label: '知识域', value: domains.length, tone: 'brand', icon: <ClusterOutlined /> },
+                        { label: '已归类项目', value: stats.covered, tone: 'violet', icon: <ApartmentOutlined /> },
+                        { label: '空知识域', value: stats.empty, tone: 'quiet', icon: <SwapOutlined /> },
+                        { label: '最近更新', value: stats.latest ? stats.latest.slice(5, 10) : '—', tone: 'cyan', icon: <ClockCircleOutlined />, hint: stats.latest ? `最近更新于 ${fmtDay(stats.latest)}` : '暂无更新时间' },
+                    ]}
+                />
+
+                {/* 查询条：知识域数量不多，但名称/描述搜索能省掉整表扫视 */}
+                <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+                    <div className="tk-query-bar tk-controls flex items-center gap-1 p-1">
+                        <Input
+                            allowClear
+                            value={searchText}
+                            onChange={e => setSearchText(e.target.value)}
+                            placeholder="搜索知识域名称或描述…"
+                            prefix={<SearchOutlined className="text-[#5B8DEF]" />}
+                            className="w-[260px]"
+                        />
+                    </div>
+                    {searchText && (
+                        <span className="inline-flex items-center gap-1.5 text-[11.5px] text-[#66738F]">
+                            <Dot tone="brand" />
+                            匹配 <span className="tk-mono font-semibold text-[#2A57C6]">{filteredDomains.length}</span> 个知识域
+                        </span>
+                    )}
+                </div>
+
+                {/* 知识域列表：与「我的项目」列表同一套冷蓝表体 / 行 hover / 分页留白 */}
+                <div className="surface-card tk-table">
+                    {loading && domains.length === 0 ? (
+                        <div className="flex h-64 items-center justify-center">
                             <Spin size="large" />
                         </div>
                     ) : domains.length === 0 ? (
                         <div className="flex flex-col items-center justify-center px-4 py-16">
                             <div
-                                className="w-14 h-14 rounded-2xl flex items-center justify-center text-[22px] text-[#2F62D8]"
+                                className="flex h-14 w-14 items-center justify-center rounded-2xl text-[22px] text-[#2F62D8]"
                                 style={{ background: 'linear-gradient(135deg, rgba(91,141,239,0.16), rgba(139,92,246,0.10))' }}
                             >
                                 <ClusterOutlined />
                             </div>
                             <div className="mt-3 text-[14px] font-semibold text-[#0F172A]">暂无知识域</div>
                             <div className="mt-1 text-[12.5px] text-[#66738F]">创建后可用于归类本体项目</div>
-                            <Button
-                                type="primary"
-                                icon={<PlusOutlined />}
-                                className="mt-4"
-                                onClick={openCreateModal}
-                            >
+                            <Button className="tk-soft-btn mt-4" icon={<PlusOutlined />} onClick={openCreateModal}>
                                 创建知识域
                             </Button>
+                        </div>
+                    ) : filteredDomains.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center px-4 py-16">
+                            <div
+                                className="flex h-14 w-14 items-center justify-center rounded-2xl text-[22px] text-[#2F62D8]"
+                                style={{ background: 'linear-gradient(135deg, rgba(91,141,239,0.16), rgba(139,92,246,0.10))' }}
+                            >
+                                <SearchOutlined />
+                            </div>
+                            <div className="mt-3 text-[14px] font-semibold text-[#0F172A]">没有找到匹配的知识域</div>
+                            <div className="mt-1 text-[12.5px] text-[#66738F]">检查一下关键词，或清除搜索查看全部</div>
+                            <Button className="tk-soft-btn mt-4" onClick={() => setSearchText('')}>清除搜索</Button>
                         </div>
                     ) : (
                         <Table
                             size="middle"
                             columns={columns}
-                            dataSource={domains}
+                            dataSource={filteredDomains}
                             rowKey="id"
-                            scroll={{ x: 860 }}
+                            scroll={{ x: 960 }}
                             pagination={{
                                 pageSize: 10,
                                 showSizeChanger: false,
@@ -362,15 +464,12 @@ const DomainManagementPage: React.FC = () => {
             <Modal
                 title={editingDomain ? '编辑知识域' : '创建知识域'}
                 open={isModalOpen}
-                onCancel={() => {
-                    setIsModalOpen(false);
-                    form.resetFields();
-                    setEditingDomain(null);
-                }}
+                onCancel={closeCreateModal}
                 footer={null}
                 width={500}
+                destroyOnHidden
             >
-                <Form form={form} layout="vertical" onFinish={handleCreateOrUpdateDomain}>
+                <Form form={form} layout="vertical" onFinish={handleCreateOrUpdateDomain} className="pt-1">
                     <Form.Item
                         name="name"
                         label="知识域名称"
@@ -386,15 +485,9 @@ const DomainManagementPage: React.FC = () => {
                         />
                     </Form.Item>
 
-                    <Form.Item>
+                    <Form.Item className="!mb-0">
                         <Space className="w-full justify-end">
-                            <Button onClick={() => {
-                                setIsModalOpen(false);
-                                form.resetFields();
-                                setEditingDomain(null);
-                            }}>
-                                取消
-                            </Button>
+                            <Button onClick={closeCreateModal}>取消</Button>
                             <Button type="primary" htmlType="submit">
                                 {editingDomain ? '更新' : '创建'}
                             </Button>
@@ -406,37 +499,28 @@ const DomainManagementPage: React.FC = () => {
             {/* 迁移项目抽屉 */}
             <Drawer
                 title={
-                    <div className="flex items-center gap-2">
+                    <span className="flex items-center gap-2">
                         <SwapOutlined className="text-[#5B8DEF]" />
                         <span>{deletingDomain ? '迁移项目后删除知识域' : '迁移项目'}</span>
-                    </div>
+                    </span>
                 }
                 placement="right"
                 open={isMigrateDrawerOpen}
-                onClose={() => {
-                    setIsMigrateDrawerOpen(false);
-                    setDomainProjects([]);
-                    setProjectTargetDomains({});
-                    setMigratingDomain(null);
-                }}
+                onClose={closeMigrateDrawer}
                 width={1200}
                 footer={
-                    <div className="flex justify-between items-center w-full">
-                        <div className="text-sm text-[#66738F]">
-                            共 {domainProjects.length} 个项目，
-                            已指定 {Object.keys(projectTargetDomains).length} 个项目的目标知识域
+                    <div className="flex w-full flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 text-[12.5px] text-[#66738F]">
+                            <Dot tone={assignedCount > 0 ? 'brand' : 'quiet'} />
+                            <span>
+                                共 <span className="tk-mono font-semibold text-[#1F2A44]">{domainProjects.length}</span> 个项目，
+                                已指定 <span className="tk-mono font-semibold text-[#2A57C6]">{assignedCount}</span> 个目标知识域
+                            </span>
                         </div>
                         <Space>
-                            <Button onClick={() => {
-                                setIsMigrateDrawerOpen(false);
-                                setDomainProjects([]);
-                                setProjectTargetDomains({});
-                                setMigratingDomain(null);
-                            }}>
-                                取消
-                            </Button>
-                            <Button 
-                                type="primary" 
+                            <Button onClick={closeMigrateDrawer}>取消</Button>
+                            <Button
+                                type="primary"
                                 onClick={handleConfirmMigrate}
                                 danger={!!deletingDomain}
                             >
@@ -447,122 +531,118 @@ const DomainManagementPage: React.FC = () => {
                 }
             >
                 <div className="space-y-4">
-                    <p className="text-[#52607A]">
-                        {deletingDomain ? (
-                            <>
-                                知识域「<Text strong>{migratingDomain?.name}</Text>」中有 <Text strong>{migratingDomain?.projectCount}</Text> 个本体项目。
-                                删除前需要将这些项目迁移到其他知识域，迁移完成后将删除该知识域。
-                            </>
-                        ) : (
-                            <>
-                                将知识域「<Text strong>{migratingDomain?.name}</Text>」中的 <Text strong>{migratingDomain?.projectCount}</Text> 个项目迁移到其他知识域。
-                            </>
-                        )}
-                    </p>
-                    <div className="rounded-lg border border-[#DCE7F7] p-3" style={{ background: 'rgba(91,141,239,0.06)' }}>
-                        <p className="text-sm text-[#2A57C6]">
-                            <strong>操作说明：</strong>为每个项目选择要迁移到的目标知识域（从左到右：本体名、类数量、实例数量、关系数量、当前知识域、目标知识域）。
-                            不指定目标知识域的项目将不会被迁移。
-                        </p>
-                    </div>
+                    <Note>
+                        <div className="text-[13px] text-[#3D4B66]">
+                            {deletingDomain ? (
+                                <>
+                                    知识域「<Text strong>{migratingDomain?.name}</Text>」中有 <Text strong>{migratingDomain?.projectCount}</Text> 个本体项目。
+                                    删除前需要将这些项目迁移到其他知识域，迁移完成后将删除该知识域。
+                                </>
+                            ) : (
+                                <>
+                                    将知识域「<Text strong>{migratingDomain?.name}</Text>」中的 <Text strong>{migratingDomain?.projectCount}</Text> 个项目迁移到其他知识域。
+                                </>
+                            )}
+                        </div>
+                    </Note>
+                    <Note tone="quiet">
+                        <span className="tk-note-title">操作说明：</span>
+                        为每个项目选择要迁移到的目标知识域（从左到右：本体名、类数量、实例数量、关系数量、当前知识域、目标知识域）。
+                        不指定目标知识域的项目将不会被迁移。
+                    </Note>
 
                     {/* 项目列表表格 */}
-                    <div className="border rounded-lg overflow-hidden">
-                        <Table
-                            columns={[
-                                {
-                                    title: '本体名',
-                                    dataIndex: 'name',
-                                    key: 'name',
-                                    width: 200,
-                                    render: (name: string, record: ProjectInDomain) => (
-                                        <div className="flex items-center gap-2">
-                                            <Text strong>{name}</Text>
-                                            {record.is_published && (
-                                                <Tag color={PUBLISHED_TAG.color}>{PUBLISHED_TAG.text}</Tag>
-                                            )}
-                                        </div>
-                                    ),
-                                },
-                                {
-                                    title: '本体类数量',
-                                    dataIndex: 'class_count',
-                                    key: 'class_count',
-                                    width: 100,
-                                    align: 'center',
-                                    render: (count: number) => (
-                                        <span className="tk-mono text-[13px] text-[#3D4B66]">{count}</span>
-                                    ),
-                                },
-                                {
-                                    title: '实例数量',
-                                    dataIndex: 'instance_count',
-                                    key: 'instance_count',
-                                    width: 100,
-                                    align: 'center',
-                                    render: (count: number) => (
-                                        <span className="tk-mono text-[13px] text-[#3D4B66]">{count}</span>
-                                    ),
-                                },
-                                {
-                                    title: '关系数量',
-                                    dataIndex: 'edge_count',
-                                    key: 'edge_count',
-                                    width: 100,
-                                    align: 'center',
-                                    render: (count: number) => (
-                                        <span className="tk-mono text-[13px] text-[#3D4B66]">{count}</span>
-                                    ),
-                                },
-                                {
-                                    title: '当前知识域',
-                                    dataIndex: 'current_domain_name',
-                                    key: 'current_domain_name',
-                                    width: 150,
-                                    render: (name: string) => (
-                                        <Tag className="!m-0">{name}</Tag>
-                                    ),
-                                },
-                                {
-                                    title: '目标知识域',
-                                    key: 'target_domain',
-                                    width: 200,
-                                    render: (_: any, record: ProjectInDomain) => (
-                                        <Select
-                                            value={projectTargetDomains[record.id] || undefined}
-                                            onChange={(value) => {
-                                                setProjectTargetDomains(prev => ({
-                                                    ...prev,
-                                                    [record.id]: value,
-                                                }));
-                                            }}
-                                            placeholder="请选择目标知识域"
-                                            className="w-full"
-                                            size="small"
-                                            allowClear
-                                            options={getTargetDomainOptions()}
-                                        />
-                                    ),
-                                },
-                            ]}
-                            dataSource={domainProjects}
-                            rowKey="id"
-                            pagination={false}
-                            scroll={{ y: 400 }}
-                            size="small"
-                        />
+                    <div className="tk-controls">
+                        <div className="surface-card tk-table !rounded-xl">
+                            <Table
+                                columns={[
+                                    {
+                                        title: '本体名',
+                                        dataIndex: 'name',
+                                        key: 'name',
+                                        width: 200,
+                                        render: (name: string, record: ProjectInDomain) => (
+                                            <div className="flex items-center gap-2">
+                                                <Text strong ellipsis={{ tooltip: name }} className="!m-0">{name}</Text>
+                                                {record.is_published && <TkTag tone="violet">已发布</TkTag>}
+                                            </div>
+                                        ),
+                                    },
+                                    {
+                                        title: '本体类数量',
+                                        dataIndex: 'class_count',
+                                        key: 'class_count',
+                                        width: 100,
+                                        align: 'center',
+                                        render: (count: number) => (
+                                            <span className="tk-mono text-[13px] text-[#3D4B66]">{count}</span>
+                                        ),
+                                    },
+                                    {
+                                        title: '实例数量',
+                                        dataIndex: 'instance_count',
+                                        key: 'instance_count',
+                                        width: 100,
+                                        align: 'center',
+                                        render: (count: number) => (
+                                            <span className="tk-mono text-[13px] text-[#3D4B66]">{count}</span>
+                                        ),
+                                    },
+                                    {
+                                        title: '关系数量',
+                                        dataIndex: 'edge_count',
+                                        key: 'edge_count',
+                                        width: 100,
+                                        align: 'center',
+                                        render: (count: number) => (
+                                            <span className="tk-mono text-[13px] text-[#3D4B66]">{count}</span>
+                                        ),
+                                    },
+                                    {
+                                        title: '当前知识域',
+                                        dataIndex: 'current_domain_name',
+                                        key: 'current_domain_name',
+                                        width: 150,
+                                        render: (name: string) => (
+                                            <TkTag tone="quiet">{name}</TkTag>
+                                        ),
+                                    },
+                                    {
+                                        title: '目标知识域',
+                                        key: 'target_domain',
+                                        width: 200,
+                                        render: (_: any, record: ProjectInDomain) => (
+                                            <Select
+                                                value={projectTargetDomains[record.id] || undefined}
+                                                onChange={(value) => {
+                                                    setProjectTargetDomains(prev => ({
+                                                        ...prev,
+                                                        [record.id]: value,
+                                                    }));
+                                                }}
+                                                placeholder="请选择目标知识域"
+                                                className="w-full"
+                                                size="small"
+                                                allowClear
+                                                options={getTargetDomainOptions()}
+                                            />
+                                        ),
+                                    },
+                                ]}
+                                dataSource={domainProjects}
+                                rowKey="id"
+                                pagination={false}
+                                scroll={{ y: 400 }}
+                                size="small"
+                            />
+                        </div>
                     </div>
                 </div>
             </Drawer>
 
             {/* 直接删除确认弹窗（无项目时） */}
             <Modal
-                title={
-                    <div className="flex items-center gap-2 text-[#B42318]">
-                        <ExclamationCircleOutlined className="text-xl" />
-                        <span>确认删除</span>
-                    </div>
-                }
+                title="删除知识域"
                 open={isDeleteModalOpen}
                 onCancel={() => setIsDeleteModalOpen(false)}
                 onOk={handleConfirmDelete}
@@ -570,10 +650,14 @@ const DomainManagementPage: React.FC = () => {
                 cancelText="取消"
                 okButtonProps={{ danger: true }}
             >
-                <p>
-                    确定要删除知识域「<Text strong>{deletingDomain?.name}</Text>」吗？
-                </p>
-                <p className="text-[#66738F] mt-2">此操作不可恢复！</p>
+                <div className="space-y-3">
+                    <div className="text-[13px] text-[#33415C]">
+                        确定要删除知识域「<Text strong>{deletingDomain?.name}</Text>」吗？
+                    </div>
+                    <Note tone="danger" icon={<ExclamationCircleOutlined />}>
+                        此操作不可恢复。
+                    </Note>
+                </div>
             </Modal>
         </div>
     );

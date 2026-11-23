@@ -1694,3 +1694,306 @@ h4.ant-typography {
   letter-spacing: -0.01em;
   color: var(--ink-1);
 }
+
+/* ===================================================================
+   管理后台 / 工具页统一材质（2026-11-23）
+   报告生成、PPT 生成与「系统配置」五个菜单共用。视觉语言不新建一套：
+   色彩全部取自站内已有的冷调 token，装饰沿用已定稿的面板装饰语言——
+   小标题彩条 + 发光圆点 + 彩色等宽数字 + 竖线分列。
+   ==================================================================== */
+
+/* 手写字段标签提升为全站可用：原先只在弹窗里有样式，
+   抽屉 / 页面里的手写标签各自写一套字号与颜色（模型配置、角色弹窗） */
+.tk-field-label {
+  display: block;
+  margin-bottom: 6px;
+  color: #52607A;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* ---------- 裸控件皮肤 ----------
+   不在 antd Form 里的输入 / 下拉 / 数字 / 日期（报告工作台、环境配置卡片），
+   和表单、弹窗、查询条吃同一支浅冷蓝字段材质。
+   挂在容器上（.tk-controls）按需生效，避免一刀切影响问答输入井、
+   MCP 控制台、代码编辑器这些自带表面的控件 */
+.tk-controls .ant-input,
+.tk-controls .ant-input-affix-wrapper,
+.tk-controls .ant-input-number,
+.tk-controls .ant-picker,
+.tk-controls .ant-select:not(.ant-select-customize-input) .ant-select-selector {
+  color: #1F2A44;
+  border-color: var(--field-border);
+  background: var(--field-bg);
+  box-shadow: none;
+}
+
+.tk-controls .ant-input-affix-wrapper > input.ant-input,
+.tk-controls .ant-input-number-input,
+.tk-controls .ant-select-selection-search-input,
+.tk-controls .ant-picker input {
+  background: transparent;
+}
+
+.tk-controls .ant-input:not(:disabled):hover,
+.tk-controls .ant-input-affix-wrapper:not(.ant-input-affix-wrapper-disabled):hover,
+.tk-controls .ant-input-number:not(.ant-input-number-disabled):hover,
+.tk-controls .ant-picker:not(.ant-picker-disabled):hover,
+.tk-controls .ant-select:not(.ant-select-disabled):not(.ant-select-customize-input):hover .ant-select-selector {
+  border-color: var(--field-border-hover);
+  background: var(--field-bg-hover);
+}
+
+.tk-controls .ant-input:focus,
+.tk-controls .ant-input-affix-wrapper:focus-within,
+.tk-controls .ant-input-number-focused,
+.tk-controls .ant-picker-focused,
+.tk-controls .ant-select-focused .ant-select-selector {
+  background: var(--field-bg-focus) !important;
+  border-color: var(--field-border-focus) !important;
+  box-shadow: var(--field-ring) !important;
+}
+
+.tk-controls .ant-input::placeholder,
+.tk-controls .ant-select-selection-placeholder,
+.tk-controls .ant-picker-input > input::placeholder {
+  color: var(--field-placeholder);
+}
+
+.tk-controls .ant-input:disabled,
+.tk-controls .ant-input-affix-wrapper-disabled,
+.tk-controls .ant-input-number-disabled,
+.tk-controls .ant-picker-disabled,
+.tk-controls .ant-select-disabled .ant-select-selector {
+  color: #8A94AB;
+  border-color: var(--field-disabled-border);
+  background: var(--field-disabled-bg);
+  box-shadow: none;
+}
+
+/* ---------- 标签胶囊 ----------
+   替代散落在页面里的 antd 预设色 Tag：品牌蓝 / 紫 / 青 / 琥珀 / 冷调红 / 灰，
+   与项目状态徽标（shared/projectStatus 的 STATUS_CHIP）同一组色值 */
+.tk-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.tk-tag--brand  { background: rgba(91, 141, 239, 0.12); border-color: rgba(91, 141, 239, 0.28); color: #2A57C6; }
+.tk-tag--violet { background: rgba(139, 92, 246, 0.12); border-color: rgba(139, 92, 246, 0.28); color: #6D3FD8; }
+.tk-tag--cyan   { background: rgba(27, 135, 173, 0.10); border-color: rgba(27, 135, 173, 0.24); color: #1B87AD; }
+.tk-tag--amber  { background: rgba(242, 185, 80, 0.18); border-color: rgba(242, 185, 80, 0.45); color: #B8790F; }
+.tk-tag--danger { background: rgba(180, 35, 24, 0.10); border-color: rgba(180, 35, 24, 0.22); color: #B42318; }
+.tk-tag--quiet  { background: rgba(15, 23, 42, 0.05); border-color: rgba(15, 23, 42, 0.08); color: #8A94AB; }
+
+/* ---------- 发光圆点 ----------
+   指标带 / 状态行 / 脏数据提示共用。3px 光晕 + 8px 柔光，
+   在冷白纸面上是一枚「亮着的指示灯」，而不是一块色块 */
+.tk-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  background: #5B8DEF;
+  box-shadow: 0 0 0 3px rgba(91, 141, 239, 0.16), 0 0 8px rgba(91, 141, 239, 0.55);
+}
+.tk-dot--violet { background: #8B5CF6; box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.16), 0 0 8px rgba(139, 92, 246, 0.55); }
+.tk-dot--cyan   { background: #1B87AD; box-shadow: 0 0 0 3px rgba(27, 135, 173, 0.16), 0 0 8px rgba(27, 135, 173, 0.50); }
+.tk-dot--amber  { background: #F2B950; box-shadow: 0 0 0 3px rgba(242, 185, 80, 0.20), 0 0 8px rgba(242, 185, 80, 0.60); }
+.tk-dot--danger { background: #E4574C; box-shadow: 0 0 0 3px rgba(228, 87, 76, 0.18), 0 0 8px rgba(228, 87, 76, 0.55); }
+.tk-dot--quiet  { background: #B7C1D4; box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.05); }
+
+/* ---------- 指标带 ----------
+   一条冷蓝纸 + 柔光 + 节点线稿的带子，竖线分列；格子透明，底纹透出来 */
+.tk-stat-band {
+  position: relative;
+  overflow: hidden;
+  border-radius: 14px;
+  border: 1px solid rgba(91, 141, 239, 0.18);
+  background:
+    radial-gradient(520px 220px at 100% 0%, rgba(91, 141, 239, 0.16), transparent 72%),
+    radial-gradient(420px 240px at 0% 100%, rgba(139, 92, 246, 0.09), transparent 74%),
+    linear-gradient(150deg, #FBFDFF 0%, #F1F7FF 58%, #EDF3FE 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.90),
+    0 12px 30px -24px rgba(15, 23, 42, 0.32),
+    0 2px 5px rgba(15, 23, 42, 0.04);
+}
+
+.tk-stat-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (min-width: 768px) {
+  .tk-stat-grid {
+    grid-template-columns: repeat(var(--tk-stat-cols, 4), minmax(0, 1fr));
+  }
+}
+
+.tk-stat-cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 16px;
+  box-shadow: inset 1px 0 0 rgba(91, 141, 239, 0.10);
+}
+
+.tk-stat-cell:first-child {
+  box-shadow: none;
+}
+
+@media (max-width: 767px) {
+  .tk-stat-cell:nth-child(2n + 1) {
+    box-shadow: none;
+  }
+}
+
+.tk-stat-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 9px;
+  font-size: 15px;
+}
+
+/* ---------- 不定进度条 ----------
+   报告 / PPT 生成这类长时间任务：不知道剩余比例时给一条往返的细条，
+   不编一个假百分比 */
+.tk-ind-bar {
+  position: relative;
+  overflow: hidden;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(91, 141, 239, 0.12);
+}
+.tk-ind-bar::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -38%;
+  width: 38%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #84ACF7, #5B8DEF);
+  animation: tk-ind-bar 1.5s ease-in-out infinite;
+}
+@keyframes tk-ind-bar {
+  0% { left: -38%; }
+  100% { left: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tk-ind-bar::after {
+    animation: none;
+    left: 31%;
+    opacity: 0.6;
+  }
+}
+
+/* ---------- 说明条 ----------
+   页面级提示（环境配置的存储机制、模板协议、批量覆盖警告），
+   与弹窗内的 Alert 同一套冷调 */
+.tk-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 13px;
+  border: 1px solid rgba(91, 141, 239, 0.20);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(91, 141, 239, 0.085), rgba(91, 141, 239, 0.045));
+  color: #52607A;
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+.tk-note > .anticon {
+  flex: none;
+  margin-top: 2px;
+  color: #2A57C6;
+  font-size: 14px;
+}
+.tk-note--amber {
+  border-color: rgba(242, 185, 80, 0.42);
+  background: linear-gradient(180deg, rgba(242, 185, 80, 0.14), rgba(242, 185, 80, 0.07));
+}
+.tk-note--amber > .anticon { color: #B8790F; }
+.tk-note--danger {
+  border-color: rgba(180, 35, 24, 0.24);
+  background: linear-gradient(180deg, rgba(180, 35, 24, 0.075), rgba(180, 35, 24, 0.04));
+}
+.tk-note--danger > .anticon { color: #B42318; }
+.tk-note--quiet {
+  border-color: rgba(91, 141, 239, 0.14);
+  background: rgba(91, 141, 239, 0.045);
+}
+.tk-note-title {
+  color: #1F2A44;
+  font-weight: 600;
+}
+
+/* ---------- 冷蓝表体 ----------
+   与「我的项目」列表同一套平铺冷蓝：表体从第一行起就与页面白卡分层，
+   表头再压一档、行 hover 比表头浅，层级稳定。
+   antd 会给表格 / 单元格铺纯白背景，必须压过它 */
+.tk-table.surface-card {
+  background-color: #F5F9FF;
+  background-image: none;
+}
+.tk-table .ant-table-wrapper,
+.tk-table .ant-table,
+.tk-table .ant-table-container,
+.tk-table .ant-table-content,
+.tk-table .ant-table-tbody > tr > td,
+.tk-table .ant-table-tbody > tr > td.ant-table-cell {
+  background: transparent !important;
+}
+.tk-table .ant-table-thead > tr > th {
+  background: #E7EFFC !important;
+}
+.tk-table .ant-table-tbody > tr.ant-table-row:hover > td,
+.tk-table .ant-table-tbody > tr > td.ant-table-cell-row-hover {
+  background: rgba(91, 141, 239, 0.06) !important;
+}
+/* 勾选行：上面的 transparent !important 会盖掉 antd 默认的选中底色，
+   这里补回来；放在 hover 之后，选中行悬停时仍保持选中色 */
+.tk-table .ant-table-tbody > tr.ant-table-row-selected > td {
+  background: rgba(91, 141, 239, 0.10) !important;
+}
+
+/* ---------- 吸底保存条 ----------
+   模块授权这类长矩阵：改动后保存入口一直贴在视口底部，
+   不必滚回页头 */
+.tk-save-bar {
+  position: sticky;
+  bottom: 12px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid rgba(91, 141, 239, 0.28);
+  border-radius: 14px;
+  background: rgba(251, 253, 255, 0.92);
+  -webkit-backdrop-filter: saturate(160%) blur(12px);
+  backdrop-filter: saturate(160%) blur(12px);
+  box-shadow:
+    inset 0 1px 0 #FFFFFF,
+    0 18px 40px -24px rgba(15, 23, 42, 0.45),
+    0 2px 6px rgba(15, 23, 42, 0.05);
+}
