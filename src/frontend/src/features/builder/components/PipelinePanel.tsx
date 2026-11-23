@@ -1373,9 +1373,10 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                 );
             })()}
 
-            {/* 状态提示统一走一行式提示条（Alert 带 description 会渲染成一大块） */}
+            {/* 状态提示统一走一行式提示条（Alert 带 description 会渲染成一大块）；
+                失败提示本身已是完整一句话，tip={false} 避免悬停时把同一句再弹一遍（2026-11-23） */}
             {finished && s?.status === 'failed' && (
-                <InlineNotice tone="error" className="mt-2">
+                <InlineNotice tone="error" className="mt-2" tip={false}>
                     {`构建未完成${s.message ? `：${s.message}` : ''}`}
                 </InlineNotice>
             )}

@@ -40,6 +40,9 @@ interface InlineNoticeProps {
     /** 行尾操作（链接按钮等） */
     action?: React.ReactNode;
     className?: string;
+    /** 是否给可能的截断文本挂「悬停看全文」（默认开）；
+       内容本身完整可读、Tooltip 只是重复同一句话时可关掉 */
+    tip?: boolean;
 }
 
 /**
@@ -50,21 +53,23 @@ interface InlineNoticeProps {
  * 需要展示列表、错误明细这类确实要多行的内容，仍直接用 Alert。
  */
 const InlineNotice: React.FC<InlineNoticeProps> = ({
-    tone = 'info', icon, children, action, className = '',
+    tone = 'info', icon, children, action, className = '', tip = true,
 }) => {
     const t = TONE[tone];
+    const body = (
+        <span className="min-w-0 flex-1 truncate">
+            {children}
+        </span>
+    );
     return (
         <div
             className={`flex items-center gap-2 rounded-lg border px-3 py-[7px] text-[12.5px] leading-5 ${className}`}
             style={{ background: t.bg, borderColor: t.border, color: t.color }}
         >
             <span className="shrink-0 text-[13px]">{icon ?? t.icon}</span>
-            {/* 截断时悬停看全文：走全站统一的深色 Tooltip，不用浏览器原生白框 */}
-            <Tip text={typeof children === 'string' ? children : undefined}>
-                <span className="min-w-0 flex-1 truncate">
-                    {children}
-                </span>
-            </Tip>
+            {/* 截断时悬停看全文：走全站统一的深色 Tooltip，不用浏览器原生白框；
+                tip={false} 时直接渲染文本（例如构建失败提示本身就一句话，再弹一遍是重复） */}
+            {tip ? <Tip text={typeof children === 'string' ? children : undefined}>{body}</Tip> : body}
             {action && <span className="shrink-0">{action}</span>}
         </div>
     );

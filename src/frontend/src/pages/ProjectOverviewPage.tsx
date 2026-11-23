@@ -6,7 +6,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { message } from '../shared/feedback';
-import { Button, Tag } from 'antd';
+import { Button, Tag, Tooltip } from 'antd';
 
 const fmtDate = (v?: string | null) =>
     v ? new Date(v).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
@@ -278,6 +278,21 @@ const ProjectOverviewPage: React.FC = () => {
                     padding-inline: 14px;
                     font-size: 12.5px;
                 }
+                /* 专家模式入口（2026-11-23）：原来"半透明白 + 22% 发丝边"压在冷蓝纸面上
+                   对比度太弱，看起来像禁用态；改成冷白实底 + 品牌蓝字/图标 + 更深描边，
+                   仍然是描边按钮的层级，不跟「去问答」的淡蓝底抢主次 */
+                .overview-stack .ov-head-btn.ant-btn-default:not(:disabled) {
+                    color: #2A57C6;
+                    background: #FBFDFF;
+                    border-color: rgba(91, 141, 239, 0.32);
+                    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+                }
+                .overview-stack .ov-head-btn.ant-btn-default:not(:disabled) .anticon { color: #2A57C6; }
+                .overview-stack .ov-head-btn.ant-btn-default:not(:disabled):hover {
+                    color: #1F2A44 !important;
+                    background: #FFFFFF;
+                    border-color: rgba(91, 141, 239, 0.48);
+                }
                 /* 按钮材质（2026-11-17）：默认 antd 的纯色蓝 / 灰边白底压在冷蓝纸面上像外挂控件。
                    ① 主按钮（重新构建 / 发布到资产中心）：蓝到深蓝的轻渐变 + 内高光 + 近距投影，
                       比纯色 #5B8DEF 更"实"，也压得住卡面；
@@ -424,10 +439,13 @@ const ProjectOverviewPage: React.FC = () => {
                                 </span>
                                 <span className="hidden h-4 w-px shrink-0 bg-[#E7EEF9] md:inline-block" />
                                 {isExpert && (
-                                    <Button className="ov-head-btn" icon={<NodeIndexOutlined />}
-                                            onClick={() => navigate(`/projects/${pid}/documents`)}>
-                                        专家模式
-                                    </Button>
+                                    /* 标签只说"专家模式"，用户不知道会去哪；tooltip 补一句入口说明（2026-11-23） */
+                                    <Tooltip title="进入多 Tab 构建工作台（文档 / 本体 / 图谱 / 时间线 / 审核）">
+                                        <Button className="ov-head-btn" icon={<NodeIndexOutlined />}
+                                                onClick={() => navigate(`/projects/${pid}/documents`)}>
+                                            专家模式
+                                        </Button>
+                                    </Tooltip>
                                 )}
                                 <Button className="ov-head-btn" type="primary" ghost icon={<RocketOutlined />}
                                         onClick={() => navigate(`/qa?projectId=${pid}`)}>
