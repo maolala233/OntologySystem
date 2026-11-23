@@ -61,6 +61,7 @@ import CqPanel from './CqPanel';
 import { QuestionCircleOutlined } from '@ant-design/icons';
 import SuggestionCard from '../../../components/Copilot/SuggestionCard';
 import { listCopilotSuggestions } from '../../../api/copilot';
+import { UPLOAD_TYPE_LABEL } from '../documents/uploadFormats';
 import type { CopilotSuggestionItem } from '../../../api/copilot';
 
 const { TreeNode } = Tree;
@@ -1037,7 +1038,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
                                 是否现在上传文档进行实例提取？
                             </p>
                             <p className="mt-2 text-sm text-gray-500">
-                                支持格式：TXT、PDF、DOC、DOCX、MD（可多选）
+                                支持格式：{UPLOAD_TYPE_LABEL}（可多选）
                             </p>
                         </div>
                     ),

@@ -19,6 +19,7 @@ import {
     CheckCircleOutlined,
     RocketOutlined,
     FolderOpenOutlined,
+    FileTextOutlined,
     ApartmentOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
@@ -29,7 +30,7 @@ import { Segmented } from 'antd';
 import { useAuthStore } from '../shared/auth/authStore';
 import { PROJECT_STATUS, STALE_PUBLISHED_TAG, projectStatusOf as statusOf, statusChip } from '../shared/projectStatus';
 import { fmtSchedule, fmtScheduleFull } from '../shared/schedule';
-import { UPLOAD_ACCEPT, UPLOAD_EXTS, MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from '../features/builder/documents/uploadFormats';
+import { UPLOAD_ACCEPT, UPLOAD_EXTS, UPLOAD_TYPE_LABEL, MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from '../features/builder/documents/uploadFormats';
 import Navbar from '../components/Layout/Navbar';
 import TechHero, { TECH_COLORS } from '../components/TechHero';
 import { documentsApi } from '../api/documents';
@@ -78,6 +79,14 @@ const STATUS_ICON: Record<string, React.ReactNode> = {
 const withAlpha = (hex: string, a: number) => {
     const n = parseInt(hex.slice(1), 16);
     return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+};
+
+/** 文件体量：B / KB / MB（上传列表与汇总共用，保留一位小数，避免长度抖动） */
+const fmtBytes = (n?: number) => {
+    if (!n || n <= 0) return '0 B';
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / 1024 / 1024).toFixed(1)} MB`;
 };
 
 const fmtDate = (v?: string | null) =>
@@ -581,10 +590,98 @@ const MyProjectsPage: React.FC = () => {
                 .mp-modal .ant-form-item:last-child { margin-bottom: 0; }
                 .mp-modal .ant-form-item-label { padding-bottom: 4px; }
                 .mp-modal .ant-form-item-label > label { height: auto; font-size: 13px; color: #52607A; }
+                /* 弹窗 · 上传文档（2026-11-23 改版）
+                   改版前：拖拽区只有大图标 + 一行灰字；选中文件后是 antd 默认灰字列表，
+                   和 hint 同为 #8A94AB，看起来像"没选上 / 不可用"。
+                   改版后：拖拽区补一行深色主文案、图标收成品牌色圆角块；
+                   已选文件变成冷白小卡（品牌文档图标 / 深色文件名 / 等宽体量 / 独立移除），
+                   下方再用「发光圆点 + 彩色等宽数字」汇总，沿用站内面板装饰语言。 */
                 .mp-modal .ant-upload-drag .ant-upload-btn { padding: 12px 0; }
-                .mp-modal .ant-upload-drag-icon { margin-bottom: 4px; }
-                .mp-modal .ant-upload-drag-icon .anticon { font-size: 32px; }
-                .mp-modal .ant-upload-hint { font-size: 12px; line-height: 1.6; }
+                .mp-modal .ant-upload-drag-icon { display: flex; justify-content: center; margin-bottom: 5px; }
+                .mp-modal .ant-upload-drag .ant-upload-drag-icon .anticon {
+                    width: 40px; height: 40px;
+                    display: inline-flex; align-items: center; justify-content: center;
+                    font-size: 20px; border-radius: 12px;
+                    color: #2A57C6;
+                    background: linear-gradient(135deg, rgba(91, 141, 239, 0.18), rgba(110, 107, 240, 0.10));
+                    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85), 0 6px 14px -12px rgba(42, 87, 198, 0.55);
+                }
+                .mp-modal .ant-upload-drag .ant-upload-text {
+                    margin: 0 0 3px;
+                    color: #1F2A44; font-size: 13px; font-weight: 600;
+                }
+                .mp-modal .ant-upload-drag .ant-upload-hint { font-size: 12px; line-height: 1.6; color: #6B7794; }
+                /* 拖拽区 / 已选文件 / 汇总条属于同一个「上传文档」板块，间距收到 4px，
+                   让它们读起来是一组，而不是三块互不相干的内容；
+                   已选列表同时压平 antd 的定高 / 内边距 / 灰底 hover，一行一条冷白小卡 */
+                .mp-modal .ant-upload-list { margin-top: 4px; display: flex; flex-direction: column; gap: 4px; }
+                .mp-modal .ant-upload-list .ant-upload-list-item,
+                .mp-modal .ant-upload-list .ant-upload-list-item-container { height: auto; margin: 0; padding: 0; }
+                /* antd 的 hover 底色是铺在 item 本体上的（不是 ::before），一并清掉，
+                   悬停反馈交给下方小卡自己的描边 */
+                .mp-modal .ant-upload-list .ant-upload-list-item:hover { background: transparent; }
+                .mp-modal .ant-upload-list .ant-upload-list-item::before { display: none; }
+                .mp-upload-item {
+                    display: flex; align-items: center; gap: 8px;
+                    width: 100%;
+                    padding: 6px 8px 6px 6px;
+                    transition: border-color 0.15s ease;
+                    border: 1px solid #E1E9F7;
+                    border-radius: 10px;
+                    background: linear-gradient(180deg, #FBFDFF 0%, #F4F8FF 100%);
+                    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+                    animation: mp-upload-in 0.18s ease-out;
+                }
+                .mp-upload-item:hover { border-color: rgba(91, 141, 239, 0.45); }
+                @keyframes mp-upload-in {
+                    from { opacity: 0; transform: translateY(-3px); }
+                    to { opacity: 1; transform: none; }
+                }
+                .mp-upload-item-icon {
+                    flex: none;
+                    width: 26px; height: 26px;
+                    display: inline-flex; align-items: center; justify-content: center;
+                    border-radius: 8px;
+                    color: #2A57C6; font-size: 14px;
+                    background: rgba(91, 141, 239, 0.12);
+                }
+                .mp-upload-item-name {
+                    flex: 1 1 auto; min-width: 0;
+                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                    color: #1F2A44; font-size: 13px; font-weight: 500;
+                }
+                .mp-upload-item-size {
+                    flex: none;
+                    color: #52607A; font-size: 12px;
+                    font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+                    font-variant-numeric: tabular-nums;
+                }
+                .mp-upload-item-remove {
+                    flex: none;
+                    width: 22px; height: 22px; padding: 0;
+                    display: inline-flex; align-items: center; justify-content: center;
+                    border: 0; border-radius: 6px; cursor: pointer;
+                    color: #8A94AB; background: transparent;
+                    font-size: 12px; transition: color 0.15s ease, background 0.15s ease;
+                }
+                .mp-upload-item-remove:hover { color: #D92D20; background: rgba(217, 45, 32, 0.08); }
+                /* 汇总条：发光圆点 + 彩色等宽数字，直接回答"到底选上了没有" */
+                .mp-upload-summary {
+                    display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+                    margin-top: 4px;
+                    font-size: 12px; color: #52607A;
+                }
+                .mp-upload-summary-dot {
+                    width: 7px; height: 7px; border-radius: 50%; flex: none;
+                    background: #2F80ED;
+                    box-shadow: 0 0 0 3px rgba(91, 141, 239, 0.16), 0 0 8px rgba(91, 141, 239, 0.55);
+                }
+                .mp-upload-summary b {
+                    color: #2A57C6; font-weight: 600;
+                    font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+                    font-variant-numeric: tabular-nums;
+                }
+                .mp-upload-summary-note { color: #8A94AB; }
                 /* 列表面板：和卡片同一套实体感材质（极轻渐变 + 内高光 + 近距投影） */
                 /* 列表面板：和卡片同一套实体感材质（极轻渐变 + 内高光 + 近距投影） */
                 .mp-table {
@@ -1073,7 +1170,7 @@ const MyProjectsPage: React.FC = () => {
                             beforeUpload={(f) => {
                                 const ext = String(f.name).split('.').pop()?.toLowerCase() || '';
                                 if (!UPLOAD_EXTS.includes(ext)) {
-                                    message.warning(`不支持 .${ext} 格式：仅支持 ${UPLOAD_EXTS.join(' / ')}`);
+                                    message.warning(`不支持 .${ext} 格式：仅支持 ${UPLOAD_TYPE_LABEL}`);
                                     return Upload.LIST_IGNORE;
                                 }
                                 if (f.size > MAX_UPLOAD_BYTES) {
@@ -1088,12 +1185,40 @@ const MyProjectsPage: React.FC = () => {
                                 setPendingFiles(fileList.map((f) => f.originFileObj).filter(Boolean) as File[]);
                             }}
                             accept={UPLOAD_ACCEPT}
+                            /* 已选文档改用自绘行（2026-11-23）：antd 默认列表是灰字，
+                               和拖拽区提示同色，选完文件后用户常常看不出"已经选上了" */
+                            itemRender={(_node, file, _list, actions) => (
+                                <div className="mp-upload-item">
+                                    <span className="mp-upload-item-icon"><FileTextOutlined /></span>
+                                    <span className="mp-upload-item-name" title={file.name}>{file.name}</span>
+                                    <span className="mp-upload-item-size">{fmtBytes(file.size)}</span>
+                                    <button
+                                        type="button"
+                                        className="mp-upload-item-remove"
+                                        aria-label={`移除 ${file.name}`}
+                                        onClick={() => actions.remove()}
+                                    >
+                                        <DeleteOutlined />
+                                    </button>
+                                </div>
+                            )}
                         >
                             <p className="ant-upload-drag-icon"><InboxOutlined /></p>
+                            <p className="ant-upload-text">点击或拖拽文档到此处</p>
                             <p className="ant-upload-hint">
-                                支持 {UPLOAD_EXTS.join(' / ')}，单文件 ≤{MAX_UPLOAD_LABEL}，可多选
+                                支持 {UPLOAD_TYPE_LABEL}，单文件 ≤{MAX_UPLOAD_LABEL}，可多选
                             </p>
                         </Upload.Dragger>
+                        {pendingFiles.length > 0 && (
+                            <div className="mp-upload-summary">
+                                <span className="mp-upload-summary-dot" aria-hidden />
+                                <span>
+                                    已选择 <b>{pendingFiles.length}</b> 个文档 · 共{' '}
+                                    <b>{fmtBytes(pendingFiles.reduce((sum, f) => sum + f.size, 0))}</b>
+                                </span>
+                                <span className="mp-upload-summary-note">创建项目后自动上传并构建</span>
+                            </div>
+                        )}
                     </Form.Item>
 
                     <Form.Item name="build_mode" label="构建时间" initialValue="now">

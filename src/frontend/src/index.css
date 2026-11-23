@@ -914,9 +914,15 @@ body .ant-form .ant-upload-drag-icon .anticon {
   color: #5B8DEF;
 }
 
-body .ant-form .ant-upload-hint,
+body .ant-form .ant-upload-hint {
+  color: #6B7794;
+}
+
+/* 已选文件名（2026-11-23）：原先和 hint 同为 #8A94AB，选完文件后看不出"已选中"，
+   改成正文深色 + 中等字重，和提示文案拉开层级 */
 body .ant-form .ant-upload-list-item-name {
-  color: #8A94AB;
+  color: #1F2A44;
+  font-weight: 500;
 }
 
 /* ===================================================================
@@ -1296,9 +1302,14 @@ body .ant-modal .ant-upload-drag-icon .anticon {
   color: #5B8DEF;
 }
 
-body .ant-modal .ant-upload-hint,
+body .ant-modal .ant-upload-hint {
+  color: #6B7794;
+}
+
+/* 已选文件名（2026-11-23）：与表单同口径，不再和 hint 同色 */
 body .ant-modal .ant-upload-list-item-name {
-  color: #8A94AB;
+  color: #1F2A44;
+  font-weight: 500;
 }
 
 /* ---------- 弹窗内的信息展示：提示条 / 描述表 / 分隔线 / 表格 ---------- */

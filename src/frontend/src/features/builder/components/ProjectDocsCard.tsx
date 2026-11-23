@@ -14,7 +14,7 @@ import type { ColumnsType } from 'antd/es/table';
 
 import { documentsApi, DocumentRow } from '../../../api/documents';
 import { pipelineApi } from '../../../api/pipeline';
-import { UPLOAD_ACCEPT, UPLOAD_EXTS, MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from '../documents/uploadFormats';
+import { UPLOAD_ACCEPT, UPLOAD_EXTS, UPLOAD_TYPE_LABEL, MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from '../documents/uploadFormats';
 
 // 解析状态标签：用冷调淡底代替 antd 的语义色（绿/蓝/红在一屏里过于抢眼）。
 // 渲染时统一补 marginInlineEnd: 0——antd Tag 默认带 8px 右外边距，列居中后
@@ -206,7 +206,7 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage,
         beforeUpload: (f) => {
             const ext = String(f.name).split('.').pop()?.toLowerCase() || '';
             if (!UPLOAD_EXTS.includes(ext)) {
-                message.warning(`不支持 .${ext} 格式：仅支持 ${UPLOAD_EXTS.join(' / ')}`);
+                message.warning(`不支持 .${ext} 格式：仅支持 ${UPLOAD_TYPE_LABEL}`);
                 return Upload.LIST_IGNORE;
             }
             if (f.size > MAX_UPLOAD_BYTES) {
@@ -274,9 +274,14 @@ const ProjectDocsCard: React.FC<Props> = ({ projectId, onChanged, pipelineStage,
                 <span className="flex items-center gap-1">
                     <UploadOutlined />
                     <span>支持</span>
-                    {/* 扩展名走等宽字形（2026-11-17）：一长串小写字母用比例字体看成一团，
-                        等宽后能按「/」一眼数出支持哪些格式 */}
-                    <span className="tk-mono text-[11px] text-[#8A94AB]">{UPLOAD_EXTS.join(' / ')}</span>
+                    {/* 2026-11-23 收敛为四类办公文档：文案改用统一格式名，比一串小写扩展名
+                        更好读；具体扩展名放进 title，悬停仍可核对是 .doc/.docx 这类细节 */}
+                    <span
+                        className="text-[11px] font-medium text-[#52607A]"
+                        title={UPLOAD_EXTS.map((e) => `.${e}`).join(' / ')}
+                    >
+                        {UPLOAD_TYPE_LABEL}
+                    </span>
                 </span>
                 {locked && (
                     // 构建锁提示（2026-11-18）：原来和左侧「支持哪些格式」挤在同一行、
