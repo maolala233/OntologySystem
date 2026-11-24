@@ -1676,6 +1676,35 @@ body .tk-surface-deco .ant-modal-content::after {
   overflow: hidden;
 }
 
+/* 服务卡片（模型配置 / 环境配置等）：沿用「模块授权 · 角色卡」的材质——
+   冷白 → 淡品牌色斜向渐变、细冷色描边、hover 时描边加深并浮起近距投影。
+   选择器带 body 前缀：开发态 antd 会给元素加 hash 类（.css-dev-only-xxx.ant-card），
+   与 .ant-card.tk-cold-card 同权重且后注入，不加前缀会被它盖回纯白。 */
+body .ant-card.tk-cold-card {
+  border: 1px solid #E9EEF8;
+  border-radius: 16px;
+  /* 关键：底色透明，渐变末端的半透明品牌蓝才能透出页面底图——
+     角色卡就是这个效果；antd 默认的白底会把这一点点冷色吃掉 */
+  background-color: transparent;
+  background-image: linear-gradient(160deg, #FFFFFF 0%, rgba(91, 141, 239, 0.07) 100%);
+  box-shadow: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+body .ant-card.tk-cold-card:hover {
+  border-color: #CBD9F2;
+  box-shadow: 0 16px 32px -20px rgba(15, 23, 42, 0.30);
+}
+
+body .ant-card.tk-cold-card > .ant-card-head {
+  border-bottom-color: #EDF1F8;
+  background: transparent;
+}
+
+body .ant-card.tk-cold-card > .ant-card-body {
+  background: transparent;
+}
+
 .surface-card .ant-table {
   background: transparent;
 }

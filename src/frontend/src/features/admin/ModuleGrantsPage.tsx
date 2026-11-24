@@ -594,10 +594,10 @@ const ModuleGrantsPage: React.FC = () => {
                 <StatBand
                     className="mb-1.5"
                     items={[
-                        { label: '可授权用户', value: matrixLoading ? '—' : normalUsers.length, tone: 'brand', icon: <TeamOutlined /> },
-                        { label: '业务模块', value: matrixLoading ? '—' : businessModules.length, tone: 'violet', icon: <SafetyOutlined /> },
-                        { label: '工具模块', value: matrixLoading ? '—' : toolModules.length, tone: 'cyan', icon: <ToolOutlined /> },
-                        { label: '角色预设', value: matrixLoading ? '—' : roles.length, tone: 'amber', icon: <UserSwitchOutlined /> },
+                        { label: '可授权用户', value: normalUsers.length, tone: 'brand', icon: <TeamOutlined /> },
+                        { label: '业务模块', value: businessModules.length, tone: 'violet', icon: <SafetyOutlined /> },
+                        { label: '工具模块', value: toolModules.length, tone: 'cyan', icon: <ToolOutlined /> },
+                        { label: '角色预设', value: roles.length, tone: 'amber', icon: <UserSwitchOutlined /> },
                     ]}
                 />
 

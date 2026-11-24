@@ -397,10 +397,10 @@ const UserAdminPage: React.FC = () => {
                 <StatBand
                     className="mb-3"
                     items={[
-                        { label: '用户总数', value: initialLoading ? '—' : counts.total, tone: 'brand', icon: <TeamOutlined /> },
-                        { label: '管理员', value: initialLoading ? '—' : counts.admins, tone: 'amber', icon: <SafetyCertificateOutlined /> },
-                        { label: '正常', value: initialLoading ? '—' : counts.active, tone: 'cyan', icon: <CheckCircleOutlined /> },
-                        { label: '停用', value: initialLoading ? '—' : counts.inactive, tone: 'quiet', icon: <StopOutlined /> },
+                        { label: '用户总数', value: counts.total, tone: 'brand', icon: <TeamOutlined /> },
+                        { label: '管理员', value: counts.admins, tone: 'amber', icon: <SafetyCertificateOutlined /> },
+                        { label: '正常', value: counts.active, tone: 'cyan', icon: <CheckCircleOutlined /> },
+                        { label: '停用', value: counts.inactive, tone: 'quiet', icon: <StopOutlined /> },
                     ]}
                 />
 

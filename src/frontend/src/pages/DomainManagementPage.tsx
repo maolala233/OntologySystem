@@ -479,11 +479,11 @@ const DomainManagementPage: React.FC = () => {
                 <StatBand
                     className="mb-3"
                     items={[
-                        { label: '知识域', value: initialLoading ? '—' : domains.length, tone: 'brand', icon: <ClusterOutlined /> },
-                        { label: '已归类项目', value: initialLoading ? '—' : stats.covered, tone: 'violet', icon: <ApartmentOutlined /> },
-                        { label: '空知识域', value: initialLoading ? '—' : stats.empty, tone: 'quiet', icon: <SwapOutlined /> },
-                        /* hint 这一行始终保留（加载期用 — 占位）：否则数据回来时指标带会长高 */
-                        { label: '最近更新', value: initialLoading ? '—' : stats.latest ? stats.latest.slice(5, 10) : '—', tone: 'cyan', icon: <ClockCircleOutlined />, hint: initialLoading ? '—' : stats.latest ? `最近更新于 ${fmtDay(stats.latest)}` : '暂无更新时间' },
+                        { label: '知识域', value: domains.length, tone: 'brand', icon: <ClusterOutlined /> },
+                        { label: '已归类项目', value: stats.covered, tone: 'violet', icon: <ApartmentOutlined /> },
+                        { label: '空知识域', value: stats.empty, tone: 'quiet', icon: <SwapOutlined /> },
+                        /* 加载期直接用默认值（0 / —），数据回来就地替换，避免指标带先显示 — 再跳变 */
+                        { label: '最近更新', value: stats.latest ? stats.latest.slice(5, 10) : '—', tone: 'cyan', icon: <ClockCircleOutlined />, hint: stats.latest ? `最近更新于 ${fmtDay(stats.latest)}` : '暂无更新时间' },
                     ]}
                 />
 

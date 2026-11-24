@@ -135,10 +135,10 @@ const EnvConfigPage: React.FC = () => {
 
     // 指标带属于静态结构：加载时就先展示标签，数值等数据齐了再填
     const statItems: StatItem[] = [
-        { label: '中间件服务', value: data ? stats.services : '—', tone: 'brand', icon: <CloudServerOutlined /> },
-        { label: '已自定义字段', value: data ? stats.customized : '—', tone: 'violet', icon: <SettingOutlined />, hint: '覆盖 .env 默认值' },
+        { label: '中间件服务', value: stats.services, tone: 'brand', icon: <CloudServerOutlined /> },
+        { label: '已自定义字段', value: stats.customized, tone: 'violet', icon: <SettingOutlined />, hint: '覆盖 .env 默认值' },
         { label: '待保存修改', value: dirtyCount, tone: dirtyCount > 0 ? 'amber' : 'quiet', icon: <SaveOutlined /> },
-        { label: '连通通过', value: data ? `${stats.ok}/${stats.tested}` : '—', tone: 'cyan', icon: <ApiOutlined />, hint: '本次已测试的服务' },
+        { label: '连通通过', value: `${stats.ok}/${stats.tested}`, tone: 'cyan', icon: <ApiOutlined />, hint: '本次已测试的服务' },
     ];
 
     const setValue = (key: string, value: string | boolean) => {
@@ -329,9 +329,15 @@ const EnvConfigPage: React.FC = () => {
                     const tr = testResults[service];
                     const serviceDirty = fields.filter((f) => f.key in dirty).length;
                     return (
+                        // 与「模块授权 · 角色卡」完全同一支背景：
+                        // 内联写死，避免被 antd 运行时注入的 .ant-card 背景覆盖
                         <Card
                             key={service}
-                            className="env-card tk-controls"
+                            className="env-card tk-controls tk-cold-card"
+                            style={{
+                                backgroundColor: 'transparent',
+                                backgroundImage: 'linear-gradient(160deg, #FFFFFF 0%, rgba(91,141,239,0.07) 100%)',
+                            }}
                             title={
                                 <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                                     <span
@@ -397,7 +403,9 @@ const EnvConfigPage: React.FC = () => {
                                         <div
                                             key={f.key}
                                             className={`rounded-lg px-1.5 py-1 transition-colors ${
-                                                changed ? 'bg-[rgba(242,185,80,0.08)]' : ''
+                                                changed
+                                                    ? 'bg-[rgba(242,185,80,0.10)]'
+                                                    : 'hover:bg-[rgba(91,141,239,0.045)]'
                                             }`}
                                         >
                                             <div className="mb-1 flex items-center justify-between gap-2">
@@ -445,7 +453,7 @@ const EnvConfigPage: React.FC = () => {
 
             <style>{`
                 /* 环境卡片：头部留白与站内面板对齐；状态区（圆点 + 测试按钮）右侧成组 */
-                .env-card.ant-card { border-radius: 14px; margin-bottom: 0; }
+                .env-card.ant-card { border-radius: 16px; margin-bottom: 0; }
                 .env-card .ant-card-head { min-height: 50px; padding: 0 14px; border-bottom-color: #F0F4FB; }
                 .env-card .ant-card-head-title { padding: 12px 0; }
                 .env-card .ant-card-extra { padding: 12px 0; }

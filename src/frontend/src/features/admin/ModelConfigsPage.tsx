@@ -372,12 +372,12 @@ const ModelConfigsPage: React.FC = () => {
                     className="mb-1.5"
                     items={[
                         {
-                            label: `${purposeMeta?.label ?? '当前用途'}配置`, value: rowsLoaded ? stats.total : '—', tone: 'brand',
+                            label: `${purposeMeta?.label ?? '当前用途'}配置`, value: stats.total, tone: 'brand',
                             icon: purposeMeta?.icon ?? <RobotOutlined />,
                         },
-                        { label: '全局', value: rowsLoaded ? stats.globals : '—', tone: 'violet', icon: <CloudOutlined /> },
-                        { label: '项目级', value: rowsLoaded ? stats.projects : '—', tone: 'cyan', icon: <DeploymentUnitOutlined /> },
-                        { label: '已启用', value: rowsLoaded ? stats.enabled : '—', tone: 'amber', icon: <ApiOutlined /> },
+                        { label: '全局', value: stats.globals, tone: 'violet', icon: <CloudOutlined /> },
+                        { label: '项目级', value: stats.projects, tone: 'cyan', icon: <DeploymentUnitOutlined /> },
+                        { label: '已启用', value: stats.enabled, tone: 'amber', icon: <ApiOutlined /> },
                     ]}
                 />
 
@@ -452,10 +452,16 @@ const ModelConfigsPage: React.FC = () => {
                             const pMeta = PURPOSE_META[row.purpose];
                             const manageable = canManage(row);
                             return (
+                                // 与「模块授权 · 角色卡」完全同一支背景：
+                                // 内联写死，避免被 antd 运行时注入的 .ant-card 背景覆盖
                                 <Card
                                     key={row.id}
                                     size="small"
-                                    className="mc-card"
+                                    className="mc-card tk-cold-card"
+                                    style={{
+                                        backgroundColor: 'transparent',
+                                        backgroundImage: 'linear-gradient(160deg, #FFFFFF 0%, rgba(91,141,239,0.07) 100%)',
+                                    }}
                                     title={
                                         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                                             <span
@@ -508,7 +514,7 @@ const ModelConfigsPage: React.FC = () => {
 
                                     {/* 卡片操作：自定义底栏，不再用 antd actions 的等分格子——
                                         只读行需要把「只读」说明放在同一行右侧 */}
-                                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[#F0F4FB] pt-2.5">
+                                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[#EDF1F8] pt-2.5">
                                         <div className="flex items-center gap-0.5">
                                             <Tooltip title={manageable
                                                 ? ''
@@ -690,7 +696,7 @@ const ModelConfigsPage: React.FC = () => {
                        这里收到 6px，配合指标带 mb-1.5 让视觉间距更紧凑 */
                     .mc-tabs.ant-tabs > .ant-tabs-nav .ant-tabs-tab { padding: 6px 0; }
                     /* 模型卡片：头部与底栏留白收一档，和站内面板同一件材质 */
-                    .mc-card.ant-card { border-radius: 14px; margin-bottom: 0; }
+                    .mc-card.ant-card { border-radius: 16px; margin-bottom: 0; }
                     .mc-card .ant-card-head { min-height: 46px; padding: 0 14px; border-bottom-color: #F0F4FB; }
                     .mc-card .ant-card-head-title { padding: 10px 0; }
                     .mc-card .ant-card-body { padding: 12px 14px 10px; }
