@@ -119,7 +119,9 @@ def download_sample_template(project_id: int, request: Request, db: Session = De
                              user: User = Depends(get_current_user)):
     """下载内置示例模板（内含占位符协议说明页，生成时说明页自动删除）。"""
     _ensure_qa_access(db, project_id, user)
-    return {"url": to_browser_url(_ensure_sample_template(), request)}
+    # _ensure_sample_template() 内部已经调用过 to_browser_url（转成 /minio/... 相对路径），
+    # 这里再转一次会变成 /minio/minio/...，浏览器打不到文件、回落到 SPA 首页。
+    return {"url": _ensure_sample_template()}
 
 
 @router.delete("/{project_id}/reports/ppt-template", dependencies=[Depends(require_any_module("report", "ppt"))])
