@@ -8,6 +8,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.adapters.provider import (
@@ -20,7 +21,7 @@ from app.adapters.provider import (
 from app.core.deps import get_current_user, get_db, require_project_role, require_role
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
 from app.core.security import decrypt_str, encrypt_str, mask_secret
-from app.infrastructure.database import ModelConfig, UserModelPick, User
+from app.infrastructure.database import ModelConfig, Project, ProjectMember, UserModelPick, User
 from app.core.logging import logger
 
 router = APIRouter(prefix="/api/model-configs", tags=["model-configs"])
@@ -124,6 +125,20 @@ def list_configs(purpose: Optional[str] = None, scope: Optional[str] = None,
         q = q.filter(ModelConfig.scope == scope)
     if project_id is not None:
         q = q.filter(ModelConfig.project_id == project_id)
+    if user.role != "admin":
+        # 非管理员：全局配置 + 自己拥有/参与项目的项目级配置。
+        # 此前不带 project_id 时会全表返回，普通用户可以枚举到别人项目的模型端点信息。
+        member_pids = [r[0] for r in
+                       db.query(ProjectMember.project_id)
+                       .filter(ProjectMember.user_id == user.id).all()]
+        owned_pids = [r[0] for r in
+                      db.query(Project.id).filter(Project.owner_id == user.id).all()]
+        allowed_pids = set(member_pids) | set(owned_pids)
+        q = q.filter(or_(
+            ModelConfig.scope == "global",
+            and_(ModelConfig.scope == "project",
+                 ModelConfig.project_id.in_(allowed_pids)),
+        ))
     rows = q.order_by(ModelConfig.purpose, ModelConfig.scope, ModelConfig.id).all()
     # 普通用户不可见 global 行的完整信息？——可见（只读用于选择），密钥已掩码
     return {"items": [_out(r) for r in rows]}
@@ -204,6 +219,9 @@ def delete_config(config_id: int, user: User = Depends(get_current_user),
     _scope_guard(row.scope, row.project_id, user, db)
     if row.is_default:
         raise ValidationError("默认配置不可删除：请先将默认标记移到其他配置")
+    # 个人模型选择引用（FK → model_configs.id）：先清掉指向该配置的选择，否则删除撞外键
+    db.query(UserModelPick).filter(UserModelPick.config_id == config_id).delete(
+        synchronize_session=False)
     db.delete(row)
     db.commit()
     logger.info(f"[audit] action=model.delete operator={user.username} target={row.name}")
@@ -228,15 +246,38 @@ def set_default(config_id: int, user: User = Depends(get_current_user),
 @router.post("/test")
 def test_config(data: TestIn, user: User = Depends(get_current_user),
                 db: Session = Depends(get_db)):
-    """连通性测试：支持未保存的表单值，也支持已保存配置（config_id → 更新测试状态）。"""
-    api_key = data.api_key
-    if not api_key and data.config_id:
-        row = db.query(ModelConfig).filter(ModelConfig.id == data.config_id).first()
-        if row and row.api_key_encrypted:
-            api_key = decrypt_str(bytes(row.api_key_encrypted))
-    result = test_connectivity(data.purpose, data.provider, data.base_url,
-                               api_key or "", data.model_name, data.dims)
+    """连通性测试：支持未保存的表单值，也支持已保存配置（config_id → 更新测试状态）。
+
+    安全约束（2026-11-24）：带 config_id 时必须能管理该配置（_scope_guard），且只有
+    「请求的 base_url/provider/model_name 与库内一致」时才复用库内密钥——否则任何人
+    都能传自己的 base_url，让服务端把库里存的 API Key 发出去。端点被改动时只用请求
+    自带的 key，测试结果也不回写已保存配置（那测的不是它）。
+    """
+    api_key = data.api_key or ""
+    base_url, provider, model_name = data.base_url, data.provider, data.model_name
+    purpose, dims = data.purpose, data.dims
+    should_mark = False
+
     if data.config_id:
+        row = db.query(ModelConfig).filter(ModelConfig.id == data.config_id).first()
+        if row is None:
+            raise NotFoundError("配置不存在", code="MODEL_CONFIG_NOT_FOUND")
+        _scope_guard(row.scope, row.project_id, user, db)
+        same_endpoint = (data.base_url == row.base_url
+                         and data.model_name == row.model_name
+                         and data.provider == row.provider)
+        if same_endpoint:
+            purpose = ModelPurpose(row.purpose)
+            # 维度不是机密：表单里新填了就按新维度测；没填才用库内值
+            dims = data.dims if data.dims is not None else row.dims
+            if not data.api_key and row.api_key_encrypted:
+                api_key = decrypt_str(bytes(row.api_key_encrypted))
+            # 复用库内密钥且参数未变，才回写状态；带新 key / 新维度测的是未保存内容
+            should_mark = (not data.api_key
+                           and (data.dims is None or data.dims == row.dims))
+
+    result = test_connectivity(purpose, provider, base_url, api_key, model_name, dims)
+    if should_mark:
         mark_test_result(db, data.config_id, result.get("ok", False))
     return result
 

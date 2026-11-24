@@ -13,7 +13,7 @@ import { Button, Card, Drawer, Form, Input, InputNumber, Select, Space, Spin, Sw
 import {
     ApiOutlined, CloudOutlined, DeploymentUnitOutlined, EyeOutlined, MessageOutlined,
     PlusOutlined, QuestionCircleOutlined, ReloadOutlined, RobotOutlined, StarFilled,
-    StarOutlined, ThunderboltOutlined,
+    StarOutlined, ThunderboltOutlined, WarningOutlined,
 } from '@ant-design/icons';
 import { modelConfigsApi, ModelConfigRow, ProviderMeta, TestResult } from '../../api/model-configs';
 import { message, confirmModal, notifyError } from '../../shared/feedback';
@@ -60,10 +60,15 @@ const ModelConfigsPage: React.FC = () => {
     const prefetchedRef = useRef(false);
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [editing, setEditing] = useState<ModelConfigRow | null>(null);
-    const [testingId, setTestingId] = useState<number | 'form' | null>(null);
+    // 测试中的行/表单（用 Set：并发测试时各自保持 loading，不会互相清掉）
+    const [testingKeys, setTestingKeys] = useState<Set<string>>(new Set());
     const [formTest, setFormTest] = useState<TestResult | null>(null);
     const [form] = Form.useForm();
     const [providerSel, setProviderSel] = useState<string>('openai_compatible');
+    // 保存中：防连点重复创建 / 重复 PATCH
+    const [saving, setSaving] = useState(false);
+    // 各用途的加载失败标记：失败 ≠ 没有配置，不能渲染成空态
+    const [failedByPurpose, setFailedByPurpose] = useState<Record<string, boolean>>({});
 
     // 普通用户可管理的项目（owner）；admin 不需要
     // projectsReady：load() 依赖这份列表，没到手之前先不 load——
@@ -103,8 +108,10 @@ const ModelConfigsPage: React.FC = () => {
                 setRowsByPurpose((prev) => ({ ...prev, [purpose]: [...globalRs, ...projectRs.flat()] }));
                 setProviders(ps);
             }
+            setFailedByPurpose((prev) => ({ ...prev, [purpose]: false }));
         } catch (err: any) {
             notifyError(err, '加载失败');
+            setFailedByPurpose((prev) => ({ ...prev, [purpose]: true }));
             // 失败也记为「已加载（空）」，避免加载提示一直挂着；可点「刷新」重试
             setRowsByPurpose((prev) => (prev[purpose] ? prev : { ...prev, [purpose]: [] }));
         }
@@ -191,6 +198,7 @@ const ModelConfigsPage: React.FC = () => {
     };
 
     const handleSave = async () => {
+        if (saving) return;
         // 校验失败交给 antd 在字段下方提示；这里吞掉 reject，避免控制台出现未处理的 Promise
         let values: any;
         try {
@@ -222,6 +230,7 @@ const ModelConfigsPage: React.FC = () => {
                 streaming_enabled: !!values.streaming_enabled,
             },
         };
+        setSaving(true);
         try {
             if (editing) {
                 await modelConfigsApi.patch(editing.id, payload);
@@ -243,12 +252,15 @@ const ModelConfigsPage: React.FC = () => {
             load();
         } catch (err: any) {
             notifyError(err, '保存失败');
+        } finally {
+            setSaving(false);
         }
     };
 
     const handleTest = async (row?: ModelConfigRow) => {
-        const id = row ? row.id : 'form';
-        setTestingId(id);
+        const key = row ? `row:${row.id}` : 'form';
+        if (testingKeys.has(key)) return;
+        setTestingKeys((prev) => new Set(prev).add(key));
         try {
             if (row) {
                 const result = await modelConfigsApi.test({
@@ -285,7 +297,11 @@ const ModelConfigsPage: React.FC = () => {
                 notifyError(err, '测试请求失败');
             }
         } finally {
-            setTestingId(null);
+            setTestingKeys((prev) => {
+                const next = new Set(prev);
+                next.delete(key);
+                return next;
+            });
         }
     };
 
@@ -386,6 +402,24 @@ const ModelConfigsPage: React.FC = () => {
 
                 {/* 手动刷新时旧卡片压在 Spin 遮罩下 */}
                 {rowsLoaded ? (
+                failedByPurpose[activePurpose] && rows.length === 0 ? (
+                    /* 加载失败 ≠ 没有配置：权限/网络错误不能渲染成空态 */
+                    <div className="surface-card">
+                        <div className="flex flex-col items-center justify-center px-4 py-14 text-center">
+                            <span
+                                className="flex h-14 w-14 items-center justify-center rounded-2xl text-[22px]"
+                                style={{ background: 'rgba(180,35,24,0.10)', color: '#B42318' }}
+                            >
+                                <WarningOutlined />
+                            </span>
+                            <div className="mt-3 text-[14px] font-semibold text-[#0F172A]">模型配置加载失败</div>
+                            <div className="mt-1 text-[12.5px] text-[#66738F]">请检查网络或后端服务后重试</div>
+                            <Button className="tk-soft-btn mt-4" icon={<ReloadOutlined />} onClick={refresh} loading={refreshing}>
+                                重新加载
+                            </Button>
+                        </div>
+                    </div>
+                ) : (
                 <Spin spinning={refreshing}>
                 {rows.length === 0 ? (
                     /* 空态不做整块白卡：横向一条虚线占位带，高度只有原先三分之一，不抢卡片区的视觉重心 */
@@ -476,9 +510,14 @@ const ModelConfigsPage: React.FC = () => {
                                         只读行需要把「只读」说明放在同一行右侧 */}
                                     <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[#F0F4FB] pt-2.5">
                                         <div className="flex items-center gap-0.5">
-                                            <Button size="small" type="link" icon={<ApiOutlined />}
-                                                    loading={testingId === row.id}
-                                                    onClick={() => handleTest(row)}>测试</Button>
+                                            <Tooltip title={manageable
+                                                ? ''
+                                                : (row.scope === 'global' ? '全局配置由管理员测试' : '项目 owner 可测试')}>
+                                                <Button size="small" type="link" icon={<ApiOutlined />}
+                                                        loading={testingKeys.has(`row:${row.id}`)}
+                                                        disabled={!manageable}
+                                                        onClick={() => handleTest(row)}>测试</Button>
+                                            </Tooltip>
                                             <Button size="small" type="link"
                                                     icon={row.is_default ? <StarFilled style={{ color: '#E0A02A' }} /> : <StarOutlined />}
                                                     disabled={row.is_default || !manageable}
@@ -508,6 +547,7 @@ const ModelConfigsPage: React.FC = () => {
                     </div>
                 )}
                 </Spin>
+                )
                 ) : (
                     /* 首屏不做骨架屏：页头/页签/指标带先出，数据齐了再填正文 */
                     <PageLoading hint={`正在加载「${purposeMeta?.label ?? '当前用途'}」配置…`} />
@@ -517,13 +557,14 @@ const ModelConfigsPage: React.FC = () => {
                     title={editing ? '编辑模型配置' : '新建模型配置'}
                     width={560}
                     open={drawerOpen}
-                    onClose={() => setDrawerOpen(false)}
+                    onClose={() => { if (!saving) setDrawerOpen(false); }}
                     destroyOnHidden
                     styles={{ body: { padding: '12px 24px 8px' } }}
                     footer={
                         <div className="flex flex-wrap items-center justify-between gap-3">
                             <div className="flex min-w-0 items-center gap-2">
-                                <Button icon={<ApiOutlined />} loading={testingId === 'form'} onClick={() => handleTest()}>
+                                <Button icon={<ApiOutlined />} loading={testingKeys.has('form')}
+                                        disabled={saving} onClick={() => handleTest()}>
                                     测试连接
                                 </Button>
                                 {formTest && (
@@ -538,8 +579,8 @@ const ModelConfigsPage: React.FC = () => {
                                 )}
                             </div>
                             <Space>
-                                <Button onClick={() => setDrawerOpen(false)}>取消</Button>
-                                <Button type="primary" onClick={handleSave}>保存</Button>
+                                <Button onClick={() => setDrawerOpen(false)} disabled={saving}>取消</Button>
+                                <Button type="primary" onClick={handleSave} loading={saving}>保存</Button>
                             </Space>
                         </div>
                     }

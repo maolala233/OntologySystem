@@ -13,7 +13,7 @@ import { message, notifyError } from '../../shared/feedback';
 import {
     CheckOutlined, CloseOutlined, DeleteOutlined, EditOutlined, LoadingOutlined, MinusOutlined,
     PlusOutlined, ReloadOutlined, SafetyOutlined, SearchOutlined, TeamOutlined,
-    ToolOutlined, UserSwitchOutlined,
+    ToolOutlined, UserSwitchOutlined, WarningOutlined,
 } from '@ant-design/icons';
 import { adminApi, AdminModule, AdminRole, AdminUser } from '../../api/admin';
 import Navbar from '../../components/Layout/Navbar';
@@ -73,8 +73,13 @@ const ModuleGrantsPage: React.FC = () => {
     const savingNow = useRef<Set<number>>(new Set());
     const saveQueued = useRef<Set<number>>(new Set());
     const [loading, setLoading] = useState(true);
+    // 首屏加载失败 ≠ 没有数据：单独成态，避免把权限/网络错误渲染成空矩阵
+    const [loadFailed, setLoadFailed] = useState(false);
     // 刷新按钮只在手动点击时转圈；首屏由骨架屏表达
     const [refreshing, setRefreshing] = useState(false);
+    // 角色提交中：防连点重复创建 / 重复删除
+    const [savingRole, setSavingRole] = useState(false);
+    const [deletingRoleId, setDeletingRoleId] = useState<number | null>(null);
 
     // 角色编辑/应用弹窗
     const [roleModalOpen, setRoleModalOpen] = useState(false);
@@ -115,11 +120,13 @@ const ModuleGrantsPage: React.FC = () => {
             setMatrix(next);
             matrixRef.current = next;
             savedMatrixRef.current = next;
+            setLoadFailed(false);
             // 刷新拿回的是服务器真值：取消还没发出的防抖保存，避免旧草稿盖掉新数据
             saveTimers.current.forEach((t) => window.clearTimeout(t));
             saveTimers.current.clear();
             saveQueued.current.clear();
         } catch (e) {
+            setLoadFailed(true);
             notifyError(e, '加载授权数据失败');
         } finally {
             setLoading(false);
@@ -127,15 +134,6 @@ const ModuleGrantsPage: React.FC = () => {
     }, []);
 
     useEffect(() => { load(); }, [load]);
-
-    const refresh = useCallback(async () => {
-        setRefreshing(true);
-        try {
-            await load();
-        } finally {
-            setRefreshing(false);
-        }
-    }, [load]);
 
     /** 立即把某用户当前整行授权写入服务器；同一用户串行，在飞期间的新改动排队补发一次 */
     const flushSave = useCallback(async (userId: number) => {
@@ -153,11 +151,20 @@ const ModuleGrantsPage: React.FC = () => {
             await adminApi.putGrants(userId, grants);
             savedMatrixRef.current = { ...savedMatrixRef.current, [userId]: row };
         } catch (err: any) {
-            // 失败整行回滚到上次成功保存的快照，界面不停留在“看起来已改”的状态
-            const snapshot = { ...(savedMatrixRef.current[userId] ?? {}) };
-            matrixRef.current = { ...matrixRef.current, [userId]: snapshot };
-            setMatrix((prev) => ({ ...prev, [userId]: snapshot }));
-            notifyError(err, '授权保存失败');
+            // 请求在飞期间用户又改了：保留最新本地行、排队再试一次，别把新改动一起回滚掉
+            const latest = { ...(matrixRef.current[userId] ?? {}) };
+            const hasNewer = Object.keys({ ...row, ...latest })
+                .some((code) => latest[code] !== row[code]);
+            if (hasNewer) {
+                saveQueued.current.add(userId);
+                notifyError(err, '授权保存失败，正在重试');
+            } else {
+                // 没有更新的改动：整行回滚到上次成功保存的快照，界面不停留在“看起来已改”的状态
+                const snapshot = { ...(savedMatrixRef.current[userId] ?? {}) };
+                matrixRef.current = { ...matrixRef.current, [userId]: snapshot };
+                setMatrix((prev) => ({ ...prev, [userId]: snapshot }));
+                notifyError(err, '授权保存失败');
+            }
         } finally {
             savingNow.current.delete(userId);
             setSavingUsers((prev) => {
@@ -182,6 +189,38 @@ const ModuleGrantsPage: React.FC = () => {
         }, 400));
     }, [flushSave]);
 
+    /** 把所有还在防抖里的行立刻推入保存队列（卸载 / 刷新 / 角色变更前用） */
+    const flushPendingSaves = useCallback(() => {
+        const pending = Array.from(saveTimers.current.keys());
+        saveTimers.current.forEach((t) => window.clearTimeout(t));
+        saveTimers.current.clear();
+        pending.forEach((uid) => { void flushSave(uid); });
+    }, [flushSave]);
+
+    /** 等保存队列归零：最多等 10s，避免后端异常时界面卡死 */
+    const waitForSaves = useCallback(async () => {
+        const deadline = Date.now() + 10_000;
+        while ((savingNow.current.size > 0 || saveQueued.current.size > 0) && Date.now() < deadline) {
+            await new Promise((resolve) => window.setTimeout(resolve, 50));
+        }
+    }, []);
+
+    /** 先把本地授权改动落库再回源：否则 load 可能拿到旧值，在飞的 PUT 又晚一步覆盖 */
+    const syncThenLoad = useCallback(async () => {
+        flushPendingSaves();
+        await waitForSaves();
+        await load();
+    }, [flushPendingSaves, waitForSaves, load]);
+
+    const refresh = useCallback(async () => {
+        setRefreshing(true);
+        try {
+            await syncThenLoad();
+        } finally {
+            setRefreshing(false);
+        }
+    }, [syncThenLoad]);
+
     /** 单元格三态循环：改本地矩阵后立即安排落库（无草稿态、无二次确认） */
     const cycleCell = (userId: number, code: string) => {
         const target = users.find((u) => u.id === userId);
@@ -196,11 +235,8 @@ const ModuleGrantsPage: React.FC = () => {
         scheduleSave(userId);
     };
 
-    // 卸载时清掉还没触发的防抖保存
-    useEffect(() => () => {
-        saveTimers.current.forEach((t) => window.clearTimeout(t));
-        saveTimers.current.clear();
-    }, []);
+    // 离开页面不等于放弃改动：把还在防抖窗口里的行直接补发（请求不依赖组件存活）
+    useEffect(() => () => { flushPendingSaves(); }, [flushPendingSaves]);
 
     // ── 角色编辑
     const openRoleModal = (role: AdminRole | null) => {
@@ -212,7 +248,9 @@ const ModuleGrantsPage: React.FC = () => {
     };
 
     const saveRole = async () => {
+        if (savingRole) return;
         if (!roleForm.name.trim()) { message.warning('请填写角色名称'); return; }
+        setSavingRole(true);
         try {
             if (editingRole) {
                 await adminApi.updateRole(editingRole.id, {
@@ -228,19 +266,26 @@ const ModuleGrantsPage: React.FC = () => {
                 message.success('角色已创建');
             }
             setRoleModalOpen(false);
-            load();
+            // 角色变更后回源前，先把矩阵里未落库的手动改动推上去，避免被 load 的旧值覆盖
+            await syncThenLoad();
         } catch (err: any) {
             notifyError(err, '保存失败');
+        } finally {
+            setSavingRole(false);
         }
     };
 
     const removeRole = async (role: AdminRole) => {
+        if (deletingRoleId != null) return;
+        setDeletingRoleId(role.id);
         try {
             await adminApi.deleteRole(role.id);
             message.success(`角色「${role.name}」已删除`);
-            load();
+            await syncThenLoad();
         } catch (err: any) {
             notifyError(err, '删除失败');
+        } finally {
+            setDeletingRoleId(null);
         }
     };
 
@@ -252,14 +297,19 @@ const ModuleGrantsPage: React.FC = () => {
 
     const doApplyRole = async () => {
         if (!applyRole || applyUserIds.length === 0) { message.warning('请选择要应用的用户'); return; }
+        if (applying) return;
         setApplying(true);
         try {
+            // 应用角色会全量覆盖所选用户的 grants：先把本地手动改动落库并等队列清空，
+            // 否则旧行可能在角色应用之后补发，把刚应用的授权又覆盖回去
+            flushPendingSaves();
+            await waitForSaves();
             const resp = await adminApi.applyRole(applyRole.id, applyUserIds);
             const skippedMsg = resp.skipped?.length
                 ? `，跳过 ${resp.skipped.length} 个（${resp.skipped.map((s) => s.reason).join('、')}）` : '';
             message.success(`角色「${resp.role}」已应用到 ${resp.applied.length} 个用户${skippedMsg}`);
             setApplyRole(null);
-            load();
+            await load();
         } catch (err: any) {
             notifyError(err, '应用失败');
         } finally {
@@ -422,11 +472,19 @@ const ModuleGrantsPage: React.FC = () => {
                                 <Space size={0}>
                                     <Button size="small" type="text" icon={<EditOutlined />}
                                         aria-label="编辑角色"
+                                        disabled={savingRole || deletingRoleId != null}
                                         onClick={() => openRoleModal(r)} />
                                     {!r.is_builtin && (
                                         <Popconfirm title={`确定删除角色「${r.name}」？`} onConfirm={() => removeRole(r)}>
                                             <Tooltip title="删除">
-                                                <Button size="small" type="text" danger icon={<DeleteOutlined />} />
+                                                <Button
+                                                    size="small"
+                                                    type="text"
+                                                    danger
+                                                    icon={<DeleteOutlined />}
+                                                    loading={deletingRoleId === r.id}
+                                                    disabled={deletingRoleId != null && deletingRoleId !== r.id}
+                                                />
                                             </Tooltip>
                                         </Popconfirm>
                                     )}
@@ -544,6 +602,24 @@ const ModuleGrantsPage: React.FC = () => {
                 />
 
                 {/* 刷新时旧矩阵保留在 Spin 遮罩下（与用户管理的 Table loading 同一观感） */}
+                {loadFailed && users.length === 0 && !loading ? (
+                    /* 加载失败与「真的没有数据」必须区分：否则权限/网络错误看起来像空矩阵 */
+                    <div className="surface-card">
+                        <div className="flex flex-col items-center justify-center px-4 py-14 text-center">
+                            <span
+                                className="flex h-14 w-14 items-center justify-center rounded-2xl text-[22px]"
+                                style={{ background: 'rgba(180,35,24,0.10)', color: '#B42318' }}
+                            >
+                                <WarningOutlined />
+                            </span>
+                            <div className="mt-3 text-[14px] font-semibold text-[#0F172A]">授权数据加载失败</div>
+                            <div className="mt-1 text-[12.5px] text-[#66738F]">请检查网络或后端服务后重试</div>
+                            <Button className="tk-soft-btn mt-4" icon={<ReloadOutlined />} onClick={refresh} loading={refreshing}>
+                                重新加载
+                            </Button>
+                        </div>
+                    </div>
+                ) : (
                 <Spin spinning={loading && users.length > 0}>
                 <Tabs
                     defaultActiveKey="users"
@@ -606,12 +682,19 @@ const ModuleGrantsPage: React.FC = () => {
                     ]}
                 />
                 </Spin>
+                )}
 
                 {/* 新建/编辑角色 */}
                 <Modal
                     title={editingRole ? `编辑角色 · ${editingRole.name}` : '新建角色'}
-                    open={roleModalOpen} onOk={saveRole} onCancel={() => setRoleModalOpen(false)}
-                    okText="保存" destroyOnHidden width={620}
+                    open={roleModalOpen}
+                    onOk={saveRole}
+                    onCancel={() => { if (!savingRole) setRoleModalOpen(false); }}
+                    okText="保存"
+                    confirmLoading={savingRole}
+                    cancelButtonProps={{ disabled: savingRole }}
+                    destroyOnHidden
+                    width={620}
                 >
                     <div className="space-y-3 py-1">
                         <div>
@@ -634,8 +717,12 @@ const ModuleGrantsPage: React.FC = () => {
                 {/* 应用角色到用户 */}
                 <Modal
                     title={`应用角色「${applyRole?.name ?? ''}」到用户`}
-                    open={!!applyRole} onOk={doApplyRole} onCancel={() => setApplyRole(null)}
-                    okText={`应用到 ${applyUserIds.length} 个用户`} confirmLoading={applying}
+                    open={!!applyRole}
+                    onOk={doApplyRole}
+                    onCancel={() => { if (!applying) setApplyRole(null); }}
+                    okText={`应用到 ${applyUserIds.length} 个用户`}
+                    confirmLoading={applying}
+                    cancelButtonProps={{ disabled: applying }}
                     okButtonProps={{ disabled: applyUserIds.length === 0 }}
                     width={560}
                 >
