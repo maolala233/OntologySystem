@@ -9,7 +9,7 @@
  * 每张卡片表头有只作用于本卡的「保存」按钮（有改动才可点），不做全局浮层。
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { message, notifyError } from '../../shared/feedback';
+import { confirmModal, message, notifyError } from '../../shared/feedback';
 import { Button, Card, Input, Spin, Switch, Tooltip } from 'antd';
 import {
     ApiOutlined,
@@ -22,7 +22,7 @@ import {
     SettingOutlined,
     ThunderboltOutlined,
 } from '@ant-design/icons';
-import { envConfigApi, EnvConfigResponse, EnvFieldRow, EnvTestResult } from '../../api/envConfig';
+import { envConfigApi, EnvConfigResponse, EnvFieldRow, EnvTestResult, EnvUpdateResult } from '../../api/envConfig';
 import Navbar from '../../components/Layout/Navbar';
 import TechHero from '../../components/TechHero';
 import { Dot, Note, PageLoading, StatBand, StatItem, TkTag } from '../../shared/consoleUi';
@@ -66,7 +66,8 @@ const EnvConfigPage: React.FC = () => {
     const [dirty, setDirty] = useState<Record<string, string | boolean>>({});
     // 开关即时保存的进行中集合（开关按钮上转圈）
     const [savingKeys, setSavingKeys] = useState<Set<string>>(new Set());
-    const [testing, setTesting] = useState<string | null>(null);
+    // 测试中的服务集合：并发测试时各自保持 loading，不会互相清掉
+    const [testingServices, setTestingServices] = useState<Set<string>>(new Set());
     const [testResults, setTestResults] = useState<Record<string, EnvTestResult>>({});
 
     const load = async () => {
@@ -85,7 +86,7 @@ const EnvConfigPage: React.FC = () => {
 
     useEffect(() => { load(); }, []);
 
-    const refresh = async () => {
+    const doRefresh = async () => {
         setRefreshing(true);
         try {
             await load();
@@ -94,7 +95,34 @@ const EnvConfigPage: React.FC = () => {
         }
     };
 
+    const refresh = async () => {
+        // 刷新会清空草稿：有未保存改动时先确认，避免静默丢数据
+        if (dirtyCount > 0) {
+            confirmModal({
+                title: '放弃未保存的修改？',
+                content: `当前有 ${dirtyCount} 项改动尚未保存，刷新会丢弃这些草稿。`,
+                okText: '放弃并刷新',
+                okType: 'danger',
+                cancelText: '取消',
+                onOk: doRefresh,
+            });
+            return;
+        }
+        await doRefresh();
+    };
+
     const dirtyCount = useMemo(() => Object.keys(dirty).length, [dirty]);
+
+    // 有未保存草稿时，关闭/刷新浏览器给原生确认（SPA 内部路由跳转不在覆盖范围）
+    useEffect(() => {
+        if (dirtyCount === 0) return;
+        const handler = (e: BeforeUnloadEvent) => {
+            e.preventDefault();
+            e.returnValue = '';
+        };
+        window.addEventListener('beforeunload', handler);
+        return () => window.removeEventListener('beforeunload', handler);
+    }, [dirtyCount]);
 
     const stats = useMemo(() => {
         const services = data ? Object.keys(data.services).length : 0;
@@ -117,6 +145,23 @@ const EnvConfigPage: React.FC = () => {
         setDirty((prev) => ({ ...prev, [key]: value }));
     };
 
+    /** 后端 applied 表示 API 进程内热重连是否成功：失败必须说出来，否则“已保存”会误导。
+     *  onlyService 用来过滤无关服务——保存 Redis 时 Neo4j 重连失败不该打扰用户。 */
+    const appliedFailures = (applied: EnvUpdateResult['applied'] | undefined, onlyService?: string): string[] => {
+        const failed: string[] = [];
+        if (applied && applied.neo4j === false && (!onlyService || onlyService === 'neo4j')) {
+            failed.push('Neo4j');
+        }
+        if (applied && applied.minio === false && (!onlyService || onlyService === 'minio')) {
+            failed.push('MinIO');
+        }
+        return failed;
+    };
+
+    /** 字段 key 的所属服务（milvus_host → milvus），用于过滤 applied 提示 */
+    const serviceOfKey = (key: string): string =>
+        ['milvus', 'neo4j', 'redis', 'minio'].find((s) => key.startsWith(s)) ?? '';
+
     /** 开关类字段即时保存：不进草稿、不弹吸底条；失败回滚到拨动前的值。
      *  不走 load() 刷新——那会把正在编辑的文本草稿一起清掉。 */
     const toggleSwitch = async (key: string, next: boolean) => {
@@ -125,7 +170,11 @@ const EnvConfigPage: React.FC = () => {
         setSavingKeys((prev) => new Set(prev).add(key));
         setData((prev) => patchField(prev, key, { value: next, source: 'db' }));
         try {
-            await envConfigApi.update({ [key]: next });
+            const result = await envConfigApi.update({ [key]: next });
+            const failed = appliedFailures(result.applied, serviceOfKey(key));
+            if (failed.length > 0) {
+                message.warning(`${failed.join(' / ')} 热重连失败：开关已保存，但可能需要重启后端或检查连接参数`);
+            }
         } catch (err: any) {
             setData((prev) => patchField(prev, key, {
                 value: before?.value ?? !next,
@@ -163,8 +212,20 @@ const EnvConfigPage: React.FC = () => {
                 Object.keys(patch).forEach((k) => delete next[k]);
                 return next;
             });
-            message.success(`已保存 ${result.changed} 项` +
-                (result.skipped ? `，${result.skipped} 项（掩码/空值）未变更` : ''));
+            // 配置值已变：清掉该服务的旧测试结果，避免继续显示保存前的“连通 Xms”
+            setTestResults((prev) => {
+                const next = { ...prev };
+                delete next[service];
+                return next;
+            });
+            const base = `已保存 ${result.changed} 项` +
+                (result.skipped ? `，${result.skipped} 项（掩码/空值）未变更` : '');
+            const failed = appliedFailures(result.applied, service);
+            if (failed.length > 0) {
+                message.warning(`${base}；但 ${failed.join(' / ')} 热重连失败，可能需要重启后端或检查连接参数`);
+            } else {
+                message.success(base);
+            }
         } catch (err: any) {
             notifyError(err, '保存失败');
         } finally {
@@ -173,7 +234,8 @@ const EnvConfigPage: React.FC = () => {
     };
 
     const handleTest = async (service: string) => {
-        setTesting(service);
+        if (testingServices.has(service)) return;
+        setTestingServices((prev) => new Set(prev).add(service));
         try {
             const result = await envConfigApi.test(service);
             setTestResults((prev) => ({ ...prev, [service]: result }));
@@ -183,7 +245,11 @@ const EnvConfigPage: React.FC = () => {
                 [service]: { service, status: 'down', error: err.response?.data?.error?.message || err.message },
             }));
         } finally {
-            setTesting(null);
+            setTestingServices((prev) => {
+                const next = new Set(prev);
+                next.delete(service);
+                return next;
+            });
         }
     };
 
@@ -298,15 +364,18 @@ const EnvConfigPage: React.FC = () => {
                                             </span>
                                         </Tooltip>
                                     )}
-                                    <Button
-                                        size="small"
-                                        className="tk-soft-btn"
-                                        icon={<ApiOutlined />}
-                                        loading={testing === service}
-                                        onClick={() => handleTest(service)}
-                                    >
-                                        测试连接
-                                    </Button>
+                                    <Tooltip title={serviceDirty > 0 ? '有未保存的修改：请先保存再测试' : ''}>
+                                        <Button
+                                            size="small"
+                                            className="tk-soft-btn"
+                                            icon={<ApiOutlined />}
+                                            loading={testingServices.has(service)}
+                                            disabled={serviceDirty > 0}
+                                            onClick={() => handleTest(service)}
+                                        >
+                                            测试连接
+                                        </Button>
+                                    </Tooltip>
                                     <Button
                                         size="small"
                                         type="primary"

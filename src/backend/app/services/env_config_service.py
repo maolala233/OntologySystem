@@ -208,8 +208,16 @@ def describe(db) -> Dict[str, Any]:
 
 
 def update(db, updates: Dict[str, Any], operator_id: int) -> Dict[str, int]:
-    """合并写入 platform_config。secret 字段传掩码/空/缺省 = 不变。"""
-    overrides = _load_platform_cfg(db)
+    """合并写入 platform_config。secret 字段传掩码/空/缺省 = 不变。
+
+    并发保护：开关是即时保存的，多个开关/卡片同时提交时，先 SELECT ... FOR UPDATE
+    锁住配置行再读改写，避免 read-modify-write 互相覆盖。
+    """
+    row = (db.query(SystemConfig)
+           .filter(SystemConfig.key == PLATFORM_CONFIG_KEY)
+           .with_for_update()
+           .first())
+    overrides = dict(row.value) if (row is not None and isinstance(row.value, dict)) else {}
     changed, skipped = 0, 0
     for key, value in (updates or {}).items():
         f = _FIELD_MAP.get(key)
@@ -226,7 +234,6 @@ def update(db, updates: Dict[str, Any], operator_id: int) -> Dict[str, int]:
             overrides[key] = _encrypt(text) if f.secret else text
         changed += 1
 
-    row = db.query(SystemConfig).filter(SystemConfig.key == PLATFORM_CONFIG_KEY).first()
     if row is None:
         row = SystemConfig(key=PLATFORM_CONFIG_KEY, value=overrides)
         db.add(row)
