@@ -77,8 +77,9 @@ const KnowledgeDomainSelector: React.FC<KnowledgeDomainSelectorProps> = ({
             setIsCreateModalOpen(false);
             createDomainForm.resetFields();
         } catch (error: any) {
-            if (error.response?.status === 400) {
-                message.warning('该知识域名称已存在');
+            // 409：后端重名拦截（400 为历史口径，一并兼容）
+            if (error.response?.status === 400 || error.response?.status === 409) {
+                message.warning('该知识域名称已存在，请直接从下拉列表选择');
             } else {
                 notifyError(error, '创建知识域失败');
             }

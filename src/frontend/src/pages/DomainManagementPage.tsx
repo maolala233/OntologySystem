@@ -41,6 +41,13 @@ const DomainManagementPage: React.FC = () => {
     const [domainProjects, setDomainProjects] = useState<ProjectInDomain[]>([]);
     const [projectTargetDomains, setProjectTargetDomains] = useState<Record<number, number>>({}); // projectId -> targetDomainId
     const [form] = Form.useForm();
+    // 首屏加载失败 ≠ 没有数据：单独成态，避免把网络/权限错误渲染成「暂无知识域」
+    const [loadFailed, setLoadFailed] = useState(false);
+    // 提交中状态：防连点重复创建/迁移/删除
+    const [formSubmitting, setFormSubmitting] = useState(false);
+    const [migrateSubmitting, setMigrateSubmitting] = useState(false);
+    const [deleteSubmitting, setDeleteSubmitting] = useState(false);
+    const [rowLoading, setRowLoading] = useState<{ id: number; action: 'migrate' | 'delete' } | null>(null);
 
     useEffect(() => {
         loadDomains();
@@ -60,7 +67,9 @@ const DomainManagementPage: React.FC = () => {
             }));
 
             setDomains(domainStats);
+            setLoadFailed(false);
         } catch (error: any) {
+            setLoadFailed(true);
             notifyError(error, '加载知识域失败');
         } finally {
             setLoading(false);
@@ -76,6 +85,28 @@ const DomainManagementPage: React.FC = () => {
         }
     };
 
+    /** 迁移/删除流程收尾：关抽屉、清临时状态、回源列表 */
+    const finishMigrate = () => {
+        setIsMigrateDrawerOpen(false);
+        setIsDeleteModalOpen(false);
+        setMigratingDomain(null);
+        setDeletingDomain(null);
+        setDomainProjects([]);
+        setProjectTargetDomains({});
+        loadDomains();
+    };
+
+    /** 迁移可能已部分生效：重新拉项目列表并清空旧分配，避免拿过期数据重试 */
+    const reloadMigrateProjects = async (domainId: number) => {
+        setProjectTargetDomains({});
+        try {
+            setDomainProjects(await getDomainProjects(domainId));
+        } catch {
+            /* 拉取失败保留旧列表，用户可自行关闭抽屉 */
+        }
+        loadDomains();
+    };
+
     const stats = useMemo(() => {
         const covered = domains.reduce((sum, d) => sum + d.projectCount, 0);
         const empty = domains.filter(d => d.projectCount === 0).length;
@@ -84,12 +115,18 @@ const DomainManagementPage: React.FC = () => {
     }, [domains]);
 
     const handleCreateOrUpdateDomain = async (values: any) => {
+        if (formSubmitting) return;
+        setFormSubmitting(true);
         try {
+            const payload = {
+                name: String(values.name ?? '').trim(),
+                description: typeof values.description === 'string' ? values.description.trim() : values.description,
+            };
             if (editingDomain) {
-                await updateDomain(editingDomain.id, values);
+                await updateDomain(editingDomain.id, payload);
                 message.success('知识域已更新');
             } else {
-                await createDomain(values);
+                await createDomain(payload);
                 message.success('知识域已创建');
             }
             setIsModalOpen(false);
@@ -97,7 +134,14 @@ const DomainManagementPage: React.FC = () => {
             setEditingDomain(null);
             loadDomains();
         } catch (error: any) {
-            notifyError(error, '操作失败，请稍后重试');
+            // 后端对重名返回 409：单独提示，别再落到「操作失败」的兜底文案
+            if (error?.response?.status === 409) {
+                message.warning('该知识域名称已存在，请换一个名称');
+            } else {
+                notifyError(error, '操作失败，请稍后重试');
+            }
+        } finally {
+            setFormSubmitting(false);
         }
     };
 
@@ -114,20 +158,27 @@ const DomainManagementPage: React.FC = () => {
      * 打开迁移抽屉
      */
     const handleMigrateClick = async (domain: DomainWithCount) => {
+        if (rowLoading) return;
         setMigratingDomain(domain);
+        // 普通迁移不是删除流程：清掉上一次删除流程可能遗留的标记，
+        // 否则抽屉会继续显示「迁移并删除」和 danger 样式（实际不会删除，但界面是错的）
+        setDeletingDomain(null);
         setProjectTargetDomains({});
 
-        if (domain.projectCount > 0) {
-            // 加载该知识域下的项目
-            try {
-                const projects = await getDomainProjects(domain.id);
-                setDomainProjects(projects);
-                setIsMigrateDrawerOpen(true);
-            } catch (error: any) {
-                notifyError(error, '加载项目列表失败');
-            }
-        } else {
+        if (domain.projectCount <= 0) {
+            setMigratingDomain(null);
             message.info('该知识域下没有项目，无需迁移');
+            return;
+        }
+        // 后端读的是整份 graph_data，项目多时要等几秒：行按钮给 loading，避免以为没点上
+        setRowLoading({ id: domain.id, action: 'migrate' });
+        try {
+            setDomainProjects(await getDomainProjects(domain.id));
+            setIsMigrateDrawerOpen(true);
+        } catch (error: any) {
+            notifyError(error, '加载项目列表失败');
+        } finally {
+            setRowLoading(null);
         }
     };
 
@@ -136,18 +187,21 @@ const DomainManagementPage: React.FC = () => {
      * 如果有项目，自动进入迁移流程；否则直接确认删除
      */
     const handleDeleteClick = async (domain: DomainWithCount) => {
+        if (rowLoading) return;
         setDeletingDomain(domain);
         setProjectTargetDomains({});
 
         if (domain.projectCount > 0) {
             // 有项目，进入迁移流程
             setMigratingDomain(domain);
+            setRowLoading({ id: domain.id, action: 'delete' });
             try {
-                const projects = await getDomainProjects(domain.id);
-                setDomainProjects(projects);
+                setDomainProjects(await getDomainProjects(domain.id));
                 setIsMigrateDrawerOpen(true);
             } catch (error: any) {
                 notifyError(error, '加载项目列表失败');
+            } finally {
+                setRowLoading(null);
             }
         } else {
             // 没有项目，直接确认删除
@@ -160,44 +214,62 @@ const DomainManagementPage: React.FC = () => {
      */
     const handleConfirmMigrate = async () => {
         const targetDomain = migratingDomain;
-        if (!targetDomain) return;
+        if (!targetDomain || migrateSubmitting) return;
+        const isDeleteFlow = !!(deletingDomain && deletingDomain.id === targetDomain.id);
 
-        try {
-            // 检查是否有项目指定了目标知识域
-            const hasTargetDomains = Object.keys(projectTargetDomains).length > 0;
-
-            if (!hasTargetDomains) {
-                message.warning('请为至少一个项目指定目标知识域');
-                return;
+        // 删除流程但域内已无项目（projectCount 过期）：直接删除，不必再要求指定目标
+        if (isDeleteFlow && domainProjects.length === 0) {
+            setMigrateSubmitting(true);
+            try {
+                await deleteDomain(targetDomain.id);
+                message.success(`知识域「${targetDomain.name}」已删除`);
+                finishMigrate();
+            } catch (error: any) {
+                notifyError(error, '删除失败，请稍后重试');
+                await reloadMigrateProjects(targetDomain.id);
+            } finally {
+                setMigrateSubmitting(false);
             }
+            return;
+        }
 
-            // 使用批量迁移 API
-            const migrationItems = Object.entries(projectTargetDomains).map(([projectId, targetDomainId]) => ({
+        if (!domainProjects.some(p => projectTargetDomains[p.id] != null)) {
+            message.warning('请为至少一个项目指定目标知识域');
+            return;
+        }
+        // 删除流程必须先清空域内全部项目，否则后端会拒绝删除：提前拦住，别等迁移完才失败
+        if (isDeleteFlow && !domainProjects.every(p => projectTargetDomains[p.id] != null)) {
+            message.warning('删除前需要为全部项目指定目标知识域');
+            return;
+        }
+
+        // 只提交仍在当前列表里的项目（失败重试时可能残留已迁走的分配）
+        const migrationItems = Object.entries(projectTargetDomains)
+            .filter(([projectId]) => domainProjects.some(p => p.id === Number(projectId)))
+            .map(([projectId, targetDomainId]) => ({
                 project_id: Number(projectId),
                 target_domain_id: targetDomainId,
             }));
 
-            await migrateProjectsBatch(targetDomain.id, {
-                items: migrationItems,
-            });
-
-            const isDeleteFlow = !!(deletingDomain && deletingDomain.id === targetDomain.id);
+        setMigrateSubmitting(true);
+        try {
+            // 使用批量迁移 API
+            const res = await migrateProjectsBatch(targetDomain.id, { items: migrationItems });
 
             if (isDeleteFlow) {
                 // 删除流程：项目迁移完成后域内已清空，随即删除知识域
                 await deleteDomain(targetDomain.id);
-                message.success(`已迁移 ${migrationItems.length} 个项目并删除知识域「${targetDomain.name}」`);
+                message.success(`已迁移 ${res.migrated_count} 个项目并删除知识域「${targetDomain.name}」`);
             } else {
-                message.success(`已迁移 ${migrationItems.length} 个项目`);
+                message.success(`已迁移 ${res.migrated_count} 个项目`);
             }
-
-            setIsMigrateDrawerOpen(false);
-            setIsDeleteModalOpen(false);
-            setMigratingDomain(null);
-            setDeletingDomain(null);
-            loadDomains();
+            finishMigrate();
         } catch (error: any) {
             notifyError(error, '操作失败，请稍后重试');
+            // 迁移可能已部分生效、删除却失败：重新拉项目列表并清空旧分配，避免用过期数据重试
+            await reloadMigrateProjects(targetDomain.id);
+        } finally {
+            setMigrateSubmitting(false);
         }
     };
 
@@ -205,8 +277,8 @@ const DomainManagementPage: React.FC = () => {
      * 确认删除（无项目时）
      */
     const handleConfirmDelete = async () => {
-        if (!deletingDomain) return;
-
+        if (!deletingDomain || deleteSubmitting) return;
+        setDeleteSubmitting(true);
         try {
             await deleteDomain(deletingDomain.id);
             message.success('知识域已删除');
@@ -221,16 +293,21 @@ const DomainManagementPage: React.FC = () => {
                 setDeletingDomain(deletingDomain);
                 setMigratingDomain(deletingDomain);
                 setIsDeleteModalOpen(false);
+                setRowLoading({ id: deletingDomain.id, action: 'delete' });
                 try {
                     const projects = await getDomainProjects(deletingDomain.id);
                     setDomainProjects(projects);
                     setIsMigrateDrawerOpen(true);
                 } catch (innerError: any) {
                     notifyError(innerError, '加载项目列表失败');
+                } finally {
+                    setRowLoading(null);
                 }
                 return;
             }
             notifyError(error, '删除失败，请稍后重试');
+        } finally {
+            setDeleteSubmitting(false);
         }
     };
 
@@ -247,10 +324,14 @@ const DomainManagementPage: React.FC = () => {
     };
 
     const closeMigrateDrawer = () => {
+        if (migrateSubmitting) return;  // 提交中不允许关闭：请求还在飞，清状态会让结果无处落地
         setIsMigrateDrawerOpen(false);
         setDomainProjects([]);
         setProjectTargetDomains({});
         setMigratingDomain(null);
+        // 必须一起清：否则删除流程的 deletingDomain 会泄漏到下一次「普通迁移」，
+        // 抽屉标题/按钮会错误地显示成「迁移并删除」
+        setDeletingDomain(null);
     };
 
     const breadcrumbs = [
@@ -290,6 +371,9 @@ const DomainManagementPage: React.FC = () => {
             key: 'description',
             // 超出宽度仍截断，但不挂浏览器原生 title 提示：描述已经在单元格里，hover 再弹同文提示是重复的
             ellipsis: { showTitle: false },
+            // rc-table 对表头会无视 showTitle 强制给 th 加 title（内容就是列名「描述」，毫无信息量），
+            // 用空 title 顶掉；单元格的 title 仍由上面的 showTitle: false 关掉
+            onHeaderCell: () => ({ title: '' }),
             render: (description?: string) => (
                 <span className="text-[13px] text-[#66738F]">{description || '—'}</span>
             ),
@@ -330,6 +414,8 @@ const DomainManagementPage: React.FC = () => {
                         size="small"
                         type="link"
                         icon={<SwapOutlined />}
+                        loading={rowLoading?.id === record.id && rowLoading.action === 'migrate'}
+                        disabled={!!rowLoading && !(rowLoading.id === record.id && rowLoading.action === 'migrate')}
                         onClick={() => handleMigrateClick(record)}
                     >
                         迁移
@@ -339,6 +425,8 @@ const DomainManagementPage: React.FC = () => {
                         type="link"
                         danger
                         icon={<DeleteOutlined />}
+                        loading={rowLoading?.id === record.id && rowLoading.action === 'delete'}
+                        disabled={!!rowLoading && !(rowLoading.id === record.id && rowLoading.action === 'delete')}
                         onClick={() => handleDeleteClick(record)}
                     >
                         删除
@@ -403,6 +491,23 @@ const DomainManagementPage: React.FC = () => {
                     首屏正文由 PageLoading 替代，刷新时旧数据保留在 Table loading 遮罩下 */}
                 {initialLoading ? (
                     <PageLoading hint="正在加载知识域…" />
+                ) : loadFailed && domains.length === 0 ? (
+                    /* 加载失败与「真的没有知识域」必须区分：否则权限/网络错误看起来像空数据 */
+                    <div className="surface-card">
+                        <div className="flex flex-col items-center justify-center px-4 py-14 text-center">
+                            <span
+                                className="flex h-14 w-14 items-center justify-center rounded-2xl text-[22px]"
+                                style={{ background: 'rgba(180,35,24,0.10)', color: '#B42318' }}
+                            >
+                                <ExclamationCircleOutlined />
+                            </span>
+                            <div className="mt-3 text-[14px] font-semibold text-[#0F172A]">知识域加载失败</div>
+                            <div className="mt-1 text-[12.5px] text-[#66738F]">请检查网络或后端服务后重试</div>
+                            <Button className="tk-soft-btn mt-4" icon={<ReloadOutlined />} onClick={refresh} loading={refreshing}>
+                                重新加载
+                            </Button>
+                        </div>
+                    </div>
                 ) : (
                 <div className="surface-card tk-table">
                     {/* 首屏由 PageLoading 整块替代；刷新时旧数据保留在 Table loading 遮罩下 */}
@@ -454,22 +559,26 @@ const DomainManagementPage: React.FC = () => {
                     <Form.Item
                         name="name"
                         label="知识域名称"
-                        rules={[{ required: true, message: '请输入知识域名称' }]}
+                        rules={[
+                            { required: true, whitespace: true, message: '请输入知识域名称' },
+                            { max: 100, message: '名称不能超过 100 个字符' },
+                        ]}
                     >
-                        <Input placeholder="例如：IT 架构、财务规范" />
+                        <Input maxLength={100} placeholder="例如：IT 架构、财务规范" />
                     </Form.Item>
 
                     <Form.Item name="description" label="描述">
                         <TextArea
                             rows={4}
+                            maxLength={500}
                             placeholder="描述这个知识域的用途和范围..."
                         />
                     </Form.Item>
 
                     <Form.Item className="!mb-0">
                         <Space className="w-full justify-end">
-                            <Button onClick={closeCreateModal}>取消</Button>
-                            <Button type="primary" htmlType="submit">
+                            <Button onClick={closeCreateModal} disabled={formSubmitting}>取消</Button>
+                            <Button type="primary" htmlType="submit" loading={formSubmitting}>
                                 {editingDomain ? '更新' : '创建'}
                             </Button>
                         </Space>
@@ -503,11 +612,12 @@ const DomainManagementPage: React.FC = () => {
                             </span>
                         </div>
                         <Space>
-                            <Button onClick={closeMigrateDrawer}>取消</Button>
+                            <Button onClick={closeMigrateDrawer} disabled={migrateSubmitting}>取消</Button>
                             <Button
                                 type="primary"
                                 onClick={handleConfirmMigrate}
                                 danger={!!deletingDomain}
+                                loading={migrateSubmitting}
                             >
                                 {deletingDomain ? '迁移并删除' : '确认迁移'}
                             </Button>
@@ -600,10 +710,14 @@ const DomainManagementPage: React.FC = () => {
                                             <Select
                                                 value={projectTargetDomains[record.id] || undefined}
                                                 onChange={(value) => {
-                                                    setProjectTargetDomains(prev => ({
-                                                        ...prev,
-                                                        [record.id]: value,
-                                                    }));
+                                                    // allowClear 会传 undefined：必须删掉 key，
+                                                    // 否则「已指定 N 个」虚增，提交时该字段还会被 JSON 丢弃导致 422
+                                                    setProjectTargetDomains(prev => {
+                                                        const next = { ...prev };
+                                                        if (value == null) delete next[record.id];
+                                                        else next[record.id] = value;
+                                                        return next;
+                                                    });
                                                 }}
                                                 placeholder="请选择目标知识域"
                                                 className="w-full"
@@ -631,10 +745,12 @@ const DomainManagementPage: React.FC = () => {
             <Modal
                 title="删除知识域"
                 open={isDeleteModalOpen}
-                onCancel={() => setIsDeleteModalOpen(false)}
+                onCancel={() => { if (!deleteSubmitting) setIsDeleteModalOpen(false); }}
                 onOk={handleConfirmDelete}
                 okText="确定删除"
                 cancelText="取消"
+                confirmLoading={deleteSubmitting}
+                cancelButtonProps={{ disabled: deleteSubmitting }}
                 okButtonProps={{ danger: true }}
             >
                 <div className="space-y-3">

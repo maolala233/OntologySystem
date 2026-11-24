@@ -3,6 +3,7 @@
 提供知识域的增删改查功能
 """
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from app.infrastructure.database import get_db, KnowledgeDomain, Project
@@ -20,10 +21,14 @@ router = APIRouter(prefix="/api/domains", tags=["domains"])
 
 
 @router.get("", response_model=List[KnowledgeDomainResponse])
-def get_all_domains(db: Session = Depends(get_db)):
+def get_all_domains(
+    _user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """
     获取所有知识域列表
     用于前端下拉选择；附带 project_count（全部项目数，含未发布，与删除接口校验口径一致）
+    登录即可读（知识域是慢变参考数据，登录后的下拉到处都要用）；此前无鉴权，未登录也能拉。
     """
     from sqlalchemy import func
 
@@ -54,15 +59,15 @@ def create_domain(
 ):
     """
     创建新的知识域
-    如果名称已存在，则返回已存在的知识域
+    名称重复时返回 409（此前静默返回已存在的记录 + 201，前端会误报「已创建」）
     """
     # 检查是否已存在同名知识域
     existing = db.query(KnowledgeDomain).filter(
         KnowledgeDomain.name == domain_data.name
     ).first()
-    
+
     if existing:
-        return existing
+        raise HTTPException(status_code=409, detail="知识域名称已存在")
     
     # 创建新知识域
     new_domain = KnowledgeDomain(
@@ -70,7 +75,12 @@ def create_domain(
         description=domain_data.description,
     )
     db.add(new_domain)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # check-then-insert 之间有竞态：并发同名会撞唯一约束，按重名处理而不是 500
+        db.rollback()
+        raise HTTPException(status_code=409, detail="知识域名称已存在")
     db.refresh(new_domain)
     return new_domain
 
@@ -78,6 +88,7 @@ def create_domain(
 @router.get("/{domain_id}", response_model=KnowledgeDomainResponse)
 def get_domain(
     domain_id: int,
+    _user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -85,7 +96,7 @@ def get_domain(
     """
     domain = db.query(KnowledgeDomain).filter(KnowledgeDomain.id == domain_id).first()
     if not domain:
-        raise HTTPException(status_code=404, detail="Knowledge domain not found")
+        raise HTTPException(status_code=404, detail="知识域不存在")
     return domain
 
 
@@ -101,8 +112,8 @@ def update_domain(
     """
     domain = db.query(KnowledgeDomain).filter(KnowledgeDomain.id == domain_id).first()
     if not domain:
-        raise HTTPException(status_code=404, detail="Knowledge domain not found")
-    
+        raise HTTPException(status_code=404, detail="知识域不存在")
+
     if domain_data.name is not None:
         # 检查新名称是否与其他知识域冲突
         existing = db.query(KnowledgeDomain).filter(
@@ -110,13 +121,18 @@ def update_domain(
             KnowledgeDomain.id != domain_id
         ).first()
         if existing:
-            raise HTTPException(status_code=400, detail="Knowledge domain name already exists")
+            raise HTTPException(status_code=409, detail="知识域名称已存在")
         domain.name = domain_data.name
-    
+
     if domain_data.description is not None:
         domain.description = domain_data.description
-    
-    db.commit()
+
+    try:
+        db.commit()
+    except IntegrityError:
+        # 并发改同名：唯一约束兜底，统一按重名处理
+        db.rollback()
+        raise HTTPException(status_code=409, detail="知识域名称已存在")
     db.refresh(domain)
     return domain
 
@@ -124,19 +140,19 @@ def update_domain(
 @router.get("/{domain_id}/projects")
 def get_domain_projects(
     domain_id: int,
-    current_user: User = Depends(get_current_user),
+    _admin: User = Depends(require_role("admin")),
     db: Session = Depends(get_db)
 ):
     """
     获取知识域下的所有项目列表（包含详细统计信息）
-    用于删除前查看需要迁移的项目
+    用于删除前查看需要迁移的项目——管理端迁移/删除流程专用，admin 才能看
     """
     from app.core.logging import logger
-    
+
     # 检查知识域是否存在
     domain = db.query(KnowledgeDomain).filter(KnowledgeDomain.id == domain_id).first()
     if not domain:
-        raise HTTPException(status_code=404, detail="Knowledge domain not found")
+        raise HTTPException(status_code=404, detail="知识域不存在")
     
     # 获取该知识域下的所有项目
     projects = db.query(Project).filter(Project.domain_id == domain_id).all()
@@ -159,16 +175,15 @@ def get_domain_projects(
         # 统计关系总数
         edge_count = len(edges)
         
-        # 获取当前知识域信息
-        current_domain = db.query(KnowledgeDomain).filter(KnowledgeDomain.id == project.domain_id).first()
-        
+        # 当前知识域：上面的查询已限定 Project.domain_id == domain_id，全量同一个域，
+        # 直接复用 domain，不再逐项目回查（原 N+1）
         project_data = {
             "id": project.id,
             "name": project.name,
             "description": project.description,
             "is_published": project.is_published,
             "domain_id": project.domain_id,
-            "current_domain_name": current_domain.name if current_domain else "未分配",
+            "current_domain_name": domain.name,
             "class_count": class_count,
             "instance_count": instance_count,
             "edge_count": edge_count,
@@ -213,12 +228,12 @@ def migrate_projects(
     # 检查源知识域是否存在
     source_domain = db.query(KnowledgeDomain).filter(KnowledgeDomain.id == domain_id).first()
     if not source_domain:
-        raise HTTPException(status_code=404, detail="Source knowledge domain not found")
+        raise HTTPException(status_code=404, detail="源知识域不存在")
     
     # 检查目标知识域是否存在
     target_domain = db.query(KnowledgeDomain).filter(KnowledgeDomain.id == target_domain_id).first()
     if not target_domain:
-        raise HTTPException(status_code=404, detail="Target knowledge domain not found")
+        raise HTTPException(status_code=404, detail="目标知识域不存在")
     
     # 迁移项目
     migrated_count = 0
@@ -262,7 +277,7 @@ def migrate_projects_batch(
     # 检查源知识域是否存在
     source_domain = db.query(KnowledgeDomain).filter(KnowledgeDomain.id == domain_id).first()
     if not source_domain:
-        raise HTTPException(status_code=404, detail="Source knowledge domain not found")
+        raise HTTPException(status_code=404, detail="源知识域不存在")
     
     # 收集所有目标知识域 ID
     target_domain_ids = set(item.target_domain_id for item in request.items)
@@ -272,7 +287,7 @@ def migrate_projects_batch(
     for target_id in target_domain_ids:
         target_domain = db.query(KnowledgeDomain).filter(KnowledgeDomain.id == target_id).first()
         if not target_domain:
-            raise HTTPException(status_code=404, detail=f"Target knowledge domain {target_id} not found")
+            raise HTTPException(status_code=404, detail=f"目标知识域 {target_id} 不存在")
         target_domains[target_id] = target_domain
     
     # 执行迁移
@@ -320,7 +335,7 @@ def delete_domain(
     """
     domain = db.query(KnowledgeDomain).filter(KnowledgeDomain.id == domain_id).first()
     if not domain:
-        raise HTTPException(status_code=404, detail="Knowledge domain not found")
+        raise HTTPException(status_code=404, detail="知识域不存在")
     
     # 检查是否有关联的项目
     related_projects = db.query(Project).filter(Project.domain_id == domain_id).all()
@@ -330,7 +345,7 @@ def delete_domain(
             # 迁移项目到目标知识域
             target_domain = db.query(KnowledgeDomain).filter(KnowledgeDomain.id == migrate_to_domain_id).first()
             if not target_domain:
-                raise HTTPException(status_code=404, detail="Target knowledge domain not found")
+                raise HTTPException(status_code=404, detail="目标知识域不存在")
             
             # 执行迁移
             for project in related_projects:
@@ -361,4 +376,4 @@ def delete_domain(
     
     db.delete(domain)
     db.commit()
-    return {"message": "Knowledge domain deleted successfully"}
+    return {"message": "知识域已删除"}
