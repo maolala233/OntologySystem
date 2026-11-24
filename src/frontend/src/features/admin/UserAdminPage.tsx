@@ -5,7 +5,7 @@
  * 视觉（2026-11-23）：TechHero + 指标带 + 冷蓝表体；批量操作条吸顶，
  * 一次性密码用独立纸面卡片承载。
  */
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Drawer, Form, Input, Modal, Popconfirm, Select, Space, Table } from 'antd';
 import {
     CheckCircleOutlined, CopyOutlined, DeleteOutlined, FolderOpenOutlined, PlusOutlined,
@@ -60,12 +60,22 @@ const UserAdminPage: React.FC = () => {
     const [projectsUser, setProjectsUser] = useState<AdminUser | null>(null);
     const [projects, setProjects] = useState<UserProject[]>([]);
     const [projectsLoading, setProjectsLoading] = useState(false);
+    // 抽屉请求序号：连续点 A/B 时丢弃旧用户的响应，避免覆盖当前列表
+    const projectsSeqRef = useRef(0);
+
+    // 首屏加载失败 ≠ 没有用户：单独成态，避免把权限/网络错误渲染成「暂无用户」
+    const [loadFailed, setLoadFailed] = useState(false);
+    // 提交中状态：防连点重复创建 / 启用 / 删除 / 重置
+    const [creating, setCreating] = useState(false);
+    const [rowBusy, setRowBusy] = useState<{ id: number; action: 'toggle' | 'delete' | 'reset' } | null>(null);
 
     const load = async () => {
         setLoading(true);
         try {
             setUsers(await adminApi.listUsers());
+            setLoadFailed(false);
         } catch (e) {
+            setLoadFailed(true);
             notifyError(e, '获取用户列表失败');
         } finally {
             setLoading(false);
@@ -84,30 +94,50 @@ const UserAdminPage: React.FC = () => {
     };
 
     const handleCreate = async () => {
+        if (creating) return;
         let values: any;
         try {
             values = await form.validateFields();
         } catch {
             return; // 校验失败由字段下方的红字提示，这里不弹 message
         }
+        setCreating(true);
         try {
-            await adminApi.createUser(values);
-            message.success(`用户 ${values.username} 已创建`);
+            // 空串归一化：邮箱输入后清空会提交 ""，EmailStr 会以 422 拒绝；
+            // 用户名/显示名去首尾空格，避免建出带空格的账号
+            const username = String(values.username ?? '').trim();
+            const payload = {
+                username,
+                password: values.password,
+                role: values.role,
+                display_name: typeof values.display_name === 'string'
+                    ? values.display_name.trim() || undefined : undefined,
+                email: typeof values.email === 'string'
+                    ? values.email.trim() || undefined : undefined,
+            };
+            await adminApi.createUser(payload);
+            message.success(`用户 ${username} 已创建`);
             setCreateOpen(false);
             form.resetFields();
             load();
         } catch (err: any) {
             notifyError(err, '创建失败');
+        } finally {
+            setCreating(false);
         }
     };
 
     const handleToggleActive = async (u: AdminUser) => {
+        if (rowBusy) return;
+        setRowBusy({ id: u.id, action: 'toggle' });
         try {
             await adminApi.patchUser(u.id, { is_active: !u.is_active });
             message.success(u.is_active ? `已停用 ${u.username}` : `已启用 ${u.username}`);
             load();
         } catch (err: any) {
             notifyError(err, '操作失败');
+        } finally {
+            setRowBusy(null);
         }
     };
 
@@ -119,6 +149,8 @@ const UserAdminPage: React.FC = () => {
             okText: '确认重置',
             cancelText: '取消',
             onOk: async () => {
+                if (rowBusy) return;
+                setRowBusy({ id: u.id, action: 'reset' });
                 try {
                     const resp = await adminApi.patchUser(u.id, { reset_password: true });
                     setResetTarget(u);
@@ -126,6 +158,8 @@ const UserAdminPage: React.FC = () => {
                     load();
                 } catch (err: any) {
                     notifyError(err, '重置失败');
+                } finally {
+                    setRowBusy(null);
                 }
             },
         });
@@ -142,12 +176,16 @@ const UserAdminPage: React.FC = () => {
     };
 
     const handleDelete = async (u: AdminUser) => {
+        if (rowBusy) return;
+        setRowBusy({ id: u.id, action: 'delete' });
         try {
             await adminApi.deleteUser(u.id);
             message.success(`用户 ${u.username} 已删除`);
             load();
         } catch (err: any) {
             notifyError(err, '删除失败');
+        } finally {
+            setRowBusy(null);
         }
     };
 
@@ -194,17 +232,27 @@ const UserAdminPage: React.FC = () => {
 
     // ── 名下项目
     const openProjects = async (u: AdminUser) => {
+        const seq = ++projectsSeqRef.current;
         setProjectsUser(u);
         setProjects([]);
         setProjectsLoading(true);
         try {
             const resp = await adminApi.listUserProjects(u.id);
+            if (seq !== projectsSeqRef.current) return;  // 已切到别的用户：丢弃旧响应
             setProjects(resp.items);
         } catch (e) {
+            if (seq !== projectsSeqRef.current) return;
             notifyError(e, '获取用户项目失败');
         } finally {
-            setProjectsLoading(false);
+            if (seq === projectsSeqRef.current) setProjectsLoading(false);
         }
+    };
+
+    const closeProjects = () => {
+        projectsSeqRef.current += 1;  // 作废在飞的请求
+        setProjectsUser(null);
+        setProjects([]);
+        setProjectsLoading(false);
     };
 
     const counts = useMemo(() => ({
@@ -271,7 +319,15 @@ const UserAdminPage: React.FC = () => {
                 <Space size={0}>
                     <Button size="small" type="link" icon={<FolderOpenOutlined />}
                         onClick={() => openProjects(record)}>项目</Button>
-                    <Button size="small" type="link" onClick={() => handleResetPassword(record)}>重置密码</Button>
+                    <Button
+                        size="small"
+                        type="link"
+                        loading={rowBusy?.id === record.id && rowBusy.action === 'reset'}
+                        disabled={batchBusy || (!!rowBusy && !(rowBusy.id === record.id && rowBusy.action === 'reset'))}
+                        onClick={() => handleResetPassword(record)}
+                    >
+                        重置密码
+                    </Button>
                     <Popconfirm
                         title={record.is_active
                             ? `确定停用用户 ${record.username}？`
@@ -286,7 +342,9 @@ const UserAdminPage: React.FC = () => {
                         disabled={record.role === 'admin'}
                     >
                         <Button size="small" type="link" danger={record.is_active}
-                                disabled={record.role === 'admin'}>
+                                loading={rowBusy?.id === record.id && rowBusy.action === 'toggle'}
+                                disabled={record.role === 'admin' || batchBusy
+                                    || (!!rowBusy && !(rowBusy.id === record.id && rowBusy.action === 'toggle'))}>
                             {record.is_active ? '停用' : '启用'}
                         </Button>
                     </Popconfirm>
@@ -296,7 +354,15 @@ const UserAdminPage: React.FC = () => {
                         okText="删除" cancelText="取消" okButtonProps={{ danger: true }}
                         onConfirm={() => handleDelete(record)}
                     >
-                        <Button size="small" type="link" danger>删除</Button>
+                        <Button
+                            size="small"
+                            type="link"
+                            danger
+                            loading={rowBusy?.id === record.id && rowBusy.action === 'delete'}
+                            disabled={batchBusy || (!!rowBusy && !(rowBusy.id === record.id && rowBusy.action === 'delete'))}
+                        >
+                            删除
+                        </Button>
                     </Popconfirm>
                 </Space>
             ),
@@ -340,6 +406,23 @@ const UserAdminPage: React.FC = () => {
 
                 {initialLoading ? (
                     <PageLoading hint="正在加载用户列表…" />
+                ) : loadFailed && users.length === 0 ? (
+                    /* 加载失败与「真的没有用户」必须区分：否则权限/网络错误看起来像空数据 */
+                    <div className="surface-card">
+                        <div className="flex flex-col items-center justify-center px-4 py-14 text-center">
+                            <span
+                                className="flex h-14 w-14 items-center justify-center rounded-2xl text-[22px]"
+                                style={{ background: 'rgba(180,35,24,0.10)', color: '#B42318' }}
+                            >
+                                <WarningOutlined />
+                            </span>
+                            <div className="mt-3 text-[14px] font-semibold text-[#0F172A]">用户列表加载失败</div>
+                            <div className="mt-1 text-[12.5px] text-[#66738F]">请检查网络或后端服务后重试</div>
+                            <Button className="tk-soft-btn mt-4" icon={<ReloadOutlined />} onClick={refresh} loading={refreshing}>
+                                重新加载
+                            </Button>
+                        </div>
+                    </div>
                 ) : (
                     <>
                 {/* 批量操作条：不再套长条卡片，直接一条左对齐的普通行；
@@ -429,14 +512,23 @@ const UserAdminPage: React.FC = () => {
                     title="新建用户"
                     open={createOpen}
                     onOk={handleCreate}
-                    onCancel={() => setCreateOpen(false)}
+                    onCancel={() => { if (!creating) setCreateOpen(false); }}
+                    confirmLoading={creating}
+                    cancelButtonProps={{ disabled: creating }}
                     destroyOnHidden
                     width={520}
                     className="tk-form-compact"
                 >
                     <Form form={form} layout="vertical" className="pt-1">
-                        <Form.Item name="username" label="用户名" rules={[{ required: true, min: 2 }]}>
-                            <Input placeholder="2-64 字符" />
+                        <Form.Item
+                            name="username"
+                            label="用户名"
+                            rules={[
+                                { required: true, whitespace: true, message: '请输入用户名' },
+                                { min: 2, max: 64, message: '用户名需为 2-64 个字符' },
+                            ]}
+                        >
+                            <Input maxLength={64} placeholder="2-64 字符" />
                         </Form.Item>
                         <Form.Item name="password" label="初始密码" rules={[{ required: true, min: 6 }]}>
                             <Input.Password placeholder="至少 6 位" />
@@ -444,11 +536,23 @@ const UserAdminPage: React.FC = () => {
                         <Form.Item name="role" label="角色" initialValue="user" rules={[{ required: true }]}>
                             <Select options={[{ value: 'user', label: '普通用户' }, { value: 'admin', label: '管理员' }]} />
                         </Form.Item>
-                        <Form.Item name="display_name" label="显示名">
-                            <Input placeholder="可选" />
+                        <Form.Item
+                            name="display_name"
+                            label="显示名"
+                            rules={[{ max: 64, message: '显示名不能超过 64 个字符' }]}
+                        >
+                            <Input maxLength={64} placeholder="可选" />
                         </Form.Item>
-                        <Form.Item name="email" label="邮箱" rules={[{ type: 'email' }]} className="!mb-0">
-                            <Input placeholder="可选" />
+                        <Form.Item
+                            name="email"
+                            label="邮箱"
+                            rules={[
+                                { type: 'email', message: '邮箱格式不正确' },
+                                { max: 255, message: '邮箱不能超过 255 个字符' },
+                            ]}
+                            className="!mb-0"
+                        >
+                            <Input maxLength={255} placeholder="可选" />
                         </Form.Item>
                     </Form>
                 </Modal>
@@ -492,7 +596,7 @@ const UserAdminPage: React.FC = () => {
                 <Drawer
                     title={`用户项目 · ${projectsUser?.username ?? ''}`}
                     open={!!projectsUser}
-                    onClose={() => setProjectsUser(null)}
+                    onClose={closeProjects}
                     width={520}
                     styles={{
                         header: { padding: '10px 24px' },

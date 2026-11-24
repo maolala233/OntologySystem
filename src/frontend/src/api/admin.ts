@@ -38,9 +38,32 @@ export interface AdminRole {
 }
 
 export const adminApi = {
+    /**
+     * 用户列表（全量）。后端是游标分页（默认 limit=50），而用户管理/模块授权/MCP
+     * 三处都需要完整名单（统计、权限矩阵、持有人下拉），此前只取了第一页，
+     * 超过 50 人的用户会静默消失。这里按 next_cursor 循环拉全（单页 200，最多 50 页）。
+     */
     listUsers: async (keyword?: string): Promise<AdminUser[]> => {
-        const resp = await apiClient.get('/api/admin/users', { params: keyword ? { keyword } : {} });
-        return resp.data.items;
+        const items: AdminUser[] = [];
+        let cursor: number | null = null;
+        for (let page = 0; page < 50; page += 1) {
+            const resp = await apiClient.get('/api/admin/users', {
+                params: {
+                    limit: 200,
+                    ...(keyword ? { keyword } : {}),
+                    ...(cursor != null ? { cursor } : {}),
+                },
+            });
+            const data = resp.data as {
+                items?: AdminUser[];
+                next_cursor?: number | null;
+                has_more?: boolean;
+            };
+            items.push(...(data.items ?? []));
+            if (!data.has_more || data.next_cursor == null) break;
+            cursor = data.next_cursor;
+        }
+        return items;
     },
 
     createUser: async (data: {

@@ -8,6 +8,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, EmailStr
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_db, require_role
@@ -76,19 +77,28 @@ def create_user(data: UserCreateIn,
                 db: Session = Depends(get_db)):
     if data.role not in ("admin", "user"):
         raise ValidationError("role 仅支持 admin/user")
+    email = str(data.email) if data.email else None
     if db.query(User).filter(User.username == data.username).first():
         raise DuplicateUploadError("用户名已存在", code="USERNAME_TAKEN")
+    # users.email 是唯一列：重复邮箱以前会直接撞约束冒 500，这里提前给出可读的 409
+    if email and db.query(User).filter(User.email == email).first():
+        raise DuplicateUploadError("邮箱已被使用", code="EMAIL_TAKEN")
     from app.api.auth import hash_password
 
     user = User(
         username=data.username,
         hashed_password=hash_password(data.password),
         role=data.role,
-        email=str(data.email) if data.email else None,
+        email=email,
         display_name=data.display_name,
     )
     db.add(user)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # check-then-insert 有竞态（并发同名/同邮箱）：唯一约束兜底，统一按“已存在”处理
+        db.rollback()
+        raise DuplicateUploadError("用户名或邮箱已存在", code="USER_CONFLICT")
     db.refresh(user)
     logger.info(f"[audit] action=user.create operator={admin.username} target={user.username} role={user.role}")
     return UserOut.model_validate(user)
@@ -172,7 +182,9 @@ def delete_user(user_id: int, admin: User = Depends(require_role("admin")),
                 db: Session = Depends(get_db)):
     """删除用户（硬删）：守卫自己/最后一个管理员/名下项目；
     先清理授权行、项目成员、MCP 令牌、问答历史再删用户。"""
-    from app.infrastructure.database import McpToken, Project, ProjectMember, QaHistory, UserModuleGrant
+    from app.infrastructure.database import (
+        McpToken, Project, ProjectMember, QaHistory, UserModelPick, UserModuleGrant,
+    )
 
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -194,6 +206,8 @@ def delete_user(user_id: int, admin: User = Depends(require_role("admin")),
     db.query(ProjectMember).filter(ProjectMember.user_id == user_id).delete()
     db.query(McpToken).filter(McpToken.user_id == user_id).delete()
     db.query(QaHistory).filter(QaHistory.user_id == user_id).delete()
+    # R14 个人模型选择（FK → users.id）：漏清会让设置过个人抽取模型的用户删除撞外键
+    db.query(UserModelPick).filter(UserModelPick.user_id == user_id).delete()
     db.delete(user)
     db.commit()
     logger.info(f"[audit] action=user.delete operator={admin.username} target={user.username}")
