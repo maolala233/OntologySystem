@@ -67,11 +67,26 @@ export function errorText(err: any, fallback = '操作失败'): string {
     const envelope = err?.response?.data?.error?.message;
     if (typeof envelope === 'string' && envelope.trim()) return envelope;
 
+    // 网关超时（nginx /api proxy_read_timeout 300s 截断）响应体是 HTML，没有 error 包络；
+    // 不单独给文案就会落到调用方的兜底句（如「生成失败」），用户看不出是等太久
+    if (err?.response?.status === 504) return '服务端处理超时，请稍后重试';
+
     const detail = err?.response?.data?.detail;
     if (typeof detail === 'string' && detail.trim()) return detail;
     if (detail && typeof detail === 'object'
         && typeof detail.message === 'string' && detail.message.trim()) {
         return detail.message;
+    }
+    if (Array.isArray(detail) && detail.length > 0) {
+        // FastAPI / Pydantic 422：detail 是 [{loc, msg, type}] 数组，取首条并带上字段名，
+        // 否则「主题超长」这类请求校验失败只会落到兜底文案「生成失败」
+        const first: any = detail[0];
+        const msg = typeof first === 'string' ? first
+            : (typeof first?.msg === 'string' ? first.msg : '');
+        const field = Array.isArray(first?.loc)
+            ? first.loc.filter((x: unknown) => x !== 'body' && x !== 'query' && x !== 'path').join('.')
+            : '';
+        if (msg) return field ? `${field}: ${msg}` : msg;
     }
 
     const dataMessage = err?.response?.data?.message;

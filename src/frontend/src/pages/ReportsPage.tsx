@@ -13,7 +13,7 @@ import {
 import {
     deletePptTemplate, downloadPptTemplate, downloadSampleTemplate, generateReport,
     getPptTemplate, suggestTopics, uploadPptTemplate,
-    type ReportResult,
+    type ReportResult, type SuggestSource,
 } from '../api/reports';
 import { projectsApi } from '../api/projects';
 import { downloadFromUrl, filenameFromUrl } from '../utils/urlDownload';
@@ -25,15 +25,22 @@ import Navbar from '../components/Layout/Navbar';
 import TechHero from '../components/TechHero';
 import { Dot, Note, SectionHead, TkTag } from '../shared/consoleUi';
 
+/** PPT 模板上限（与后端校验一致）：选文件时就拦下，避免传完 20MB 才被后端拒绝 */
+const MAX_TEMPLATE_MB = 20;
+
 export default function ReportsPage() {
     const navigate = useNavigate();
+    const location = useLocation();
     const [projects, setProjects] = useState<ProjectData[]>([]);
     const [projectId, setProjectId] = useState<number | null>(null);
-    // kind 由路由决定（R11：报告/PPT 分开授权与入口）
-    const kind: 'report' | 'ppt' = useLocation().pathname === '/tools/ppt' ? 'ppt' : 'report';
+    // kind 由路由决定（R11：报告/PPT 分开授权与入口）；先去尾斜杠再比对，
+    // 否则 /tools/ppt/（React Router 会匹配同一路由）会被误判成报告页、按 report 发请求
+    const kind: 'report' | 'ppt' = location.pathname.replace(/\/+$/, '') === '/tools/ppt' ? 'ppt' : 'report';
     const [topic, setTopic] = useState('');
     const [chips, setChips] = useState<string[]>([]);
     const [chipsLoading, setChipsLoading] = useState(false);
+    // 建议来源：llm=模型生成 / cache=10 分钟内缓存 / fallback=知识锚点兜底 / empty=图谱无数据
+    const [chipsSource, setChipsSource] = useState<SuggestSource | null>(null);
     const [maxSlides, setMaxSlides] = useState(8);
     const [includeInferred, setIncludeInferred] = useState(false);
     const [busy, setBusy] = useState(false);
@@ -41,49 +48,73 @@ export default function ReportsPage() {
     const [elapsed, setElapsed] = useState(0);
     const [templateInfo, setTemplateInfo] = useState<{ exists: boolean; filename?: string }>({ exists: false });
     const [templateUploading, setTemplateUploading] = useState(false);
-    const [templateDownloading, setTemplateDownloading] = useState(false);
+    // 两个模板下载按钮各自独立 loading，互不阻塞
+    const [templateDownloading, setTemplateDownloading] = useState<'current' | 'sample' | null>(null);
     // 模板信息是异步读取的：首帧先给「读取中」，避免先显示『未上传』再跳成『已上传』
     const [templateLoading, setTemplateLoading] = useState(false);
+    // 读取失败 ≠ 未上传：单独一态，否则接口 403/500 会被误显示成「没有模板」
+    const [templateError, setTemplateError] = useState(false);
     // 项目列表未回来前不判定「还没有可用项目」，避免提示文案先错后对
     const [projectsLoading, setProjectsLoading] = useState(true);
     const [useTemplate, setUseTemplate] = useState(true);
+    // 结果下载按格式独立 loading，避免连点重复拉流
+    const [downloadingFmt, setDownloadingFmt] = useState<string | null>(null);
     const resultRef = useRef<HTMLElement | null>(null);
+    // 请求序号守卫：切项目后丢弃旧项目在飞的响应（模板信息 / 主题建议 / 生成结果）
+    const templateSeqRef = useRef(0);
+    const chipsSeqRef = useRef(0);
+    const runSeqRef = useRef(0);
 
     const isPpt = kind === 'ppt';
-    // 模板块的稳定文案：项目未选中 / 模板信息读取中 / 已上传 / 未上传 四态，
+    // 模板块的稳定文案：项目未选中 / 读取中 / 读取失败 / 已上传 / 未上传 五态，
     // 文案在首帧就占位，避免块从无到有、按钮被顶下去
     const templateReady = projectId != null && !templateLoading;
     const templateTitle = projectId == null
         ? (projectsLoading ? '正在加载项目…' : '选择项目后可上传模板')
         : templateLoading
             ? '正在读取模板…'
-            : templateInfo.exists
-                ? (templateInfo.filename || '已上传模板')
-                : '未上传 · 使用系统默认模板';
-    const templateTagText = projectId == null ? '待选项目' : templateLoading ? '读取中' : templateInfo.exists ? '已上传' : '未上传';
+            : templateError
+                ? '模板信息读取失败 · 生成将使用系统默认模板'
+                : templateInfo.exists
+                    ? (templateInfo.filename || '已上传模板')
+                    : '未上传 · 使用系统默认模板';
+    const templateTagText = projectId == null
+        ? '待选项目'
+        : templateLoading ? '读取中' : templateError ? '读取失败' : templateInfo.exists ? '已上传' : '未上传';
     const activeProject = useMemo(
         () => projects.find(p => p.id === projectId) ?? null,
         [projects, projectId],
     );
 
     const loadTemplateInfo = useCallback(async (pid: number) => {
+        const seq = ++templateSeqRef.current;
         setTemplateLoading(true);
+        setTemplateError(false);
         try {
-            setTemplateInfo(await getPptTemplate(pid));
+            const info = await getPptTemplate(pid);
+            if (seq !== templateSeqRef.current) return;  // 已切到别的项目：丢弃旧响应
+            setTemplateInfo(info);
         } catch {
+            if (seq !== templateSeqRef.current) return;
             setTemplateInfo({ exists: false });
+            setTemplateError(true);
         } finally {
-            setTemplateLoading(false);
+            if (seq === templateSeqRef.current) setTemplateLoading(false);
         }
     }, []);
 
     const handleTemplateUpload = useCallback(async (file: File) => {
         if (projectId == null) return;
+        const seq = templateSeqRef.current;  // 上传期间切了项目：不再把状态写到新项目上
         setTemplateUploading(true);
         try {
             const r = await uploadPptTemplate(projectId, file);
             message.success(`模板「${r.filename}」已上传`);
+            if (seq !== templateSeqRef.current) return;
+            templateSeqRef.current += 1;  // 作废在飞的读取，避免旧响应把「已上传」覆盖回去
             setTemplateInfo({ exists: true, filename: r.filename });
+            setTemplateError(false);
+            setTemplateLoading(false);
             setUseTemplate(true);
         } catch (e: any) {
             notifyError(e, '模板上传失败');
@@ -94,9 +125,13 @@ export default function ReportsPage() {
 
     const handleTemplateDelete = useCallback(async () => {
         if (projectId == null) return;
+        const seq = templateSeqRef.current;
         try {
             await deletePptTemplate(projectId);
+            if (seq !== templateSeqRef.current) return;
+            templateSeqRef.current += 1;
             setTemplateInfo({ exists: false });
+            setTemplateError(false);
             message.success('模板已清除');
         } catch (e) {
             notifyError(e, '清除失败');
@@ -106,7 +141,7 @@ export default function ReportsPage() {
     // 模板下载：预签名直链在当前页拉流保存，不新开标签页（新标签页会先白屏等附件）
     const handleDownload = useCallback(async (kind: 'current' | 'sample') => {
         if (projectId == null || templateDownloading) return;
-        setTemplateDownloading(true);
+        setTemplateDownloading(kind);
         try {
             if (kind === 'current') {
                 const url = await downloadPptTemplate(projectId);
@@ -118,20 +153,32 @@ export default function ReportsPage() {
         } catch (e: any) {
             notifyError(e, '下载模板失败');
         } finally {
-            setTemplateDownloading(false);
+            setTemplateDownloading(null);
         }
     }, [projectId, templateDownloading, templateInfo.filename]);
 
-    // 主题建议由 LLM 基于图谱材料生成（后端缓存 10 分钟），加载不阻塞页面
+    // 主题建议由 LLM 基于图谱材料生成（后端缓存 10 分钟），加载不阻塞页面。
+    // 序号守卫：切项目后丢弃旧项目的建议；失败不再静默，给出可行动提示。
     const loadChips = useCallback(async (pid: number) => {
+        const seq = ++chipsSeqRef.current;
         setChipsLoading(true);
         setChips([]);
+        setChipsSource(null);
         try {
-            setChips(await suggestTopics(pid));
-        } catch {
+            const r = await suggestTopics(pid);
+            if (seq !== chipsSeqRef.current) return;
+            setChips(r.chips);
+            setChipsSource(r.source);
+            if (r.chips.length === 0) {
+                message.info('该项目图谱数据不足，暂时没有主题建议，可直接手填主题');
+            }
+        } catch (e) {
+            if (seq !== chipsSeqRef.current) return;
             setChips([]);
+            setChipsSource(null);
+            notifyError(e, '主题建议生成失败');
         } finally {
-            setChipsLoading(false);
+            if (seq === chipsSeqRef.current) setChipsLoading(false);
         }
     }, []);
 
@@ -142,10 +189,14 @@ export default function ReportsPage() {
                 // 已发布的公共本体对非成员只读，选中后生成必然 403——与本体问答页保持一致
                 const list = await projectsApi.getMyProjects();
                 setProjects(list);
+                // ?projectId= 深链 > localStorage 记忆 > 第一个（与问答页一致）
+                const fromUrl = Number(new URLSearchParams(location.search).get('projectId'));
                 const saved = Number(localStorage.getItem(QA_LAST_PROJECT_ID_KEY));
-                const pid = list.find(p => p.id === saved)?.id ?? list[0]?.id ?? null;
+                const pid = list.find(p => p.id === fromUrl)?.id
+                    ?? list.find(p => p.id === saved)?.id ?? list[0]?.id ?? null;
                 setProjectId(pid);
-                if (pid != null) {
+                if (pid != null && isPpt) {
+                    // 模板只属于 PPT 页：报告页不再多发一次 ppt-template 请求。
                     // 主题建议不自动生成（LLM 调用，网络抖动时挂几分钟）——点击「生成主题建议」按钮触发
                     loadTemplateInfo(pid);
                 }
@@ -155,17 +206,25 @@ export default function ReportsPage() {
                 setProjectsLoading(false);
             }
         })();
-    }, [loadTemplateInfo]);
+    }, [loadTemplateInfo, isPpt, location.search]);
 
-    // 切项目后刷新模板信息；主题建议保持点击生成（不随切项目自动打 LLM）
+    // 切项目后刷新模板信息；主题建议保持点击生成（不随切项目自动打 LLM）。
+    // 先作废三类在飞请求的序号：旧项目的响应回来一律丢弃，不再串到新项目上。
     const onProjectChange = useCallback(async (pid: number) => {
+        runSeqRef.current += 1;
+        chipsSeqRef.current += 1;
+        templateSeqRef.current += 1;
         setProjectId(pid);
         setResult(null);
         setChips([]);
+        setChipsSource(null);
+        setChipsLoading(false);
         setTemplateInfo({ exists: false });
+        setTemplateError(false);
+        setTemplateLoading(false);
         localStorage.setItem(QA_LAST_PROJECT_ID_KEY, String(pid));
-        loadTemplateInfo(pid);
-    }, [loadTemplateInfo]);
+        if (isPpt) loadTemplateInfo(pid);
+    }, [loadTemplateInfo, isPpt]);
 
     // 生成耗时 60s+：显示计时
     useEffect(() => {
@@ -192,6 +251,7 @@ export default function ReportsPage() {
             message.warning('请先填写分析主题（可点击下方建议快速填入）');
             return;
         }
+        const seq = ++runSeqRef.current;
         setBusy(true);
         setResult(null);
         try {
@@ -202,20 +262,30 @@ export default function ReportsPage() {
                 use_template: kind === 'ppt' && useTemplate && templateInfo.exists,
                 include_inferred: includeInferred,
             });
+            if (seq !== runSeqRef.current) return;  // 生成期间切了项目：结果不属于当前项目
             setResult(r);
         } catch (e: any) {
+            if (seq !== runSeqRef.current) return;
+            // 模板在别处被删/被换：刷新模板块，避免仍显示「已上传」导致下一次生成再次失败
+            if (isPpt && e?.response?.data?.error?.code === 'PPT_TEMPLATE_MISSING') {
+                loadTemplateInfo(projectId);
+            }
             notifyError(e, '生成失败');
         } finally {
             setBusy(false);
         }
-    }, [busy, projectId, kind, topic, maxSlides, includeInferred, useTemplate, templateInfo.exists]);
+    }, [busy, projectId, kind, topic, maxSlides, includeInferred, useTemplate, templateInfo.exists, isPpt, loadTemplateInfo]);
 
-    // 成品下载：同样走当前页拉流，避免新标签页白屏
-    const download = async (url: string) => {
+    // 成品下载：同样走当前页拉流，避免新标签页白屏；按格式独立 loading 防连点重复拉流
+    const download = async (fmt: string, url: string) => {
+        if (downloadingFmt) return;
+        setDownloadingFmt(fmt);
         try {
             await downloadFromUrl(url, filenameFromUrl(url, '下载文件'));
         } catch (e: any) {
             notifyError(e, '下载失败');
+        } finally {
+            setDownloadingFmt(null);
         }
     };
 
@@ -247,6 +317,7 @@ export default function ReportsPage() {
                                     onChange={onProjectChange}
                                     placeholder={projectsLoading ? '正在加载项目…' : '选择项目'}
                                     loading={projectsLoading}
+                                    disabled={busy || templateUploading}
                                     className="w-[240px]"
                                     showSearch
                                     optionFilterProp="label"
@@ -275,6 +346,8 @@ export default function ReportsPage() {
                                     size="large"
                                     value={topic}
                                     onChange={e => setTopic(e.target.value)}
+                                    maxLength={300}
+                                    showCount
                                     placeholder={isPpt
                                         ? '如：理财产品的风险类型与应对措施'
                                         : '如：理财产品的风险类型与应对措施'}
@@ -308,7 +381,13 @@ export default function ReportsPage() {
                             )}
                             {!chipsLoading && chips.length > 0 && (
                                 <div className="mt-3">
-                                    <div className="mb-1.5 text-[11px] text-[#8A94AB]">点击加入主题（可继续追加）</div>
+                                    <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-[#8A94AB]">
+                                        <span>点击加入主题（可继续追加）</span>
+                                        {chipsSource === 'fallback' && (
+                                            <span>· 模型暂不可用，以下为图谱高频锚点</span>
+                                        )}
+                                        {chipsSource === 'cache' && <span>· 10 分钟内缓存</span>}
+                                    </div>
                                     <div className="flex flex-wrap gap-1.5">
                                         {chips.map(c => (
                                             <button
@@ -407,7 +486,17 @@ export default function ReportsPage() {
                                         <Upload
                                             accept=".pptx"
                                             showUploadList={false}
-                                            beforeUpload={() => false}
+                                            beforeUpload={(file) => {
+                                                if (!/\.pptx$/i.test(file.name)) {
+                                                    message.error('模板须为 .pptx 文件');
+                                                    return Upload.LIST_IGNORE;
+                                                }
+                                                if (file.size > MAX_TEMPLATE_MB * 1024 * 1024) {
+                                                    message.error(`模板文件不能超过 ${MAX_TEMPLATE_MB}MB`);
+                                                    return Upload.LIST_IGNORE;
+                                                }
+                                                return false;  // 合法文件交给 handleTemplateUpload 手动上传
+                                            }}
                                             disabled={busy || templateUploading || projectId == null || templateLoading}
                                             onChange={({ file }) => {
                                                 if (file.status === 'removed' || !file.originFileObj) return;
@@ -427,7 +516,8 @@ export default function ReportsPage() {
                                                     size="small"
                                                     type="link"
                                                     className="!px-1"
-                                                    loading={templateDownloading}
+                                                    loading={templateDownloading === 'current'}
+                                                    disabled={templateDownloading === 'sample'}
                                                     onClick={() => handleDownload('current')}
                                                 >
                                                     下载
@@ -450,8 +540,8 @@ export default function ReportsPage() {
                                             size="small"
                                             type="link"
                                             className="!px-0 !text-[11px]"
-                                            loading={templateDownloading}
-                                            disabled={projectId == null || templateDownloading}
+                                            loading={templateDownloading === 'sample'}
+                                            disabled={projectId == null || templateDownloading !== null}
                                             onClick={() => handleDownload('sample')}
                                         >
                                             下载示例模板（内含使用说明）
@@ -512,6 +602,9 @@ export default function ReportsPage() {
                                     <TkTag tone={result.kind === 'ppt' ? 'violet' : 'brand'}>
                                         {result.kind === 'report' ? '分析报告' : '演示文稿'}
                                     </TkTag>
+                                    {result.kind === 'ppt' && result.used_template != null && (
+                                        <TkTag tone="quiet">{result.used_template ? '自定义模板' : '默认模板'}</TkTag>
+                                    )}
                                     <span className="tk-mono text-[11.5px] text-[#8A94AB]">{(result.latency_ms / 1000).toFixed(1)}s</span>
                                     <div className="ml-auto flex flex-wrap gap-2">
                                         {Object.entries(result.downloads).map(([fmt, url]) => (
@@ -520,7 +613,9 @@ export default function ReportsPage() {
                                                 size="small"
                                                 className="tk-soft-btn"
                                                 icon={<DownloadOutlined />}
-                                                onClick={() => download(url)}
+                                                loading={downloadingFmt === fmt}
+                                                disabled={downloadingFmt !== null && downloadingFmt !== fmt}
+                                                onClick={() => download(fmt, url)}
                                             >
                                                 下载 .{fmt}
                                             </Button>

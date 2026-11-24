@@ -14,6 +14,8 @@ export interface ReportResult {
     outline: ReportOutline | null;
     downloads: Record<string, string>;
     latency_ms: number;
+    /** kind=ppt 且本次使用了已上传的自定义模板 */
+    used_template?: boolean;
 }
 
 export async function generateReport(
@@ -26,10 +28,14 @@ export async function generateReport(
     return resp.data;
 }
 
-/** 主题建议（LLM 基于图谱材料生成，后端缓存 10 分钟；失败回退知识锚点） */
-export async function suggestTopics(projectId: number): Promise<string[]> {
-    const resp = await apiClient.get(`/api/projects/${projectId}/reports/suggest`);
-    return resp.data.chips ?? [];
+export type SuggestSource = 'llm' | 'cache' | 'fallback' | 'empty';
+
+/** 主题建议（LLM 基于图谱材料生成，后端缓存 10 分钟；失败回退知识锚点）。
+ *  source 透出给页面：区分「AI 生成 / 缓存 / 锚点兜底」，不再把兜底结果当成模型建议；
+ *  显式 180s——后端单次预算 150s（含兜底），默认 600s 会让异常场景白白多等。 */
+export async function suggestTopics(projectId: number): Promise<{ chips: string[]; source: SuggestSource }> {
+    const resp = await apiClient.get(`/api/projects/${projectId}/reports/suggest`, { timeout: 180_000 });
+    return { chips: resp.data.chips ?? [], source: resp.data.source ?? 'llm' };
 }
 
 // ── PPT 自定义模板（占位符协议：封面 {{title}}/{{subtitle}}/{{date}}/{{project}}，

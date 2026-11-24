@@ -304,7 +304,9 @@ def _inference_appendix_slide(rows: list[ReasoningResult]) -> dict:
 # ---------------------------------------------------------------- LLM 生成
 
 def _llm_call(llm: LLMClient, system: str, user: str) -> str:
-    result = llm.call_llm_text(system, user, timeout=300)
+    # max_retries=1（2026-11-24）：单次生成预算 300s；默认 3 次重试会在 nginx 300s
+    # 截断后继续空烧约 15 分钟 token（用户早已离开）。失败交给用户重试。
+    result = llm.call_llm_text(system, user, timeout=300, max_retries=1)
     # call_llm_text 返回 dict（含 content/usage）或 str，做兼容展开
     if isinstance(result, dict):
         content = result.get("content") or result.get("text") or ""
@@ -1063,27 +1065,31 @@ def suggest_topics(project_id: int, db: Session = Depends(get_db),
     防御三件（2026-11-02 网络抖动 4 分钟挂起事故）：①总预算硬闸（future 75s，
     传输层超时对自定义 httpx 客户端不生效）；②失败短缓存 2 分钟；③单飞——并发
     请求共享同一次计算。前端已改为点击生成，本端点是兜底防线。
+    缓存先行（2026-11-24）：成功缓存命中不再构建上下文——此前命中也要全量扫
+    Entity/Relation，大项目上白白多付一次最贵的查询。
     """
     _ensure_qa_access(db, project_id, user)
-    ctx = _collect_context(db, project_id)
-    if ctx["entity_total"] == 0:
-        return {"chips": [], "source": "empty"}
 
-    def _cache_get() -> dict | None:
+    def _cache_read() -> tuple[bool, list[str] | None]:
+        """读缓存并做过期清理：返回 (是否命中, 值)；值为 None 表示「近期失败」缓存。"""
         cached = _SUGGEST_CACHE.get(project_id)
         if not cached:
-            return None
+            return False, None
         ts, val = cached
         if time.time() - ts >= (_SUGGEST_TTL if val is not None else _SUGGEST_FAIL_TTL):
             _SUGGEST_CACHE.pop(project_id, None)
-            return None
-        if val is None:  # 近期失败缓存：直接锚点回退，不再打 LLM
-            return {"chips": _fallback_chips(ctx), "source": "fallback"}
-        return {"chips": val, "source": "cache"}
+            return False, None
+        return True, val
 
-    hit = _cache_get()
-    if hit is not None:
-        return hit
+    hit, cached_val = _cache_read()
+    if hit and cached_val is not None:
+        return {"chips": cached_val, "source": "cache"}
+
+    ctx = _collect_context(db, project_id)
+    if ctx["entity_total"] == 0:
+        return {"chips": [], "source": "empty"}
+    if hit:  # 近期失败缓存：直接锚点回退，不再打 LLM
+        return {"chips": _fallback_chips(ctx), "source": "fallback"}
 
     lock = _SUGGEST_LOCKS.setdefault(project_id, threading.Lock())
     if not lock.acquire(blocking=False):
@@ -1091,7 +1097,10 @@ def suggest_topics(project_id: int, db: Session = Depends(get_db),
         if not lock.acquire(timeout=_SUGGEST_DEADLINE):
             return {"chips": _fallback_chips(ctx), "source": "fallback"}
         lock.release()
-        return _cache_get() or {"chips": _fallback_chips(ctx), "source": "fallback"}
+        hit, val = _cache_read()
+        if hit and val is not None:
+            return {"chips": val, "source": "cache"}
+        return {"chips": _fallback_chips(ctx), "source": "fallback"}
 
     try:
         def _call():
@@ -1175,9 +1184,11 @@ def generate_report(
         docx_bytes = _markdown_to_docx(content, title=title, project_name=proj.name,
                                        entity_total=ctx["entity_total"],
                                        relation_total=ctx["relation_total"])
-        downloads["md"] = _upload_export(project_id, f"{title}_{stamp}.md", md_bytes,
+        # 文件名清洗与 pptx 分支一致：LLM 标题可能含 : ? * 等 Windows 非法字符
+        safe_title = re.sub(r'[\\/:*?"<>|]', '_', title).strip() or "本体分析报告"
+        downloads["md"] = _upload_export(project_id, f"{safe_title}_{stamp}.md", md_bytes,
                                          "text/markdown", request)
-        downloads["docx"] = _upload_export(project_id, f"{title}_{stamp}.docx", docx_bytes,
+        downloads["docx"] = _upload_export(project_id, f"{safe_title}_{stamp}.docx", docx_bytes,
                                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                                            request)
         result = {"kind": "report", "title": title, "content": content, "outline": None,
