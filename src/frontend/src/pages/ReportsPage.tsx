@@ -16,6 +16,7 @@ import {
     type ReportResult,
 } from '../api/reports';
 import { projectsApi } from '../api/projects';
+import { downloadFromUrl, filenameFromUrl } from '../utils/urlDownload';
 import { QA_LAST_PROJECT_ID_KEY } from '../shared/keys';
 import type { ProjectData } from '../types/ontology';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -40,6 +41,7 @@ export default function ReportsPage() {
     const [elapsed, setElapsed] = useState(0);
     const [templateInfo, setTemplateInfo] = useState<{ exists: boolean; filename?: string }>({ exists: false });
     const [templateUploading, setTemplateUploading] = useState(false);
+    const [templateDownloading, setTemplateDownloading] = useState(false);
     // 模板信息是异步读取的：首帧先给「读取中」，避免先显示『未上传』再跳成『已上传』
     const [templateLoading, setTemplateLoading] = useState(false);
     // 项目列表未回来前不判定「还没有可用项目」，避免提示文案先错后对
@@ -101,17 +103,24 @@ export default function ReportsPage() {
         }
     }, [projectId]);
 
+    // 模板下载：预签名直链在当前页拉流保存，不新开标签页（新标签页会先白屏等附件）
     const handleDownload = useCallback(async (kind: 'current' | 'sample') => {
-        if (projectId == null) return;
+        if (projectId == null || templateDownloading) return;
+        setTemplateDownloading(true);
         try {
-            const url = kind === 'current'
-                ? await downloadPptTemplate(projectId)
-                : await downloadSampleTemplate(projectId);
-            window.open(url, '_blank');
+            if (kind === 'current') {
+                const url = await downloadPptTemplate(projectId);
+                await downloadFromUrl(url, templateInfo.filename || `PPT模板_project${projectId}.pptx`);
+            } else {
+                const url = await downloadSampleTemplate(projectId);
+                await downloadFromUrl(url, 'PPT模板示例（内含使用说明）.pptx');
+            }
         } catch (e: any) {
-            notifyError(e, '获取下载链接失败');
+            notifyError(e, '下载模板失败');
+        } finally {
+            setTemplateDownloading(false);
         }
-    }, [projectId]);
+    }, [projectId, templateDownloading, templateInfo.filename]);
 
     // 主题建议由 LLM 基于图谱材料生成（后端缓存 10 分钟），加载不阻塞页面
     const loadChips = useCallback(async (pid: number) => {
@@ -201,7 +210,14 @@ export default function ReportsPage() {
         }
     }, [busy, projectId, kind, topic, maxSlides, includeInferred, useTemplate, templateInfo.exists]);
 
-    const download = (url: string) => window.open(url, '_blank');
+    // 成品下载：同样走当前页拉流，避免新标签页白屏
+    const download = async (url: string) => {
+        try {
+            await downloadFromUrl(url, filenameFromUrl(url, '下载文件'));
+        } catch (e: any) {
+            notifyError(e, '下载失败');
+        }
+    };
 
     const appendSuggestion = (c: string) => {
         if (busy) return;
@@ -407,7 +423,13 @@ export default function ReportsPage() {
                                                 <Checkbox checked={useTemplate} disabled={busy} onChange={e => setUseTemplate(e.target.checked)}>
                                                     生成时使用
                                                 </Checkbox>
-                                                <Button size="small" type="link" className="!px-1" onClick={() => handleDownload('current')}>
+                                                <Button
+                                                    size="small"
+                                                    type="link"
+                                                    className="!px-1"
+                                                    loading={templateDownloading}
+                                                    onClick={() => handleDownload('current')}
+                                                >
                                                     下载
                                                 </Button>
                                                 <Popconfirm title="确定清除已上传的模板？" onConfirm={handleTemplateDelete}>
@@ -428,7 +450,8 @@ export default function ReportsPage() {
                                             size="small"
                                             type="link"
                                             className="!px-0 !text-[11px]"
-                                            disabled={projectId == null}
+                                            loading={templateDownloading}
+                                            disabled={projectId == null || templateDownloading}
                                             onClick={() => handleDownload('sample')}
                                         >
                                             下载示例模板（内含使用说明）
