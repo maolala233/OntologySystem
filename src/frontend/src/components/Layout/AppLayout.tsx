@@ -47,10 +47,23 @@ const AppLayout: React.FC = () => {
     });
     useEffect(() => {
         const parent = parentOfPath[location.pathname];
-        if (parent) setOpenMenus(prev => (prev.includes(parent) ? prev : [...prev, parent]));
+        // 手风琴：进入子页只展开其所在分组，其他分组一并收起
+        if (parent) setOpenMenus([parent]);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [location.pathname]);
     const [collapsed, setCollapsed] = useState(false);
+
+    // 手风琴（2026-11-24）：侧栏二级菜单同一时间只允许一个展开。
+    // antd 的 onOpenChange 回调的是「当前全部已展开 keys」，这里只认本次新展开的那一个：
+    // 展开新分组时旧分组自动收起；手动收起当前分组则全部关闭。
+    const handleOpenChange = (keys: string[]) => {
+        const newlyOpened = keys.filter(k => !openMenus.includes(k));
+        if (newlyOpened.length > 0) {
+            setOpenMenus([newlyOpened[newlyOpened.length - 1]]);
+            return;
+        }
+        setOpenMenus(keys);
+    };
     const [isMobile, setIsMobile] = useState(false);
 
     // 响应式布局：检测屏幕宽度
@@ -215,7 +228,7 @@ const AppLayout: React.FC = () => {
                         mode="inline"
                         selectedKeys={[selectedMenuKey]}
                         openKeys={openMenus}
-                        onOpenChange={keys => setOpenMenus(keys as string[])}
+                        onOpenChange={keys => handleOpenChange(keys as string[])}
                         items={allMenuItems}
                         onClick={({ key }) => {
                             if (key === location.pathname) return;

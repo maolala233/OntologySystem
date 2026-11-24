@@ -4,7 +4,9 @@
  * 保存后 API 进程热生效（Neo4j/MinIO 重连，Milvus 下次实例化生效），Celery worker 需重启。
  * MySQL 为平台自身元数据库，不开放修改。
  * 视觉（2026-11-23）：TechHero + 指标带；服务卡片统一冷蓝字段材质，
- * 已修改字段用琥珀淡底 + 发光圆点标出；改动后吸底保存条常驻。
+ * 已修改字段用琥珀淡底 + 发光圆点标出。
+ * 交互（2026-11-24）：开关类字段即时保存；文本/密码按卡片走草稿，
+ * 每张卡片表头有只作用于本卡的「保存」按钮（有改动才可点），不做全局浮层。
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import { message, notifyError } from '../../shared/feedback';
@@ -20,10 +22,10 @@ import {
     SettingOutlined,
     ThunderboltOutlined,
 } from '@ant-design/icons';
-import { envConfigApi, EnvConfigResponse, EnvTestResult } from '../../api/envConfig';
+import { envConfigApi, EnvConfigResponse, EnvFieldRow, EnvTestResult } from '../../api/envConfig';
 import Navbar from '../../components/Layout/Navbar';
 import TechHero from '../../components/TechHero';
-import { Dot, Note, StatBand, TkTag } from '../../shared/consoleUi';
+import { Dot, Note, PageLoading, StatBand, StatItem, TkTag } from '../../shared/consoleUi';
 
 const SERVICE_META: Record<string, { title: string; icon: React.ReactNode; ink: string; tint: string }> = {
     milvus: { title: 'Milvus 向量库', icon: <ThunderboltOutlined />, ink: '#6D3FD8', tint: 'rgba(139,92,246,0.12)' },
@@ -38,13 +40,32 @@ const BREADCRUMBS = [
     { title: '环境配置' },
 ];
 
+/** 就地替换某个字段（开关即时保存用，不整体 reload，避免冲掉正在编辑的文本草稿） */
+const patchField = (
+    prev: EnvConfigResponse | null,
+    key: string,
+    patch: Partial<EnvFieldRow>,
+): EnvConfigResponse | null => {
+    if (!prev) return prev;
+    const services = Object.fromEntries(
+        Object.entries(prev.services).map(([service, fields]) => [
+            service,
+            fields.map((f) => (f.key === key ? { ...f, ...patch } : f)),
+        ]),
+    );
+    return { ...prev, services };
+};
+
 const EnvConfigPage: React.FC = () => {
     const [data, setData] = useState<EnvConfigResponse | null>(null);
     const [loading, setLoading] = useState(true);
     // 刷新按钮只在手动点击时转圈；首屏由骨架屏表达
     const [refreshing, setRefreshing] = useState(false);
-    const [saving, setSaving] = useState(false);
+    // 正在保存的服务卡片（表头上的保存按钮转圈）
+    const [savingService, setSavingService] = useState<string | null>(null);
     const [dirty, setDirty] = useState<Record<string, string | boolean>>({});
+    // 开关即时保存的进行中集合（开关按钮上转圈）
+    const [savingKeys, setSavingKeys] = useState<Set<string>>(new Set());
     const [testing, setTesting] = useState<string | null>(null);
     const [testResults, setTestResults] = useState<Record<string, EnvTestResult>>({});
 
@@ -84,22 +105,70 @@ const EnvConfigPage: React.FC = () => {
         return { services, customized, ok, tested: tested.length };
     }, [data, testResults]);
 
+    // 指标带属于静态结构：加载时就先展示标签，数值等数据齐了再填
+    const statItems: StatItem[] = [
+        { label: '中间件服务', value: data ? stats.services : '—', tone: 'brand', icon: <CloudServerOutlined /> },
+        { label: '已自定义字段', value: data ? stats.customized : '—', tone: 'violet', icon: <SettingOutlined />, hint: '覆盖 .env 默认值' },
+        { label: '待保存修改', value: dirtyCount, tone: dirtyCount > 0 ? 'amber' : 'quiet', icon: <SaveOutlined /> },
+        { label: '连通通过', value: data ? `${stats.ok}/${stats.tested}` : '—', tone: 'cyan', icon: <ApiOutlined />, hint: '本次已测试的服务' },
+    ];
+
     const setValue = (key: string, value: string | boolean) => {
         setDirty((prev) => ({ ...prev, [key]: value }));
     };
 
-    const handleSave = async () => {
-        if (dirtyCount === 0) { message.info('没有修改需要保存'); return; }
-        setSaving(true);
+    /** 开关类字段即时保存：不进草稿、不弹吸底条；失败回滚到拨动前的值。
+     *  不走 load() 刷新——那会把正在编辑的文本草稿一起清掉。 */
+    const toggleSwitch = async (key: string, next: boolean) => {
+        if (!data || savingKeys.has(key)) return;
+        const before = Object.values(data.services).flat().find((f) => f.key === key);
+        setSavingKeys((prev) => new Set(prev).add(key));
+        setData((prev) => patchField(prev, key, { value: next, source: 'db' }));
         try {
-            const result = await envConfigApi.update(dirty);
-            message.success(`已保存 ${result.changed} 项修改` +
+            await envConfigApi.update({ [key]: next });
+        } catch (err: any) {
+            setData((prev) => patchField(prev, key, {
+                value: before?.value ?? !next,
+                source: before?.source ?? 'env',
+            }));
+            notifyError(err, '保存开关失败');
+        } finally {
+            setSavingKeys((prev) => {
+                const nextSet = new Set(prev);
+                nextSet.delete(key);
+                return nextSet;
+            });
+        }
+    };
+
+    /** 保存单张卡片的文本/密码改动：只提交这张卡的 dirty keys；
+     *  成功后只回填这张卡（用回读结果，掩码/空值以服务端为准），别的卡片的草稿不受影响 */
+    const saveService = async (service: string) => {
+        if (!data || savingService) return;
+        const patch: Record<string, string | boolean> = {};
+        for (const f of data.services[service] ?? []) {
+            if (f.key in dirty) patch[f.key] = dirty[f.key];
+        }
+        if (Object.keys(patch).length === 0) return;
+        setSavingService(service);
+        try {
+            const result = await envConfigApi.update(patch);
+            const fresh = await envConfigApi.get();
+            setData((prev) => prev ? {
+                ...prev,
+                services: { ...prev.services, [service]: fresh.services[service] ?? prev.services[service] },
+            } : fresh);
+            setDirty((prev) => {
+                const next = { ...prev };
+                Object.keys(patch).forEach((k) => delete next[k]);
+                return next;
+            });
+            message.success(`已保存 ${result.changed} 项` +
                 (result.skipped ? `，${result.skipped} 项（掩码/空值）未变更` : ''));
-            await load();
         } catch (err: any) {
             notifyError(err, '保存失败');
         } finally {
-            setSaving(false);
+            setSavingService(null);
         }
     };
 
@@ -136,19 +205,7 @@ const EnvConfigPage: React.FC = () => {
             subtitle="中间件连接参数 · 修改保存后 API 进程即时生效（无需重启后端）"
             showConstellation={!!data}
             actions={
-                <>
-                    <Button className="tk-soft-btn" icon={<ReloadOutlined />} onClick={refresh} loading={refreshing}>刷新</Button>
-                    <Button
-                        type="primary"
-                        className="tk-primary-btn"
-                        icon={<SaveOutlined />}
-                        onClick={handleSave}
-                        loading={saving}
-                        disabled={dirtyCount === 0}
-                    >
-                        保存全部{dirtyCount > 0 ? `（${dirtyCount} 项修改）` : ''}
-                    </Button>
-                </>
+                <Button className="tk-soft-btn" icon={<ReloadOutlined />} onClick={refresh} loading={refreshing}>刷新</Button>
             }
         />
     );
@@ -157,30 +214,9 @@ const EnvConfigPage: React.FC = () => {
         return shell(
             <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
                 {hero}
-                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                    {[0, 1, 2, 3].map((i) => (
-                        <div key={i} className="surface-card p-4">
-                            <div className="flex items-center gap-2.5">
-                                <span className="tk-skel h-8 w-8 !rounded-lg" />
-                                <div className="flex-1">
-                                    <div className="tk-skel h-3.5 w-28" />
-                                    <div className="tk-skel mt-1.5 h-2.5 w-16" />
-                                </div>
-                            </div>
-                            <div className="mt-4 space-y-3">
-                                {[0, 1, 2].map((j) => (
-                                    <div key={j}>
-                                        <div className="flex justify-between">
-                                            <div className="tk-skel h-2.5 w-20" />
-                                            <div className="tk-skel h-2.5 w-24" />
-                                        </div>
-                                        <div className="tk-skel mt-1.5 h-8 w-full !rounded-lg" />
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    ))}
-                </div>
+                {/* 首屏不做骨架屏：页头与指标带先出（数值显示 —），说明条/服务卡片等数据齐了一次性呈现 */}
+                <StatBand className="mb-3" items={statItems} />
+                <PageLoading hint="正在加载中间件连接参数…" />
             </div>,
         );
     }
@@ -207,15 +243,7 @@ const EnvConfigPage: React.FC = () => {
         <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
             {hero}
 
-            <StatBand
-                className="mb-4"
-                items={[
-                    { label: '中间件服务', value: stats.services, tone: 'brand', icon: <CloudServerOutlined /> },
-                    { label: '已自定义字段', value: stats.customized, tone: 'violet', icon: <SettingOutlined />, hint: '覆盖 .env 默认值' },
-                    { label: '待保存修改', value: dirtyCount, tone: dirtyCount > 0 ? 'amber' : 'quiet', icon: <SaveOutlined /> },
-                    { label: '连通通过', value: `${stats.ok}/${stats.tested}`, tone: 'cyan', icon: <ApiOutlined />, hint: '本次已测试的服务' },
-                ]}
-            />
+            <StatBand className="mb-3" items={statItems} />
 
             <Note className="mb-4">
                 <span className="tk-note-title">存储机制：</span>
@@ -279,6 +307,17 @@ const EnvConfigPage: React.FC = () => {
                                     >
                                         测试连接
                                     </Button>
+                                    <Button
+                                        size="small"
+                                        type="primary"
+                                        className="tk-primary-btn"
+                                        icon={<SaveOutlined />}
+                                        disabled={serviceDirty === 0 || (savingService !== null && savingService !== service)}
+                                        loading={savingService === service}
+                                        onClick={() => void saveService(service)}
+                                    >
+                                        保存
+                                    </Button>
                                 </div>
                             }
                         >
@@ -308,8 +347,9 @@ const EnvConfigPage: React.FC = () => {
 
                                             {f.kind === 'switch' ? (
                                                 <Switch
-                                                    checked={changed ? Boolean(dirty[f.key]) : Boolean(f.value)}
-                                                    onChange={(v) => setValue(f.key, v)}
+                                                    checked={Boolean(f.value)}
+                                                    loading={savingKeys.has(f.key)}
+                                                    onChange={(v) => void toggleSwitch(f.key, v)}
                                                 />
                                             ) : f.kind === 'password' ? (
                                                 <Input.Password
@@ -333,20 +373,6 @@ const EnvConfigPage: React.FC = () => {
                 })}
             </div>
             </Spin>
-
-            {/* 吸底保存条：页面较长时，改动后的保存入口一直可见 */}
-            {dirtyCount > 0 && (
-                <div className="tk-save-bar mt-4">
-                    <Dot tone="amber" />
-                    <span className="text-[12.5px] text-[#3D4B66]">
-                        <span className="tk-mono text-[14px] font-semibold text-[#B8790F]">{dirtyCount}</span> 项修改待保存
-                    </span>
-                    <Button size="small" icon={<ReloadOutlined />} onClick={load} disabled={saving}>放弃修改</Button>
-                    <Button type="primary" size="small" className="tk-primary-btn" icon={<SaveOutlined />} loading={saving} onClick={handleSave}>
-                        保存全部
-                    </Button>
-                </div>
-            )}
 
             <style>{`
                 /* 环境卡片：头部留白与站内面板对齐；状态区（圆点 + 测试按钮）右侧成组 */

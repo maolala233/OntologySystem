@@ -18,7 +18,7 @@ import { useAuthStore } from '../../shared/auth/authStore';
 import { PROJECT_STATUS, statusChip } from '../../shared/projectStatus';
 import Navbar from '../../components/Layout/Navbar';
 import TechHero from '../../components/TechHero';
-import { Dot, StatBand, TkTag } from '../../shared/consoleUi';
+import { Dot, StatBand, TkTag, PageLoading } from '../../shared/consoleUi';
 import Tip from '../../shared/Tip';
 
 interface UserProject {
@@ -214,6 +214,9 @@ const UserAdminPage: React.FC = () => {
         inactive: users.filter((u) => !u.is_active).length,
     }), [users]);
 
+    // 首屏：指标带等静态结构先出（数值显示 —），表格等数据齐了再出
+    const initialLoading = loading && users.length === 0;
+
     const columns = [
         {
             title: 'ID', dataIndex: 'id', width: 60,
@@ -221,10 +224,9 @@ const UserAdminPage: React.FC = () => {
         },
         {
             title: '用户', dataIndex: 'username', width: 210,
+            // 用户名直接展示，不挂 hover 提示（同文重复）
             render: (name: string) => (
-                <Tip text={name}>
-                    <span className="block truncate text-[13px] font-medium text-[#1F2A44]">{name}</span>
-                </Tip>
+                <span className="block truncate text-[13px] font-medium text-[#1F2A44]">{name}</span>
             ),
         },
         {
@@ -327,15 +329,19 @@ const UserAdminPage: React.FC = () => {
                 />
 
                 <StatBand
-                    className="mb-4"
+                    className="mb-3"
                     items={[
-                        { label: '用户总数', value: counts.total, tone: 'brand', icon: <TeamOutlined /> },
-                        { label: '管理员', value: counts.admins, tone: 'amber', icon: <SafetyCertificateOutlined /> },
-                        { label: '正常', value: counts.active, tone: 'cyan', icon: <CheckCircleOutlined /> },
-                        { label: '停用', value: counts.inactive, tone: 'quiet', icon: <StopOutlined /> },
+                        { label: '用户总数', value: initialLoading ? '—' : counts.total, tone: 'brand', icon: <TeamOutlined /> },
+                        { label: '管理员', value: initialLoading ? '—' : counts.admins, tone: 'amber', icon: <SafetyCertificateOutlined /> },
+                        { label: '正常', value: initialLoading ? '—' : counts.active, tone: 'cyan', icon: <CheckCircleOutlined /> },
+                        { label: '停用', value: initialLoading ? '—' : counts.inactive, tone: 'quiet', icon: <StopOutlined /> },
                     ]}
                 />
 
+                {initialLoading ? (
+                    <PageLoading hint="正在加载用户列表…" />
+                ) : (
+                    <>
                 {/* 批量操作条：不再套长条卡片，直接一条左对齐的普通行；
                     用发光圆点 + 等宽计数回答"选了几个" */}
                 {selectedIds.length > 0 && (
@@ -376,9 +382,8 @@ const UserAdminPage: React.FC = () => {
                 )}
 
                 <div className="surface-card tk-table">
-                    {/* 与知识域管理同一套加载方式：表头始终是真实表头，
-                        数据未到时用 Table 自己的 loading 遮罩，不再先出现一套骨架表头。
-                        列宽全部显式给出 + fixed 布局，表头从第一帧起就是确定的位置。 */}
+                    {/* 首屏整块由 PageLoading 替代；刷新时用 Table loading 遮罩保留旧数据。
+                        列宽全部显式给出 + fixed 布局，表头位置从第一帧起就是确定的。 */}
                     <Table
                         rowKey="id"
                         size="middle"
@@ -417,6 +422,8 @@ const UserAdminPage: React.FC = () => {
                         }}
                     />
                 </div>
+                    </>
+                )}
 
                 <Modal
                     title="新建用户"
@@ -487,14 +494,18 @@ const UserAdminPage: React.FC = () => {
                     open={!!projectsUser}
                     onClose={() => setProjectsUser(null)}
                     width={520}
+                    styles={{
+                        header: { padding: '10px 24px' },
+                        body: { padding: '10px 24px 8px' },
+                    }}
                 >
                     {projectsLoading ? (
-                        <div className="py-10 text-center text-sm text-[#66738F]">
+                        <div className="py-8 text-center text-sm text-[#66738F]">
                             <Dot tone="brand" className="mr-2 inline-block align-middle" />
                             加载中…
                         </div>
                     ) : projects.length === 0 ? (
-                        <div className="flex flex-col items-center px-4 py-12 text-center">
+                        <div className="flex flex-col items-center px-4 py-10 text-center">
                             <span
                                 className="flex h-12 w-12 items-center justify-center rounded-2xl text-[20px] text-[#2F62D8]"
                                 style={{ background: 'linear-gradient(135deg, rgba(91,141,239,0.16), rgba(139,92,246,0.10))' }}

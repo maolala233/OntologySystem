@@ -2,23 +2,23 @@
  * 管理后台 · 模块授权（R8 重构：界面平铺 + 角色配置；R11 拆分工具授权清单）
  * Tab1 用户权限：业务模块平铺矩阵（行=全部用户、列=模块）；
  * Tab2 工具授权：工具类四模块（本体问答/报告生成/PPT生成/MCP 工具）单独清单；
- * 单元格三态点击循环：默认（按 is_default_on）→ 允许 → 拒绝 → 默认；保存按用户整表 PUT。
+ * 单元格三态点击循环：默认（按 is_default_on）→ 允许 → 拒绝 → 默认；改动即时落库
+ * （按用户防抖 400ms + 串行发送，整表 PUT），失败整行回滚到上次成功快照。
  * Tab3 角色配置：角色 = 模块授权预设（roles 表），应用角色即全量覆盖该用户 grants。
- * 视觉（2026-11-23）：TechHero + 指标带；矩阵换成冷蓝表体，
- * 未保存行带左侧品牌竖条；改动后吸底保存条一直可见，不必滚回页头。
+ * 视觉（2026-11-23）：TechHero + 指标带；矩阵换成冷蓝表体。
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Checkbox, Input, Modal, Popconfirm, Space, Spin, Tabs, Tooltip } from 'antd';
 import { message, notifyError } from '../../shared/feedback';
 import {
-    CheckOutlined, CloseOutlined, DeleteOutlined, EditOutlined, MinusOutlined, PlusOutlined,
-    ReloadOutlined, SafetyOutlined, SaveOutlined, SearchOutlined, TeamOutlined,
-    ToolOutlined, UndoOutlined, UserSwitchOutlined,
+    CheckOutlined, CloseOutlined, DeleteOutlined, EditOutlined, LoadingOutlined, MinusOutlined,
+    PlusOutlined, ReloadOutlined, SafetyOutlined, SearchOutlined, TeamOutlined,
+    ToolOutlined, UserSwitchOutlined,
 } from '@ant-design/icons';
 import { adminApi, AdminModule, AdminRole, AdminUser } from '../../api/admin';
 import Navbar from '../../components/Layout/Navbar';
 import TechHero from '../../components/TechHero';
-import { Dot, Note, SectionHead, StatBand, TkTag } from '../../shared/consoleUi';
+import { Note, PageLoading, SectionHead, StatBand, TkTag } from '../../shared/consoleUi';
 
 type CellState = 'default' | 'allow' | 'deny';
 type Matrix = Record<string, Record<string, CellState>>; // userId -> moduleCode -> state
@@ -36,15 +36,42 @@ const TOOL_LABELS: Record<string, string> = {
     qa: '本体问答', report: '报告生成', ppt: 'PPT生成', mcp: 'MCP 工具',
 };
 
+/** 行内「保存中」小转圈：固定 16px 占位，出现/消失不挤动用户名；
+ *  150ms 内完成的快速保存不闪转圈，只给真正慢下来的保存一个轻提示。 */
+const SavingSpinner: React.FC<{ saving: boolean }> = ({ saving }) => {
+    const [visible, setVisible] = useState(false);
+    useEffect(() => {
+        if (!saving) {
+            setVisible(false);
+            return;
+        }
+        const timer = window.setTimeout(() => setVisible(true), 150);
+        return () => window.clearTimeout(timer);
+    }, [saving]);
+    return (
+        <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center" aria-live="polite">
+            {visible && (
+                <Tooltip title="正在保存授权…">
+                    <LoadingOutlined spin className="text-[12px] text-[#5B8DEF]" aria-label="正在保存授权" />
+                </Tooltip>
+            )}
+        </span>
+    );
+};
+
 const ModuleGrantsPage: React.FC = () => {
     const [users, setUsers] = useState<AdminUser[]>([]);
     const [modules, setModules] = useState<AdminModule[]>([]);
     const [roles, setRoles] = useState<AdminRole[]>([]);
     const [matrix, setMatrix] = useState<Matrix>({});
-    // 服务器上的授权快照：行内「还原」回到这份，而不是清成默认（默认 ≠ 已保存值）
-    const [savedMatrix, setSavedMatrix] = useState<Matrix>({});
-    const [dirtyUsers, setDirtyUsers] = useState<Set<number>>(new Set());
-    const [saving, setSaving] = useState(false);
+    // 即时保存：matrixRef 供防抖定时器/串行队列读最新行，savedMatrixRef 是失败回滚快照
+    const matrixRef = useRef<Matrix>({});
+    const savedMatrixRef = useRef<Matrix>({});
+    // 行内「保存中」提示（请求在飞时显示）
+    const [savingUsers, setSavingUsers] = useState<Set<number>>(new Set());
+    const saveTimers = useRef<Map<number, number>>(new Map());
+    const savingNow = useRef<Set<number>>(new Set());
+    const saveQueued = useRef<Set<number>>(new Set());
     const [loading, setLoading] = useState(true);
     // 刷新按钮只在手动点击时转圈；首屏由骨架屏表达
     const [refreshing, setRefreshing] = useState(false);
@@ -86,8 +113,12 @@ const ModuleGrantsPage: React.FC = () => {
                 }
             }
             setMatrix(next);
-            setSavedMatrix(next);
-            setDirtyUsers(new Set());
+            matrixRef.current = next;
+            savedMatrixRef.current = next;
+            // 刷新拿回的是服务器真值：取消还没发出的防抖保存，避免旧草稿盖掉新数据
+            saveTimers.current.forEach((t) => window.clearTimeout(t));
+            saveTimers.current.clear();
+            saveQueued.current.clear();
         } catch (e) {
             notifyError(e, '加载授权数据失败');
         } finally {
@@ -106,53 +137,70 @@ const ModuleGrantsPage: React.FC = () => {
         }
     }, [load]);
 
+    /** 立即把某用户当前整行授权写入服务器；同一用户串行，在飞期间的新改动排队补发一次 */
+    const flushSave = useCallback(async (userId: number) => {
+        if (savingNow.current.has(userId)) {
+            saveQueued.current.add(userId);
+            return;
+        }
+        savingNow.current.add(userId);
+        setSavingUsers((prev) => new Set(prev).add(userId));
+        const row = { ...(matrixRef.current[userId] ?? {}) };
+        try {
+            const grants = Object.entries(row)
+                .filter(([, state]) => state !== 'default')
+                .map(([module_code, state]) => ({ module_code, allowed: state === 'allow' }));
+            await adminApi.putGrants(userId, grants);
+            savedMatrixRef.current = { ...savedMatrixRef.current, [userId]: row };
+        } catch (err: any) {
+            // 失败整行回滚到上次成功保存的快照，界面不停留在“看起来已改”的状态
+            const snapshot = { ...(savedMatrixRef.current[userId] ?? {}) };
+            matrixRef.current = { ...matrixRef.current, [userId]: snapshot };
+            setMatrix((prev) => ({ ...prev, [userId]: snapshot }));
+            notifyError(err, '授权保存失败');
+        } finally {
+            savingNow.current.delete(userId);
+            setSavingUsers((prev) => {
+                const next = new Set(prev);
+                next.delete(userId);
+                return next;
+            });
+            if (saveQueued.current.has(userId)) {
+                saveQueued.current.delete(userId);
+                flushSave(userId);
+            }
+        }
+    }, []);
+
+    /** 400ms 防抖：同一行连点只发最后一次，不同用户互不影响 */
+    const scheduleSave = useCallback((userId: number) => {
+        const prev = saveTimers.current.get(userId);
+        if (prev) window.clearTimeout(prev);
+        saveTimers.current.set(userId, window.setTimeout(() => {
+            saveTimers.current.delete(userId);
+            flushSave(userId);
+        }, 400));
+    }, [flushSave]);
+
+    /** 单元格三态循环：改本地矩阵后立即安排落库（无草稿态、无二次确认） */
     const cycleCell = (userId: number, code: string) => {
         const target = users.find((u) => u.id === userId);
         if (target?.role === 'admin') return;
-        setMatrix((prev) => ({
-            ...prev,
-            [userId]: { ...prev[userId], [code]: NEXT_STATE[prev[userId]?.[code] ?? 'default'] },
-        }));
-        setDirtyUsers((prev) => new Set(prev).add(userId));
+        const prevRow = matrixRef.current[userId] ?? {};
+        const next: Matrix = {
+            ...matrixRef.current,
+            [userId]: { ...prevRow, [code]: NEXT_STATE[prevRow[code] ?? 'default'] },
+        };
+        matrixRef.current = next;
+        setMatrix(next);
+        scheduleSave(userId);
     };
 
-    const resetRow = (userId: number) => {
-        setMatrix((prev) => ({
-            ...prev,
-            [userId]: { ...(savedMatrix[userId] ?? {}) },
-        }));
-        setDirtyUsers((prev) => {
-            const next = new Set(prev);
-            next.delete(userId);
-            return next;
-        });
-    };
-
-    const saveAll = async () => {
-        const targets = [...dirtyUsers].filter((id) => users.find((u) => u.id === id)?.role !== 'admin');
-        if (targets.length === 0) return;
-        setSaving(true);
-        try {
-            await Promise.all(targets.map(async (userId) => {
-                const grants = Object.entries(matrix[userId] ?? {})
-                    .filter(([, state]) => state !== 'default')
-                    .map(([module_code, state]) => ({ module_code, allowed: state === 'allow' }));
-                await adminApi.putGrants(userId, grants);
-            }));
-            message.success(`已保存 ${targets.length} 个用户的授权`);
-            // 保存成功后把快照推进到当前矩阵：之后的行内「还原」应回到刚保存的状态
-            setSavedMatrix((prev) => {
-                const next = { ...prev };
-                for (const userId of targets) next[userId] = { ...(matrix[userId] ?? {}) };
-                return next;
-            });
-            setDirtyUsers(new Set());
-        } catch (err: any) {
-            notifyError(err, '保存失败');
-        } finally {
-            setSaving(false);
-        }
-    };
+    // 卸载时清掉还没触发的防抖保存
+    useEffect(() => () => {
+        saveTimers.current.forEach((t) => window.clearTimeout(t));
+        saveTimers.current.clear();
+    }, []);
 
     // ── 角色编辑
     const openRoleModal = (role: AdminRole | null) => {
@@ -260,9 +308,9 @@ const ModuleGrantsPage: React.FC = () => {
                 </thead>
                 <tbody>
                     {users.map((u) => {
-                        const dirty = dirtyUsers.has(u.id);
+                        const saving = savingUsers.has(u.id);
                         return (
-                            <tr key={u.id} className={dirty ? 'mg-row mg-row--dirty' : 'mg-row'}>
+                            <tr key={u.id} className="mg-row">
                                 <td className="mg-user-col">
                                     <Space size={6} wrap>
                                         <span
@@ -278,16 +326,7 @@ const ModuleGrantsPage: React.FC = () => {
                                         <span className="text-[13px] text-[#1F2A44] whitespace-nowrap">{u.username}</span>
                                         {u.role === 'admin' && <TkTag tone="amber">管理员</TkTag>}
                                         {!u.is_active && <TkTag tone="quiet">停用</TkTag>}
-                                        {dirty && (
-                                            <>
-                                                <TkTag tone="brand">
-                                                    <Dot tone="brand" className="!h-[5px] !w-[5px]" />
-                                                    未保存
-                                                </TkTag>
-                                                <Button size="small" type="link" className="!px-0 !text-[11px]"
-                                                    onClick={() => resetRow(u.id)}>还原</Button>
-                                            </>
-                                        )}
+                                        <SavingSpinner saving={saving} />
                                     </Space>
                                 </td>
                                 {mods.map((m) => {
@@ -326,7 +365,7 @@ const ModuleGrantsPage: React.FC = () => {
     );
 
     const legendBar = (
-        <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-[11.5px] text-[#66738F]">
+        <div className="mb-2.5 flex flex-wrap items-center gap-x-4 gap-y-2 text-[11.5px] text-[#66738F]">
             <span className="inline-flex items-center gap-1.5">
                 <span className="mg-legend mg-legend--default">默</span>跟随模块默认
             </span>
@@ -336,7 +375,7 @@ const ModuleGrantsPage: React.FC = () => {
             <span className="inline-flex items-center gap-1.5">
                 <span className="mg-legend mg-legend--deny">拒</span>拒绝
             </span>
-            <span className="text-[#A3ADC2]">点击单元格循环切换：默认 → 允许 → 拒绝</span>
+            <span className="text-[#A3ADC2]">点击单元格循环切换，改动即时保存：默认 → 允许 → 拒绝</span>
         </div>
     );
 
@@ -381,10 +420,9 @@ const ModuleGrantsPage: React.FC = () => {
                                     {r.is_builtin && <TkTag tone="brand">内置</TkTag>}
                                 </Space>
                                 <Space size={0}>
-                                    <Tooltip title="编辑">
-                                        <Button size="small" type="text" icon={<EditOutlined />}
-                                            onClick={() => openRoleModal(r)} />
-                                    </Tooltip>
+                                    <Button size="small" type="text" icon={<EditOutlined />}
+                                        aria-label="编辑角色"
+                                        onClick={() => openRoleModal(r)} />
                                     {!r.is_builtin && (
                                         <Popconfirm title={`确定删除角色「${r.name}」？`} onConfirm={() => removeRole(r)}>
                                             <Tooltip title="删除">
@@ -469,7 +507,8 @@ const ModuleGrantsPage: React.FC = () => {
         ? normalUsers.filter((u) => u.username.toLowerCase().includes(applySearch.trim().toLowerCase()))
         : normalUsers;
 
-    const dirtyCount = dirtyUsers.size;
+    // 首屏：指标带/页签等静态结构先出（计数显示占位），矩阵/角色卡等数据齐了再出
+    const matrixLoading = loading && users.length === 0;
 
     return (
         <div className="h-full flex flex-col app-canvas">
@@ -489,56 +528,41 @@ const ModuleGrantsPage: React.FC = () => {
                     subtitle="按用户配置业务模块与工具功能的开通情况；角色 = 一组可复用的模块授权预设"
                     showConstellation={users.length > 0}
                     actions={
-                        <>
-                            <Button className="tk-soft-btn" icon={<ReloadOutlined />} onClick={refresh} loading={refreshing}>刷新</Button>
-                            {dirtyCount > 0 && (
-                                <TkTag tone="amber">
-                                    <Dot tone="amber" className="!h-[5px] !w-[5px]" />
-                                    <span className="tk-mono">{dirtyCount}</span> 个用户未保存
-                                </TkTag>
-                            )}
-                        </>
+                        <Button className="tk-soft-btn" icon={<ReloadOutlined />} onClick={refresh} loading={refreshing}>刷新</Button>
                     }
                 />
 
+                {/* 静态结构先出：指标带与页签立刻可见（计数等数据齐了再填），矩阵/角色卡等数据齐了再出 */}
                 <StatBand
-                    className="mb-4"
+                    className="mb-1.5"
                     items={[
-                        { label: '可授权用户', value: normalUsers.length, tone: 'brand', icon: <TeamOutlined /> },
-                        { label: '业务模块', value: businessModules.length, tone: 'violet', icon: <SafetyOutlined /> },
-                        { label: '工具模块', value: toolModules.length, tone: 'cyan', icon: <ToolOutlined /> },
-                        { label: '角色预设', value: roles.length, tone: 'amber', icon: <UserSwitchOutlined /> },
+                        { label: '可授权用户', value: matrixLoading ? '—' : normalUsers.length, tone: 'brand', icon: <TeamOutlined /> },
+                        { label: '业务模块', value: matrixLoading ? '—' : businessModules.length, tone: 'violet', icon: <SafetyOutlined /> },
+                        { label: '工具模块', value: matrixLoading ? '—' : toolModules.length, tone: 'cyan', icon: <ToolOutlined /> },
+                        { label: '角色预设', value: matrixLoading ? '—' : roles.length, tone: 'amber', icon: <UserSwitchOutlined /> },
                     ]}
                 />
 
                 {/* 刷新时旧矩阵保留在 Spin 遮罩下（与用户管理的 Table loading 同一观感） */}
                 <Spin spinning={loading && users.length > 0}>
-                {loading && users.length === 0 ? (
-                    <div className="surface-card p-4">
-                        <div className="flex items-center gap-2">
-                            <div className="tk-skel h-3 w-24" />
-                            <div className="tk-skel h-3 w-16" />
-                            <div className="tk-skel ml-auto h-3 w-20" />
-                        </div>
-                        <div className="mt-3 space-y-2">
-                            {[0, 1, 2, 3, 4, 5].map((i) => (
-                                <div key={i} className="tk-skel h-9 w-full !rounded-lg" />
-                            ))}
-                        </div>
-                    </div>
-                ) : (
                 <Tabs
                     defaultActiveKey="users"
+                    className="mg-tabs"
+                    tabBarStyle={{ marginBottom: 8 }}
                     items={[
                         {
                             key: 'users',
                             label: (
                                 <span className="inline-flex items-center gap-1.5">
                                     用户权限
-                                    <span className="tk-mono text-[11px] text-[#8A94AB]">{normalUsers.length}</span>
+                                    {!matrixLoading && (
+                                        <span className="tk-mono text-[11px] text-[#8A94AB]">{normalUsers.length}</span>
+                                    )}
                                 </span>
                             ),
-                            children: (
+                            children: matrixLoading ? (
+                                <PageLoading hint="正在加载用户与授权矩阵…" />
+                            ) : (
                                 <div>
                                     {legendBar}
                                     {renderMatrix(businessModules)}
@@ -550,10 +574,14 @@ const ModuleGrantsPage: React.FC = () => {
                             label: (
                                 <span className="inline-flex items-center gap-1.5">
                                     工具授权
-                                    <span className="tk-mono text-[11px] text-[#8A94AB]">{toolModules.length}</span>
+                                    {!matrixLoading && (
+                                        <span className="tk-mono text-[11px] text-[#8A94AB]">{toolModules.length}</span>
+                                    )}
                                 </span>
                             ),
-                            children: (
+                            children: matrixLoading ? (
+                                <PageLoading hint="正在加载工具授权…" />
+                            ) : (
                                 <div>
                                     <Note tone="quiet" className="mb-3">
                                         工具类功能单独授权：本体问答 / 报告生成 / PPT生成 / MCP 工具，分别控制「工具」子菜单中各入口的可见与可用。
@@ -568,36 +596,16 @@ const ModuleGrantsPage: React.FC = () => {
                             label: (
                                 <span className="inline-flex items-center gap-1.5">
                                     角色配置
-                                    <span className="tk-mono text-[11px] text-[#8A94AB]">{roles.length}</span>
+                                    {!matrixLoading && (
+                                        <span className="tk-mono text-[11px] text-[#8A94AB]">{roles.length}</span>
+                                    )}
                                 </span>
                             ),
-                            children: roleCards,
+                            children: matrixLoading ? <PageLoading hint="正在加载角色预设…" /> : roleCards,
                         },
                     ]}
                 />
-                )}
                 </Spin>
-
-                {/* 吸底保存条：矩阵很长时改动后的保存入口一直贴在视口底部 */}
-                {dirtyCount > 0 && (
-                    <div className="tk-save-bar mt-3">
-                        <Dot tone="amber" />
-                        <span className="text-[12.5px] text-[#3D4B66]">
-                            <span className="tk-mono text-[14px] font-semibold text-[#B8790F]">{dirtyCount}</span> 个用户有未保存的修改
-                        </span>
-                        <Popconfirm
-                            title="放弃所有未保存的修改？"
-                            description="矩阵会恢复到服务器上的当前授权。"
-                            okText="放弃修改" cancelText="继续编辑"
-                            onConfirm={load}
-                        >
-                            <Button size="small" icon={<UndoOutlined />} disabled={saving}>放弃修改</Button>
-                        </Popconfirm>
-                        <Button type="primary" size="small" className="tk-primary-btn" icon={<SaveOutlined />} loading={saving} onClick={saveAll}>
-                            保存全部
-                        </Button>
-                    </div>
-                )}
 
                 {/* 新建/编辑角色 */}
                 <Modal
@@ -686,6 +694,9 @@ const ModuleGrantsPage: React.FC = () => {
                 </Modal>
 
                 <style>{`
+                    /* 页签：antd 默认 tab 上下各 12px 内边距，会把「指标带 → 页签」的空档撑大；
+                       这里收到 6px，配合指标带 mb-1.5 让视觉间距更紧凑 */
+                    .mg-tabs.ant-tabs > .ant-tabs-nav .ant-tabs-tab { padding: 6px 0; }
                     /* 矩阵：冷蓝表体 + 固定用户列 + 未保存行左侧品牌竖条（2026-11-23） */
                     .mg-matrix {
                         width: 100%;
@@ -722,19 +733,17 @@ const ModuleGrantsPage: React.FC = () => {
                     }
                     .mg-matrix thead .mg-user-col { z-index: 4; }
                     .mg-matrix tbody tr:hover .mg-user-col { background: #EDF4FF; }
-                    .mg-matrix tbody tr.mg-row--dirty .mg-user-col {
-                        box-shadow: inset 3px 0 0 #5B8DEF;
-                    }
                     .mg-module-col { border-left: 1px solid #E9F0FA; }
                     .mg-cell {
                         display: inline-flex;
                         align-items: center;
                         justify-content: center;
-                        width: 28px;
-                        height: 28px;
+                        /* 2026-11-24：整格收一档（28→26、图标 11→10），矩阵更紧凑，图标比例不变 */
+                        width: 26px;
+                        height: 26px;
                         border: 1px solid transparent;
-                        border-radius: 8px;
-                        font-size: 11px;
+                        border-radius: 7px;
+                        font-size: 10px;
                         cursor: pointer;
                         transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease;
                     }

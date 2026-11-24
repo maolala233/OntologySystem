@@ -1015,6 +1015,20 @@ body .ant-drawer-body {
   scrollbar-gutter: stable;
 }
 
+/* 抽屉内容区顶底留白（2026-11-24）：antd 默认上下各 24px，在内容以表单/列表为主的
+   抽屉里偏空；统一收到 16px / 14px（左右仍是 24px，与标题对齐）。
+   个别抽屉通过 styles.body 或 .property-drawer 自行给值，优先级更高、不受影响 */
+body .ant-drawer .ant-drawer-body {
+  padding-top: 16px;
+  padding-bottom: 14px;
+}
+
+/* 抽屉标题栏：antd 默认上下各 16px，标题看起来悬在中间；统一收到 12px */
+body .ant-drawer .ant-drawer-header {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
 /* 弹窗主体：与卡片同族的冷白渐变。不再在顶部铺满宽彩线（2026-11-18 用户反馈）：
    弹窗已经有描边/投影/圆角把层次拉开，全宽线落在每个小弹窗上反而显碎；
    品牌彩条只留给小标题前的 3×13px 点缀（面板装饰语言） */

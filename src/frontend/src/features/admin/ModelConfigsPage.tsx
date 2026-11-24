@@ -8,7 +8,7 @@
  * 最近测试用发光圆点表达；抽屉里按基础信息 / 连接参数 / 运行参数分段，
  * 测试结果直接回显在抽屉底部，不再只靠顶部 message。
  */
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Card, Drawer, Form, Input, InputNumber, Select, Space, Spin, Switch, Tabs, Tooltip } from 'antd';
 import {
     ApiOutlined, CloudOutlined, DeploymentUnitOutlined, EyeOutlined, MessageOutlined,
@@ -22,7 +22,7 @@ import { projectsApi } from '../../api/projects';
 import { ProjectData } from '../../types/ontology';
 import Navbar from '../../components/Layout/Navbar';
 import TechHero from '../../components/TechHero';
-import { Dot, Note, SectionHead, StatBand, TkTag } from '../../shared/consoleUi';
+import { Dot, Note, PageLoading, SectionHead, StatBand, TkTag } from '../../shared/consoleUi';
 import Tip from '../../shared/Tip';
 
 const PURPOSES = [
@@ -45,13 +45,19 @@ const FieldRow: React.FC<{ label: string; children: React.ReactNode; mono?: bool
 const ModelConfigsPage: React.FC = () => {
     const { user, loaded: authLoaded } = useAuthStore();
     const isAdmin = user?.role === 'admin';
-    const [rows, setRows] = useState<ModelConfigRow[]>([]);
+    // 每个用途 tab 各自缓存一份 rows：切回已加载过的 tab 直接渲染缓存，
+    // 不再先显示上一个 tab 的卡片再被替换（2026-11-24：切 tab 闪烁）
+    const [rowsByPurpose, setRowsByPurpose] = useState<Record<string, ModelConfigRow[]>>({});
     const [providers, setProviders] = useState<ProviderMeta[]>([]);
     const [myProjects, setMyProjects] = useState<ProjectData[]>([]);
     const [activePurpose, setActivePurpose] = useState<string>('extract');
-    const [loading, setLoading] = useState(true);
-    // 刷新按钮只在手动点击时转圈；首屏由骨架屏表达
+    // 刷新按钮只在手动点击时转圈；首次进入某用途由一条延迟淡入的加载带表达
     const [refreshing, setRefreshing] = useState(false);
+    // 当前 tab 的数据/是否已加载过（有缓存即算已加载，空数组也算）
+    const rows = rowsByPurpose[activePurpose] ?? [];
+    const rowsLoaded = Object.prototype.hasOwnProperty.call(rowsByPurpose, activePurpose);
+    // 其余用途后台预取只需一次
+    const prefetchedRef = useRef(false);
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [editing, setEditing] = useState<ModelConfigRow | null>(null);
     const [testingId, setTestingId] = useState<number | 'form' | null>(null);
@@ -74,38 +80,54 @@ const ModelConfigsPage: React.FC = () => {
         return () => { alive = false; };
     }, [authLoaded, isAdmin]);
 
-    const load = async () => {
-        setLoading(true);
+    const load = async (purpose: string = activePurpose) => {
         try {
             if (isAdmin) {
                 const [rs, ps] = await Promise.all([
-                    modelConfigsApi.list({ purpose: activePurpose }),
+                    modelConfigsApi.list({ purpose }),
                     modelConfigsApi.listProviders(),
                 ]);
-                setRows(rs);
+                setRowsByPurpose((prev) => ({ ...prev, [purpose]: rs }));
                 setProviders(ps);
             } else {
                 // 普通用户：全局行（只读展示，默认项可见）+ 自己拥有项目的配置
                 const [globalRs, ps] = await Promise.all([
-                    modelConfigsApi.list({ purpose: activePurpose, scope: 'global' }),
+                    modelConfigsApi.list({ purpose, scope: 'global' }),
                     modelConfigsApi.listProviders(),
                 ]);
                 const projectRs = await Promise.all(
                     myProjects.map((p) =>
-                        modelConfigsApi.list({ purpose: activePurpose, scope: 'project', project_id: p.id })
+                        modelConfigsApi.list({ purpose, scope: 'project', project_id: p.id })
                             .catch(() => [] as ModelConfigRow[])),
                 );
-                setRows([...globalRs, ...projectRs.flat()]);
+                setRowsByPurpose((prev) => ({ ...prev, [purpose]: [...globalRs, ...projectRs.flat()] }));
                 setProviders(ps);
             }
         } catch (err: any) {
             notifyError(err, '加载失败');
-        } finally {
-            setLoading(false);
+            // 失败也记为「已加载（空）」，避免加载提示一直挂着；可点「刷新」重试
+            setRowsByPurpose((prev) => (prev[purpose] ? prev : { ...prev, [purpose]: [] }));
         }
     };
 
-    useEffect(() => { if (projectsReady) void load(); }, [activePurpose, isAdmin, myProjects, projectsReady]);
+    useEffect(() => {
+        if (!projectsReady) return;
+        // 只有首次进入该用途才请求：已有缓存的 tab 直接展示，切 tab 不会闪旧卡片
+        if (rowsByPurpose[activePurpose]) return;
+        void load(activePurpose);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activePurpose, isAdmin, myProjects, projectsReady]);
+
+    // 后台预取其余用途（管理员：本页只出现在「系统配置」管理员菜单里）：
+    // 四个用途都先进缓存，之后再切 tab 就是纯本地渲染，加载带根本不会出现、也就没有闪烁。
+    // 普通用户按项目逐项拉取，请求量会随项目数放大，不预取——切 tab 时才按需加载。
+    useEffect(() => {
+        if (!projectsReady || !isAdmin || prefetchedRef.current) return;
+        prefetchedRef.current = true;
+        const others = PURPOSES.map((p) => p.key).filter((k) => k !== activePurpose);
+        others.forEach((k) => { if (!rowsByPurpose[k]) void load(k); });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [projectsReady, isAdmin]);
 
     const refresh = async () => {
         setRefreshing(true);
@@ -209,6 +231,15 @@ const ModelConfigsPage: React.FC = () => {
                 message.success('配置已创建');
             }
             setDrawerOpen(false);
+            if (values.purpose !== activePurpose) {
+                // 在别的 tab 里新建的配置：作废该用途缓存，下次进入重新拉取
+                setRowsByPurpose((prev) => {
+                    if (!(values.purpose in prev)) return prev;
+                    const next = { ...prev };
+                    delete next[values.purpose];
+                    return next;
+                });
+            }
             load();
         } catch (err: any) {
             notifyError(err, '保存失败');
@@ -319,6 +350,21 @@ const ModelConfigsPage: React.FC = () => {
                     }
                 />
 
+                {/* 指标带与页签属于静态结构，先出；数值等当前用途数据回来再填。
+                    位置与「模块授权」一致：指标带在页签上方 */}
+                <StatBand
+                    className="mb-1.5"
+                    items={[
+                        {
+                            label: `${purposeMeta?.label ?? '当前用途'}配置`, value: rowsLoaded ? stats.total : '—', tone: 'brand',
+                            icon: purposeMeta?.icon ?? <RobotOutlined />,
+                        },
+                        { label: '全局', value: rowsLoaded ? stats.globals : '—', tone: 'violet', icon: <CloudOutlined /> },
+                        { label: '项目级', value: rowsLoaded ? stats.projects : '—', tone: 'cyan', icon: <DeploymentUnitOutlined /> },
+                        { label: '已启用', value: rowsLoaded ? stats.enabled : '—', tone: 'amber', icon: <ApiOutlined /> },
+                    ]}
+                />
+
                 <Tabs
                     activeKey={activePurpose}
                     onChange={setActivePurpose}
@@ -334,60 +380,37 @@ const ModelConfigsPage: React.FC = () => {
                             </span>
                         ),
                     }))}
-                    className="mb-2"
+                    className="mc-tabs"
+                    tabBarStyle={{ marginBottom: 8 }}
                 />
 
-                <StatBand
-                    className="mb-4"
-                    items={[
-                        {
-                            label: `${purposeMeta?.label ?? '当前用途'}配置`, value: stats.total, tone: 'brand',
-                            icon: purposeMeta?.icon ?? <RobotOutlined />,
-                        },
-                        { label: '全局', value: stats.globals, tone: 'violet', icon: <CloudOutlined /> },
-                        { label: '项目级', value: stats.projects, tone: 'cyan', icon: <DeploymentUnitOutlined /> },
-                        { label: '已启用', value: stats.enabled, tone: 'amber', icon: <ApiOutlined /> },
-                    ]}
-                />
-
-                {/* 刷新 / 切用途时旧卡片保留在 Spin 遮罩下，和用户管理的 Table loading 同一观感 */}
-                <Spin spinning={loading && rows.length > 0}>
-                {loading && rows.length === 0 ? (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 16 }}>
-                        {[0, 1, 2, 3].map((i) => (
-                            <div key={i} className="surface-card p-4">
-                                <div className="flex items-center gap-2">
-                                    <div className="tk-skel h-7 w-7 !rounded-lg" />
-                                    <div className="tk-skel h-3.5 w-32" />
-                                    <div className="tk-skel ml-auto h-4 w-12 !rounded-full" />
-                                </div>
-                                <div className="mt-4 space-y-2.5">
-                                    {[0, 1, 2, 3].map((j) => (
-                                        <div key={j} className="flex items-center gap-2">
-                                            <div className="tk-skel h-2.5 w-12" />
-                                            <div className="tk-skel h-2.5 flex-1" />
-                                        </div>
-                                    ))}
-                                </div>
-                                <div className="mt-4 tk-skel h-7 w-full !rounded-lg" />
-                            </div>
-                        ))}
-                    </div>
-                ) : rows.length === 0 && !loading ? (
-                    <div className="surface-card flex flex-col items-center px-4 py-16 text-center">
+                {/* 手动刷新时旧卡片压在 Spin 遮罩下 */}
+                {rowsLoaded ? (
+                <Spin spinning={refreshing}>
+                {rows.length === 0 ? (
+                    /* 空态不做整块白卡：横向一条虚线占位带，高度只有原先三分之一，不抢卡片区的视觉重心 */
+                    <div
+                        className="flex flex-wrap items-center gap-4 rounded-2xl px-5 py-4"
+                        style={{
+                            border: '1px dashed rgba(91,141,239,0.30)',
+                            backgroundImage: 'linear-gradient(120deg, rgba(251,253,255,0.96) 0%, rgba(91,141,239,0.06) 100%)',
+                        }}
+                    >
                         <span
-                            className="flex h-14 w-14 items-center justify-center rounded-2xl text-[22px] text-[#2F62D8]"
+                            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-[18px] text-[#2F62D8]"
                             style={{ background: 'linear-gradient(135deg, rgba(91,141,239,0.16), rgba(139,92,246,0.10))' }}
                         >
                             {purposeMeta?.icon ?? <RobotOutlined />}
                         </span>
-                        <div className="mt-4 text-[14px] font-semibold text-[#0F172A]">
-                            暂无「{purposeMeta?.label ?? '当前用途'}」配置
+                        <div className="min-w-0 flex-1">
+                            <div className="text-[13.5px] font-semibold text-[#0F172A]">
+                                暂无「{purposeMeta?.label ?? '当前用途'}」配置
+                            </div>
+                            <div className="mt-0.5 text-[12px] leading-relaxed text-[#66738F]">
+                                {purposeMeta?.hint}
+                            </div>
                         </div>
-                        <div className="mt-1.5 max-w-[360px] text-[12.5px] leading-[1.7] text-[#66738F]">
-                            {purposeMeta?.hint}
-                        </div>
-                        <Button className="tk-soft-btn mt-4" icon={<PlusOutlined />} onClick={openCreate}>新建配置</Button>
+                        <Button className="tk-soft-btn shrink-0" icon={<PlusOutlined />} onClick={openCreate}>新建配置</Button>
                     </div>
                 ) : (
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 16 }}>
@@ -453,19 +476,15 @@ const ModelConfigsPage: React.FC = () => {
                                         只读行需要把「只读」说明放在同一行右侧 */}
                                     <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[#F0F4FB] pt-2.5">
                                         <div className="flex items-center gap-0.5">
-                                            <Tooltip title="测试连接">
-                                                <Button size="small" type="link" icon={<ApiOutlined />}
-                                                        loading={testingId === row.id}
-                                                        onClick={() => handleTest(row)}>测试</Button>
-                                            </Tooltip>
-                                            <Tooltip title={manageable ? '设为该用途的默认配置' : '全局默认由管理员设置，项目配置需为项目 owner'}>
-                                                <Button size="small" type="link"
-                                                        icon={row.is_default ? <StarFilled style={{ color: '#E0A02A' }} /> : <StarOutlined />}
-                                                        disabled={row.is_default || !manageable}
-                                                        onClick={() => handleSetDefault(row)}>
-                                                    {row.is_default ? '默认' : '设默认'}
-                                                </Button>
-                                            </Tooltip>
+                                            <Button size="small" type="link" icon={<ApiOutlined />}
+                                                    loading={testingId === row.id}
+                                                    onClick={() => handleTest(row)}>测试</Button>
+                                            <Button size="small" type="link"
+                                                    icon={row.is_default ? <StarFilled style={{ color: '#E0A02A' }} /> : <StarOutlined />}
+                                                    disabled={row.is_default || !manageable}
+                                                    onClick={() => handleSetDefault(row)}>
+                                                {row.is_default ? '默认' : '设默认'}
+                                            </Button>
                                         </div>
                                         <div className="flex items-center gap-0.5">
                                             {manageable ? (
@@ -489,6 +508,10 @@ const ModelConfigsPage: React.FC = () => {
                     </div>
                 )}
                 </Spin>
+                ) : (
+                    /* 首屏不做骨架屏：页头/页签/指标带先出，数据齐了再填正文 */
+                    <PageLoading hint={`正在加载「${purposeMeta?.label ?? '当前用途'}」配置…`} />
+                )}
 
                 <Drawer
                     title={editing ? '编辑模型配置' : '新建模型配置'}
@@ -496,6 +519,7 @@ const ModelConfigsPage: React.FC = () => {
                     open={drawerOpen}
                     onClose={() => setDrawerOpen(false)}
                     destroyOnHidden
+                    styles={{ body: { padding: '12px 24px 8px' } }}
                     footer={
                         <div className="flex flex-wrap items-center justify-between gap-3">
                             <div className="flex min-w-0 items-center gap-2">
@@ -520,8 +544,8 @@ const ModelConfigsPage: React.FC = () => {
                         </div>
                     }
                 >
-                    <Form form={form} layout="vertical">
-                        <SectionHead title="基础信息" hint="用途与作用域决定谁可以管理这份配置" className="mb-3" />
+                    <Form form={form} layout="vertical" className="mc-form">
+                        <SectionHead title="基础信息" hint="用途与作用域决定谁可以管理这份配置" className="mb-2" />
                         <Form.Item name="purpose" label="用途" rules={[{ required: true }]}>
                             <Select disabled={!!editing}
                                     options={PURPOSES.map((p) => ({ value: p.key, label: `${p.label} — ${p.hint}` }))} />
@@ -545,7 +569,7 @@ const ModelConfigsPage: React.FC = () => {
                             <Input placeholder="如：GLM-抽取-方舟" />
                         </Form.Item>
 
-                        <SectionHead title="连接参数" hint="provider 决定表单默认值；密钥留空表示保持不变" className="mb-3 mt-1" />
+                        <SectionHead title="连接参数" hint="provider 决定表单默认值；密钥留空表示保持不变" className="mb-2 mt-3" />
                         <Form.Item name="provider" label="Provider" rules={[{ required: true }]}>
                             <Select
                                 onChange={(v) => {
@@ -577,7 +601,7 @@ const ModelConfigsPage: React.FC = () => {
 
                         {(isExtract || isChat || isVL) && (
                             <>
-                                <SectionHead title="运行参数" hint="按用途展开：抽取参数只在抽取模型出现" className="mb-3 mt-1" />
+                                <SectionHead title="运行参数" hint="按用途展开：抽取参数只在抽取模型出现" className="mb-2 mt-3" />
                                 {isExtract && (
                                     <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
                                         <Form.Item name="chunk_size" label="chunk_size" initialValue={15000}>
@@ -621,11 +645,21 @@ const ModelConfigsPage: React.FC = () => {
                 </Drawer>
 
                 <style>{`
+                    /* 页签：antd 默认 tab 上下各 12px 内边距，会把「指标带 → 页签」的空档撑大；
+                       这里收到 6px，配合指标带 mb-1.5 让视觉间距更紧凑 */
+                    .mc-tabs.ant-tabs > .ant-tabs-nav .ant-tabs-tab { padding: 6px 0; }
                     /* 模型卡片：头部与底栏留白收一档，和站内面板同一件材质 */
                     .mc-card.ant-card { border-radius: 14px; margin-bottom: 0; }
                     .mc-card .ant-card-head { min-height: 46px; padding: 0 14px; border-bottom-color: #F0F4FB; }
                     .mc-card .ant-card-head-title { padding: 10px 0; }
                     .mc-card .ant-card-body { padding: 12px 14px 10px; }
+                    /* 新建/编辑抽屉：antd 默认 24px 字段行距在 560px 宽里偏空，收一档 */
+                    .mc-form .ant-form-item { margin-bottom: 14px; }
+                    .mc-form .ant-form-item-label { padding-bottom: 4px; }
+                    .mc-form .ant-form-item-extra { margin-top: 3px; font-size: 11.5px; }
+                    .mc-form .ant-form-item-explain { font-size: 11.5px; }
+                    /* 最后一项（含底部 Note）不再留底距，底部只保留抽屉 body 的 8px */
+                    .mc-form .ant-form-item:last-of-type { margin-bottom: 0; }
                 `}</style>
             </div>
         </div>

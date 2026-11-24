@@ -278,6 +278,11 @@ const DETAIL_CSS = `
     }
     .dd-table .ant-table-tbody > tr:last-child > td { border-bottom: 0 !important; }
     .dd-table .ant-pagination { background: transparent; }
+    /* 最后一个分组及其内部最后一块内容都去掉底边距：
+       否则分组 20px + 表格分页 16px + body 内边距会层层叠加，抽屉底部空一大截 */
+    .dd-drawer .ant-drawer-body section:last-child { margin-bottom: 0; }
+    .dd-drawer .ant-drawer-body section:last-child > *:last-child { margin-bottom: 0; }
+    .dd-drawer .ant-drawer-body section:last-child .ant-pagination { margin-bottom: 0 !important; }
     .dd-icon-btn.ant-btn { color: #8A94AB !important; }
     .dd-icon-btn.ant-btn:hover { color: #2A57C6 !important; background: rgba(91, 141, 239, 0.10) !important; }
     /* 关闭按钮挪到右侧：antd Drawer 默认放左边，和全站 Modal 的关闭位置不一致 */
@@ -325,7 +330,7 @@ const DetailDrawer: React.FC<Props> = ({ projectId, selection, onClose, onNaviga
                 // 抽屉整体走冷蓝底（深色画布档，由全局 --surface-immersive 提供，
                 // 与关系详情弹窗同一组色值）：header / body 透明，内部表格和描述行一律透底
                 header: { padding: '12px 20px', borderBottom: '1px solid #E1EAF8', marginBottom: 0, background: 'transparent' },
-                body: { padding: '16px 20px 24px', background: 'transparent' },
+                body: { padding: '12px 20px', background: 'transparent' },
             }}
         >
             {!selection && <Empty description="选择节点或关系查看详情" />}

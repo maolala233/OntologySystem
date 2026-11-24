@@ -14,7 +14,7 @@ import {
 } from '@ant-design/icons';
 import Navbar from '../components/Layout/Navbar';
 import TechHero from '../components/TechHero';
-import { Dot, Note, StatBand, TkTag } from '../shared/consoleUi';
+import { Dot, Note, PageLoading, StatBand, TkTag } from '../shared/consoleUi';
 import { getDomains, invalidateDomains, createDomain, updateDomain, deleteDomain, getDomainProjects, migrateProjectsBatch, KnowledgeDomain, ProjectInDomain } from '../api/domains';
 
 const { TextArea } = Input;
@@ -288,7 +288,8 @@ const DomainManagementPage: React.FC = () => {
             title: '描述',
             dataIndex: 'description',
             key: 'description',
-            ellipsis: true,
+            // 超出宽度仍截断，但不挂浏览器原生 title 提示：描述已经在单元格里，hover 再弹同文提示是重复的
+            ellipsis: { showTitle: false },
             render: (description?: string) => (
                 <span className="text-[13px] text-[#66738F]">{description || '—'}</span>
             ),
@@ -359,6 +360,8 @@ const DomainManagementPage: React.FC = () => {
     };
 
     const assignedCount = Object.keys(projectTargetDomains).length;
+    // 首屏：指标带等静态结构先出（数值显示 —），表格等数据齐了再出
+    const initialLoading = loading && domains.length === 0;
 
     return (
         <div className="h-full flex flex-col app-canvas">
@@ -386,19 +389,23 @@ const DomainManagementPage: React.FC = () => {
                 />
 
                 <StatBand
-                    className="mb-4"
+                    className="mb-3"
                     items={[
-                        { label: '知识域', value: domains.length, tone: 'brand', icon: <ClusterOutlined /> },
-                        { label: '已归类项目', value: stats.covered, tone: 'violet', icon: <ApartmentOutlined /> },
-                        { label: '空知识域', value: stats.empty, tone: 'quiet', icon: <SwapOutlined /> },
-                        { label: '最近更新', value: stats.latest ? stats.latest.slice(5, 10) : '—', tone: 'cyan', icon: <ClockCircleOutlined />, hint: stats.latest ? `最近更新于 ${fmtDay(stats.latest)}` : '暂无更新时间' },
+                        { label: '知识域', value: initialLoading ? '—' : domains.length, tone: 'brand', icon: <ClusterOutlined /> },
+                        { label: '已归类项目', value: initialLoading ? '—' : stats.covered, tone: 'violet', icon: <ApartmentOutlined /> },
+                        { label: '空知识域', value: initialLoading ? '—' : stats.empty, tone: 'quiet', icon: <SwapOutlined /> },
+                        /* hint 这一行始终保留（加载期用 — 占位）：否则数据回来时指标带会长高 */
+                        { label: '最近更新', value: initialLoading ? '—' : stats.latest ? stats.latest.slice(5, 10) : '—', tone: 'cyan', icon: <ClockCircleOutlined />, hint: initialLoading ? '—' : stats.latest ? `最近更新于 ${fmtDay(stats.latest)}` : '暂无更新时间' },
                     ]}
                 />
 
-                {/* 知识域列表：与「我的项目」列表同一套冷蓝表体 / 行 hover / 分页留白 */}
+                {/* 知识域列表：与「我的项目」列表同一套冷蓝表体 / 行 hover / 分页留白；
+                    首屏正文由 PageLoading 替代，刷新时旧数据保留在 Table loading 遮罩下 */}
+                {initialLoading ? (
+                    <PageLoading hint="正在加载知识域…" />
+                ) : (
                 <div className="surface-card tk-table">
-                    {/* 加载态与用户管理同款：交给 antd Table 的 loading 遮罩，
-                        刷新时旧数据保留在遮罩下面，不再整块消失 */}
+                    {/* 首屏由 PageLoading 整块替代；刷新时旧数据保留在 Table loading 遮罩下 */}
                     <Table
                         size="middle"
                         loading={loading}
@@ -430,6 +437,7 @@ const DomainManagementPage: React.FC = () => {
                         }}
                     />
                 </div>
+                )}
             </div>
 
             {/* 创建/编辑知识域弹窗 */}
@@ -481,6 +489,10 @@ const DomainManagementPage: React.FC = () => {
                 open={isMigrateDrawerOpen}
                 onClose={closeMigrateDrawer}
                 width={1200}
+                styles={{
+                    header: { padding: '10px 24px' },
+                    body: { padding: '12px 24px 10px' },
+                }}
                 footer={
                     <div className="flex w-full flex-wrap items-center justify-between gap-2">
                         <div className="flex items-center gap-2 text-[12.5px] text-[#66738F]">

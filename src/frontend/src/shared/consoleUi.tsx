@@ -9,6 +9,7 @@
  * 与 shared/projectStatus 的 STATUS_CHIP 同一组值，不引入新色。
  */
 import React, { useId } from 'react';
+import { Spin } from 'antd';
 import { InfoCircleOutlined, WarningOutlined } from '@ant-design/icons';
 import DecoConstellation from '../components/DecoConstellation';
 
@@ -38,6 +39,22 @@ const TONE_TINT: Record<ConsoleTone, string> = {
 export const Dot: React.FC<{ tone?: ConsoleTone; className?: string }> = ({
     tone = 'brand', className = '',
 }) => <span className={`tk-dot tk-dot--${tone} ${className}`} aria-hidden />;
+
+/** 页面内容区加载占位（系统配置五页统一，2026-11-24）：
+ *  页头/导航先出，数据齐了再出正文。与「我的项目」同款大号 Spin，
+ *  不做骨架屏——各页数据条数差异大，假结构反而会闪、会对不上。 */
+export const PageLoading: React.FC<{ hint?: string; className?: string }> = ({
+    hint, className = '',
+}) => (
+    <div
+        className={`flex flex-col items-center justify-center gap-3 px-4 py-20 ${className}`}
+        role="status"
+        aria-live="polite"
+    >
+        <Spin size="large" />
+        {hint && <span className="text-[12px] text-[#8A94AB]">{hint}</span>}
+    </div>
+);
 
 /** 冷调标签胶囊：替代 antd 预设色 Tag；mono 让编号/倍率走等宽字形 */
 export const TkTag: React.FC<{
