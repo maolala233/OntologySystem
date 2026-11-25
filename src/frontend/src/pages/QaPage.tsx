@@ -690,7 +690,10 @@ export default function QaPage() {
             {/* 全站顶栏：面包屑 + 账号（与工作台/我的项目/资产中心共用，切页不再「失去顶栏」） */}
             <Navbar breadcrumbs={[{ title: '首页', path: '/' }, { title: '工具' }, { title: '本体问答' }]} />
 
-            <div className="flex flex-1 min-h-0">
+            {/* 内容区留白（2026-11-25）：右侧保持通栏不加，左 / 上 / 下补齐到二级页的
+                16px（<640）/ 24px（>=640）。内部已有 12px 上 / 12px 左 / 16px 下，
+                这里只补差额，侧栏与会话列表的内部排布一个像素都不动 */}
+            <div className="flex flex-1 min-h-0 pt-1 pb-0 pl-1 sm:pt-3 sm:pb-2 sm:pl-3">
                 {/* 左侧：会话历史。整列透明，让内容区底部的静态背景图透上来；
                     只保留一条右侧分隔线，列内条目用白色/品牌蓝药丸保持可读性 */}
                 <aside className="w-64 shrink-0 border-r border-[#E4EBF7]/70 bg-transparent flex flex-col">
@@ -804,7 +807,7 @@ export default function QaPage() {
                         它读作「工具条」，不读作「标题」 */}
                     <div className="shrink-0 px-6 pt-3 pb-1">
                         <div className="max-w-3xl mx-auto">
-                            <div className="tk-query-bar qa-config inline-flex max-w-full flex-wrap items-center gap-1 p-1">
+                            <div className="tk-query-bar qa-config inline-flex max-w-full items-center gap-1 p-1">
                                 <div className="flex min-w-0 items-center gap-1.5 pl-2.5">
                                     <span className="shrink-0 text-[13px] font-semibold text-[#3D4B66]">项目</span>
                                     <Select
@@ -822,10 +825,12 @@ export default function QaPage() {
                                            琥珀底（.qa-select-warn），列表回来后自动选中第一个
                                            又变回白色。只有"加载完了确实没选中"才提示 */
                                         className={!projectsLoading && projectId == null ? 'qa-select-warn' : undefined}
-                                        /* 固定宽度（2026-11-19）：原来是 auto + 270 上限，长项目名会把整条
+                                        /* 偏好宽度 240（2026-11-19）：原来是 auto + 270 上限，长项目名会把整条
                                            「项目 / 对话模型」工具条撑长；定宽后名字只在选择器里省略号截断，
-                                           工具条长度稳定，右侧「对话模型」不会被挤走 */
-                                        style={{ width: 240 }}
+                                           工具条长度稳定，右侧「对话模型」不会被挤走。
+                                           2026-11-25：低分辨率/高缩放时不再换行，选择器按 space 一起收缩
+                                           （minWidth: 0 解除 flex 的 min-content 限制），文字照旧省略号截断 */
+                                        style={{ width: 240, minWidth: 0 }}
                                         options={projects.map(p => ({ value: p.id, label: p.name }))}
                                     />
                                     {/* 状态标签固定槽位（2026-11-19）：
@@ -851,7 +856,7 @@ export default function QaPage() {
                                         placeholder="跟随默认模型"
                                         allowClear
                                         onClear={() => setModelId(null)}
-                                        style={{ width: 240 }}
+                                        style={{ width: 240, minWidth: 0 }}
                                         options={models.map(m => ({
                                             value: m.id,
                                             label: `${m.name}${m.is_default ? ' · 默认' : ''}`,
