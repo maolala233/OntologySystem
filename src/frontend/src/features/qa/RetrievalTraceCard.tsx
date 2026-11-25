@@ -42,14 +42,20 @@ export default function RetrievalTraceCard({ trace, streaming }: {
     const totalRefs = trace.reduce((acc, st) => (st.stage !== '大模型综合' ? acc + (st.refs?.length || 0) : acc), 0);
     return (
         <div className="mt-1 rounded-xl border border-[rgba(91,141,239,0.16)] bg-[#EDF3FE] p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]">
-            <button type="button" className={`flex w-full items-center gap-2 text-left text-[11.5px] text-[#66738F] ${collapsed ? '' : 'mb-1.5'}`}
-                    onClick={() => setCollapsed(v => !v)}>
+            {/* 整行仍是点击区，但右侧的展开/收起做成与「溯源引用」同款的小胶囊（2026-11-25）：
+                文案统一成「展开过程 / 收起过程」（原来展开 4 字、收起 2 字），
+                hover 时整行点亮胶囊（group-hover），和下方引用区的切换控件一致 */}
+            <button
+                type="button"
+                className={`group flex w-full items-center gap-2 rounded-[7px] text-left text-[11.5px] text-[#66738F] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(91,141,239,0.35)] ${collapsed ? '' : 'mb-1.5'}`}
+                onClick={() => setCollapsed(v => !v)}
+            >
                 <span className="tk-mark" aria-hidden />
                 <span className="font-medium text-[#3B4A63]">检索过程</span>
                 <span className="tk-mono text-[10.5px] text-[#8A94AB]">{trace.length - 1} 步检索 · {totalRefs} 条证据</span>
-                <span className="ml-auto flex items-center gap-0.5 text-[11px] text-[#2A57C6]">
+                <span className="ml-auto -mr-1 flex items-center gap-1 rounded-[7px] px-1.5 py-0.5 text-[11px] text-[#2A57C6] transition-colors group-hover:bg-[rgba(91,141,239,0.12)] group-hover:text-[#1F47A8]">
                     {collapsed ? <DownOutlined /> : <UpOutlined />}
-                    <span>{collapsed ? '展开过程' : '收起'}</span>
+                    <span>{collapsed ? '展开过程' : '收起过程'}</span>
                 </span>
             </button>
             {!collapsed && (

@@ -608,18 +608,10 @@ export default function QaPage() {
                     outline: 2px solid rgba(91,141,239,0.5);
                     outline-offset: 2px;
                 }
-                /* 停止：与本页品牌色同源的淡蓝描边按钮，不用刺眼的红色 */
-                .qa-stop-btn.ant-btn {
-                    border-color: rgba(91,141,239,0.25);
-                    background: rgba(91,141,239,0.08);
-                    color: #2A57C6;
-                    box-shadow: none;
-                }
-                .qa-stop-btn.ant-btn:hover {
-                    border-color: rgba(91,141,239,0.45) !important;
-                    background: rgba(91,141,239,0.12) !important;
-                    color: #2A57C6 !important;
-                }
+                /* 停止按钮（2026-11-25）：不再用品牌蓝——蓝色是"主操作"色，
+                   和旁边的发送按钮同色系会让人以为是第二个发送键。
+                   打断动作走全站统一的琥珀软按钮（构建面板的「停止」同款），
+                   比红色克制：停止生成会保留已产出的内容，不是删除，红色过重 */
                 /* 新建对话：淡蓝品牌按钮，替代实心蓝块，避免在透明侧栏里显得过重 */
                 .qa-new-conv {
                     color: #2A57C6;
@@ -1130,7 +1122,7 @@ export default function QaPage() {
                                         Enter 发送 · Shift + Enter 换行
                                     </span>
                                     {busy ? (
-                                        <Button icon={<StopOutlined />} onClick={stop} className="qa-stop-btn">
+                                        <Button icon={<StopOutlined />} onClick={stop} className="tk-warn-soft-btn">
                                             停止
                                         </Button>
                                     ) : (
