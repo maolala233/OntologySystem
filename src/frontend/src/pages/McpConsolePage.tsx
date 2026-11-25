@@ -106,14 +106,19 @@ function JsonNode({ name, value, depth = 0 }: { name?: string; value: unknown; d
     );
 }
 
-/** 结果体：文本能解析为 JSON 时渲染彩色树，否则渲染纯文本；带复制按钮 */
-function ResultBody({ text }: { text: string }) {
+/** 结果体：文本能解析为 JSON 时渲染彩色树，否则渲染纯文本；带复制按钮。
+    fill：撑满父卡剩余高度。scroll=false：平铺展示，内容多高就多高、不在框内滚动 */
+function ResultBody({ text, fill = false, scroll = true }: { text: string; fill?: boolean; scroll?: boolean }) {
     const parsed = useMemo(() => { try { return JSON.parse(text); } catch { return null; } }, [text]);
     return (
-        <div className="relative border border-[#E7EEF9] rounded-lg bg-[#FBFDFF]">
+        <div className={fill
+            ? `relative flex flex-1 flex-col border border-[#E7EEF9] rounded-lg bg-[#FBFDFF]${scroll ? ' min-h-0' : ''}`
+            : 'relative border border-[#E7EEF9] rounded-lg bg-[#FBFDFF]'}>
             <CopyButton text={text} size="small" type="text" aria-label="复制结果"
                 className="!absolute top-1.5 right-1.5 z-10" />
-            <div className="p-3 overflow-auto max-h-96 font-mono text-[12px]">
+            <div className={`p-3 font-mono text-[12px] ${fill
+                ? (scroll ? 'min-h-0 flex-1 overflow-auto' : 'flex-1')
+                : 'overflow-auto max-h-96'}`}>
                 {parsed !== null ? <JsonNode value={parsed} /> : <pre className="whitespace-pre-wrap">{text}</pre>}
             </div>
         </div>
@@ -1027,7 +1032,7 @@ export default function McpConsolePage() {
                         )}
 
                         {activeTab === 'tools' && (
-                            <div className="grid gap-4 lg:h-[480px] lg:grid-cols-[minmax(0,300px)_minmax(0,1fr)] xl:h-auto xl:min-h-0 xl:flex-1">
+                            <div className="grid gap-4 lg:h-[480px] lg:grid-rows-1 lg:grid-cols-[minmax(0,300px)_minmax(0,1fr)] xl:h-auto xl:min-h-0 xl:flex-1">
                                 <section className="surface-card flex min-h-0 min-w-0 flex-col overflow-hidden pb-3">
                                     <div className="flex items-center justify-between gap-2 border-b border-[#EDF1F8] px-4 py-2.5">
                                         <SectionHead
@@ -1099,7 +1104,7 @@ export default function McpConsolePage() {
                                     </div>
                                 </section>
 
-                                <div ref={callPanelRef} className="min-w-0 space-y-4 lg:min-h-0 lg:overflow-y-auto lg:pr-1">
+                                <div ref={callPanelRef} className="min-w-0 flex flex-col gap-4 lg:min-h-0 lg:overflow-y-auto lg:pr-1">
                                     {!selectedTool ? (
                                         <section className="surface-card flex min-h-[320px] flex-col items-center justify-center px-6 text-center lg:h-full lg:min-h-0">
                                             <EmptyState
@@ -1111,7 +1116,7 @@ export default function McpConsolePage() {
                                         </section>
                                     ) : (
                                         <>
-                                            <section className="surface-card p-4">
+                                            <section className="surface-card shrink-0 p-4">
                                                 <SectionHead
                                                     className="mb-2"
                                                     title="工具信息"
@@ -1121,7 +1126,7 @@ export default function McpConsolePage() {
                                                 <div className="mt-1 text-[13px] leading-relaxed text-[#66738F]">{selectedTool.description}</div>
                                             </section>
 
-                                            <section className="surface-card p-4 tk-controls">
+                                            <section className="surface-card shrink-0 p-4 tk-controls">
                                                 <SectionHead
                                                     className="mb-3"
                                                     title="调用参数"
@@ -1179,20 +1184,31 @@ export default function McpConsolePage() {
                                                 </div>
                                             </section>
 
-                                            {callResult && (
-                                                <section ref={callResultRef} className="surface-card p-4">
-                                                    <SectionHead
-                                                        className="mb-2"
-                                                        title="调用结果"
-                                                        extra={calling
-                                                            ? <TkTag tone="brand">运行中…</TkTag>
-                                                            : <TkTag tone={callResult.ok ? 'brand' : 'danger'}>{callResult.ok ? '成功' : '失败'}</TkTag>}
-                                                    />
-                                                    <div className={calling ? 'opacity-55 transition-opacity' : 'transition-opacity'}>
-                                                        <ResultBody text={callResult.text} />
+                                            {/* 结果卡常驻（与资源页签同构）：没跑过时占位，跑完由它吃掉右栏剩余高度，
+                                                参数卡就能保持内容高度、按钮紧跟参数 */}
+                                            <section ref={callResultRef}
+                                                className="surface-card p-4 lg:flex lg:flex-col lg:min-h-[96px] lg:flex-[1_0_auto]">
+                                                <SectionHead
+                                                    className="mb-2"
+                                                    title="调用结果"
+                                                    extra={calling
+                                                        ? <TkTag tone="brand">运行中…</TkTag>
+                                                        : callResult
+                                                            ? <TkTag tone={callResult.ok ? 'brand' : 'danger'}>{callResult.ok ? '成功' : '失败'}</TkTag>
+                                                            : undefined}
+                                                />
+                                                {callResult ? (
+                                                    <div className={`min-h-0 transition-opacity lg:flex lg:flex-1 lg:flex-col${calling ? ' opacity-55' : ''}`}>
+                                                        <ResultBody fill scroll={false} text={callResult.text} />
                                                     </div>
-                                                </section>
-                                            )}
+                                                ) : (
+                                                    <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-[#E7EEF9] bg-[#FBFDFF] px-4 py-4 text-center text-[12.5px] text-[#A9B4C9]">
+                                                        {calling
+                                                            ? <span className="inline-flex items-center gap-2"><LoadingOutlined /> 正在运行…</span>
+                                                            : '运行工具后，结果会显示在这里'}
+                                                    </div>
+                                                )}
+                                            </section>
                                         </>
                                     )}
                                 </div>
@@ -1200,7 +1216,7 @@ export default function McpConsolePage() {
                         )}
 
                         {activeTab === 'resources' && (
-                            <div className="grid gap-4 lg:h-[480px] lg:grid-cols-[minmax(0,300px)_minmax(0,1fr)] xl:h-auto xl:min-h-0 xl:flex-1">
+                            <div className="grid gap-4 lg:h-[480px] lg:grid-rows-1 lg:grid-cols-[minmax(0,300px)_minmax(0,1fr)] xl:h-auto xl:min-h-0 xl:flex-1">
                                 <section className="surface-card flex min-h-0 min-w-0 flex-col overflow-hidden pb-3">
                                     <div className="flex items-center justify-between gap-2 border-b border-[#EDF1F8] px-4 py-2.5">
                                         <SectionHead
@@ -1249,7 +1265,7 @@ export default function McpConsolePage() {
                                     </div>
                                 </section>
 
-                                <div className="min-w-0 space-y-4 lg:min-h-0 lg:overflow-y-auto lg:pr-1">
+                                <div className="min-w-0 flex flex-col gap-4 lg:min-h-0 lg:overflow-y-auto lg:pr-1">
                                     {!selectedResource ? (
                                         <section className="surface-card flex min-h-[320px] flex-col items-center justify-center px-6 text-center lg:h-full lg:min-h-0">
                                             <EmptyState
@@ -1261,7 +1277,7 @@ export default function McpConsolePage() {
                                         </section>
                                     ) : (
                                         <>
-                                            <section className="surface-card p-4">
+                                            <section className="surface-card shrink-0 p-4">
                                                 <SectionHead
                                                     className="mb-2"
                                                     title="资源信息"
@@ -1278,7 +1294,7 @@ export default function McpConsolePage() {
                                                 </div>
                                                 <div className="mt-1 break-all font-mono text-xs text-[#66738F]">{selectedResource.uri}</div>
                                             </section>
-                                            <section className="surface-card p-4">
+                                            <section className="surface-card p-4 lg:flex lg:flex-col lg:min-h-[160px] lg:flex-[1_1_auto]">
                                                 <SectionHead
                                                     className="mb-2"
                                                     title="读取结果"
@@ -1289,7 +1305,7 @@ export default function McpConsolePage() {
                                                 {readingRes ? (
                                                     <div className="py-2 text-[13px] text-[#8A94AB]">正在读取…</div>
                                                 ) : resourceText ? (
-                                                    <ResultBody text={resourceText.text} />
+                                                    <ResultBody fill text={resourceText.text} />
                                                 ) : (
                                                     <div className="py-2 text-[13px] text-[#8A94AB]">即将自动读取…</div>
                                                 )}
