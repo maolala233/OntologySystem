@@ -19,6 +19,7 @@ import { adminApi, AdminModule, AdminRole, AdminUser } from '../../api/admin';
 import Navbar from '../../components/Layout/Navbar';
 import TechHero from '../../components/TechHero';
 import { Note, PageLoading, SectionHead, StatBand, TkTag } from '../../shared/consoleUi';
+import { useImeSafeSearch } from '../../shared/useImeSafeSearch';
 
 type CellState = 'default' | 'allow' | 'deny';
 type Matrix = Record<string, Record<string, CellState>>; // userId -> moduleCode -> state
@@ -87,7 +88,13 @@ const ModuleGrantsPage: React.FC = () => {
     const [roleForm, setRoleForm] = useState({ name: '', description: '', module_codes: [] as string[] });
     const [applyRole, setApplyRole] = useState<AdminRole | null>(null);
     const [applyUserIds, setApplyUserIds] = useState<number[]>([]);
-    const [applySearch, setApplySearch] = useState('');
+    // 应用角色弹窗的用户搜索（2026-11-25）：组字结束/停顿 200ms 后才过滤
+    const {
+        value: applySearch,
+        setValue: setApplySearch,
+        query: applySearchQuery,
+        inputProps: applySearchInputProps,
+    } = useImeSafeSearch(200);
     const [applying, setApplying] = useState(false);
 
     const normalUsers = useMemo(() => users.filter((u) => u.role !== 'admin'), [users]);
@@ -561,8 +568,8 @@ const ModuleGrantsPage: React.FC = () => {
         </div>
     );
 
-    const filteredApplyUsers = applySearch.trim()
-        ? normalUsers.filter((u) => u.username.toLowerCase().includes(applySearch.trim().toLowerCase()))
+    const filteredApplyUsers = applySearchQuery
+        ? normalUsers.filter((u) => u.username.toLowerCase().includes(applySearchQuery.toLowerCase()))
         : normalUsers;
 
     // 首屏：指标带/页签等静态结构先出（计数显示占位），矩阵/角色卡等数据齐了再出
@@ -744,6 +751,7 @@ const ModuleGrantsPage: React.FC = () => {
                                 allowClear
                                 value={applySearch}
                                 onChange={(e) => setApplySearch(e.target.value)}
+                                {...applySearchInputProps}
                                 placeholder="搜索用户名…"
                                 prefix={<SearchOutlined className="text-[#5B8DEF]" />}
                             />

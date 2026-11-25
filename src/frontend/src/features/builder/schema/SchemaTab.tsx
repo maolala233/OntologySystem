@@ -5,6 +5,7 @@ import { Drawer, Form, Input, Button, Space, Modal, Spin, Tabs, Tooltip, Select,
 import type { TreeProps } from 'antd';
 import { message, confirmModal, notifyError } from '../../../shared/feedback';
 import Tip from '../../../shared/Tip';
+import { useImeSafeSearch } from '../../../shared/useImeSafeSearch';
 import EmptyState from '../../../components/EmptyState';
 import {
     SaveOutlined,
@@ -367,7 +368,13 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
     const [isLeftPanelExpanded, setIsLeftPanelExpanded] = useState(false);
     
     // 树形列表搜索
-    const [treeSearchValue, setTreeSearchValue] = useState('');
+    // 列表树搜索（2026-11-25）：输入框即时回显，组字结束/停顿 200ms 后才重算整棵树
+    const {
+        value: treeSearchValue,
+        setValue: setTreeSearchValue,
+        query: treeSearchQuery,
+        inputProps: treeSearchInputProps,
+    } = useImeSafeSearch(200);
     
     // 树形列表展开状态（仅控制列表内部显示，不影响画布）
     const [manualExpandedKeys, setManualExpandedKeys] = useState<Set<string>>(new Set());
@@ -1575,8 +1582,8 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
         }
 
         const filterNode = (title: string) => {
-            if (!treeSearchValue) return true;
-            return title.toLowerCase().includes(treeSearchValue.toLowerCase());
+            if (!treeSearchQuery) return true;
+            return title.toLowerCase().includes(treeSearchQuery.toLowerCase());
         };
 
         return classNodes.map(classNode => {
@@ -1600,14 +1607,14 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
                 searchableTitle: classTitle,
             };
         }).filter(node => {
-            if (!treeSearchValue) return true;
-            const selfMatch = node.searchableTitle?.toLowerCase().includes(treeSearchValue.toLowerCase());
-            const childrenMatch = node.children?.some((child: any) => 
-                child.searchableTitle?.toLowerCase().includes(treeSearchValue.toLowerCase())
+            if (!treeSearchQuery) return true;
+            const selfMatch = node.searchableTitle?.toLowerCase().includes(treeSearchQuery.toLowerCase());
+            const childrenMatch = node.children?.some((child: any) =>
+                child.searchableTitle?.toLowerCase().includes(treeSearchQuery.toLowerCase())
             );
             return selfMatch || childrenMatch;
         });
-    }, [nodes, edges, treeSearchValue]);
+    }, [nodes, edges, treeSearchQuery]);
 
     // 列表树右上角只放一个「全部展开 / 全部收起」（2026-11-20）：按当前是否已全展开切换。
     // 面板收起时不计算树数据，省掉一次整图遍历。
@@ -2014,6 +2021,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
                                     size="small"
                                     value={treeSearchValue}
                                     onChange={(e) => setTreeSearchValue(e.target.value)}
+                                    {...treeSearchInputProps}
                                     allowClear
                                     prefix={<SearchOutlined className="text-gray-500" />}
                                 />
@@ -2079,7 +2087,7 @@ const SchemaTab: React.FC<{ projectId: string; active?: boolean }> = ({ projectI
                                         line-height: 24px;
                                     }
                                 `}</style>
-                                {treeSearchValue.trim() && listTreeData.length === 0 ? (
+                                {treeSearchQuery && listTreeData.length === 0 ? (
                                     <EmptyState
                                         tone="dark"
                                         className="h-full min-h-[220px]"

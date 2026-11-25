@@ -3,6 +3,8 @@
 // 主题必填；主题建议由 LLM 生成；PPT 支持上传自定义模板（占位符协议自动填写）。
 // 视觉（2026-11-23）：与「我的项目 / 资产中心」共用 TechHero 页头 + 冷蓝工作台；
 // 左栏配置、右栏输出，长任务用不定进度条而不是编造的百分比。
+// 卡片材质（2026-11-25）：页内卡片换成与 MCP / 系统配置同族的冷蓝纸（.rp-page .surface-card），
+// 卡内小面板改冷白层，形成「蓝纸 → 白卡」的层次。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Checkbox, Input, InputNumber, Popconfirm, Select, Tooltip, Upload } from 'antd';
 import { message, notifyError } from '../shared/feedback';
@@ -296,8 +298,30 @@ export default function ReportsPage() {
 
     return (
         <div className="h-full flex flex-col app-canvas">
+            <style>{`
+                /* 卡片材质（2026-11-25）：报告 / PPT 两页的卡原先走 .surface-card 的近白底，
+                   和 MCP 服务台、系统配置那几张冷蓝纸面放在一起，整页只剩一片白。
+                   这里换成同一族的冷蓝纸：左上冷白 → 右下淡品牌蓝 + 蓝调细描边；
+                   卡内的输入框、选项行、幻灯片仍保持冷白面，形成「蓝纸 → 白卡」的层次。 */
+                .rp-page .surface-card {
+                    border-color: #E3EBF8;
+                    background:
+                        radial-gradient(520px 340px at -8% -14%, rgba(91, 141, 239, 0.12), transparent 70%),
+                        linear-gradient(160deg, #FBFDFF 0%, #F2F7FF 46%, #E8F0FD 100%);
+                    box-shadow:
+                        inset 0 1px 0 rgba(255, 255, 255, 0.95),
+                        inset 0 -1px 0 rgba(210, 222, 240, 0.55),
+                        0 14px 34px -26px rgba(15, 23, 42, 0.26),
+                        0 2px 5px rgba(15, 23, 42, 0.035);
+                }
+                /* 底部提示条同属「卡内白块」：默认的淡蓝底压在蓝纸上看不出边界 */
+                .rp-page .tk-note {
+                    border-color: #E4EDFA;
+                    background: rgba(255, 255, 255, 0.70);
+                }
+            `}</style>
             <Navbar breadcrumbs={[{ title: '首页', path: '/' }, { title: '工具' }, { title: isPpt ? 'PPT生成' : '报告生成' }]} />
-            <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
+            <div className="rp-page p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
                 <TechHero
                     compact
                     tone="light"
@@ -373,7 +397,7 @@ export default function ReportsPage() {
                             </div>
 
                             {chipsLoading && (
-                                <div className="mt-2 flex items-center gap-2 rounded-lg bg-[rgba(91,141,239,0.06)] px-2.5 py-2 text-[11.5px] text-[#66738F]">
+                                <div className="mt-2 flex items-center gap-2 rounded-lg border border-[#E4EDFA] bg-[rgba(255,255,255,0.72)] px-2.5 py-2 text-[11.5px] text-[#66738F]">
                                     <Dot tone="brand" />
                                     正在根据图谱内容生成主题建议，超时会回退到知识锚点…
                                 </div>
@@ -426,7 +450,7 @@ export default function ReportsPage() {
                             {/* 用 div 而不是 label 包 Checkbox：antd Checkbox 自身就是 label，
                                 嵌套 label 会让点复选框时触发两次切换；复选框单独 stopPropagation */}
                             <div
-                                className="mt-3 flex cursor-pointer items-start gap-2.5 rounded-xl border border-[rgba(91,141,239,0.16)] bg-[rgba(91,141,239,0.05)] px-3 py-2.5 transition-colors hover:border-[rgba(91,141,239,0.32)] hover:bg-[rgba(91,141,239,0.08)]"
+                                className="mt-3 flex cursor-pointer items-start gap-2.5 rounded-xl border border-[#E4EDFA] bg-[rgba(255,255,255,0.70)] px-3 py-2.5 transition-colors hover:border-[rgba(91,141,239,0.32)] hover:bg-[rgba(255,255,255,0.92)]"
                                 onClick={() => { if (!busy) setIncludeInferred(v => !v); }}
                             >
                                 <span className="inline-flex pt-0.5" onClick={e => e.stopPropagation()}>
@@ -455,7 +479,7 @@ export default function ReportsPage() {
                                 始终渲染（不随 projectId 到位才出现）：否则进入页面时这块会迟到，
                                 下面的「生成 PPT」按钮会被顶下去——2026-11-23 反馈 */}
                             {isPpt && (
-                                <div className="mt-3 rounded-xl border border-[rgba(91,141,239,0.16)] bg-[rgba(91,141,239,0.04)] p-3">
+                                <div className="mt-3 rounded-xl border border-[#E4EDFA] bg-[rgba(255,255,255,0.68)] p-3">
                                     <div className="flex items-center justify-between gap-2">
                                         <div className="flex min-w-0 items-center gap-2">
                                             <span
@@ -595,7 +619,7 @@ export default function ReportsPage() {
 
                         {result && !busy && (
                             <section ref={resultRef} className="surface-card overflow-hidden scroll-mt-4">
-                                <div className="flex flex-wrap items-center gap-2 border-b border-[rgba(91,141,239,0.12)] px-5 py-3.5">
+                                <div className="flex flex-wrap items-center gap-2 border-b border-[#E4EDFA] px-5 py-3.5">
                                     <span className="tk-mark" aria-hidden />
                                     <span className="min-w-0 truncate text-[14px] font-semibold text-[#0F172A]">{result.title}</span>
                                     <TkTag tone={result.kind === 'ppt' ? 'violet' : 'brand'}>
@@ -624,7 +648,7 @@ export default function ReportsPage() {
 
                                 {result.kind === 'report' && result.content && (
                                     <div className="p-5">
-                                        <div className="rounded-xl border border-[rgba(91,141,239,0.14)] bg-[#FBFDFF] px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
+                                        <div className="rounded-xl border border-[#E4EDFA] bg-[rgba(255,255,255,0.86)] px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
                                             <MarkdownAnswer content={result.content} sourceCount={0} onCite={() => {}} />
                                         </div>
                                     </div>
@@ -655,7 +679,7 @@ export default function ReportsPage() {
 
                                         <div className="grid gap-3 2xl:grid-cols-2">
                                         {result.outline.slides.map((s, i) => (
-                                            <div key={i} className="rounded-xl border border-[#E7EEF9] bg-[#F7F9FD] p-3.5">
+                                            <div key={i} className="rounded-xl border border-[#E4EDFA] bg-[rgba(255,255,255,0.72)] p-3.5">
                                                 <div className="mb-1.5 flex items-start gap-2.5">
                                                     <span
                                                         className="tk-mono mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-[11px] font-bold text-white"
@@ -731,7 +755,7 @@ export default function ReportsPage() {
                                                 { t: '填写主题', d: isPpt ? '可点主题建议快速填入' : '越具体，证据越聚焦' },
                                                 { t: isPpt ? '生成并导出' : '生成并下载', d: isPpt ? '按模板自动排版 .pptx' : '支持 md / docx 下载' },
                                             ].map((s, i) => (
-                                                <div key={s.t} className="rounded-xl border border-[#EDF1F8] bg-[rgba(91,141,239,0.035)] px-3 py-2.5">
+                                                <div key={s.t} className="rounded-xl border border-[#E4EDFA] bg-[rgba(255,255,255,0.62)] px-3 py-2.5">
                                                     <div className="flex items-center gap-2">
                                                         <span
                                                             className="tk-mono flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white"

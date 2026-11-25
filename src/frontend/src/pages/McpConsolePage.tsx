@@ -7,6 +7,7 @@ import { Button, Checkbox, Input, InputNumber, Modal, Select, Tabs, Tooltip } fr
 import { message, notifyError } from '../shared/feedback';
 import EmptyState from '../components/EmptyState';
 import { Dot, Note, SectionHead, TkTag, TONE_INK } from '../shared/consoleUi';
+import { useImeSafeSearch } from '../shared/useImeSafeSearch';
 import {
     ApiOutlined, BookOutlined, CaretRightOutlined, CheckCircleFilled, ClearOutlined, CloseCircleFilled,
     CopyOutlined, DeleteOutlined, DisconnectOutlined, FolderOpenOutlined, InfoCircleOutlined,
@@ -202,7 +203,13 @@ export default function McpConsolePage() {
     // ── Tab 与数据
     const [activeTab, setActiveTab] = useState<TabKey>('tools');
     const [tools, setTools] = useState<McpToolSpec[]>([]);
-    const [toolSearch, setToolSearch] = useState('');
+    // 工具搜索（2026-11-25）：输入框即时回显，组字结束/停顿 200ms 后才过滤列表
+    const {
+        value: toolSearch,
+        setValue: setToolSearch,
+        query: toolSearchQuery,
+        inputProps: toolSearchInputProps,
+    } = useImeSafeSearch(200);
     const [selectedTool, setSelectedTool] = useState<McpToolSpec | null>(null);
     const [formValues, setFormValues] = useState<Record<string, string>>({});
     const [calling, setCalling] = useState(false);
@@ -471,8 +478,8 @@ export default function McpConsolePage() {
 
     const schemaProps = Object.entries(selectedTool?.inputSchema?.properties ?? {});
     const requiredKeys = selectedTool?.inputSchema?.required ?? [];
-    const filteredTools = toolSearch.trim()
-        ? tools.filter(t => `${t.name} ${t.description ?? ''}`.toLowerCase().includes(toolSearch.trim().toLowerCase()))
+    const filteredTools = toolSearchQuery
+        ? tools.filter(t => `${t.name} ${t.description ?? ''}`.toLowerCase().includes(toolSearchQuery.toLowerCase()))
         : tools;
     const selectedToken = tokens.find(t => t.id === selectedTokenId);
 
@@ -983,11 +990,11 @@ export default function McpConsolePage() {
                                     <div className="border-b border-[#EDF1F8] px-4 py-2 tk-controls">
                                         <Input size="small" allowClear prefix={<SearchOutlined className="text-[#A9B4C9]" />}
                                             placeholder="搜索工具名称或描述" value={toolSearch}
-                                            onChange={e => setToolSearch(e.target.value)} />
+                                            onChange={e => setToolSearch(e.target.value)} {...toolSearchInputProps} />
                                     </div>
                                     <div className="min-h-[220px] flex-1 overflow-auto p-2">
                                         {filteredTools.length === 0 ? (
-                                            connected && toolSearch.trim() ? (
+                                            connected && toolSearchQuery ? (
                                                 <EmptyState
                                                     compact
                                                     title="没有匹配的工具"

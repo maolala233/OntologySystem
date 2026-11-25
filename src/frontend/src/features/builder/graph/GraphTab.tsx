@@ -18,6 +18,7 @@ import {
 import { projectsApi } from '../../../api/projects';
 import { setUnsavedGuard } from '../../../utils/unsavedGuard';
 import Tip from '../../../shared/Tip';
+import { useImeSafeSearch } from '../../../shared/useImeSafeSearch';
 import confirmImpact from '../../../utils/impactConfirm';
 import { extractionApi } from '../../../api/extraction';
 import { versionsApi } from '../../../api/governance';
@@ -65,7 +66,13 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
     const focusSeqRef = useRef(0);
     // 左侧类/实例列表面板
     const [isLeftPanelExpanded, setIsLeftPanelExpanded] = useState(false);
-    const [treeSearchValue, setTreeSearchValue] = useState('');
+    // 列表树搜索（2026-11-25）：输入框即时回显，组字结束/停顿 200ms 后才重算整棵树
+    const {
+        value: treeSearchValue,
+        setValue: setTreeSearchValue,
+        query: treeSearchQuery,
+        inputProps: treeSearchInputProps,
+    } = useImeSafeSearch(200);
     const [manualExpandedKeys, setManualExpandedKeys] = useState<Set<string>>(new Set());
     // 发布 / RAG 同步
     const [isPublished, setIsPublished] = useState(false);
@@ -397,7 +404,7 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                 if (cid) (classToInstances[cid] = classToInstances[cid] || []).push(n.id);
             }
         });
-        const q = treeSearchValue.trim().toLowerCase();
+        const q = treeSearchQuery.toLowerCase();
         const nodes = classNodes.map((classNode) => {
             const title = classNode.data?.label || '未命名类';
             const children = (classToInstances[classNode.id] || []).map((iid) => {
@@ -421,7 +428,7 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                 return { ...n, children: self ? n.children : children };
             })
             .filter(Boolean);
-    }, [graphNodes, graphEdges, treeSearchValue]);
+    }, [graphNodes, graphEdges, treeSearchQuery]);
 
     // 列表树右上角只放一个「全部展开 / 全部收起」（2026-11-20）：按当前是否已全展开切换。
     // 面板收起时不计算树数据，省掉一次整图遍历。
@@ -868,6 +875,7 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                                     size="small"
                                     value={treeSearchValue}
                                     onChange={(e) => setTreeSearchValue(e.target.value)}
+                                    {...treeSearchInputProps}
                                     allowClear
                                     prefix={<SearchOutlined className="text-gray-500" />}
                                 />
@@ -882,7 +890,7 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                                     .inst-tree .ant-tree-node-content-wrapper-selected { background: rgba(91, 141, 239, 0.28) !important; }
                                     .inst-tree .ant-tree-switcher { width: 20px; height: 24px; line-height: 24px; }
                                 `}</style>
-                                {treeSearchValue.trim() && listTreeData.length === 0 ? (
+                                {treeSearchQuery && listTreeData.length === 0 ? (
                                     <EmptyState
                                         tone="dark"
                                         className="h-full min-h-[220px]"

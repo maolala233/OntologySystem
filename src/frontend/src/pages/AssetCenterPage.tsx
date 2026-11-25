@@ -8,6 +8,7 @@ import TechHero from '../components/TechHero';
 import { projectsApi } from '../api/projects';
 import { getDomains, KnowledgeDomain } from '../api/domains';
 import { ProjectData } from '../types/ontology';
+import { useImeSafeSearch } from '../shared/useImeSafeSearch';
 
 // 模块级缓存：进入详情页再返回时，组件会重新挂载——先用上次的数据立即渲染，
 // 再后台刷新，避免"整页转圈 → 内容重现"的闪烁（2026-11-11）
@@ -55,7 +56,13 @@ const AssetCenterPage: React.FC = () => {
     // 有缓存说明是"返回"场景：不显示整页 loading，直接渲染缓存再后台刷新
     const [loading, setLoading] = useState(!cachedDomains);
     const [loadError, setLoadError] = useState<string | null>(null);
-    const [searchText, setSearchText] = useState('');
+    // 搜索（2026-11-25）：输入框即时回显，组字结束/停顿 200ms 后才参与过滤
+    const {
+        value: searchText,
+        setValue: setSearchText,
+        query: searchQuery,
+        inputProps: searchInputProps,
+    } = useImeSafeSearch(200);
     const [sortBy, setSortBy] = useState<'latest' | 'nodes'>('latest');
 
     // 切换层级时回到顶部：否则新视图会继承上一屏的滚动位置，看起来像"跳了一下"
@@ -108,12 +115,12 @@ const AssetCenterPage: React.FC = () => {
             filtered = filtered.filter((p) => p.domain_id === selectedDomain.id);
         }
 
-        // 搜索过滤
-        if (searchText) {
+        // 搜索过滤（用防抖后的查询值，输入拼音期间不重算）
+        if (searchQuery) {
             filtered = filtered.filter(
                 (p) =>
-                    p.name.toLowerCase().includes(searchText.toLowerCase()) ||
-                    p.description?.toLowerCase().includes(searchText.toLowerCase())
+                    p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                    p.description?.toLowerCase().includes(searchQuery.toLowerCase())
             );
         }
 
@@ -128,7 +135,7 @@ const AssetCenterPage: React.FC = () => {
         }
 
         return filtered;
-    }, [projects, currentView, selectedDomain, searchText, sortBy]);
+    }, [projects, currentView, selectedDomain, searchQuery, sortBy]);
 
     // 处理知识域选择
     const handleDomainSelect = (domain: KnowledgeDomain) => {
@@ -312,6 +319,7 @@ const AssetCenterPage: React.FC = () => {
                             allowClear
                             value={searchText}
                             onChange={(e) => setSearchText(e.target.value)}
+                            {...searchInputProps}
                             placeholder="搜索本体名称或描述…"
                             prefix={<SearchOutlined className="text-[#5B8DEF]" />}
                             className="w-full sm:w-[215px]"
@@ -348,7 +356,7 @@ const AssetCenterPage: React.FC = () => {
                     </Empty>
                 </div>
             ) : filteredProjects.length === 0 ? (
-                searchText ? (
+                searchQuery ? (
                     /* 搜索无结果（2026-11-20）：与「我的项目」同一套空态 */
                     <EmptyState
                         className="min-h-[384px]"

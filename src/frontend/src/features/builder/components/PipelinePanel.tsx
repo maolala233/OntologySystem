@@ -853,14 +853,17 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
 
     const chips = activeKey === s?.stage ? statChips(s?.sub?.stats) : [];
 
+    // 明细区的第二行（2026-11-25）：只放「状态句子之外的补充信息」。
+    // 之前 pending / skipped / done 在没有后端明细时也会返回一句通用状态，
+    // 和上方那句状态说明完全重复——打开一个待开始的阶段会看到两行「等待前置阶段完成」；
+    // 现在通用状态只由上方句子表达，这里没有真实明细就返回空串，整行不渲染。
     const detailMessage = (st: PipelineStageState, shown: string): string => {
         if (shown === 'stopping') return s?.message || '正在停止（等待任务退出）…';
         if (shown === 'running') return s?.sub?.message || s?.message || st.detail || '正在执行…';
-        if (shown === 'failed') return st.detail || s?.message || '阶段失败';
-        if (shown === 'cancelled') return st.detail || '已中止';
-        if (shown === 'skipped') return '本档位跳过该阶段';
-        if (shown === 'pending') return '等待前置阶段完成';
-        return st.detail || '已完成';
+        if (shown === 'failed') return st.detail || s?.message || '';
+        if (shown === 'cancelled') return st.detail || '';
+        if (shown === 'skipped' || shown === 'pending') return '';
+        return st.detail || '';
     };
 
     const summaryTagState = s?.status === 'completed' ? 'done'
@@ -1156,6 +1159,7 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                 : activeStage.status;
                             const pct = stagePercentOf(activeStage);
                             const live = stageDuration(activeStage);
+                            const stageDetail = detailMessage(activeStage, shown);
                             // 子步骤只用后端数据（2026-11-16 用户要求前端不写死）：
                             // 当前阶段优先取实时 sub.steps，其次取运行中真实采集到的缓存
                             // （完成态回放）；都没有就不展示，由下面的占位文案说明
@@ -1291,7 +1295,10 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                                         {shown === 'done' ? '本阶段已完成'
                                                             : shown === 'skipped' ? '本档位跳过该阶段'
                                                                 : shown === 'failed' ? '阶段失败'
-                                                                    : shown === 'cancelled' ? '已中止' : '等待前置阶段完成'}
+                                                                    : shown === 'cancelled' ? '已中止'
+                                                                        // stopping 之前落到了 else，误显示成「等待前置阶段完成」
+                                                                        : shown === 'stopping' ? '正在停止构建'
+                                                                            : '等待前置阶段完成'}
                                                     </span>
                                                 )}
                                             </div>
@@ -1309,13 +1316,15 @@ const PipelinePanel: React.FC<Props> = ({ projectId, signal = 0, onNavigate, bui
                                                 </div>
                                             )}
 
-                                            <div className="mt-1.5 flex items-start gap-1.5 text-[11.5px]"
-                                                 style={{ color: shown === 'running' ? '#2A57C6'
-                                                     : shown === 'failed' ? '#B42318'
-                                                         : shown === 'cancelled' ? '#B8790F' : '#8A94AB' }}>
-                                                {shown === 'running' && <span className="pl-live-dot mt-[5px]" />}
-                                                <span className="min-w-0 leading-5">{detailMessage(activeStage, shown)}</span>
-                                            </div>
+                                            {stageDetail && (
+                                                <div className="mt-1.5 flex items-start gap-1.5 text-[11.5px]"
+                                                     style={{ color: shown === 'running' ? '#2A57C6'
+                                                         : shown === 'failed' ? '#B42318'
+                                                             : shown === 'cancelled' ? '#B8790F' : '#8A94AB' }}>
+                                                    {shown === 'running' && <span className="pl-live-dot mt-[5px]" />}
+                                                    <span className="min-w-0 leading-5">{stageDetail}</span>
+                                                </div>
+                                            )}
 
                                         </div>
                                     </div>

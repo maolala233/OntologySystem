@@ -638,12 +638,14 @@ const LoginPage: React.FC = () => {
                         <div className="login-card-title-row">
                             <span className="login-title-mark" aria-hidden />
                             <div className="login-card-title">
-                                {activeTab === 'login' ? '欢迎回来' : '创建账号'}
+                                {/* 欢迎语对所有人通用（2026-11-25）：「欢迎回来」默认用户是老用户，
+                                    但登录页同样面向第一次进来的人；换成「欢迎登录」两种身份都成立 */}
+                                {activeTab === 'login' ? '欢迎登录' : '创建账号'}
                             </div>
                         </div>
                         <p className="login-card-sub">
                             {activeTab === 'login'
-                                ? '登录后进入工作台，继续本体建模与知识治理。'
+                                ? '登录后进入工作台，开展本体建模与知识治理。'
                                 : '注册后即可创建工作台项目；管理权限请联系管理员。'}
                         </p>
                         <div className="login-capabilities">

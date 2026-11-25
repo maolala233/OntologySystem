@@ -14,6 +14,7 @@ import WorkspaceSkeleton from '../components/Layout/WorkspaceSkeleton';
 import EmptyState from '../components/EmptyState';
 import { publishApi } from '../api/governance';
 import { ProjectData } from '../types/ontology';
+import { useImeSafeSearch } from '../shared/useImeSafeSearch';
 
 /** 资产详情返回的是「发布快照」视角，比构建器的 ProjectData 多这几个字段（2026-11-16） */
 interface AssetProjectData extends ProjectData {
@@ -62,7 +63,13 @@ const AssetDetailPage: React.FC = () => {
     const focusSeqRef = useRef(0);
     // 左侧类/实例列表面板
     const [isLeftPanelExpanded, setIsLeftPanelExpanded] = useState(false);
-    const [treeSearchValue, setTreeSearchValue] = useState('');
+    // 列表树搜索（2026-11-25）：输入框即时回显，组字结束/停顿 200ms 后才重算整棵树
+    const {
+        value: treeSearchValue,
+        setValue: setTreeSearchValue,
+        query: treeSearchQuery,
+        inputProps: treeSearchInputProps,
+    } = useImeSafeSearch(200);
     const [manualExpandedKeys, setManualExpandedKeys] = useState<Set<string>>(new Set());
     const [exportOpen, setExportOpen] = useState(false);
     // 节点间距（0–100）：控件放在顶部工具条里，值由页面持有再传给画布（画布受控模式）
@@ -181,7 +188,7 @@ const AssetDetailPage: React.FC = () => {
                 if (cid) (classToInstances[cid] = classToInstances[cid] || []).push(n.id);
             }
         });
-        const q = treeSearchValue.trim().toLowerCase();
+        const q = treeSearchQuery.toLowerCase();
         const nodes = classNodes.map((classNode) => {
             const title = classNode.data?.label || '未命名类';
             const children = (classToInstances[classNode.id] || []).map((iid) => {
@@ -205,7 +212,7 @@ const AssetDetailPage: React.FC = () => {
                 return { ...n, children: self ? n.children : children };
             })
             .filter(Boolean);
-    }, [graphNodes, graphEdges, treeSearchValue]);
+    }, [graphNodes, graphEdges, treeSearchQuery]);
 
     // 列表树右上角只放一个「全部展开 / 全部收起」（2026-11-20）：按当前是否已全展开切换。
     // 面板收起时不计算树数据，省掉一次整图遍历。
@@ -720,6 +727,7 @@ const AssetDetailPage: React.FC = () => {
                                         size="small"
                                         value={treeSearchValue}
                                         onChange={(e) => setTreeSearchValue(e.target.value)}
+                                        {...treeSearchInputProps}
                                         allowClear
                                         prefix={<SearchOutlined style={{ color: '#6E7B99' }} />}
                                     />
@@ -791,7 +799,7 @@ const AssetDetailPage: React.FC = () => {
                                             white-space: nowrap;
                                         }
                                     `}</style>
-                                    {treeSearchValue.trim() && listTreeData.length === 0 ? (
+                                    {treeSearchQuery && listTreeData.length === 0 ? (
                                         <EmptyState
                                             tone="dark"
                                             className="h-full min-h-[220px]"

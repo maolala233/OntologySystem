@@ -30,6 +30,7 @@ import { Segmented } from 'antd';
 import { useAuthStore } from '../shared/auth/authStore';
 import { PROJECT_STATUS, STALE_PUBLISHED_TAG, projectStatusOf as statusOf, statusChip } from '../shared/projectStatus';
 import { fmtSchedule, fmtScheduleFull } from '../shared/schedule';
+import { useImeSafeSearch } from '../shared/useImeSafeSearch';
 import { UPLOAD_ACCEPT, UPLOAD_EXTS, UPLOAD_TYPE_LABEL, MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from '../features/builder/documents/uploadFormats';
 import Navbar from '../components/Layout/Navbar';
 import TechHero, { TECH_COLORS } from '../components/TechHero';
@@ -155,9 +156,15 @@ const MyProjectsPage: React.FC = () => {
 
     const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
     const [page, setPage] = useState(1);
-    // 输入框即时值 + 防抖 300ms 后生效的查询词
-    const [searchText, setSearchText] = useState('');
-    const [keyword, setKeyword] = useState('');
+    // 搜索（2026-11-25）：输入框即时回显；拼音组字期间不查询，
+    // 组字结束 + 停顿 300ms 后才作为 keyword 发请求；
+    // 关键词生效时顺带回到第一页——和 setQuery 同一批次，不会先按旧词拉一遍新页码
+    const {
+        value: searchText,
+        setValue: setSearchText,
+        query: keyword,
+        inputProps: searchInputProps,
+    } = useImeSafeSearch(300, '', () => setPage(1));
     const [statusFilter, setStatusFilter] = useState<string[]>([]);
     const [sortField, setSortField] = useState<SortField>('created_at');
     const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
@@ -171,15 +178,6 @@ const MyProjectsPage: React.FC = () => {
     const isSuperAdmin = me?.role === 'admin' && me?.username === 'admin';
     const [scope, setScope] = useState<'mine' | 'all'>('mine');
     const apiScope = isSuperAdmin ? scope : undefined;
-
-    // 搜索防抖：停止输入 300ms 后才发请求，并回到第一页
-    useEffect(() => {
-        const t = setTimeout(() => {
-            setKeyword(searchText.trim());
-            setPage(1);
-        }, 300);
-        return () => clearTimeout(t);
-    }, [searchText]);
 
     // 列表加载：任一查询条件变化都从后端重新取当前页
     useEffect(() => {
@@ -852,6 +850,7 @@ const MyProjectsPage: React.FC = () => {
                                 placeholder="搜索项目名称/描述..."
                                 value={searchText}
                                 onChange={e => setSearchText(e.target.value)}
+                                {...searchInputProps}
                                 allowClear
                                 style={{ width: 220 }}
                             />

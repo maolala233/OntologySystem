@@ -22,6 +22,7 @@ import {
 import { pipelineApi } from '../api/pipeline';
 import { projectsApi } from '../api/projects';
 import { PROJECT_STATUS } from '../shared/projectStatus';
+import { useImeSafeSearch } from '../shared/useImeSafeSearch';
 import { useBuilderStore } from '../features/builder/store';
 import D3ForceGraph, { spacingLabel } from '../components/OntologyGraph/D3ForceGraph';
 import DetailDrawer from '../features/graph-explorer/DetailDrawer';
@@ -68,7 +69,13 @@ const BuildResultPage: React.FC = () => {
     const [selectedEdge, setSelectedEdge] = useState<any>(null);
     // 类/实例列表树（与资产中心同款）+ 展开收起所有实例
     const [isLeftPanelExpanded, setIsLeftPanelExpanded] = useState(false);
-    const [treeSearchValue, setTreeSearchValue] = useState('');
+    // 列表树搜索（2026-11-25）：输入框即时回显，组字结束/停顿 200ms 后才重算整棵树
+    const {
+        value: treeSearchValue,
+        setValue: setTreeSearchValue,
+        query: treeSearchQuery,
+        inputProps: treeSearchInputProps,
+    } = useImeSafeSearch(200);
     const [manualExpandedKeys, setManualExpandedKeys] = useState<Set<string>>(new Set());
     // 节点间距（0–100）：控件摆在工具条里，值由页面持有再传给画布（受控模式）
     const [nodeSpacing, setNodeSpacing] = useState(50);
@@ -186,7 +193,7 @@ const BuildResultPage: React.FC = () => {
                 if (cid) (classToInstances[cid] = classToInstances[cid] || []).push(String(n.id));
             }
         });
-        const q = treeSearchValue.trim().toLowerCase();
+        const q = treeSearchQuery.toLowerCase();
         const nodes = classNodes.map((classNode) => {
             const title = classNode.data?.label || '未命名类';
             const children = (classToInstances[classNode.id] || []).map((iid) => {
@@ -216,7 +223,7 @@ const BuildResultPage: React.FC = () => {
                 return { ...n, children: self ? n.children : children };
             })
             .filter(Boolean);
-    }, [graphNodes, graphEdges, treeSearchValue]);
+    }, [graphNodes, graphEdges, treeSearchQuery]);
 
     // 列表树右上角只放一个「全部展开 / 全部收起」（2026-11-20）：按当前是否已全展开切换。
     // 面板收起时不计算树数据，省掉一次整图遍历。
@@ -741,12 +748,13 @@ const BuildResultPage: React.FC = () => {
                                         size="small"
                                         value={treeSearchValue}
                                         onChange={(e) => setTreeSearchValue(e.target.value)}
+                                        {...treeSearchInputProps}
                                         allowClear
                                         prefix={<SearchOutlined style={{ color: '#6E7B99' }} />}
                                     />
                                 </div>
                                 <div className="flex-1 overflow-auto p-2">
-                                    {treeSearchValue.trim() && listTreeData.length === 0 ? (
+                                    {treeSearchQuery && listTreeData.length === 0 ? (
                                         <EmptyState
                                             tone="dark"
                                             className="h-full min-h-[220px]"
