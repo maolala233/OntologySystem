@@ -513,9 +513,15 @@ const BuildResultPage: React.FC = () => {
                     <div className="asset-panel">
                         {/* 身份段：名称 + 状态 + 一行元信息（知识域 · 更新时间） */}
                         <div className="border-b px-5 pb-3.5 pt-4" style={{ borderColor: AP_DIV }}>
-                            <div className="flex items-start justify-between gap-2">
-                                <div className="min-w-0">
-                                    <h1 className="line-clamp-2 text-[19px] font-semibold leading-7 text-[#F2F6FF]">
+                            <div className="flex items-start justify-between gap-4">
+                                <div className="min-w-0 flex-1">
+                                    {/* 项目名只占一行（2026-11-25）：原来 line-clamp-2 长名字会折成两行、
+                                        末尾跟着省略号，把「已构建」标签挤在右上角；现在单行截断，
+                                        和右侧标签之间留 16px，全名走原生悬停提示 */}
+                                    <h1
+                                        className="truncate text-[19px] font-semibold leading-7 text-[#F2F6FF]"
+                                        title={projectReady ? projectName : undefined}
+                                    >
                                         {projectReady && projectName ? projectName : '加载中…'}
                                     </h1>
                                     <div className="mt-1 text-[11.5px] text-[#8B94AB]">本体图谱 · 只读视图</div>

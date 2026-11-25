@@ -6,7 +6,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { notifyError } from '../../shared/feedback';
 import { Button, Descriptions, Drawer, Empty, Modal, Space, Spin, Table, Tag, Tooltip, Typography } from 'antd';
-import { FileTextOutlined, LinkOutlined, ReloadOutlined, SendOutlined, ExpandOutlined } from '@ant-design/icons';
+import { CheckCircleFilled, FileTextOutlined, LinkOutlined, ReloadOutlined, SendOutlined, ExpandOutlined } from '@ant-design/icons';
 
 import { EdgeDetail, NodeDetail, graphApi } from '../../api/graphview';
 import { documentsApi } from '../../api/documents';
@@ -413,19 +413,36 @@ export const NodeDetailContent: React.FC<{
     const [nodeDetail, setNodeDetail] = useState<NodeDetail | null>(null);
     const [loading, setLoading] = useState(false);
     const [refreshKey, setRefreshKey] = useState(0);
+    // 刷新成功的短暂反馈（时间戳驱动重挂定时器；数据没变化时用户否则不知道点没生效）
+    const [refreshOkAt, setRefreshOkAt] = useState<number | null>(null);
+
+    // 当前抽屉里已渲染的是哪个节点（projectId:nodeId）：刷新同一节点时不清空内容
+    const loadedKeyRef = useRef<string | null>(null);
 
     useEffect(() => {
         let alive = true;
+        const key = `${projectId}:${nodeId}`;
+        // 这次是「同一节点重取」还是首次/换节点：只有前者才需要「已刷新」提示
+        const isRefresh = loadedKeyRef.current === key;
+        // 刷新 / 宿主保存后重载：内容还是这个节点的，保留旧内容只出 loading；
+        // 切换节点才清空——否则会短暂把上一个节点的属性挂到新的标题下
+        // （上一个节点留下的「已刷新」也要一起清掉，不能挂到新节点头上）
+        if (!isRefresh) {
+            setNodeDetail(null);
+            setRefreshOkAt(null);
+        }
         setLoading(true);
-        setNodeDetail(null);
         const load = async () => {
             try {
                 const d = await graphApi.nodeDetail(projectId, nodeId);
                 if (!alive) return;
+                loadedKeyRef.current = key;
                 setNodeDetail(d);
+                if (isRefresh) setRefreshOkAt(Date.now());
                 onLoaded?.(d);
             } catch (e: any) {
-                // 未保存节点（宿主已给提示）属预期 404：不再弹错误 toast
+                // 未保存节点（宿主已给提示）属预期 404：不再弹错误 toast。
+                // 刷新失败时保留上一次的内容，不把抽屉清成空态
                 if (alive && !unsavedHint) notifyError(e, '加载详情失败');
             } finally {
                 if (alive) setLoading(false);
@@ -436,7 +453,15 @@ export const NodeDetailContent: React.FC<{
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectId, nodeId, refreshKey, reloadKey]);
 
-    if (loading) return <Spin className="block mx-auto my-10" />;
+    // 「已刷新」1.8s 后收起，避免长期占位
+    useEffect(() => {
+        if (refreshOkAt == null) return;
+        const t = setTimeout(() => setRefreshOkAt(null), 1800);
+        return () => clearTimeout(t);
+    }, [refreshOkAt]);
+
+    // 首次加载（或切到新节点）才在空白区转圈；刷新时内容还在，loading 落在刷新按钮上
+    if (loading && !nodeDetail) return <Spin className="block mx-auto my-10" />;
     if (!nodeDetail) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={unsavedHint || "详情加载失败或节点不存在"} />;
     return (
                 <div>
@@ -446,10 +471,20 @@ export const NodeDetailContent: React.FC<{
                             <Paragraph strong className="!mb-0" style={{ fontSize: 17, lineHeight: 1.45, wordBreak: 'break-word', color: '#0F172A' }}>
                                 {nodeDetail.node.label || '未命名节点'}
                             </Paragraph>
-                            <Tooltip title="刷新详情">
+                            <div className="flex shrink-0 items-center gap-1.5">
+                                {refreshOkAt != null && (
+                                    <span className="inline-flex items-center gap-1 text-[11.5px] leading-none text-[#1B87AD]">
+                                        <CheckCircleFilled className="text-[11px]" />
+                                        已刷新
+                                    </span>
+                                )}
+                                {/* 刷新是通用图标，不再挂「刷新详情」悬停提示（2026-11-25）：
+                                    aria-label 留给读屏，鼠标悬停不弹气泡 */}
                                 <Button size="small" type="text" icon={<ReloadOutlined />} className="dd-icon-btn shrink-0"
+                                        aria-label="刷新详情"
+                                        loading={loading}
                                         onClick={() => setRefreshKey((k) => k + 1)} />
-                            </Tooltip>
+                            </div>
                         </div>
                         {headerActions && <div className="mt-2">{headerActions}</div>}
                     </div>
@@ -466,7 +501,8 @@ export const NodeDetailContent: React.FC<{
 
                     <Section title="基本信息">
                         <Descriptions size="small" column={1} className="dd-desc">
-                            <Descriptions.Item label="URI"><Text code copyable style={{ fontSize: 11 }}>{nodeDetail.entity.uri}</Text></Descriptions.Item>
+                            {/* 复制图标本身已经说明动作，去掉 antd 默认的「复制/已复制」悬停气泡（2026-11-25）*/}
+                            <Descriptions.Item label="URI"><Text code copyable={{ tooltips: false }} style={{ fontSize: 11 }}>{nodeDetail.entity.uri}</Text></Descriptions.Item>
                             <Descriptions.Item label={<Term t="规范名" />}>{nodeDetail.entity.label}</Descriptions.Item>
                             <Descriptions.Item label={<Term t="归一化" />}>{nodeDetail.entity.label_normalized}</Descriptions.Item>
                             {nodeDetail.entity.instance_count != null &&

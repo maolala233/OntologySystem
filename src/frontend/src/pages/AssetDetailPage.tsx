@@ -488,8 +488,13 @@ const AssetDetailPage: React.FC = () => {
                     <div className="asset-panel">
                         {/* 身份段：名称 + 发布状态 + 一行元信息（作者 · 知识域 · 发布时间 · 版本） */}
                         <div className="border-b px-5 pb-3.5 pt-4" style={{ borderColor: AP_DIV }}>
-                            <div className="flex items-start justify-between gap-2">
-                                <h1 className="line-clamp-2 text-[20px] font-semibold leading-7 text-[#F2F6FF]">
+                            <div className="flex items-start justify-between gap-4">
+                                {/* 项目名单行截断（2026-11-25）：与「查看图谱」页同一处理——
+                                    长名字不再折成两行去挤右侧的发布状态标签 */}
+                                <h1
+                                    className="min-w-0 flex-1 truncate text-[20px] font-semibold leading-7 text-[#F2F6FF]"
+                                    title={project.name}
+                                >
                                     {project.name}
                                 </h1>
                                 <Tag
