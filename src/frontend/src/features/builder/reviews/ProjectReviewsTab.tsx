@@ -440,7 +440,7 @@ const ProjectReviewsTab: React.FC<Props> = ({ projectId }) => {
                                 </Button>
                             </div>
                             {showRaw && (
-                                <Paragraph code copyable={{ text: editText }} className="!mb-0"
+                                <Paragraph code copyable={{ text: editText, tooltips: false }} className="!mb-0"
                                            style={{ maxHeight: 360, overflow: 'auto', fontSize: 12 }}>
                                     {editText}
                                 </Paragraph>

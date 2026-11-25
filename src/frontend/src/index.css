@@ -686,6 +686,15 @@ button[title*="列表"]:hover {
   display: none;
 }
 
+/* 页签内的图标间距（2026-11-25）：antd 给「不是最后一个子元素的 .anticon」
+   默认加了 12px 右边距（.ant-tabs-tab .anticon:not(:last-child)），
+   凡是「图标 + 文字」的页签都会被这段边距推开（MCP 服务 / 模型配置 / 构建器 Tab）。
+   这里全局清零，间距交给各页签自己的 gap / margin 控制。
+   选择器多带一层 .ant-tabs 和 body，权重高于 antd 运行时注入的规则。 */
+body .ant-tabs .ant-tabs-tab .anticon:not(:last-child) {
+  margin-right: 0;
+}
+
 
 /* ===================================================================
    视觉系统（2026-11-11）：统一画布 / 顶栏 / 面板 / 表格的层次与质感

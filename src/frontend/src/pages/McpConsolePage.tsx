@@ -2,15 +2,17 @@
 // 页面骨架：左栏连接配置卡（页头信息/指标收在卡内）+ 右栏 Tabs 卡 + 底部调用历史卡
 // （工具 / 资源 / Ping / 接入说明）+ 底部全宽可折叠调用历史卡。
 // 连接握手、工具/资源调用全部走平台 POST /mcp 网关。
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { Button, Checkbox, Input, InputNumber, Modal, Select, Tabs, Tooltip } from 'antd';
 import { message, notifyError } from '../shared/feedback';
 import EmptyState from '../components/EmptyState';
 import { Dot, Note, SectionHead, TkTag, TONE_INK } from '../shared/consoleUi';
+import CopyButton from '../shared/CopyButton';
 import { useImeSafeSearch } from '../shared/useImeSafeSearch';
 import {
     ApiOutlined, BookOutlined, CaretRightOutlined, CheckCircleFilled, ClearOutlined, CloseCircleFilled,
-    CopyOutlined, DeleteOutlined, DisconnectOutlined, FolderOpenOutlined, InfoCircleOutlined,
+    DeleteOutlined, DisconnectOutlined, FolderOpenOutlined, InfoCircleOutlined,
     LinkOutlined, LoadingOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined, RightOutlined,
     DownOutlined, SearchOutlined, ThunderboltOutlined, ToolOutlined, UndoOutlined, UpOutlined, WarningOutlined, WifiOutlined,
 } from '@ant-design/icons';
@@ -106,22 +108,13 @@ function JsonNode({ name, value, depth = 0 }: { name?: string; value: unknown; d
 /** 结果体：文本能解析为 JSON 时渲染彩色树，否则渲染纯文本；带复制按钮 */
 function ResultBody({ text }: { text: string }) {
     const parsed = useMemo(() => { try { return JSON.parse(text); } catch { return null; } }, [text]);
-    const [copied, setCopied] = useState(false);
     return (
         <div className="relative border border-[#E7EEF9] rounded-lg bg-[#FBFDFF]">
-            <Tooltip title="复制结果">
-                <Button size="small" type="text" icon={<CopyOutlined />}
-                    className="!absolute top-1.5 right-1.5 z-10"
-                    onClick={() => {
-                        navigator.clipboard.writeText(text);
-                        setCopied(true);
-                        setTimeout(() => setCopied(false), 1500);
-                    }} />
-            </Tooltip>
+            <CopyButton text={text} size="small" type="text" aria-label="复制结果"
+                className="!absolute top-1.5 right-1.5 z-10" />
             <div className="p-3 overflow-auto max-h-96 font-mono text-[12px]">
                 {parsed !== null ? <JsonNode value={parsed} /> : <pre className="whitespace-pre-wrap">{text}</pre>}
             </div>
-            {copied && <span className="absolute bottom-1.5 right-2 text-[11px] text-[#66738F]">已复制</span>}
         </div>
     );
 }
@@ -142,21 +135,13 @@ const dedent = (code: string) => {
 
 /** 接入说明用的代码块：深色底 + 顶部标题栏 + 复制 */
 function CodeBlock({ title, code }: { title?: string; code: string }) {
-    const [copied, setCopied] = useState(false);
     const text = useMemo(() => dedent(code), [code]);
     return (
         <div className="rounded-xl overflow-hidden border border-[#1A2233] bg-[#0F1420]">
             <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-white/10">
                 <span className="text-[11px] text-[#8A94B8]">{title}</span>
-                <Tooltip title="复制代码">
-                    <Button size="small" type="text" className="!text-[#8A94AB] hover:!text-white"
-                        icon={copied ? <CheckCircleFilled className="text-[#5AC8FA]" /> : <CopyOutlined />}
-                        onClick={() => {
-                            navigator.clipboard.writeText(text);
-                            setCopied(true);
-                            setTimeout(() => setCopied(false), 1500);
-                        }} />
-                </Tooltip>
+                <CopyButton text={text} size="small" type="text" className="!text-[#8A94AB] hover:!text-white"
+                    checkClassName="text-[#5AC8FA]" aria-label="复制代码" />
             </div>
             <pre className="m-0 p-3 font-mono text-[12px] leading-relaxed text-[#C9D4FF] overflow-auto max-h-80 whitespace-pre">{text}</pre>
         </div>
@@ -187,6 +172,21 @@ export default function McpConsolePage() {
     const currentUser = useAuthStore(s => s.user);
     const isAdmin = currentUser?.role === 'admin';
 
+    // 左右两栏等高（2026-11-25）：左卡高度由内容决定（始终饱满，任何状态都不留空），
+    // 这里量出它的实际高度，通过 CSS 变量同步给右栏——两栏下沿对齐，
+    // 又不依赖固定行高（左卡内容变化时右栏跟着变）
+    const leftCardRef = useRef<HTMLElement | null>(null);
+    const [leftCardH, setLeftCardH] = useState<number | null>(null);
+    useLayoutEffect(() => {
+        const el = leftCardRef.current;
+        if (!el) return;
+        const sync = () => setLeftCardH(Math.round(el.getBoundingClientRect().height));
+        sync();
+        const ro = new ResizeObserver(sync);
+        ro.observe(el);
+        return () => ro.disconnect();
+    }, []);
+
     // ── 连接配置
     const [tokens, setTokens] = useState<McpTokenItem[]>([]);
     const [selectedTokenId, setSelectedTokenId] = useState<number | null>(null);
@@ -214,6 +214,26 @@ export default function McpConsolePage() {
     const [formValues, setFormValues] = useState<Record<string, string>>({});
     const [calling, setCalling] = useState(false);
     const [callResult, setCallResult] = useState<{ ok: boolean; text: string } | null>(null);
+
+    // 结果卡出现 / 刷新时滚进面板视野（2026-11-25）：
+    // 参数多的时候结果落在右侧面板下方，之前不会自动滚动，用户会以为"没出结果"
+    const callPanelRef = useRef<HTMLDivElement | null>(null);
+    const callResultRef = useRef<HTMLElement | null>(null);
+    useEffect(() => {
+        if (calling || !callResult) return;
+        const panel = callPanelRef.current;
+        const target = callResultRef.current;
+        if (!panel || !target) return;
+        const raf = requestAnimationFrame(() => {
+            if (panel.scrollHeight <= panel.clientHeight) return;   // 面板没有滚动条就不用动
+            const pr = panel.getBoundingClientRect();
+            const tr = target.getBoundingClientRect();
+            // 结果卡已经完全在视野里（参数少的情况）就不动，避免无谓的跳动
+            if (tr.top >= pr.top - 1 && tr.bottom <= pr.bottom + 1) return;
+            panel.scrollTo({ top: Math.max(0, panel.scrollTop + (tr.top - pr.top) - 8), behavior: 'smooth' });
+        });
+        return () => cancelAnimationFrame(raf);
+    }, [callResult, calling]);
 
     const [resources, setResources] = useState<McpResourceSpec[]>([]);
     const [selectedResource, setSelectedResource] = useState<McpResourceSpec | null>(null);
@@ -536,9 +556,9 @@ export default function McpConsolePage() {
         }
     }, [selectedToken, reissuing, isAdmin, loadTokens, connect]);
 
-    // Copy Input：把当前表单值按 tools/call 的 arguments 复制为 JSON
-    const copyInput = useCallback(() => {
-        if (!selectedTool) return;
+    // Copy Input：把当前表单值按 tools/call 的 arguments 组装成 JSON（复制时由 CopyButton 取用）
+    const inputAsJson = useCallback(() => {
+        if (!selectedTool) return '';
         const args: Record<string, unknown> = {};
         for (const [k, v] of Object.entries(formValues)) {
             if (v === '' || v == null) continue;
@@ -548,8 +568,7 @@ export default function McpConsolePage() {
             }
             args[k] = v;
         }
-        navigator.clipboard.writeText(JSON.stringify({ name: selectedTool.name, arguments: args }, null, 2));
-        message.success('已复制调用入参 JSON');
+        return JSON.stringify({ name: selectedTool.name, arguments: args }, null, 2);
     }, [selectedTool, formValues]);
 
     // 顶部导航：与全站 Tabs 统一（下划线 + 品牌色 ink bar），图标 + 数量弱提示
@@ -568,6 +587,11 @@ export default function McpConsolePage() {
     return (
         <div className="h-full flex flex-col app-canvas">
             <style>{`
+                /* 右栏高度跟随左卡（2026-11-25）：--mcp-left-h 由页面用 ResizeObserver 测得，
+                   只在宽屏生效；小屏仍按内容自然排布 */
+                @media (min-width: 1280px) {
+                    .mcp-right { height: var(--mcp-left-h, 560px); }
+                }
                 /* Tab 条做成与面板同材质的横条：不再裸在画布上，也不做成「卡片套卡片」。
                    内部改用分段胶囊——在横条里画下划线会和描边打架。 */
                 /* 卡片材质对齐全站「服务卡 / 角色卡」：冷白 → 淡品牌蓝的斜向渐变，
@@ -598,7 +622,7 @@ export default function McpConsolePage() {
                 .mcp-page .mcp-page-tabs .ant-tabs-nav-list { gap: 2px; }
                 .mcp-page .mcp-page-tabs .ant-tabs-tab {
                     margin: 0 !important;
-                    padding: 4px 12px !important;
+                    padding: 6px 14px !important;
                     border-radius: 10px;
                     transition: background-color .18s ease, color .18s ease;
                 }
@@ -615,17 +639,39 @@ export default function McpConsolePage() {
                     font-size: 12.5px;
                     transition: color .18s ease;
                 }
+                /* Tab 标签（2026-11-25）：只收图标与文字之间的水平间距（6→4px），
+                   行高 / 内边距维持原有体量。上一版顺手把 line-height 压成 1，
+                   胶囊整体矮了一截，看起来"小气"，这里回退 */
+                .mcp-page .mcp-page-tabs .ant-tabs-tab { justify-content: center; }
+                .mcp-page .mcp-page-tabs .ant-tabs-tab-btn {
+                    display: inline-flex; align-items: center; justify-content: center;
+                }
+                .mcp-page .mcp-page-tabs .mcp-tab-label {
+                    display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+                }
+                /* 真正的"离得远"在这里：antd 给 tab 内「不是最后一个子元素的 .anticon」
+                   默认加了 12px 右边距（.ant-tabs-tab .anticon:not(:last-child)，
+                   token.marginSM），和外层 flex gap 叠加后图标离文字有 14px+。
+                   这里把这段默认边距清掉，间距只由上面的 gap 控制（2026-11-25） */
+                .mcp-page .mcp-page-tabs .mcp-tab-label > .anticon {
+                    font-size: 13px; margin-inline-end: 0;
+                }
+                .mcp-page .mcp-page-tabs .mcp-tab-count {
+                    margin-left: 2px; font-size: 11px; color: #8A94AB;
+                }
                 .mcp-page .mcp-page-tabs .ant-tabs-tab-active .ant-tabs-tab-btn { color: #2A57C6; font-weight: 600; }
             `}</style>
             <Navbar breadcrumbs={[{ title: '首页', path: '/' }, { title: '工具' }, { title: 'MCP 服务' }]} />
             <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable mcp-page">
-                <div className="grid gap-4 xl:h-[clamp(520px,calc(100vh_-_164px),680px)] xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
-                    {/* ── 左栏：连接配置。Tabs 有定高的页签里让这张卡撑满同一行，
-                        底部说明用 mt-auto 贴在卡底，两栏下沿就能对齐（接入说明是长文，不拉伸） ── */}
-                    <div className="min-w-0 space-y-4 xl:flex xl:flex-col">
-                        <section className="surface-card p-5 tk-controls xl:flex xl:flex-1 xl:flex-col">
-                            {/* 页头信息收进卡内：右侧 Tabs 比这张卡高，标题/说明/指标放这里补齐高度，
-                                也不再单占一条顶栏——信息和它描述的操作就在同一张卡里 */}
+                {/* 行高不再写死：左卡按内容收尾，右栏高度由它测得的变量决定，
+                    两栏下沿对齐（2026-11-25） */}
+                <div className="grid gap-4 xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
+                    {/* ── 左栏：连接配置。卡片高度 = 内容高度，始终是"满"的；
+                        底部说明紧跟按钮（不再 mt-auto 贴底）── */}
+                    <div className="min-w-0 space-y-4">
+                        <section ref={leftCardRef} className="surface-card p-5 tk-controls">
+                            {/* 页头信息收进卡内：标题/说明/指标和它们描述的操作在同一张卡里，
+                                不再单占一条顶栏（卡高跟随内容，不再靠它去补行高） */}
                             <div className="mb-4 flex items-start justify-between gap-3">
                                 <div className="min-w-0">
                                     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
@@ -690,10 +736,8 @@ export default function McpConsolePage() {
                                                 placeholder={defaultEndpoint}
                                                 className="!text-[11px] font-mono" />
                                         </Tooltip>
-                                        <Tooltip title="复制端点">
-                                            <Button size="small" type="text" icon={<CopyOutlined />} className="!px-1"
-                                                onClick={() => { navigator.clipboard.writeText(endpoint.trim() || defaultEndpoint); message.success('已复制端点'); }} />
-                                        </Tooltip>
+                                        <CopyButton size="small" type="text" className="!px-1" aria-label="复制端点"
+                                            text={() => endpoint.trim() || defaultEndpoint} />
                                     </div>
                                     <div className="mt-1 text-[11px] text-[#8A94AB]">无状态 POST · 每次请求独立</div>
                                 </div>
@@ -729,16 +773,14 @@ export default function McpConsolePage() {
                                                 </span>
                                                 <span className="flex items-center gap-0.5">
                                                     {bearer && (
-                                                        <Tooltip title="复制令牌明文（仅本标签页有）">
-                                                            <Button size="small" type="text" icon={<CopyOutlined />}
-                                                                className="!px-1"
-                                                                onClick={() => { navigator.clipboard.writeText(bearer); message.success('已复制令牌'); }} />
-                                                        </Tooltip>
+                                                        <CopyButton size="small" type="text" className="!px-1"
+                                                            aria-label="复制令牌明文" text={bearer} />
                                                     )}
-                                                    <Tooltip title="撤销该令牌">
-                                                        <Button size="small" type="text" danger icon={<DeleteOutlined />}
-                                                            className="!px-1" onClick={() => doRevoke(selectedToken.id)} />
-                                                    </Tooltip>
+                                                    {/* 垃圾桶图标即动作本身，去掉「撤销该令牌」悬停气泡；
+                                                        aria-label 保留给读屏（2026-11-25） */}
+                                                    <Button size="small" type="text" danger icon={<DeleteOutlined />}
+                                                        aria-label="撤销该令牌"
+                                                        className="!px-1" onClick={() => doRevoke(selectedToken.id)} />
                                                 </span>
                                             </div>
                                         ) : (
@@ -791,8 +833,33 @@ export default function McpConsolePage() {
                                     )}
                                 </div>
                             </div>
-                            {/* 明文说明收进连接配置卡尾部：只是这张卡的补充信息，不再单独占一张卡 */}
-                            <div className="mt-4 flex items-start gap-2 border-t border-[#EDF1F8] pt-3 text-[11px] leading-relaxed text-[#8A94AB] xl:mt-auto">
+                            {/* 接入步骤（2026-11-25）：从右侧「接入说明」页签收进连接卡——
+                                配置完当场能看到下一步；也让左卡的高度更接近整屏，底部不再空出大半屏 */}
+                            <div className="mt-4 border-t border-[#EDF1F8] pt-3">
+                                <SectionHead className="mb-2" title="接入步骤" hint="签发 → 配置 → 接入客户端" />
+                                <ol className="space-y-1.5 text-[11.5px] leading-[1.7] text-[#52607A]">
+                                    <li className="flex gap-2">
+                                        <span className="tk-mono shrink-0 text-[#2A57C6]">01</span>
+                                        <span>右上角「签发令牌」创建 <span className="font-mono">sk-mcp-</span> 令牌，明文只展示一次，当场复制</span>
+                                    </li>
+                                    <li className="flex gap-2">
+                                        <span className="tk-mono shrink-0 text-[#2A57C6]">02</span>
+                                        <span>确认端点和令牌后点「连接」；容器化 / 反向代理部署可在上方改成实际可达的地址</span>
+                                    </li>
+                                    <li className="flex gap-2">
+                                        <span className="tk-mono shrink-0 text-[#2A57C6]">03</span>
+                                        <span>端点 + 令牌配进 MCP 客户端（Cursor / Claude Code / Agent Skill），示例见右侧接入说明</span>
+                                    </li>
+                                </ol>
+                            </div>
+
+                            {/* 「最近调用」摘要不再放左栏（2026-11-25）：有调用记录时多出一块、
+                                没有时只有一行，左卡高度会跟着跳；完整调用记录在右侧「调用历史」，
+                                左栏保持稳定的内容高度即可 */}
+
+                            {/* 明文说明收进连接配置卡尾部：只是这张卡的补充信息，不再单独占一张卡。
+                                不再 xl:mt-auto：那条分隔线要贴着「重连/断开」，而不是被推到卡片最底 */}
+                            <div className="mt-4 flex items-start gap-2 border-t border-[#EDF1F8] pt-3 text-[11px] leading-relaxed text-[#8A94AB]">
                                 <InfoCircleOutlined className="mt-[2px] shrink-0 text-[#A9B4C9]" />
                                 <span>
                                     明文令牌仅签发时展示一次（本页内存留存）；对外服务请把
@@ -803,8 +870,12 @@ export default function McpConsolePage() {
                         </section>
                     </div>
 
-                    {/* ── 右栏：Tabs。导航条固定，内容块吃满剩余高度，各页签自己滚 ── */}
-                    <div className="min-w-0 xl:flex xl:min-h-0 xl:flex-col">
+                    {/* ── 右栏：Tabs。导航条固定，内容块吃满剩余高度，各页签自己滚。
+                        高度由左卡测得（.mcp-right 的媒体查询），两栏下沿对齐 ── */}
+                    <div
+                        className="mcp-right min-w-0 xl:flex xl:min-h-0 xl:flex-col"
+                        style={{ '--mcp-left-h': leftCardH != null ? `${leftCardH}px` : undefined } as CSSProperties}
+                    >
                         <Tabs
                             activeKey={activeTab}
                             onChange={key => setActiveTab(key as TabKey)}
@@ -812,11 +883,11 @@ export default function McpConsolePage() {
                             items={tabItems.map(t => ({
                                 key: t.key,
                                 label: (
-                                    <span className="inline-flex items-center gap-1.5">
+                                    <span className="mcp-tab-label">
                                         {t.icon}
                                         <span>{t.label}</span>
                                         {t.count !== undefined && (
-                                            <span className="text-[11px] text-[#8A94AB]">{t.count}</span>
+                                            <span className="mcp-tab-count">{t.count}</span>
                                         )}
                                     </span>
                                 ),
@@ -839,18 +910,8 @@ export default function McpConsolePage() {
                                         </div>
                                     </div>
 
-                                    <div className="surface-card p-5">
-                                        <SectionHead className="mb-3" title="三步接入" hint="签发令牌 → 配置端点 → 接入客户端" />
-                                        <ol className="text-sm text-[#52607A] list-decimal pl-5 space-y-1.5 leading-relaxed">
-                                            <li>左侧「签发令牌」创建 <span className="font-mono">sk-mcp-</span> 令牌：{isAdmin ? '选持有人、' : ''}绑定项目、勾是否允许写入——<b>明文只展示一次</b>，当场复制</li>
-                                            <li>端点默认为 <span className="font-mono">{effEndpoint}</span>（host 随访问地址自动推导；容器化/反代部署可在左栏改，HTTP Streamable，无状态 POST-only）</li>
-                                            <li>把端点 + 令牌配到下方任意一种客户端 / 自己的 agent 里</li>
-                                        </ol>
-                                        <div className="mt-3 text-xs text-[#66738F] leading-relaxed">
-                                            令牌绑定单项目（数据隔离）；只读令牌不暴露写入工具；限流：读 60 次/分、写 20 次/分。
-                                            {bearer ? ' 已检测到当前选中令牌，下方示例已代入。' : ' 尚未选令牌，示例中用占位符表示，替换为你的明文即可。'}
-                                        </div>
-                                    </div>
+                                    {/* 三步接入已收进左栏连接卡（2026-11-25），文档页签不再重复；
+                                        令牌绑定 / 限流说明保留在下方「注意事项」里 */}
 
                                     <div className="surface-card p-5 space-y-3">
                                         <SectionHead title="curl 调用" hint="命令行自测" />
@@ -945,10 +1006,7 @@ export default function McpConsolePage() {
                                                     harness 配置该 Skill 后即可按统一口径查图谱与检索结果。
                                                 </div>
                                             </div>
-                                            <Button size="small" icon={<CopyOutlined />}
-                                                onClick={() => { navigator.clipboard.writeText(MCP_SKILL_TEXT); message.success('已复制 Skill'); }}>
-                                                复制 Skill
-                                            </Button>
+                                            <CopyButton size="small" text={MCP_SKILL_TEXT}>复制 Skill</CopyButton>
                                         </div>
                                         <CodeBlock title="SKILL.md（给智能体 harness）" code={MCP_SKILL_TEXT} />
                                     </div>
@@ -1040,7 +1098,7 @@ export default function McpConsolePage() {
                                     </div>
                                 </section>
 
-                                <div className="min-w-0 space-y-4 lg:min-h-0 lg:overflow-y-auto lg:pr-1">
+                                <div ref={callPanelRef} className="min-w-0 space-y-4 lg:min-h-0 lg:overflow-y-auto lg:pr-1">
                                     {!selectedTool ? (
                                         <section className="surface-card flex min-h-[320px] flex-col items-center justify-center px-6 text-center lg:h-full lg:min-h-0">
                                             <EmptyState
@@ -1116,12 +1174,12 @@ export default function McpConsolePage() {
                                                     <Button type="primary" className="tk-primary-btn" icon={<PlayCircleOutlined />} onClick={runTool} loading={calling}>
                                                         运行工具
                                                     </Button>
-                                                    <Button className="tk-soft-btn" icon={<CopyOutlined />} onClick={copyInput}>Copy Input</Button>
+                                                    <CopyButton className="tk-soft-btn" text={inputAsJson}>Copy Input</CopyButton>
                                                 </div>
                                             </section>
 
                                             {callResult && (
-                                                <section className="surface-card p-4">
+                                                <section ref={callResultRef} className="surface-card p-4">
                                                     <SectionHead
                                                         className="mb-2"
                                                         title="调用结果"
@@ -1427,8 +1485,7 @@ export default function McpConsolePage() {
                         </Note>
                         <div className="flex gap-2">
                             <Input value={issuedPlain} readOnly className="font-mono !text-xs" />
-                            <Button icon={<CopyOutlined />}
-                                onClick={() => { navigator.clipboard.writeText(issuedPlain); message.success('已复制令牌'); }} />
+                            <CopyButton text={issuedPlain} aria-label="复制令牌" />
                         </div>
                         <Button type="primary" onClick={() => { setIssueOpen(false); setIssuedPlain(null); }}>
                             我已保存

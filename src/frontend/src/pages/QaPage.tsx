@@ -1028,21 +1028,25 @@ export default function QaPage() {
                                                原来 #F4F8FE 和回答卡底部几乎同色，这层读起来像卡片拖出来的尾巴，
                                                现在它是卡片里一块压下去的凹槽，引用行浮在里面 */
                                             <div className="mt-4 rounded-xl border border-[rgba(91,141,239,0.16)] bg-[#EDF3FE] p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]">
-                                                <div className="flex items-center gap-2 text-[11.5px] text-[#66738F]">
+                                                {/* 整行都是点击区（2026-11-25）：与上面「检索过程」卡的收起/展开统一，
+                                                    原来这一排只有右侧小按钮可点，两个折叠区的触发范围不一致；
+                                                    行内没有其它可交互元素，整行触发也更好点中 */}
+                                                <button
+                                                    type="button"
+                                                    aria-expanded={turn.sourcesOpen}
+                                                    onClick={() => toggleSourcesSection(i)}
+                                                    className="group flex w-full items-center gap-2 rounded-[7px] text-left text-[11.5px] text-[#66738F] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(91,141,239,0.35)]"
+                                                >
                                                     <span className="tk-mark" aria-hidden />
                                                     <span className="font-medium text-[#3B4A63]">溯源引用</span>
                                                     <span className="tk-mono text-[10.5px] text-[#8A94AB]">{turn.sources.length} 条证据</span>
                                                     {/* 引用区只有两态：整块折叠 / 整块展开（展开即全部卡片全文）；
                                                         点正文 [n] 会展开引用区并滚到对应证据 */}
-                                                    <button
-                                                        type="button"
-                                                        className="ml-auto -mr-1 flex items-center gap-1 rounded-[7px] px-1.5 py-0.5 text-[11px] text-[#2A57C6] transition-colors hover:bg-[rgba(91,141,239,0.12)] hover:text-[#1F47A8] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(91,141,239,0.35)]"
-                                                        onClick={() => toggleSourcesSection(i)}
-                                                    >
+                                                    <span className="ml-auto -mr-1 flex items-center gap-1 rounded-[7px] px-1.5 py-0.5 text-[11px] text-[#2A57C6] transition-colors group-hover:bg-[rgba(91,141,239,0.12)] group-hover:text-[#1F47A8]">
                                                         {turn.sourcesOpen ? <UpOutlined /> : <DownOutlined />}
                                                         <span>{turn.sourcesOpen ? '收起引用' : '展开引用'}</span>
-                                                    </button>
-                                                </div>
+                                                    </span>
+                                                </button>
                                                 {turn.sourcesOpen && (
                                                 <div className="mt-2 divide-y divide-[rgba(91,141,239,0.12)]">
                                                     {turn.sources.map((s, k) => (

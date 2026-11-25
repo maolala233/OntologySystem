@@ -8,10 +8,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Drawer, Form, Input, Modal, Popconfirm, Select, Space, Table } from 'antd';
 import {
-    CheckCircleOutlined, CopyOutlined, DeleteOutlined, FolderOpenOutlined, PlusOutlined,
+    CheckCircleOutlined, DeleteOutlined, FolderOpenOutlined, PlusOutlined,
     ReloadOutlined, SafetyCertificateOutlined, StopOutlined, TeamOutlined, UserOutlined,
     WarningOutlined,
 } from '@ant-design/icons';
+import CopyButton from '../../shared/CopyButton';
 import { confirmModal, message, notifyError } from '../../shared/feedback';
 import { adminApi, AdminUser } from '../../api/admin';
 import { useAuthStore } from '../../shared/auth/authStore';
@@ -163,16 +164,6 @@ const UserAdminPage: React.FC = () => {
                 }
             },
         });
-    };
-
-    const copyOneTimePassword = async () => {
-        if (!oneTimePassword) return;
-        try {
-            await navigator.clipboard.writeText(oneTimePassword);
-            message.success('新密码已复制');
-        } catch {
-            message.warning('复制失败，请手动选择密码复制');
-        }
     };
 
     const handleDelete = async (u: AdminUser) => {
@@ -581,9 +572,10 @@ const UserAdminPage: React.FC = () => {
                                 <span className="tk-mono min-w-0 flex-1 select-all break-all text-[20px] font-semibold leading-7 tracking-[0.04em] text-[#0F172A]">
                                     {oneTimePassword}
                                 </span>
-                                <Button size="small" className="shrink-0" icon={<CopyOutlined />} onClick={copyOneTimePassword}>
+                                <CopyButton size="small" className="shrink-0" text={oneTimePassword}
+                                    failText="复制失败，请手动选择密码复制">
                                     复制
-                                </Button>
+                                </CopyButton>
                             </div>
                         </div>
 
