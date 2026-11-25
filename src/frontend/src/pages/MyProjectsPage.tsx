@@ -579,8 +579,17 @@ const MyProjectsPage: React.FC = () => {
                 }
                 /* 创建/编辑弹窗：antd 默认 24px 表单行距 + 20/24 内边距，在 500px 弹窗里显得松散，
                    表单行距收到 10px、标签 13px；外围留白比默认略宽，避免内容贴边；上传拖拽区图标与留白也缩一档 */
-                .mp-modal .ant-modal-content { padding: 20px 24px 20px; }
-                .mp-modal .ant-modal-header { margin-bottom: 12px; }
+                /* 注意选择器要写 .ant-modal.mp-modal（2026-11-25 修正）：
+                   index.css 里的全局弹窗材质用的是「body .ant-modal .ant-modal-content」
+                   （0,2,1），单独的「.mp-modal .ant-modal-content」（0,2,0）权重不够，
+                   之前这两条一直没生效——界面上的留白实际走的是全局值。 */
+                /* 弹窗顶部内边距：20px → 12px，底部维持 20px、左右 24px。
+                   标题行本身已有下边距和分隔线，顶上加 20px 会让标题离弹窗上缘过远，
+                   整张表单看起来"头上空一截"；底部按钮的留白是对称的另一回事，不动 */
+                .ant-modal.mp-modal .ant-modal-content { padding: 12px 24px 20px; }
+                /* 标题分隔线到第一个字段的距离：12px → 8px。
+                   分隔线本身已经划出层级，下面再留一段空白，「项目名称」会显得离横线很远 */
+                .ant-modal.mp-modal .ant-modal-header { margin-bottom: 8px; }
                 .mp-modal .ant-modal-title { font-size: 15px; }
                 .mp-modal .ant-form-item { margin-bottom: 10px; }
                 .mp-modal .ant-form-item:last-child { margin-bottom: 0; }

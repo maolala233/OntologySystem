@@ -1044,10 +1044,13 @@ body .ant-modal .ant-modal-content {
     0 4px 14px rgba(15, 23, 42, 0.05);
 }
 
-/* 标题区：透明底 + 一条发丝分隔线，标题与正文层级拉开 */
+/* 标题区：透明底 + 一条发丝分隔线，标题与正文层级拉开。
+   分隔线到正文的距离 2026-11-25 从 14px 收到 8px：标题本身已有下边距和线，
+   下面再留 14px，正文第一行会明显离横线很远（导出图谱 / 新建项目都反馈过）。
+   单个弹窗要更紧时仍可用页面内的高权重选择器覆盖（如 .ant-modal.mp-modal）。 */
 body .ant-modal .ant-modal-header {
   background: transparent;
-  margin-bottom: 14px;
+  margin-bottom: 8px;
   padding-bottom: 10px;
   border-bottom: 1px solid rgba(91, 141, 239, 0.12);
 }
@@ -1111,7 +1114,7 @@ body .ant-modal.tk-form-compact .ant-modal-content {
   padding: 20px 24px 20px;
 }
 body .ant-modal.tk-form-compact .ant-modal-header {
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 body .ant-modal.tk-form-compact .ant-form-item {
   margin-bottom: 10px;

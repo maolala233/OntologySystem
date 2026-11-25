@@ -11,7 +11,8 @@ import SiderToggle from './SiderToggle';
 import Tip from '../../shared/Tip';
 
 interface NavbarProps {
-    breadcrumbs?: { title: string; path?: string }[];
+    /** path = 站内路由；onClick = 同一路由内的层级跳转（如资产中心二级 → 一级） */
+    breadcrumbs?: { title: string; path?: string; onClick?: () => void }[];
 }
 
 /**
@@ -122,6 +123,23 @@ const Navbar: React.FC<NavbarProps> = ({ breadcrumbs = [] }) => {
                             <Link to={item.path} className="inline-block max-w-[220px] truncate align-middle">
                                 {item.title}
                             </Link>
+                        ) : item.onClick ? (
+                            /* 同路由内的层级切换（2026-11-25）：没有 path，用点击回调；
+                               用 a 而不是 span，才能拿到 antd 面包屑链接的 hover 药丸 */
+                            <a
+                                role="link"
+                                tabIndex={0}
+                                className="inline-block max-w-[220px] truncate align-middle cursor-pointer"
+                                onClick={(e) => { e.preventDefault(); item.onClick?.(); }}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                        e.preventDefault();
+                                        item.onClick?.();
+                                    }
+                                }}
+                            >
+                                {item.title}
+                            </a>
                         ) : (
                             <span className="inline-block max-w-[220px] truncate align-middle">
                                 {item.title}

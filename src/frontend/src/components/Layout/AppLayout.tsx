@@ -168,12 +168,14 @@ const AppLayout: React.FC = () => {
 
     // 菜单选中态：板块下的子页面仍归属到板块本身——
     // 项目概览/构建/文档/图谱等 /projects/:id/* 页面继续高亮「我的项目」，
-    // 否则进入项目后左侧菜单失去高亮（2026-11-11 实测）
+    // 否则进入项目后左侧菜单失去高亮（2026-11-11 实测）；
+    // 资产中心的图谱详情 /asset-center/:id 同理继续高亮「资产中心」（2026-11-25）
     const selectedMenuKey = (() => {
         const path = location.pathname;
         if (path === '/my-projects' || path.startsWith('/projects/') || path.startsWith('/ontology-builder/')) {
             return '/my-projects';
         }
+        if (path === '/asset-center' || path.startsWith('/asset-center/')) return '/asset-center';
         return path;
     })();
 
@@ -231,6 +233,18 @@ const AppLayout: React.FC = () => {
                         onOpenChange={keys => handleOpenChange(keys as string[])}
                         items={allMenuItems}
                         onClick={({ key }) => {
+                            // 资产中心是「一条路由 + 页内两级视图」（2026-11-25）：
+                            // 已经在资产中心页面（知识域总览 / 某域列表 / 图谱详情）时，
+                            // 再点侧栏要回到一级总览。同路径导航只会换 state，
+                            // 由 AssetCenterPage 监听 resetOverview 复位视图；
+                            // 图谱详情（/asset-center/:id）也走这里，避免被来源知识域带回二级
+                            if (key === '/asset-center' && location.pathname.startsWith('/asset-center')) {
+                                confirmLeaveUnsaved(() => navigate('/asset-center', {
+                                    replace: true,
+                                    state: { resetOverview: Date.now() },
+                                }));
+                                return;
+                            }
                             if (key === location.pathname) return;
                             confirmLeaveUnsaved(() => navigate(key));
                         }}

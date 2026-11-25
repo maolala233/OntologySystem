@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { PROJECT_STATUS, PUBLISHED_TAG } from '../shared/projectStatus';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { message, notifyError } from '../shared/feedback';
 import { Button, Tag, Modal, Input, Tooltip, Tree } from 'antd';
 import type { TreeProps } from 'antd';
@@ -48,6 +48,28 @@ const AP_STATS = [
 const AssetDetailPage: React.FC = () => {
     const { projectId } = useParams<{ projectId: string }>();
     const navigate = useNavigate();
+    const location = useLocation();
+    // 返回资产中心（2026-11-25）：图谱详情是第三层，进入时资产中心把来源知识域带过来，
+    // 返回就回到第二层（该知识域的项目列表），而不是一级的知识域总览；
+    // 直接打开链接（没有来源）时仍回总览
+    const fromOrigin = location.state as {
+        domainId?: number | null;
+        domainName?: string;
+        projectName?: string;
+    } | null;
+    const fromDomainId = fromOrigin?.domainId;
+    const fromDomainName = fromOrigin?.domainName;
+    // 首帧用的项目名（2026-11-25）：资产中心点进来时会带过来，
+    // 面包屑和骨架屏先显示它，等详情加载完再用接口返回的名称替换，
+    // 不会再出现「本体详情 → 实际名字」这一下跳变
+    const fromProjectName = fromOrigin?.projectName;
+    // 按钮文案跟着实际目的地走：回二级就写「返回「域名」」，回一级才写「返回资产中心」
+    const backLabel = fromDomainId == null
+        ? '返回资产中心'
+        : (fromDomainName ? `返回「${fromDomainName}」` : '返回资产列表');
+    const backToAssetCenter = useCallback(() => {
+        navigate('/asset-center', { state: fromDomainId == null ? undefined : { domainId: fromDomainId } });
+    }, [navigate, fromDomainId]);
     const [project, setProject] = useState<AssetProjectData | null>(null);
     const [loading, setLoading] = useState(true);
     const [graphNodes, setGraphNodes] = useState<any[]>([]);
@@ -91,7 +113,7 @@ const AssetDetailPage: React.FC = () => {
             setGraphEdges(data.graph_data?.edges || []);
         } catch (error: any) {
             notifyError(error, '加载本体详情失败');
-            navigate('/asset-center');
+            backToAssetCenter();
         } finally {
             setLoading(false);
         }
@@ -280,10 +302,15 @@ const AssetDetailPage: React.FC = () => {
         } catch { /* 聚焦失败不阻断详情浏览 */ }
     }, [projectId, graphNodes, graphEdges, expandedNodeIds]);
 
+    // 面包屑与三级路径一致（2026-11-25）：资产中心 → 域名 → 本体。
+    // 「资产中心」回一级总览，域名回二级（该域的本体列表），和左上返回按钮的落点一致
     const breadcrumbs = [
         { title: '首页', path: '/' },
-        { title: '资产中心', path: '/asset-center' },
-        { title: project?.name || '本体详情' },
+        fromDomainId == null
+            ? { title: '资产中心', path: '/asset-center' }
+            : { title: '资产中心', onClick: () => navigate('/asset-center') },
+        ...(fromDomainName ? [{ title: fromDomainName, onClick: backToAssetCenter }] : []),
+        { title: project?.name || fromProjectName || '本体详情' },
     ];
 
     // 加载态直接用最终构图：同样是浅色外壳 + 内缩深色台面 + 左栏面板骨架，
@@ -640,10 +667,11 @@ const AssetDetailPage: React.FC = () => {
                     >
                         <Button
                             icon={<ArrowLeftOutlined />}
-                            onClick={() => navigate('/asset-center')}
+                            onClick={backToAssetCenter}
                             className="ap-ghost"
                         >
-                            返回资产中心
+                            {/* 域名可能很长：限宽截断，工具栏右侧还有节点间距滑杆等控件 */}
+                            <span className="inline-block max-w-[180px] truncate align-middle">{backLabel}</span>
                         </Button>
                         <div className="ml-auto flex items-center gap-3">
                             {/* 节点间距（2026-11-17）：直接摆进工具条、常显滑杆。

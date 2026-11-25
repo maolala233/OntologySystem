@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Empty, Spin, message, Input, Select, Button } from 'antd';
 import { UserOutlined, NodeIndexOutlined, DatabaseOutlined, ApartmentOutlined, ArrowLeftOutlined, ArrowRightOutlined, ReloadOutlined, SearchOutlined, ShareAltOutlined } from '@ant-design/icons';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import Navbar from '../components/Layout/Navbar';
 import EmptyState from '../components/EmptyState';
 import TechHero from '../components/TechHero';
@@ -43,13 +43,23 @@ const DOMAIN_HUES = [
  */
 const AssetCenterPage: React.FC = () => {
     const navigate = useNavigate();
-    
+    const location = useLocation();
+
+    // 从第三层（图谱详情）返回时还原第二层（2026-11-25）：
+    // 详情页的「返回资产中心」会把来源知识域 id 带回来。
+    // 命中模块级缓存时直接在首帧把它当初始状态——否则会先渲染一帧知识域总览，
+    // effect 再切到项目列表，二级界面的卡片就会闪一下（一级 → 二级不受影响，因为那是用户点击触发的）
+    const returningDomainId = (location.state as { domainId?: number | null } | null)?.domainId;
+    const initialReturnDomain = returningDomainId != null
+        ? cachedDomains?.find((d) => d.id === returningDomainId) ?? null
+        : null;
+
     // 视图状态：'domain' = 知识域选择层，'project' = 项目列表层
-    const [currentView, setCurrentView] = useState<'domain' | 'project'>('domain');
-    
+    const [currentView, setCurrentView] = useState<'domain' | 'project'>(initialReturnDomain ? 'project' : 'domain');
+
     // 知识域相关状态
     const [domains, setDomains] = useState<DomainWithCount[]>(cachedDomains ?? []);
-    const [selectedDomain, setSelectedDomain] = useState<KnowledgeDomain | null>(null);
+    const [selectedDomain, setSelectedDomain] = useState<KnowledgeDomain | null>(initialReturnDomain);
     
     // 项目相关状态
     const [projects, setProjects] = useState<ProjectData[]>(cachedPublicProjects ?? []);
@@ -70,6 +80,35 @@ const AssetCenterPage: React.FC = () => {
     useEffect(() => {
         scrollRef.current?.scrollTo({ top: 0 });
     }, [currentView, selectedDomain]);
+
+    // 从第三层（图谱详情）返回时还原第二层（2026-11-25）：
+    // 详情页的「返回资产中心」会把来源知识域 id 带回来，这里选回该域的项目列表，
+    // 而不是把用户直接丢回知识域总览。直接打开 /asset-center 时没有这个 state，照旧停在总览
+    // 缓存未命中（如刷新过详情页再返回）：等知识域列表到位后再还原，
+    // 首帧仍是总览的 loading 态，不会先摆出一屏错的卡片
+    const restoredViewRef = useRef(initialReturnDomain != null || returningDomainId == null);
+    useEffect(() => {
+        if (restoredViewRef.current) return;
+        if (!domains.length) return;   // 知识域还没就绪
+        const domain = domains.find((d) => d.id === returningDomainId);
+        if (domain) {
+            setSelectedDomain(domain);
+            setCurrentView('project');
+        }
+        // 找不到（知识域已被删）就停在总览，不再反复尝试
+        restoredViewRef.current = true;
+    }, [domains, returningDomainId]);
+
+    // 侧栏点「资产中心」回到一级总览（2026-11-25）：页内两级视图不在路由里，
+    // 同路径导航只会换 state，所以由 AppLayout 带一个 resetOverview 时间戳过来，
+    // 这里监听到就把视图复位（并清掉搜索词）
+    const resetOverviewTick = (location.state as { resetOverview?: number } | null)?.resetOverview;
+    useEffect(() => {
+        if (resetOverviewTick == null) return;
+        setCurrentView('domain');
+        setSelectedDomain(null);
+        setSearchText('');
+    }, [resetOverviewTick]);
 
     // 一次性拉取知识域 + 公共项目（首屏与失败重试共用）；
     // 切换视图/选域一律本地过滤，不再整页 loading——原来每次切换都是
@@ -143,6 +182,18 @@ const AssetCenterPage: React.FC = () => {
         setCurrentView('project');
     };
 
+    // 进图谱详情（第三层）时把当前知识域一起带上：返回按钮据此还原第二层。
+    // 名称也一并带过去（2026-11-25）：详情页首帧还没拉到数据，
+    // 面包屑/骨架屏直接用它，避免先显示「本体详情」再切成实际项目名
+    const openAssetDetail = (project: ProjectData) => {
+        navigate(`/asset-center/${project.id}`, {
+            state: {
+                ...(selectedDomain ? { domainId: selectedDomain.id, domainName: selectedDomain.name } : {}),
+                projectName: project.name,
+            },
+        });
+    };
+
     // 返回知识域选择视图
     const handleBackToDomains = () => {
         setCurrentView('domain');
@@ -150,11 +201,12 @@ const AssetCenterPage: React.FC = () => {
         setSearchText('');
     };
 
+    // 面包屑与层级一致（2026-11-25）：二级时「资产中心」可点回知识域总览，
+    // 一级时它就是当前页，只显示为纯文本
     const breadcrumbs = [
         { title: '首页', path: '/' },
-        { 
-            title: currentView === 'domain' ? '资产中心' : '资产中心',
-            path: currentView === 'domain' ? undefined : '/asset-center',
+        {
+            title: '资产中心',
             onClick: currentView === 'project' ? handleBackToDomains : undefined,
         },
         ...(selectedDomain && currentView === 'project' ? [{ title: selectedDomain.name }] : []),
@@ -287,8 +339,10 @@ const AssetCenterPage: React.FC = () => {
                 返回按钮也从实心默认样式降成浅底描边，把最重的位置让给搜索 */}
             <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
                 <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-2">
+                    {/* 目的地是知识域总览（一级）：叫「全部知识域」而不是「返回知识域」——
+                        当前页本身就是某个知识域，再说"返回知识域"会让人以为是回到它自己 */}
                     <Button className="tk-soft-btn" icon={<ArrowLeftOutlined />} onClick={handleBackToDomains}>
-                        返回知识域
+                        全部知识域
                     </Button>
                     {selectedDomain && selectedDomain.id !== 0 && (
                         <span className="inline-flex min-w-0 items-center gap-1.5 text-[13px] font-medium text-[#1F2A44]">
@@ -398,11 +452,11 @@ const AssetCenterPage: React.FC = () => {
                                 role="button"
                                 tabIndex={0}
                                 aria-label={`查看本体 ${project.name}`}
-                                onClick={() => navigate(`/asset-center/${project.id}`)}
+                                onClick={() => openAssetDetail(project)}
                                 onKeyDown={(e) => {
                                     if (e.key === 'Enter' || e.key === ' ') {
                                         e.preventDefault();
-                                        navigate(`/asset-center/${project.id}`);
+                                        openAssetDetail(project);
                                     }
                                 }}
                                 className="group flex flex-col rounded-2xl border border-[#E9EEF8] p-3.5 cursor-pointer transition-[border-color,box-shadow] duration-200 hover:border-[#CBD9F2] hover:shadow-[0_16px_32px_-20px_rgba(15,23,42,0.30)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"

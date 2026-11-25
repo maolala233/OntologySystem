@@ -108,7 +108,7 @@ type ProvRow = { id: number; document_id: number | null; document_name: string |
 
 function EvidenceCards({ rows, projectId }: { projectId: number; rows: ProvRow[] }) {
     const [ctxProv, setCtxProv] = useState<ProvRow | null>(null);
-    if (!rows.length) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无溯源记录" />;
+    if (!rows.length) return <EmptyLine text="暂无溯源记录" />;
     return (
         <div className="space-y-2">
             {rows.map((p) => (
@@ -165,6 +165,21 @@ function Section({ title, extra, children }: { title: React.ReactNode; extra?: R
             </div>
             {children}
         </section>
+    );
+}
+
+/**
+ * 详情分区的一行式空状态（2026-11-25）。
+ * antd Empty 的插图 + 上下留白要占近 100px，「暂无属性 / 暂无溯源 / 暂无关系」
+ * 这种一句话就能说清的事，换成一条虚线短条：仍然明确「这一项没有值」，
+ * 但不会把下面的分区一路推到抽屉外。
+ */
+function EmptyLine({ text }: { text: string }) {
+    return (
+        <div className="flex items-center gap-1.5 rounded-md border border-dashed border-[#D8E2F3] px-2.5 py-1.5 text-[11.5px] text-[#8A94AB]">
+            <span className="h-1 w-1 shrink-0 rounded-full bg-[#B7C1D4]" aria-hidden />
+            {text}
+        </div>
     );
 }
 
@@ -516,7 +531,7 @@ export const NodeDetailContent: React.FC<{
 
                     <Section title={`属性（${Object.keys(nodeDetail.properties).length}）`}>
                         {Object.keys(nodeDetail.properties).length === 0
-                            ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="无属性" />
+                            ? <EmptyLine text="暂无属性" />
                             : (
                                 <Table
                                     className="dd-table"
@@ -543,21 +558,25 @@ export const NodeDetailContent: React.FC<{
                     </Section>
 
                     <Section title={`关系（${nodeDetail.relations.length}）`}>
-                        <Table
-                            className="dd-table"
-                            size="small" pagination={{ pageSize: 8 }} rowKey="id"
-                            dataSource={nodeDetail.relations}
-                            columns={[
-                                { title: <Term t="谓词" />, dataIndex: 'predicate', width: '30%',
-                                  render: (v, r) => <Tag color={r.direction === 'out' ? 'blue' : 'green'}>{v}{r.direction === 'out' ? ' →' : ' ←'}</Tag> },
-                                { title: '对方', dataIndex: 'other_label',
-                                  render: (v, r) => r.other_id ? (
-                                      <a onClick={() => r.other_id && onNavigateNode?.(r.other_id)}>{v} <Text type="secondary" className="text-xs">{r.other_class}</Text></a>
-                                  ) : v },
-                                { title: <Term t="置信" />, dataIndex: 'confidence', width: 70,
-                                  render: (v) => v != null ? v.toFixed(2) : '—' },
-                            ]}
-                        />
+                        {nodeDetail.relations.length === 0
+                            ? <EmptyLine text="暂无关系" />
+                            : (
+                                <Table
+                                    className="dd-table"
+                                    size="small" pagination={{ pageSize: 8 }} rowKey="id"
+                                    dataSource={nodeDetail.relations}
+                                    columns={[
+                                        { title: <Term t="谓词" />, dataIndex: 'predicate', width: '30%',
+                                          render: (v, r) => <Tag color={r.direction === 'out' ? 'blue' : 'green'}>{v}{r.direction === 'out' ? ' →' : ' ←'}</Tag> },
+                                        { title: '对方', dataIndex: 'other_label',
+                                          render: (v, r) => r.other_id ? (
+                                              <a onClick={() => r.other_id && onNavigateNode?.(r.other_id)}>{v} <Text type="secondary" className="text-xs">{r.other_class}</Text></a>
+                                          ) : v },
+                                        { title: <Term t="置信" />, dataIndex: 'confidence', width: 70,
+                                          render: (v) => v != null ? v.toFixed(2) : '—' },
+                                    ]}
+                                />
+                            )}
                     </Section>
 
                     {(nodeDetail.merge.canonical_id || nodeDetail.merge.merged_children.length > 0) && (

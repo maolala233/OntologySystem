@@ -65,7 +65,7 @@ export default function ExportDialog({ open, onClose, projectId, title = '导出
         }
     };
 
-    const renderGroup = (label: string, hint: string, options: FormatOption[], twoCol = false) => (
+    const renderGroup = (label: string, hint: string, options: FormatOption[]) => (
         <div className="tk-export-group">
             <div className="tk-export-group-head">
                 <span className="tk-export-group-title">
@@ -79,15 +79,16 @@ export default function ExportDialog({ open, onClose, projectId, title = '导出
                 onChange={(e) => setFormat(e.target.value)}
                 className="tk-export-radio-group"
             >
-                <div className={twoCol ? 'tk-export-grid tk-export-grid-2' : 'tk-export-grid'}>
+                <div className="tk-export-grid">
                     {options.map((opt) => (
                         <Radio key={opt.id} value={opt.id} className="tk-export-option">
+                            {/* 单行：名称 + 扩展名徽标在左，说明靠右对齐（2026-11-25）。
+                                原来是「名称 / 说明」两行叠在左侧，右侧除了徽标整片空着，
+                                两列网格下每张卡都像有两行没写满 */}
                             <span className="tk-export-option-body">
-                                <span className="tk-export-option-main">
-                                    <span className="tk-export-option-name">{opt.label}</span>
-                                    <span className="tk-export-option-desc">{opt.desc}</span>
-                                </span>
+                                <span className="tk-export-option-name">{opt.label}</span>
                                 <span className="tk-export-option-ext">{EXPORT_FORMAT_EXT[opt.id]}</span>
+                                <span className="tk-export-option-desc">{opt.desc}</span>
                             </span>
                         </Radio>
                     ))}
@@ -110,11 +111,11 @@ export default function ExportDialog({ open, onClose, projectId, title = '导出
             destroyOnHidden
         >
             <style>{`
-                .tk-export-group { margin-bottom: 14px; }
+                .tk-export-group { margin-bottom: 12px; }
                 .tk-export-group:last-of-type { margin-bottom: 0; }
                 .tk-export-group-head {
                     display: flex; flex-wrap: wrap; align-items: baseline;
-                    gap: 2px 10px; margin-bottom: 8px;
+                    gap: 2px 10px; margin-bottom: 6px;
                 }
                 .tk-export-group-title {
                     display: inline-flex; align-items: center; gap: 6px;
@@ -126,14 +127,13 @@ export default function ExportDialog({ open, onClose, projectId, title = '导出
                 }
                 .tk-export-group-hint { color: #A3ADC2; font-size: 11.5px; }
                 .tk-export-radio-group { display: block; width: 100%; }
-                .tk-export-grid { display: grid; grid-template-columns: 1fr; gap: 8px; }
-                @media (min-width: 520px) {
-                    .tk-export-grid-2 { grid-template-columns: 1fr 1fr; }
-                }
+                /* 单行条目（2026-11-25）：由两列卡片改成通栏细行，说明靠右对齐，
+                   宽度利用起来，7 个格式也不再是"每张卡左半满、右半空" */
+                .tk-export-grid { display: flex; flex-direction: column; gap: 5px; }
                 .tk-export-option.ant-radio-wrapper {
-                    display: flex; align-items: flex-start; gap: 10px;
-                    width: 100%; margin: 0; padding: 9px 11px;
-                    border: 1px solid #E4ECF8; border-radius: 10px;
+                    display: flex; align-items: center; gap: 9px;
+                    width: 100%; margin: 0; padding: 6px 10px;
+                    border: 1px solid #E4ECF8; border-radius: 9px;
                     background: #FBFDFF;
                     transition: border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
                 }
@@ -147,19 +147,20 @@ export default function ExportDialog({ open, onClose, projectId, title = '导出
                     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 6px 14px -12px rgba(91, 141, 239, 0.55);
                 }
                 .tk-export-option.ant-radio-wrapper > span:last-child { flex: 1; min-width: 0; }
-                .tk-export-option .ant-radio { margin-top: 3px; flex: none; }
-                .tk-export-option-body { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
-                .tk-export-option-main { min-width: 0; flex: 1; }
+                .tk-export-option .ant-radio { margin: 0; flex: none; }
+                .tk-export-option-body { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
                 .tk-export-option-name {
-                    display: block; color: #1F2A44;
-                    font-size: 13px; line-height: 20px; font-weight: 500;
+                    flex: none; color: #1F2A44;
+                    font-size: 12.5px; line-height: 18px; font-weight: 500;
                 }
                 .tk-export-option-desc {
-                    display: block; margin-top: 1px; color: #8A94AB;
-                    font-size: 11.5px; line-height: 17px;
+                    margin-left: auto; min-width: 0;
+                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                    color: #8A94AB; font-size: 11.5px; line-height: 17px;
+                    text-align: right;
                 }
                 .tk-export-option-ext {
-                    flex: none; margin-top: 2px; padding: 1px 6px; border-radius: 6px;
+                    flex: none; margin: 0; padding: 1px 6px; border-radius: 6px;
                     background: rgba(91, 141, 239, 0.10); color: #2A57C6;
                     font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
                     font-size: 10.5px; line-height: 16px; letter-spacing: 0.01em;
@@ -172,15 +173,15 @@ export default function ExportDialog({ open, onClose, projectId, title = '导出
                 }
                 .tk-export-note {
                     display: flex; align-items: flex-start; gap: 8px;
-                    margin-top: 14px; padding: 8px 11px;
+                    margin-top: 10px; padding: 7px 10px;
                     border: 1px solid rgba(91, 141, 239, 0.14); border-radius: 10px;
                     background: rgba(91, 141, 239, 0.06);
                     color: #8A94AB; font-size: 11.5px; line-height: 18px;
                 }
                 .tk-export-note-icon { margin-top: 2px; flex: none; color: #5B8DEF; font-size: 12px; }
             `}</style>
-            <div className="pt-1">
-                {renderGroup('RDF 格式', '可被 Protégé / rdflib 等标准工具读取', RDF_FORMATS, true)}
+            <div>
+                {renderGroup('RDF 格式', '可被 Protégé / rdflib 等标准工具读取', RDF_FORMATS)}
                 {renderGroup('平台格式', '保留画布完整结构，可直接导回', JSON_FORMATS)}
                 <div className="tk-export-note">
                     <InfoCircleOutlined className="tk-export-note-icon" />
