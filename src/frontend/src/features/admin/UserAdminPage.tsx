@@ -381,7 +381,6 @@ const UserAdminPage: React.FC = () => {
                 <TechHero
                     compact
                     tone="light"
-                    className="!mb-4"
                     title="用户管理"
                     titleSuffix="USER DIRECTORY"
                     subtitle="管理平台账号、角色与状态；支持批量启用/停用/删除，并可查看用户名下项目"

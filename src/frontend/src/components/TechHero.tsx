@@ -118,7 +118,7 @@ const TechHero: React.FC<TechHeroProps> = ({
 
     return (
         <div
-            className={`relative overflow-hidden rounded-2xl mb-6 sm:mb-8 ${className}`}
+            className={`relative overflow-hidden rounded-2xl ${compact ? 'mb-4' : 'mb-6'} ${className}`}
             style={{
                 background: isDark || compact ? C.bg : LIGHT_BG_WIDE,
                 border: `1px solid ${C.border}`,
@@ -212,8 +212,10 @@ const TechHero: React.FC<TechHeroProps> = ({
             </svg>
 
             {/* 右侧几何装饰：六边形网架 + 虚线轨道 + 小节点。
-                紧凑版单独用更矮的尺寸和裁切后的 viewBox，避免在矮卡片里被上下截断 */}
-            {showConstellation && (
+                紧凑版单独用更矮的尺寸和裁切后的 viewBox，避免在矮卡片里被上下截断。
+                紧凑版有操作时不再画：那块空间已经由控件占据，线稿垫在按钮背后
+                只会让按钮边缘发脏 */}
+            {showConstellation && !(compact && actions) && (
                 <svg
                     className={`absolute top-1/2 -translate-y-1/2 hidden lg:block ${compact ? 'right-3 opacity-60' : '-right-4 lg:-right-6'}`}
                     width={compact ? 160 : 330}
@@ -280,63 +282,81 @@ const TechHero: React.FC<TechHeroProps> = ({
                 </svg>
             )}
 
-            <div className={`relative z-10 ${compact ? 'p-4 sm:p-5 lg:p-6' : 'p-5 sm:p-6 lg:p-7'}`}>
-                {chips.length > 0 && (
-                    <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-2.5 sm:mb-3">
-                        {chips.map((chip, i) => (
-                            <span
-                                key={i}
-                                className="tk-mono text-[11px] sm:text-xs tracking-[0.2em] px-3 py-1 rounded-full"
-                                style={isDark ? {
-                                    color: i === 0 ? TECH_COLORS.cyan : TECH_COLORS.textSub,
-                                    border: `1px solid ${TECH_COLORS.line}`,
-                                    background: i === 0 ? 'rgba(90,200,250,0.06)' : 'transparent',
-                                } : {
-                                    color: i === 0 ? '#2F62D8' : LIGHT_COLORS.textSub,
-                                    border: `1px solid ${i === 0 ? 'rgba(91,141,239,0.22)' : '#E4EAF5'}`,
-                                    background: i === 0 ? 'rgba(91,141,239,0.10)' : 'rgba(255,255,255,0.72)',
-                                }}
-                            >
-                                {chip}
-                            </span>
-                        ))}
-                    </div>
-                )}
+            {/* 紧凑版（二级页）的纵向节奏（2026-11-25 收口）：
+                原来是上下各 24px 内边距 + 24px 标题 + 10px 行距 + 14px 按钮间距，
+                一张纯信息卡在 1080 高屏上要吃掉近 1/5；现在压到 18px 内边距、
+                20px 标题、13px 副标题，文字块缩一圈，卡片不再比下方内容还抢眼。
+                宽屏上操作从副标题下方挪到右侧居中：右侧本来只挂着装饰线稿，
+                按钮过去之后卡片高度少约 40px，主操作也回到视线落点上。
+                首页大卡（工作台）同步收一档：内边距 28→20/24、标题 32→24、副标题 16→15；
+                它仍是全站最大的标题，只是不再比下方内容板还占屏。 */}
+            <div className={`relative z-10 ${compact ? 'px-4 py-3.5 sm:px-5 sm:py-4 lg:py-[18px]' : 'p-4 sm:p-5 lg:px-6 lg:py-5'}`}>
+                <div className={compact ? 'flex flex-col gap-y-3 xl:flex-row xl:items-center xl:gap-x-8' : ''}>
+                    <div className="min-w-0 flex-1">
+                        {chips.length > 0 && (
+                            <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-2.5 sm:mb-3">
+                                {chips.map((chip, i) => (
+                                    <span
+                                        key={i}
+                                        className="tk-mono text-[11px] sm:text-xs tracking-[0.2em] px-3 py-1 rounded-full"
+                                        style={isDark ? {
+                                            color: i === 0 ? TECH_COLORS.cyan : TECH_COLORS.textSub,
+                                            border: `1px solid ${TECH_COLORS.line}`,
+                                            background: i === 0 ? 'rgba(90,200,250,0.06)' : 'transparent',
+                                        } : {
+                                            color: i === 0 ? '#2F62D8' : LIGHT_COLORS.textSub,
+                                            border: `1px solid ${i === 0 ? 'rgba(91,141,239,0.22)' : '#E4EAF5'}`,
+                                            background: i === 0 ? 'rgba(91,141,239,0.10)' : 'rgba(255,255,255,0.72)',
+                                        }}
+                                    >
+                                        {chip}
+                                    </span>
+                                ))}
+                            </div>
+                        )}
 
-                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-2 sm:mb-2.5">
-                    <h1
-                        className={`${titleClass} font-bold leading-tight ${compact ? 'tracking-[-0.01em]' : 'tracking-[-0.02em]'} ${compact ? 'text-[18px] sm:text-[20px] lg:text-[24px]' : 'text-[22px] sm:text-[26px] lg:text-[32px]'}`}
-                        style={titleStyle}
-                    >
-                        {title}
-                    </h1>
-                    {titleSuffix && (
-                        <>
-                            <span
-                                aria-hidden
-                                className="hidden sm:block self-center w-px h-3.5"
-                                style={{ background: isDark ? 'rgba(255,255,255,0.18)' : '#DCE4F2' }}
-                            />
-                            <span
-                                className="tk-mono text-[10px] sm:text-[11px] tracking-[0.18em] uppercase"
-                                style={{ color: isDark ? 'rgba(201,212,255,0.6)' : '#8A94AB' }}
+                        <div className={`flex flex-wrap items-baseline gap-x-3 gap-y-1 ${compact ? 'mb-1.5' : 'mb-2'}`}>
+                            <h1
+                                className={`${titleClass} font-bold leading-tight ${compact
+                                    ? 'tracking-[-0.01em] text-[17px] sm:text-[18px] lg:text-[20px]'
+                                    : 'tracking-[-0.02em] text-[20px] sm:text-[22px] lg:text-[24px]'}`}
+                                style={titleStyle}
                             >
-                                {titleSuffix}
-                            </span>
-                        </>
+                                {title}
+                            </h1>
+                            {titleSuffix && (
+                                <>
+                                    <span
+                                        aria-hidden
+                                        className="hidden sm:block self-center w-px h-3.5"
+                                        style={{ background: isDark ? 'rgba(255,255,255,0.18)' : '#DCE4F2' }}
+                                    />
+                                    <span
+                                        className="tk-mono text-[10px] sm:text-[11px] tracking-[0.18em] uppercase"
+                                        style={{ color: isDark ? 'rgba(201,212,255,0.6)' : '#8A94AB' }}
+                                    >
+                                        {titleSuffix}
+                                    </span>
+                                </>
+                            )}
+                        </div>
+                        {subtitle && (
+                            <p
+                                // 只有「上下排布、下面还有按钮」时才留下边距；紧凑版按钮在右侧，
+                                // 文字块与操作之间的间距交给外层 flex 的 gap-y-3
+                                className={`${!compact && actions ? 'mb-3.5' : ''} ${compact ? 'max-w-2xl text-[12.5px] leading-[1.65] sm:text-[13px]' : 'max-w-2xl text-sm leading-[1.7] sm:text-[15px]'} [text-wrap:balance]`}
+                                style={{ color: C.textSub }}
+                            >
+                                {subtitle}
+                            </p>
+                        )}
+                    </div>
+                    {actions && (
+                        <div className={`flex flex-wrap gap-2.5 sm:gap-3 ${compact ? 'shrink-0 xl:justify-end' : ''}`}>
+                            {actions}
+                        </div>
                     )}
                 </div>
-                {subtitle && (
-                    <p
-                        // 只有下面还有按钮时才留下边距；否则这段 margin 会和卡片底部内边距叠加，
-                        // 让卡片"上紧下松"（我的项目/资产中心都没有 actions，表现最明显）
-                        className={`${actions ? 'mb-3.5 sm:mb-4' : ''} ${compact ? 'max-w-2xl text-sm leading-[1.6]' : 'max-w-2xl text-sm sm:text-base leading-[1.7]'} [text-wrap:balance]`}
-                        style={{ color: C.textSub }}
-                    >
-                        {subtitle}
-                    </p>
-                )}
-                {actions && <div className="flex flex-wrap gap-3 sm:gap-4">{actions}</div>}
             </div>
         </div>
     );

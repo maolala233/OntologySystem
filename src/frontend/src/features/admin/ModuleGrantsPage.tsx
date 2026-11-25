@@ -580,7 +580,6 @@ const ModuleGrantsPage: React.FC = () => {
                 <TechHero
                     compact
                     tone="light"
-                    className="!mb-4"
                     title="模块授权"
                     titleSuffix="ACCESS MATRIX"
                     subtitle="按用户配置业务模块与工具功能的开通情况；角色 = 一组可复用的模块授权预设"

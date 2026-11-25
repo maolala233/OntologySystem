@@ -144,7 +144,6 @@ const HomePage: React.FC = () => {
                 {/* ── 面一：门面。Hero 独立浮起，只放标题、副标题与两个主操作 ── */}
                 <TechHero
                     tone="light"
-                    className="!mb-6"
                     title="企业级语义知识及本体治理平台"
                     titleSuffix="WORKBENCH"
                     subtitle="基于 AI 的本体构建 · 知识图谱 · 溯源治理一站式流水线，让知识资产沉淀为可计算的服务"
@@ -156,7 +155,7 @@ const HomePage: React.FC = () => {
                                         type="primary"
                                         icon={<RocketOutlined />}
                                         onClick={() => navigate('/my-projects')}
-                                        className="h-9 sm:h-10 px-4 sm:px-6 border-0"
+                                        className="h-9 sm:h-10 px-4 sm:px-5 border-0"
                                         style={{ background: `linear-gradient(95deg, ${C.blue}, ${C.purple})`, boxShadow: '0 8px 20px -10px rgba(91,141,239,0.55)' }}
                                     >
                                         开始使用
@@ -166,7 +165,7 @@ const HomePage: React.FC = () => {
                                     <Button
                                         icon={<ArrowRightOutlined />}
                                         onClick={() => navigate('/asset-center')}
-                                        className="tk-soft-btn h-9 sm:h-10 px-4 sm:px-6"
+                                        className="tk-soft-btn h-9 sm:h-10 px-4 sm:px-5"
                                     >
                                         浏览资产中心
                                     </Button>

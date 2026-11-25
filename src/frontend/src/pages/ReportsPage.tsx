@@ -301,7 +301,6 @@ export default function ReportsPage() {
                 <TechHero
                     compact
                     tone="light"
-                    className="!mb-4"
                     title={isPpt ? 'PPT 演示生成' : '主题分析报告'}
                     titleSuffix={isPpt ? 'SLIDE STUDIO' : 'REPORT STUDIO'}
                     subtitle={isPpt

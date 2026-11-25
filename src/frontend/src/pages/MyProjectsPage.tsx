@@ -784,7 +784,6 @@ const MyProjectsPage: React.FC = () => {
                 <TechHero
                     compact
                     tone="light"
-                    className="!mb-4"
                     title={isSuperAdmin && scope === 'all' ? '全部项目' : '我的项目'}
                     titleSuffix="PROJECT WORKSPACE"
                     subtitle={isSuperAdmin && scope === 'all'

@@ -265,7 +265,6 @@ const EnvConfigPage: React.FC = () => {
         <TechHero
             compact
             tone="light"
-            className="!mb-4"
             title="环境配置"
             titleSuffix="RUNTIME ENV"
             subtitle="中间件连接参数 · 修改保存后 API 进程即时生效（无需重启后端）"

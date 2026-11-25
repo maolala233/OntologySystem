@@ -463,7 +463,6 @@ const AssetCenterPage: React.FC = () => {
                 <TechHero
                     compact
                     tone="light"
-                    className="!mb-4"
                     title="资产中心"
                     titleSuffix="PUBLIC ONTOLOGIES"
                     subtitle="浏览已发布的公共本体资产：按知识域归类 · 只读快照 · 支持在线检索与图谱预览"

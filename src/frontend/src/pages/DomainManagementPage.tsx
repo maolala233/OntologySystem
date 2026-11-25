@@ -459,7 +459,6 @@ const DomainManagementPage: React.FC = () => {
                 <TechHero
                     compact
                     tone="light"
-                    className="!mb-4"
                     title="知识域管理"
                     titleSuffix="DOMAIN REGISTRY"
                     subtitle="管理系统中的知识域分类：新建、编辑、删除，以及知识域之间的项目迁移"

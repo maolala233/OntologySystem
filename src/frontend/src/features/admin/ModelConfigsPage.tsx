@@ -353,7 +353,6 @@ const ModelConfigsPage: React.FC = () => {
                 <TechHero
                     compact
                     tone="light"
-                    className="!mb-4"
                     title="模型配置"
                     titleSuffix="MODEL REGISTRY"
                     subtitle="配置抽取 / 对话 / 嵌入 / 视觉四类模型服务；全局配置由管理员维护，项目级配置由项目 owner 维护"
