@@ -53,11 +53,6 @@ export const authAPI = {
         return response.data as MeResponse;
     },
 
-    refresh: async (refresh_token: string) => {
-        const response = await apiClient.post('/api/auth/refresh', { refresh_token });
-        return response.data as AuthResponse;
-    },
-
     updateMe: async (data: { display_name?: string; locale?: string }) => {
         const response = await apiClient.put('/api/auth/me', data);
         return response.data;

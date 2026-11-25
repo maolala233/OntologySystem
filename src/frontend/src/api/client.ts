@@ -3,14 +3,7 @@ import { rememberReturnPath } from '../shared/auth/returnPath';
 
 // 运行时动态获取API基础URL - 不依赖构建时的环境变量
 const getApiBaseUrl = () => {
-    // 方法 1: 从 URL 参数获取（用于测试）
-    const urlParams = new URLSearchParams(window.location.search);
-    const apiHost = urlParams.get('api_host');
-    if (apiHost) {
-        return `http://${apiHost}:8000`;
-    }
-
-    // 方法 2: 使用当前页面的 host（推荐）
+    // 使用当前页面的 host（推荐）
     const currentHost = window.location.host;
 
     // 容器化/反代同域部署（nginx 已把 /api、/mcp 反代到后端）：
@@ -22,22 +15,23 @@ const getApiBaseUrl = () => {
     }
 
     // 如果是 localhost 或 127.0.0.1，使用 localhost:3001（与后端端口一致）
+    const protocol = window.location.protocol;
     if (currentHost === 'localhost' || currentHost === '127.0.0.1') {
-        return 'http://localhost:3001';
+        return `${protocol}//localhost:3001`;
     }
 
-    // 对于远程访问，移除端口号后加上:3001
+    // 对于远程访问，移除端口号后加上:3001；沿用页面协议，避免 HTTPS 页面拼出 http 直链（混合内容）
     const hostWithoutPort = currentHost.replace(/:\d+$/, '');
-    return `http://${hostWithoutPort}:3001`;
+    return `${protocol}//${hostWithoutPort}:3001`;
 };
 
 const API_BASE_URL = getApiBaseUrl();
 
-console.log('API Base URL:', API_BASE_URL); // 调试用
-
 const apiClient = axios.create({
     baseURL: API_BASE_URL,
-    timeout: 600000,
+    // 默认 120s（2026-11-25：原为 10 分钟，接口挂起时用户要等太久）。
+    // 上传、导出、推理等等待久的接口在调用处单独放宽（见 api/projects.ts / documents.ts / reasoning.ts）
+    timeout: 120_000,
 });
 
 // 请求拦截器 - 添加认证token
@@ -106,7 +100,12 @@ export function clearStoredSession(): void {
     localStorage.removeItem('user');
 }
 
+let loggingOut = false;
+
 function forceLogout() {
+    // 并发多个 401 会同时走到这里：只跳转一次
+    if (loggingOut) return;
+    loggingOut = true;
     clearStoredSession();
     rememberReturnPath();
     window.location.href = '/login';
@@ -126,7 +125,7 @@ apiClient.interceptors.response.use(
             original._retry = true;
             const outcome = await refreshSessionOnce();
             if (outcome.ok) {
-                original.headers = { ...(original.headers || {}), Authorization: `Bearer ${outcome.token}` };
+                // 重放时请求拦截器会从 localStorage 重新取新 token，不必手动改 headers
                 return apiClient(original);
             }
             if (outcome.failure === 'expired') forceLogout();
@@ -151,8 +150,9 @@ const inflightGets = new Map<string, { at: number; p: Promise<unknown> }>();
 const rawGet = apiClient.get.bind(apiClient) as typeof apiClient.get;
 
 apiClient.get = ((url: string, config?: Parameters<typeof rawGet>[1]) => {
-    // 带取消信号的 GET 不合并：合并后一方 abort 会连带取消另一方的请求
-    if (config?.signal) return rawGet(url, config);
+    // 带取消信号或自定义请求头的 GET 不合并：合并键只表达 params/responseType，
+    // 信号一方 abort 会连带取消另一方，头不同则可能串结果
+    if (config?.signal || config?.headers) return rawGet(url, config);
     // 一次性票据不合并：两个 EventSource 必须各拿各的 ticket
     if (url.includes('/api/auth/sse-ticket')) return rawGet(url, config);
     let paramsKey: string;
@@ -161,7 +161,7 @@ apiClient.get = ((url: string, config?: Parameters<typeof rawGet>[1]) => {
     } catch {
         return rawGet(url, config); // 参数不可序列化（循环引用等）：不参与合并
     }
-    const key = `${url}?${paramsKey}#${config?.responseType ?? ''}`;
+    const key = `${url}?${paramsKey}#${config?.responseType ?? ''}@${config?.timeout ?? ''}`;
     const hit = inflightGets.get(key);
     if (hit && Date.now() - hit.at < INFLIGHT_WINDOW_MS) return hit.p;
     const p = rawGet(url, config);

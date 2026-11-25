@@ -11,6 +11,8 @@ import {
 } from '@ant-design/icons';
 
 import { reasoningApi, type DeclaredAxiom, type OntologyRule, type ReasoningItem, type ReasoningSummary, type RuleSuggestion } from '../../../api/reasoning';
+import apiClient from '../../../api/client';
+import { triggerBlobDownload } from '../../../utils/blobDownload';
 
 const SOURCE_TAG: Record<string, { color: string; label: string }> = {
     owlrl: { color: '#5B8DEF', label: 'OWL-RL 蕴含' },
@@ -178,19 +180,17 @@ const ReasoningModal: React.FC<{
     };
     const exportInferred = async (fmt: string) => {
         try {
-            const resp = await fetch(`/api/projects/${projectId}/export?format=${fmt}&include_inferred=true`, {
-                headers: { Authorization: `Bearer ${localStorage.getItem('access_token') || ''}` },
+            const { data } = await apiClient.get(`/api/projects/${projectId}/export`, {
+                params: { format: fmt, include_inferred: true },
+                responseType: 'blob',
+                timeout: 300_000, // 含推理的导出可能跑几分钟，单独放宽
             });
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const blob = await resp.blob();
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `ontology_project_${projectId}_inferred.${EXPORT_FMT_EXT[fmt] || fmt}`;
-            a.click();
-            URL.revokeObjectURL(url);
+            triggerBlobDownload(
+                new Blob([data]),
+                `ontology_project_${projectId}_inferred.${EXPORT_FMT_EXT[fmt] || fmt}`,
+            );
         } catch (e: any) {
-            message.error('导出失败，请重试');
+            notifyError(e, '导出失败，请重试');
         }
     };
 

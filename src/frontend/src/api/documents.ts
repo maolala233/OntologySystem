@@ -44,7 +44,11 @@ export const documentsApi = {
         const response = await apiClient.post(
             `/api/projects/${projectId}/documents/upload?${qs.toString()}`,
             formData,
-            { headers: { 'Content-Type': 'multipart/form-data' } },
+            {
+                headers: { 'Content-Type': 'multipart/form-data' },
+                // 后端单文件上限 200MB：上传不走 120s 默认超时
+                timeout: 600_000,
+            },
         );
         return response.data;
     },

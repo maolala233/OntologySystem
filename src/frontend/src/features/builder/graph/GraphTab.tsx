@@ -15,6 +15,7 @@ import {
     ShrinkOutlined, ThunderboltOutlined, UnorderedListOutlined,
 } from '@ant-design/icons';
 
+import apiClient from '../../../api/client';
 import { projectsApi } from '../../../api/projects';
 import { setUnsavedGuard } from '../../../utils/unsavedGuard';
 import Tip from '../../../shared/Tip';
@@ -505,16 +506,10 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
 
     const startResolution = async () => {
         try {
-            const r = await fetch(`${window.location.origin}/api/projects/${projectId}/resolution/run`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${localStorage.getItem('access_token') || ''}`,
-                },
-                body: JSON.stringify({ blocking: 'pinyin' }),
-            });
-            if (!r.ok) throw new Error(`HTTP ${r.status}`);
-            const data = await r.json();
+            const { data } = await apiClient.post(
+                `/api/projects/${projectId}/resolution/run`,
+                { blocking: 'pinyin' },
+            );
             setProgressTitle('实体消解（拼音 blocking）');
             setTaskId(data.task_id);
             setProgressOpen(true);
@@ -526,16 +521,7 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
     const detectConflicts = async () => {
         try {
             // 后端路由为 POST /api/projects/{id}/conflicts/detect（无 /resolution 前缀）
-            const r = await fetch(`${window.location.origin}/api/projects/${projectId}/conflicts/detect`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${localStorage.getItem('access_token') || ''}`,
-                },
-                body: JSON.stringify({}),
-            });
-            if (!r.ok) throw new Error(`HTTP ${r.status}`);
-            const data = await r.json();
+            const { data } = await apiClient.post(`/api/projects/${projectId}/conflicts/detect`, {});
             // 异步任务：复用一个进度窗口（TaskProgressModal onCompleted 已绑定 refresh）
             setProgressTitle('冲突检测');
             setTaskId(data.task_id);
@@ -549,19 +535,11 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
     // 走 extract 任务框架，复用 TaskProgressModal（分阶段进度 + 可人工取消） ──
     const scanAxioms = async () => {
         try {
-            const r = await fetch(`${window.location.origin}/api/projects/${projectId}/axiom-suggestions/run?channel=llm`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${localStorage.getItem('access_token') || ''}`,
-                },
-                body: JSON.stringify({}),
-            });
-            if (!r.ok) {
-                const err = await r.json().catch(() => ({}));
-                throw new Error(err?.error?.message || `HTTP ${r.status}`);
-            }
-            const data = await r.json();
+            const { data } = await apiClient.post(
+                `/api/projects/${projectId}/axiom-suggestions/run`,
+                {},
+                { params: { channel: 'llm' } },
+            );
             setProgressTitle('AI 公理扫描');
             setTaskId(data.task_id);
             setProgressOpen(true);

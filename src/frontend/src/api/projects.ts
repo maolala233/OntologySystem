@@ -195,6 +195,7 @@ export const projectsApi = {
 
         const response = await apiClient.post(`/api/projects/${projectId}/upload`, formData, {
             headers: { 'Content-Type': 'multipart/form-data' },
+            timeout: 600_000, // 大文件上传
         });
         return response.data;
     },
@@ -206,6 +207,7 @@ export const projectsApi = {
 
         const response = await apiClient.post(`/api/projects/${projectId}/upload-ttl`, formData, {
             headers: { 'Content-Type': 'multipart/form-data' },
+            timeout: 600_000, // 大文件上传
         });
         return response.data;
     },
@@ -224,6 +226,7 @@ export const projectsApi = {
         const response = await apiClient.get(`/api/projects/${projectId}/export`, {
             params: { format },
             responseType: 'blob',
+            timeout: 300_000, // 大图导出/含推理时较慢
         });
 
         const fallback = `ontology_project_${projectId}.${EXPORT_FORMAT_EXT[format]}`;
@@ -291,6 +294,7 @@ export const projectsApi = {
             formData,
             {
                 headers: { 'Content-Type': 'multipart/form-data' },
+                timeout: 300_000, // 同步 Schema 抽取可能跑几分钟（与 nginx 300s 对齐）
             }
         );
         return response.data;
@@ -332,6 +336,7 @@ export const projectsApi = {
             formData,
             {
                 headers: { 'Content-Type': 'multipart/form-data' },
+                timeout: 300_000, // 同步实例抽取可能跑几分钟（与 nginx 300s 对齐）
             }
         );
         return response.data;
@@ -371,6 +376,7 @@ export const projectsApi = {
             formData,
             {
                 headers: { 'Content-Type': 'multipart/form-data' },
+                timeout: 300_000, // 大文档解析可能超过默认 120s
             }
         );
         // response.data 已经是后端返回的数据对象
@@ -441,6 +447,7 @@ export const projectsApi = {
             formData,
             {
                 headers: { 'Content-Type': 'multipart/form-data' },
+                timeout: 300_000, // 同步抽取可能跑几分钟
             }
         );
         return response.data;
@@ -488,6 +495,7 @@ export const projectsApi = {
             formData,
             {
                 headers: { 'Content-Type': 'multipart/form-data' },
+                timeout: 300_000, // 同步抽取可能跑几分钟
             }
         );
         return response.data;
@@ -519,6 +527,7 @@ export const projectsApi = {
             formData,
             {
                 headers: { 'Content-Type': 'multipart/form-data' },
+                timeout: 300_000, // 非流式 LLM 问答可能超过默认 120s
             }
         );
         return response.data;

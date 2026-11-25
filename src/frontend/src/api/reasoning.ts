@@ -90,7 +90,9 @@ export interface AxiomBody {
 
 export const reasoningApi = {
     run: async (projectId: number, body?: { profile?: string; rule_ids?: number[] }): Promise<ReasoningSummary> => {
-        const response = await apiClient.post(`/api/projects/${projectId}/reasoning/run`, body || {});
+        const response = await apiClient.post(`/api/projects/${projectId}/reasoning/run`, body || {}, {
+            timeout: 300_000, // 规则推理可能要跑几分钟，默认 120s 不够
+        });
         return response.data;
     },
     getResults: async (projectId: number, params?: { limit?: number; offset?: number; source?: string }): Promise<{
