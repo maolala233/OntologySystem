@@ -188,6 +188,8 @@ const ScorecardPage: React.FC = () => {
         { id: 'review', label: '待审项', value: String(data.pending_reviews), status: 'info' },
     ];
 
+    // 居中阅读页：max-width 居中，左右留白天然对称；不套 PageScroll，
+    // padding 24 自行兜底（老浏览器没有滚动条槽时也一样）
     return (
         <div className="h-full overflow-y-auto scrollbar-stable" style={{ padding: 24, maxWidth: 1100, margin: '0 auto' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>

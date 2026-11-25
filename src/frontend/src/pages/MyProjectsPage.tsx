@@ -33,6 +33,7 @@ import { fmtSchedule, fmtScheduleFull } from '../shared/schedule';
 import { useImeSafeSearch } from '../shared/useImeSafeSearch';
 import { UPLOAD_ACCEPT, UPLOAD_EXTS, UPLOAD_TYPE_LABEL, MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from '../features/builder/documents/uploadFormats';
 import Navbar from '../components/Layout/Navbar';
+import PageScroll from '../components/Layout/PageScroll';
 import TechHero, { TECH_COLORS } from '../components/TechHero';
 import { documentsApi } from '../api/documents';
 import { pipelineApi } from '../api/pipeline';
@@ -787,7 +788,7 @@ const MyProjectsPage: React.FC = () => {
             `}</style>
             <Navbar breadcrumbs={breadcrumbs} />
 
-            <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
+            <PageScroll>
                 <TechHero
                     compact
                     tone="light"
@@ -1140,7 +1141,7 @@ const MyProjectsPage: React.FC = () => {
                         )}
                     </>
                 )}
-            </div>
+            </PageScroll>
 
             {/* 创建项目弹窗（2026-11 改版：文档可选；构建时机一级；标准构建；定时须晚于当前时间） */}
             <Modal

@@ -24,6 +24,7 @@ import type { ProjectData } from '../types/ontology';
 import { useLocation, useNavigate } from 'react-router-dom';
 import MarkdownAnswer from '../features/qa/MarkdownAnswer';
 import Navbar from '../components/Layout/Navbar';
+import PageScroll from '../components/Layout/PageScroll';
 import TechHero from '../components/TechHero';
 import { Dot, Note, SectionHead, TkTag } from '../shared/consoleUi';
 
@@ -321,7 +322,7 @@ export default function ReportsPage() {
                 }
             `}</style>
             <Navbar breadcrumbs={[{ title: '首页', path: '/' }, { title: '工具' }, { title: isPpt ? 'PPT生成' : '报告生成' }]} />
-            <div className="rp-page p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
+            <PageScroll className="rp-page">
                 <TechHero
                     compact
                     tone="light"
@@ -781,7 +782,7 @@ export default function ReportsPage() {
                         )}
                     </div>
                 </div>
-            </div>
+            </PageScroll>
         </div>
     );
 }

@@ -264,9 +264,36 @@ body .ant-breadcrumb .ant-breadcrumb-item a:hover {
   scrollbar-color: rgba(100, 116, 139, 0.30) transparent;
 }
 
-/* 内容区滚动容器：始终预留滚动条槽位，避免滚动条出现/消失导致布局抖动 */
+/* 内容区滚动容器：两侧都预留滚动条槽位（2026-11-25）。
+   stable：滚动条不出现时也占位，页面切换不抖动；
+   both-edges：左右各留 8px，左右留白对称，滚动条出现/消失内容完全不动 */
 .scrollbar-stable {
-  scrollbar-gutter: stable;
+  scrollbar-gutter: stable both-edges;
+}
+
+/* 页面内容滚动容器（见 components/Layout/PageScroll.tsx）：
+   左右 16 + 两侧滚动条槽 8 = 视觉 24，与页头 Navbar 对齐；上下移动端 16 / 桌面 24 */
+.page-scroll {
+  padding: 16px;
+}
+
+@media (min-width: 640px) {
+  .page-scroll {
+    padding-top: 24px;
+    padding-bottom: 24px;
+  }
+}
+
+/* 不支持 scrollbar-gutter 的老浏览器（Safari ≤ 18.1）：两侧槽位不存在，
+   桌面把左右补回 8px，仍与页头 24 对齐；滚动条出现时内容会有 8px 位移，
+   属该浏览器能力所限的降级 */
+@supports not (scrollbar-gutter: stable) {
+  @media (min-width: 640px) {
+    .page-scroll {
+      padding-left: 24px;
+      padding-right: 24px;
+    }
+  }
 }
 
 /* 侧边栏菜单滚动条：侧栏改浅色后沿用全站的浅色细滚动条（6px） */

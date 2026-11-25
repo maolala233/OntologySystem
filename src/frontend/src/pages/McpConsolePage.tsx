@@ -29,6 +29,7 @@ import { useAuthStore } from '../shared/auth/authStore';
 import type { AdminUser } from '../api/admin';
 import type { ProjectData } from '../types/ontology';
 import Navbar from '../components/Layout/Navbar';
+import PageScroll from '../components/Layout/PageScroll';
 
 const MCP_SKILL_TEXT = `---
 name: ontology-platform-retrieval
@@ -662,7 +663,7 @@ export default function McpConsolePage() {
                 .mcp-page .mcp-page-tabs .ant-tabs-tab-active .ant-tabs-tab-btn { color: #2A57C6; font-weight: 600; }
             `}</style>
             <Navbar breadcrumbs={[{ title: '首页', path: '/' }, { title: '工具' }, { title: 'MCP 服务' }]} />
-            <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable mcp-page">
+            <PageScroll className="mcp-page">
                 {/* 行高不再写死：左卡按内容收尾，右栏高度由它测得的变量决定，
                     两栏下沿对齐（2026-11-25） */}
                 <div className="grid gap-4 xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
@@ -1471,7 +1472,7 @@ export default function McpConsolePage() {
                         </div>
                     )}
                 </section>
-            </div>
+            </PageScroll>
 
                         {/* ── 签发令牌弹窗 */}
             <Modal

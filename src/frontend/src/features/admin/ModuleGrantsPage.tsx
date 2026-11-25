@@ -17,6 +17,7 @@ import {
 } from '@ant-design/icons';
 import { adminApi, AdminModule, AdminRole, AdminUser } from '../../api/admin';
 import Navbar from '../../components/Layout/Navbar';
+import PageScroll from '../../components/Layout/PageScroll';
 import TechHero from '../../components/TechHero';
 import { Note, PageLoading, SectionHead, StatBand, TkTag } from '../../shared/consoleUi';
 import { useImeSafeSearch } from '../../shared/useImeSafeSearch';
@@ -583,7 +584,7 @@ const ModuleGrantsPage: React.FC = () => {
                 { title: '模块授权' },
             ]} />
 
-            <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
+            <PageScroll>
                 <TechHero
                     compact
                     tone="light"
@@ -875,7 +876,7 @@ const ModuleGrantsPage: React.FC = () => {
                     .mg-legend--allow { background: #5B8DEF; color: #FFFFFF; }
                     .mg-legend--deny { background: rgba(180, 35, 24, 0.10); color: #B42318; }
                 `}</style>
-            </div>
+            </PageScroll>
         </div>
     );
 };

@@ -23,6 +23,7 @@ import BuildResultsPanel from '../features/builder/components/BuildResultsPanel'
 import { useBuilderStore } from '../features/builder/store';
 import type { ProjectData } from '../types/ontology';
 import Navbar from '../components/Layout/Navbar';
+import PageScroll from '../components/Layout/PageScroll';
 import Tip from '../shared/Tip';
 
 const ProjectOverviewPage: React.FC = () => {
@@ -376,9 +377,9 @@ const ProjectOverviewPage: React.FC = () => {
                 { title: '我的项目', path: '/my-projects' },
                 { title: projectReady && projectName ? projectName : '项目详情' },
             ]} />
-            {/* 页面留白与工作台 / 我的项目统一（2026-11-16）：p-4 sm:p-6，不再用 lg:px-8 +
+            {/* 页面留白与工作台 / 我的项目统一（2026-11-16）：p-4 sm:py-6（左右 16 + 滚动槽 8 = 视觉 24），不再用 lg:px-8 +
                 2xl:max-w-[1600px] 居中——那套让详情页在宽屏上比同级页面更"缩"，边界也对不齐 */}
-            <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
+            <PageScroll>
                 {/* 主体：构建 / 文档 / 结果原本是三张独立白卡，堆在一起像三块板子；
                     现在收进同一张白面，用发丝线分段。子组件自身的 Card 由 .overview-stack
                     压平（只影响本页，专家模式 Tab 里的用法不变） */}
@@ -476,7 +477,7 @@ const ProjectOverviewPage: React.FC = () => {
                                            onPublishedChange={() => { load(); loadProject(pid); }} />
                     )}
                 </div>
-            </div>
+            </PageScroll>
 
         </div>
     );

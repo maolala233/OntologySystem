@@ -16,6 +16,38 @@ import type { ButtonProps } from 'antd';
 import { CheckCircleFilled, CopyOutlined } from '@ant-design/icons';
 import { message } from './feedback';
 
+/**
+ * 复制文本（2026-11-25）。
+ * navigator.clipboard 只在安全上下文（HTTPS / localhost）存在；本项目按明文
+ * HTTP 部署（http://IP:80），此时它是 undefined，直接调用会让全站复制按钮失效。
+ * 顺序：先走 Clipboard API（权限被拒也回退），再退回隐藏 textarea + execCommand。
+ */
+async function writeClipboard(value: string): Promise<void> {
+    if (navigator.clipboard?.writeText) {
+        try {
+            await navigator.clipboard.writeText(value);
+            return;
+        } catch {
+            // 权限被拒 / 非安全上下文：继续走兜底
+        }
+    }
+    const ta = document.createElement('textarea');
+    ta.value = value;
+    ta.setAttribute('readonly', '');
+    ta.setAttribute('aria-hidden', 'true');
+    ta.style.position = 'fixed';
+    ta.style.top = '-1000px';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    try {
+        ta.select();
+        ta.setSelectionRange(0, value.length);
+        if (!document.execCommand('copy')) throw new Error('execCommand copy failed');
+    } finally {
+        document.body.removeChild(ta);
+    }
+}
+
 export interface CopyButtonProps extends Omit<ButtonProps, 'icon' | 'onClick'> {
     /** 要复制的内容；传函数可以延迟取值（点击时才计算） */
     text: string | (() => string);
@@ -42,7 +74,7 @@ const CopyButton: React.FC<CopyButtonProps> = ({
 
     const copy = useCallback(async () => {
         try {
-            await navigator.clipboard.writeText(typeof text === 'function' ? text() : text);
+            await writeClipboard(typeof text === 'function' ? text() : text);
             setCopied(true);
             if (timerRef.current != null) window.clearTimeout(timerRef.current);
             timerRef.current = window.setTimeout(() => setCopied(false), 1500);

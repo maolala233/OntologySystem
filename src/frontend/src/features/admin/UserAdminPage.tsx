@@ -13,11 +13,12 @@ import {
     WarningOutlined,
 } from '@ant-design/icons';
 import CopyButton from '../../shared/CopyButton';
-import { confirmModal, message, notifyError } from '../../shared/feedback';
+import { message, notifyError } from '../../shared/feedback';
 import { adminApi, AdminUser } from '../../api/admin';
 import { useAuthStore } from '../../shared/auth/authStore';
 import { PROJECT_STATUS, statusChip } from '../../shared/projectStatus';
 import Navbar from '../../components/Layout/Navbar';
+import PageScroll from '../../components/Layout/PageScroll';
 import TechHero from '../../components/TechHero';
 import { Dot, StatBand, TkTag, PageLoading } from '../../shared/consoleUi';
 import Tip from '../../shared/Tip';
@@ -142,28 +143,21 @@ const UserAdminPage: React.FC = () => {
         }
     };
 
-    const handleResetPassword = (u: AdminUser) => {
-        // 重置会立即让旧密码失效，属于敏感操作：先确认，再调接口
-        confirmModal({
-            title: `重置密码 · ${u.username}`,
-            content: '重置后该用户的旧密码立即失效，系统会生成一个一次性新密码（仅本次显示）。确定要重置吗？',
-            okText: '确认重置',
-            cancelText: '取消',
-            onOk: async () => {
-                if (rowBusy) return;
-                setRowBusy({ id: u.id, action: 'reset' });
-                try {
-                    const resp = await adminApi.patchUser(u.id, { reset_password: true });
-                    setResetTarget(u);
-                    setOneTimePassword(resp.password || '');
-                    load();
-                } catch (err: any) {
-                    notifyError(err, '重置失败');
-                } finally {
-                    setRowBusy(null);
-                }
-            },
-        });
+    const handleResetPassword = async (u: AdminUser) => {
+        // 二次确认放在行内 Popconfirm（与停用/删除一致），这里只负责调接口；
+        // 成功后的弹窗仅用于展示一次性新密码（关闭即不可再查看）
+        if (rowBusy) return;
+        setRowBusy({ id: u.id, action: 'reset' });
+        try {
+            const resp = await adminApi.patchUser(u.id, { reset_password: true });
+            setResetTarget(u);
+            setOneTimePassword(resp.password || '');
+            load();
+        } catch (err: any) {
+            notifyError(err, '重置失败');
+        } finally {
+            setRowBusy(null);
+        }
     };
 
     const handleDelete = async (u: AdminUser) => {
@@ -306,19 +300,26 @@ const UserAdminPage: React.FC = () => {
         },
         {
             title: '操作', key: 'action', width: 270,
+            // 行内按钮不挂 antd 的 loading：spinner 会插在文字前，把「停用/启用」向右推；
+            // 执行进度由 Popconfirm 确认按钮的 loading 承担
             render: (_: any, record: AdminUser) => (
                 <Space size={0}>
                     <Button size="small" type="link" icon={<FolderOpenOutlined />}
                         onClick={() => openProjects(record)}>项目</Button>
-                    <Button
-                        size="small"
-                        type="link"
-                        loading={rowBusy?.id === record.id && rowBusy.action === 'reset'}
-                        disabled={batchBusy || (!!rowBusy && !(rowBusy.id === record.id && rowBusy.action === 'reset'))}
-                        onClick={() => handleResetPassword(record)}
+                    <Popconfirm
+                        title={`确定重置用户 ${record.username} 的密码？`}
+                        description="重置后旧密码立即失效，系统会生成一次性新密码（仅本次显示）。"
+                        okText="重置" cancelText="取消" okButtonProps={{ danger: true }}
+                        onConfirm={() => handleResetPassword(record)}
                     >
-                        重置密码
-                    </Button>
+                        <Button
+                            size="small"
+                            type="link"
+                            disabled={batchBusy || (!!rowBusy && !(rowBusy.id === record.id && rowBusy.action === 'reset'))}
+                        >
+                            重置密码
+                        </Button>
+                    </Popconfirm>
                     <Popconfirm
                         title={record.is_active
                             ? `确定停用用户 ${record.username}？`
@@ -333,7 +334,6 @@ const UserAdminPage: React.FC = () => {
                         disabled={record.role === 'admin'}
                     >
                         <Button size="small" type="link" danger={record.is_active}
-                                loading={rowBusy?.id === record.id && rowBusy.action === 'toggle'}
                                 disabled={record.role === 'admin' || batchBusy
                                     || (!!rowBusy && !(rowBusy.id === record.id && rowBusy.action === 'toggle'))}>
                             {record.is_active ? '停用' : '启用'}
@@ -349,7 +349,6 @@ const UserAdminPage: React.FC = () => {
                             size="small"
                             type="link"
                             danger
-                            loading={rowBusy?.id === record.id && rowBusy.action === 'delete'}
                             disabled={batchBusy || (!!rowBusy && !(rowBusy.id === record.id && rowBusy.action === 'delete'))}
                         >
                             删除
@@ -368,7 +367,7 @@ const UserAdminPage: React.FC = () => {
                 { title: '用户管理' },
             ]} />
 
-            <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
+            <PageScroll>
                 <TechHero
                     compact
                     tone="light"
@@ -647,7 +646,7 @@ const UserAdminPage: React.FC = () => {
                         </div>
                     )}
                 </Drawer>
-            </div>
+            </PageScroll>
         </div>
     );
 };

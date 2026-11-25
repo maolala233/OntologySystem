@@ -13,6 +13,7 @@ import {
     SwapOutlined,
 } from '@ant-design/icons';
 import Navbar from '../components/Layout/Navbar';
+import PageScroll from '../components/Layout/PageScroll';
 import TechHero from '../components/TechHero';
 import { Dot, Note, PageLoading, StatBand, TkTag } from '../shared/consoleUi';
 import { getDomains, invalidateDomains, createDomain, updateDomain, deleteDomain, getDomainProjects, migrateProjectsBatch, KnowledgeDomain, ProjectInDomain } from '../api/domains';
@@ -455,7 +456,7 @@ const DomainManagementPage: React.FC = () => {
         <div className="h-full flex flex-col app-canvas">
             <Navbar breadcrumbs={breadcrumbs} />
 
-            <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
+            <PageScroll>
                 <TechHero
                     compact
                     tone="light"
@@ -542,7 +543,7 @@ const DomainManagementPage: React.FC = () => {
                     />
                 </div>
                 )}
-            </div>
+            </PageScroll>
 
             {/* 创建/编辑知识域弹窗 */}
             <Modal

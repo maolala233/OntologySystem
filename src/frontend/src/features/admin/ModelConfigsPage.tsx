@@ -21,6 +21,7 @@ import { useAuthStore } from '../../shared/auth/authStore';
 import { projectsApi } from '../../api/projects';
 import { ProjectData } from '../../types/ontology';
 import Navbar from '../../components/Layout/Navbar';
+import PageScroll from '../../components/Layout/PageScroll';
 import TechHero from '../../components/TechHero';
 import { Dot, Note, PageLoading, SectionHead, StatBand, TkTag } from '../../shared/consoleUi';
 import Tip from '../../shared/Tip';
@@ -349,7 +350,7 @@ const ModelConfigsPage: React.FC = () => {
                 { title: '模型配置' },
             ]} />
 
-            <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
+            <PageScroll>
                 <TechHero
                     compact
                     tone="light"
@@ -707,7 +708,7 @@ const ModelConfigsPage: React.FC = () => {
                     /* 最后一项（含底部 Note）不再留底距，底部只保留抽屉 body 的 8px */
                     .mc-form .ant-form-item:last-of-type { margin-bottom: 0; }
                 `}</style>
-            </div>
+            </PageScroll>
         </div>
     );
 };

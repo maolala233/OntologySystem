@@ -3,6 +3,7 @@ import { Empty, Spin, message, Input, Select, Button } from 'antd';
 import { UserOutlined, NodeIndexOutlined, DatabaseOutlined, ApartmentOutlined, ArrowLeftOutlined, ArrowRightOutlined, ReloadOutlined, SearchOutlined, ShareAltOutlined } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import Navbar from '../components/Layout/Navbar';
+import PageScroll from '../components/Layout/PageScroll';
 import EmptyState from '../components/EmptyState';
 import TechHero from '../components/TechHero';
 import { projectsApi } from '../api/projects';
@@ -521,7 +522,7 @@ const AssetCenterPage: React.FC = () => {
             `}</style>
             <Navbar breadcrumbs={breadcrumbs} />
 
-            <div ref={scrollRef} className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
+            <PageScroll ref={scrollRef}>
                 <TechHero
                     compact
                     tone="light"
@@ -531,7 +532,7 @@ const AssetCenterPage: React.FC = () => {
                     showConstellation={currentView === 'domain'}
                 />
                 {currentView === 'domain' ? renderDomainSelectionView() : renderProjectListView()}
-            </div>
+            </PageScroll>
         </div>
     );
 };

@@ -24,6 +24,7 @@ import {
 } from '@ant-design/icons';
 import { envConfigApi, EnvConfigResponse, EnvFieldRow, EnvTestResult, EnvUpdateResult } from '../../api/envConfig';
 import Navbar from '../../components/Layout/Navbar';
+import PageScroll from '../../components/Layout/PageScroll';
 import TechHero from '../../components/TechHero';
 import { Dot, Note, PageLoading, StatBand, StatItem, TkTag } from '../../shared/consoleUi';
 
@@ -277,17 +278,17 @@ const EnvConfigPage: React.FC = () => {
 
     if (loading && !data) {
         return shell(
-            <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
+            <PageScroll>
                 {hero}
                 {/* 首屏不做骨架屏：页头与指标带先出（数值显示 —），说明条/服务卡片等数据齐了一次性呈现 */}
                 <StatBand className="mb-3" items={statItems} />
                 <PageLoading hint="正在加载中间件连接参数…" />
-            </div>,
+            </PageScroll>,
         );
     }
     if (!data) {
         return shell(
-            <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
+            <PageScroll>
                 {hero}
                 <div className="surface-card flex flex-col items-center px-4 py-16 text-center">
                     <span
@@ -300,12 +301,12 @@ const EnvConfigPage: React.FC = () => {
                     <div className="mt-1.5 text-[12.5px] text-[#66738F]">请检查后端服务是否可用，然后重试</div>
                     <Button className="tk-soft-btn mt-4" icon={<ReloadOutlined />} onClick={load}>重试</Button>
                 </div>
-            </div>,
+            </PageScroll>,
         );
     }
 
     return shell(
-        <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
+        <PageScroll>
             {hero}
 
             <StatBand className="mb-3" items={statItems} />
@@ -458,7 +459,7 @@ const EnvConfigPage: React.FC = () => {
                 .env-card .ant-card-extra { padding: 12px 0; }
                 .env-card .ant-card-body { padding: 12px 14px 14px; }
             `}</style>
-        </div>,
+        </PageScroll>,
     );
 };
 

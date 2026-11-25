@@ -11,6 +11,25 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Tip from '../../shared/Tip';
 
+/**
+ * Safari < 16.4 的正则引擎不支持 lookbehind。remark-gfm 的邮箱自动链接扩展
+ * 在解析时会构造 `new RegExp('(?<=…)')` 并抛 SyntaxError；本组件用于问答 /
+ * Copilot / 报告，且全局没有 ErrorBoundary，渲染期抛错会让整页白屏。
+ * 这里只检测一次：不支持时就不挂 remark-gfm（表格等 GFM 语法降级为纯文本，
+ * 但页面不再崩）。esbuild 只会把生产包里的字面量正则转成 new RegExp，
+ * 不会补 lookbehind，所以这个检测必须放在业务侧。
+ */
+const SUPPORTS_LOOKBEHIND = (() => {
+    try {
+        new RegExp('(?<=a)b');
+        return true;
+    } catch {
+        return false;
+    }
+})();
+
+const REMARK_PLUGINS = SUPPORTS_LOOKBEHIND ? [remarkGfm] : [];
+
 const CITE_RE = /\[(\d{1,2})\]/g;
 
 interface MarkdownAnswerProps {
@@ -93,7 +112,7 @@ export default function MarkdownAnswer({ content, sourceCount, onCite, dense, ci
            上边距、最后一个块的下边距归零，留白只由容器决定 */
         <div className={`break-words leading-[1.75] text-[#2B3852] [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 ${dense ? 'text-[12.5px]' : 'text-[14px]'}`}>
             <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
+                remarkPlugins={REMARK_PLUGINS}
                 components={{
                     h1: ({ children }) => <h1 className={`mb-1.5 mt-3.5 font-semibold text-[#0F172A] ${h1}`}>{cite(children)}</h1>,
                     h2: ({ children }) => <h2 className={`mb-1.5 mt-3 font-semibold text-[#0F172A] ${h2}`}>{cite(children)}</h2>,

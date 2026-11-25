@@ -10,6 +10,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../shared/auth/authStore';
 import Navbar from '../components/Layout/Navbar';
+import PageScroll from '../components/Layout/PageScroll';
 import TechHero from '../components/TechHero';
 
 const C = {
@@ -140,7 +141,7 @@ const HomePage: React.FC = () => {
             `}</style>
             <Navbar breadcrumbs={breadcrumbs} />
 
-            <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto scrollbar-stable">
+            <PageScroll>
                 {/* ── 面一：门面。Hero 独立浮起，只放标题、副标题与两个主操作 ── */}
                 <TechHero
                     tone="light"
@@ -299,7 +300,7 @@ const HomePage: React.FC = () => {
                         </div>
                     </section>
                 </section>
-            </div>
+            </PageScroll>
         </div>
     );
 };
