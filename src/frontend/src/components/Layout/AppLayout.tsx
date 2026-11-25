@@ -21,7 +21,7 @@ import {
     RobotOutlined,
     SafetyOutlined,
 } from '@ant-design/icons';
-import { useAuthStore } from '../../shared/auth/authStore';
+import { useAuthStore, readCachedUser } from '../../shared/auth/authStore';
 import { confirmLeaveUnsaved } from '../../utils/unsavedGuard';
 import CopilotWidget from '../Copilot/CopilotWidget';
 import BrandMark from '../BrandMark';
@@ -83,7 +83,8 @@ const AppLayout: React.FC = () => {
 
     // M1：用户与模块授权状态（authStore 为源，localStorage 兜底供旧组件读取）
     const { user: storeUser, modules, loaded, hydrate, clear: clearAuth } = useAuthStore();
-    const user = (storeUser || JSON.parse(localStorage.getItem('user') || '{}')) as {
+    const cachedUser = readCachedUser(); // 脏数据返回 null，避免渲染期 JSON.parse 抛错
+    const user = (storeUser || cachedUser || {}) as {
         id?: number;
         username: string;
         role?: 'admin' | 'user';

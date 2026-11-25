@@ -1,7 +1,7 @@
 // src/api/qa.ts - 本体问答 API（M5，docs/design/03 §15 / 07 §4）
 // SSE 流式（POST fetch + ReadableStream 解析 token/sources/done/error 事件）
 // + 历史 / 引用溯源详情端点。鉴权与 401 刷新复用 client.ts 的 token 约定。
-import { API_BASE_URL, refreshAccessToken, forceLogout } from './client';
+import { API_BASE_URL, refreshSessionOnce, forceLogout } from './client';
 
 // ───────────────────────── 类型（03 §15 契约）
 
@@ -84,6 +84,7 @@ export async function askQuestionStream(
     question: string,
     handlers: AskStreamHandlers,
     options?: AskOptions,
+    retried = false,
 ): Promise<void> {
     const resp = await fetch(`${API_BASE_URL}/api/projects/${projectId}/qa`, {
         method: 'POST',
@@ -102,11 +103,17 @@ export async function askQuestionStream(
     });
 
     if (resp.status === 401) {
-        const newToken = await refreshAccessToken();
-        if (newToken) {
-            return askQuestionStream(projectId, question, handlers, options);
+        // 只重试一次：避免「刷新成功但接口仍 401」时无限递归重发
+        if (retried) {
+            forceLogout();
+            return;
         }
-        forceLogout();
+        const outcome = await refreshSessionOnce();
+        if (outcome.ok) {
+            return askQuestionStream(projectId, question, handlers, options, true);
+        }
+        if (outcome.failure === 'expired') forceLogout();
+        else handlers.onError?.('网络连接失败，请检查网络后重试');
         return;
     }
     if (resp.status === 403) {

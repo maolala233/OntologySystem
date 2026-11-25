@@ -1,7 +1,7 @@
 // src/api/copilot.ts - Copilot 人机协同 API（O5-B22/F12，docs/design/14 §5 S1）
 // SSE 流式（POST fetch + ReadableStream 解析 stage/token/done/error 事件）
 // + 会话列表/回放/删除 + 模型选择。鉴权与 401 刷新复用 client.ts 约定。
-import { API_BASE_URL, refreshAccessToken, forceLogout } from './client';
+import { API_BASE_URL, refreshSessionOnce, forceLogout } from './client';
 
 // ───────────────────────── 类型
 
@@ -182,6 +182,7 @@ export async function sendCopilotMessage(
     message: string,
     handlers: CopilotStreamHandlers,
     options?: CopilotChatOptions,
+    retried = false,
 ): Promise<void> {
     const resp = await fetch(`${API_BASE_URL}/api/projects/${projectId}/copilot/chat`, {
         method: 'POST',
@@ -196,11 +197,17 @@ export async function sendCopilotMessage(
     });
 
     if (resp.status === 401) {
-        const newToken = await refreshAccessToken();
-        if (newToken) {
-            return sendCopilotMessage(projectId, message, handlers, options);
+        // 只重试一次：避免「刷新成功但接口仍 401」时无限递归重发
+        if (retried) {
+            forceLogout();
+            return;
         }
-        forceLogout();
+        const outcome = await refreshSessionOnce();
+        if (outcome.ok) {
+            return sendCopilotMessage(projectId, message, handlers, options, true);
+        }
+        if (outcome.failure === 'expired') forceLogout();
+        else handlers.onError?.('网络连接失败，请检查网络后重试');
         return;
     }
     if (resp.status === 403) {

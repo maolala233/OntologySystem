@@ -128,7 +128,7 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
     # 检查用户名是否已存在
     existing_user = db.query(User).filter(User.username == user_data.username).first()
     if existing_user:
-        raise HTTPException(status_code=400, detail="Username already registered")
+        raise HTTPException(status_code=400, detail="用户名已被注册")
 
     new_user = User(
         username=user_data.username,
@@ -153,7 +153,7 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == form_data.username).first()
     if not user or not verify_password(form_data.password, user.hashed_password):
-        raise HTTPException(status_code=400, detail="Incorrect username or password")
+        raise HTTPException(status_code=400, detail="用户名或密码错误")
 
     user.last_login_at = datetime.utcnow()
     db.commit()

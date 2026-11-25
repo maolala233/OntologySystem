@@ -17,11 +17,21 @@ const NoAccess: React.FC<{ onBack: () => void; reason: string }> = ({ onBack, re
     />
 );
 
+/** /me 因网络或服务不可用失败：保留登录态并给重试入口（2026-11-25） */
+const AuthLoadFailed: React.FC<{ onRetry: () => void }> = ({ onRetry }) => (
+    <Result
+        status="warning"
+        title="无法加载登录信息"
+        subTitle="网络或服务暂时不可用，登录状态已保留。请检查网络后重试。"
+        extra={<Button type="primary" onClick={onRetry}>重试</Button>}
+    />
+);
+
 export const RequireModule: React.FC<{ module: string; children: React.ReactElement }> = ({
     module,
     children,
 }) => {
-    const { user, modules, loaded, hydrate } = useAuthStore();
+    const { user, modules, loaded, loading, loadError, hydrate } = useAuthStore();
     const navigate = useNavigate();
 
     useEffect(() => {
@@ -30,8 +40,11 @@ export const RequireModule: React.FC<{ module: string; children: React.ReactElem
         }
     }, [loaded, hydrate]);
 
-    if (!loaded) {
+    if (!loaded || (loading && !user)) {
         return <Spin size="large" style={{ display: 'block', margin: '120px auto' }} />;
+    }
+    if (loadError && !user) {
+        return <AuthLoadFailed onRetry={() => hydrate()} />;
     }
     if (!user) {
         return <NoAccess reason="登录状态已失效" onBack={() => navigate('/login')} />;
@@ -43,7 +56,7 @@ export const RequireModule: React.FC<{ module: string; children: React.ReactElem
 };
 
 export const RequireAdmin: React.FC<{ children: React.ReactElement }> = ({ children }) => {
-    const { user, loaded, hydrate } = useAuthStore();
+    const { user, loaded, loading, loadError, hydrate } = useAuthStore();
     const navigate = useNavigate();
 
     useEffect(() => {
@@ -52,8 +65,11 @@ export const RequireAdmin: React.FC<{ children: React.ReactElement }> = ({ child
         }
     }, [loaded, hydrate]);
 
-    if (!loaded) {
+    if (!loaded || (loading && !user)) {
         return <Spin size="large" style={{ display: 'block', margin: '120px auto' }} />;
+    }
+    if (loadError && !user) {
+        return <AuthLoadFailed onRetry={() => hydrate()} />;
     }
     if (!user || user.role !== 'admin') {
         return <NoAccess reason="需要管理员权限" onBack={() => navigate('/')} />;
@@ -67,7 +83,7 @@ export const RequireAdmin: React.FC<{ children: React.ReactElement }> = ({ child
  * （新手形态：一键构建 + 结果查看，见 /projects/:id）。
  */
 export const ExpertGuard: React.FC<{ children: React.ReactElement }> = ({ children }) => {
-    const { loaded, hydrate } = useAuthStore();
+    const { user, loaded, loading, loadError, hydrate } = useAuthStore();
     const { projectId } = useParams<{ projectId: string }>();
     const navigate = useNavigate();
 
@@ -77,8 +93,11 @@ export const ExpertGuard: React.FC<{ children: React.ReactElement }> = ({ childr
         }
     }, [loaded, hydrate]);
 
-    if (!loaded) {
+    if (!loaded || (loading && !user)) {
         return <Spin size="large" style={{ display: 'block', margin: '120px auto' }} />;
+    }
+    if (loadError && !user) {
+        return <AuthLoadFailed onRetry={() => hydrate()} />;
     }
     return <ExpertCheck projectId={projectId} onFallback={() => navigate(`/projects/${projectId}`, { replace: true })}>
         {children}

@@ -6,7 +6,8 @@ import {
 } from '@ant-design/icons';
 import { message, confirmModal, notifyError } from '../../shared/feedback';
 import { authAPI } from '../../api/auth';
-import { useAuthStore } from '../../shared/auth/authStore';
+import { useAuthStore, readCachedUser } from '../../shared/auth/authStore';
+import { clearReturnPath } from '../../shared/auth/returnPath';
 import SiderToggle from './SiderToggle';
 import Tip from '../../shared/Tip';
 
@@ -22,8 +23,10 @@ interface NavbarProps {
 const Navbar: React.FC<NavbarProps> = ({ breadcrumbs = [] }) => {
     const navigate = useNavigate();
     const { user: storeUser, clear: clearAuth } = useAuthStore();
-    // store 尚未 hydrate 时用 localStorage 兜底（与 AppLayout 同源），避免首帧空白
-    const user = (storeUser || JSON.parse(localStorage.getItem('user') || '{}')) as {
+    // store 尚未 hydrate 时用 localStorage 兜底（与 AppLayout 同源），避免首帧空白；
+    // readCachedUser 对脏数据返回 null，不会在渲染期抛错
+    const cachedUser = readCachedUser();
+    const user = (storeUser || cachedUser || {}) as {
         username?: string;
         role?: 'admin' | 'user';
         display_name?: string | null;
@@ -75,6 +78,7 @@ const Navbar: React.FC<NavbarProps> = ({ breadcrumbs = [] }) => {
             okText: '退出登录',
             cancelText: '取消',
             onOk: () => {
+                clearReturnPath(); // 主动退出：清掉历史回跳，避免下次登录被带到旧页面
                 clearAuth();
                 navigate('/login');
             },

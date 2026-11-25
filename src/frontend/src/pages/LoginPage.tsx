@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { notifyError } from '../shared/feedback';
+import { message, notifyError } from '../shared/feedback';
 import { Form, Input, Button } from 'antd';
 import {
     UserOutlined, LockOutlined, ArrowRightOutlined, SafetyCertificateOutlined,
@@ -7,6 +7,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { authAPI } from '../api/auth';
 import { useAuthStore } from '../shared/auth/authStore';
+import { consumeReturnPath } from '../shared/auth/returnPath';
 import BrandMark from '../components/BrandMark';
 import DecoConstellation from '../components/DecoConstellation';
 import canvasBg from '../assets/app-canvas-bg.svg';
@@ -29,7 +30,24 @@ const LoginPage: React.FC = () => {
     const [loading, setLoading] = useState(false);
     const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
 
+    /**
+     * 登录成功后的收尾（2026-11-25）：拉 /me → 失败自动重试一次 → 回跳原页面。
+     * /me 失败不阻断登录（token 已落盘）：网络抖动时先重试，仍失败则提示一句，
+     * 进入页面后各守卫会显示「无法加载登录信息 + 重试」，不会白屏也不会被踢回登录页。
+     */
+    const finishSignIn = async () => {
+        await hydrate();
+        if (useAuthStore.getState().loadError) {
+            await hydrate(); // 首次失败多为网络抖动，自动重试一次
+        }
+        if (useAuthStore.getState().loadError) {
+            message.warning('登录成功，但用户信息加载失败；进入后可在页面点「重试」');
+        }
+        navigate(consumeReturnPath() ?? '/', { replace: true });
+    };
+
     const handleLogin = async (values: any) => {
+        if (loading) return; // 连按回车/重复点击时不重复提交
         setLoading(true);
         try {
             const response = await authAPI.login({
@@ -38,10 +56,7 @@ const LoginPage: React.FC = () => {
             });
 
             setTokens(response.access_token, response.refresh_token || '');
-            await hydrate(); // M1：拉取 /auth/me（role + modules[]），驱动菜单与路由守卫
-
-            // 登录后直接跳转，页面本身就是反馈，不再额外弹全局提示
-            navigate('/');
+            await finishSignIn(); // 拉 /auth/me（role + modules[]），再回跳
         } catch (error: any) {
             notifyError(error, '登录失败，请检查用户名和密码');
         } finally {
@@ -50,6 +65,7 @@ const LoginPage: React.FC = () => {
     };
 
     const handleRegister = async (values: any) => {
+        if (loading) return;
         setLoading(true);
         try {
             const response = await authAPI.register({
@@ -58,9 +74,7 @@ const LoginPage: React.FC = () => {
             });
 
             setTokens(response.access_token, response.refresh_token || '');
-            await hydrate();
-
-            navigate('/');
+            await finishSignIn();
         } catch (error: any) {
             notifyError(error, '注册失败，请稍后重试');
         } finally {

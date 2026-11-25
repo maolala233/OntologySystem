@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { rememberReturnPath } from '../shared/auth/returnPath';
 
 // 运行时动态获取API基础URL - 不依赖构建时的环境变量
 const getApiBaseUrl = () => {
@@ -54,39 +55,61 @@ apiClient.interceptors.request.use(
 );
 
 // ---- M1：401 时用 refresh token 单飞刷新后重试（docs/design/05 §4.1）----
-let refreshPromise: Promise<string | null> | null = null;
+/**
+ * 刷新结果（2026-11-25）：失败时区分「凭证过期」和「网络/服务不可用」。
+ * 后端重启、断网、刷新超时、限流都不能把用户踢下线——只有凭证类 4xx 才算会话失效。
+ */
+export type RefreshOutcome =
+    | { ok: true; token: string }
+    | { ok: false; failure: 'expired' | 'network' };
 
-async function refreshAccessToken(): Promise<string | null> {
+const REFRESH_TIMEOUT_MS = 10_000;
+
+async function performRefresh(): Promise<RefreshOutcome> {
     const refreshToken = localStorage.getItem('refresh_token');
-    if (!refreshToken) return null;
+    if (!refreshToken) return { ok: false, failure: 'expired' };
     try {
-        const resp = await axios.post(`${API_BASE_URL}/api/auth/refresh`, {
-            refresh_token: refreshToken,
-        });
-        const { access_token, refresh_token } = resp.data;
-        if (!access_token) return null;
+        const resp = await axios.post(
+            `${API_BASE_URL}/api/auth/refresh`,
+            { refresh_token: refreshToken },
+            { timeout: REFRESH_TIMEOUT_MS },
+        );
+        const { access_token, refresh_token } = resp.data || {};
+        if (!access_token) return { ok: false, failure: 'network' };
         localStorage.setItem('access_token', access_token);
         if (refresh_token) localStorage.setItem('refresh_token', refresh_token);
-        return access_token;
-    } catch {
-        return null;
+        return { ok: true, token: access_token };
+    } catch (err: any) {
+        const status = err?.response?.status;
+        // 400/401/403 = 凭证无效；无响应 / 超时 / 429 / 5xx 是服务问题，不能踢下线
+        const expired = status === 400 || status === 401 || status === 403;
+        return { ok: false, failure: expired ? 'expired' : 'network' };
     }
 }
 
-function forceLogout() {
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('refresh_token');
-    localStorage.removeItem('user');
-    window.location.href = '/login';
-}
+let refreshPromise: Promise<RefreshOutcome> | null = null;
 
-function refreshInFlight(): Promise<string | null> {
+/** 全站唯一的刷新入口：并发调用共享同一次请求（ProtectedRoute / 401 拦截器 / SSE 共用） */
+export function refreshSessionOnce(): Promise<RefreshOutcome> {
     if (!refreshPromise) {
-        refreshPromise = refreshAccessToken().finally(() => {
+        refreshPromise = performRefresh().finally(() => {
             refreshPromise = null;
         });
     }
     return refreshPromise;
+}
+
+/** 清掉本地会话（不跳转）；forceLogout 与 ProtectedRoute 共用 */
+export function clearStoredSession(): void {
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
+    localStorage.removeItem('user');
+}
+
+function forceLogout() {
+    clearStoredSession();
+    rememberReturnPath();
+    window.location.href = '/login';
 }
 
 // 403 不再在拦截器里弹提示（2026-11-20）：业务侧 catch 统一走 shared/feedback 的
@@ -101,12 +124,14 @@ apiClient.interceptors.response.use(
 
         if (status === 401 && !original._retry) {
             original._retry = true;
-            const newToken = await refreshInFlight();
-            if (newToken) {
-                original.headers = { ...(original.headers || {}), Authorization: `Bearer ${newToken}` };
+            const outcome = await refreshSessionOnce();
+            if (outcome.ok) {
+                original.headers = { ...(original.headers || {}), Authorization: `Bearer ${outcome.token}` };
                 return apiClient(original);
             }
-            forceLogout();
+            if (outcome.failure === 'expired') forceLogout();
+            // 网络/服务不可用：保留登录态，把原始 401 交给调用方提示，下个请求会再试
+            return Promise.reject(error);
         } else if (status === 401) {
             forceLogout();
         }
@@ -155,5 +180,5 @@ export function sharedGet<T = unknown>(url: string, config?: { params?: unknown 
     return apiClient.get<T>(url, config as any).then((r) => r.data);
 }
 
-export { refreshAccessToken, forceLogout, API_BASE_URL };
+export { forceLogout, API_BASE_URL };
 export default apiClient;
