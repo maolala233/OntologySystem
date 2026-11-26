@@ -25,6 +25,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from app.core.logging import logger
 from app.tasks.celery_app import celery_app
 from app.tasks.progress import finish_task_progress, get_task_progress, set_task_progress
 from app.services.pipeline_profiler import (
