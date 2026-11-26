@@ -258,29 +258,44 @@ def _jsonrpc_response(payload: dict, status: int = 200) -> Response:
 # ---------------------------------------------------------------- 工具清单（07 §3.3 MVP 10 个）
 
 def _doc_graph_tool_specs() -> list[dict]:
-    """testfile/工具.docx 的 17 个图谱工具（只读，参数名按文档 camelCase）。"""
-    def spec(name: str, desc: str, props: dict | None = None) -> dict:
-        return {"name": name, "description": desc,
-                "inputSchema": {"type": "object", "properties": props or {}}}
+    """testfile/工具.docx 的 17 个图谱工具（只读，参数名按文档 camelCase）。
+
+    2026-11-26：schema 补 required —— 这些工具此前只有 properties、没有 required，
+    MCP 客户端（含本站 MCP 控制台的「调用参数」卡）无从知道哪些参数必填：
+    控制台顶部挂着「带 * 为必填」，表单里却一个星号都没有。必填口径与
+    services/mcp_graph_tools 的实现一致：缺了它就没法定位查询目标。
+    """
+    def spec(name: str, desc: str, props: dict | None = None,
+             required: list[str] | None = None) -> dict:
+        schema: dict = {"type": "object", "properties": props or {}}
+        if required:
+            schema["required"] = required
+        return {"name": name, "description": desc, "inputSchema": schema}
 
     return [
         spec("graph_schema_get", "获取图谱完整 Schema（类/对象属性/数据属性）"),
         spec("entity_type_list", "列出图谱下所有实体类型"),
         spec("relation_type_list", "列出图谱下所有关系类型"),
         spec("entity_type_detail", "按英文名查询实体类型",
-             {"typeNameEn": {"type": "string", "description": "实体类型英文名"}}),
+             {"typeNameEn": {"type": "string", "description": "实体类型英文名"}},
+             ["typeNameEn"]),
         spec("relation_type_detail", "按英文名查询关系类型",
-             {"typeNameEn": {"type": "string", "description": "关系类型英文名"}}),
+             {"typeNameEn": {"type": "string", "description": "关系类型英文名"}},
+             ["typeNameEn"]),
         spec("entity_get", "获取单个实体",
-             {"dataId": {"type": "string", "description": "实体数据ID"}}),
+             {"dataId": {"type": "string", "description": "实体数据ID"}},
+             ["dataId"]),
         spec("entities_get", "批量获取实体",
              {"dataIds": {"type": "array", "items": {"type": "string"},
-                          "description": "实体数据ID列表"}}),
+                          "description": "实体数据ID列表"}},
+             ["dataIds"]),
         spec("relation_get", "获取单条关系",
-             {"dataId": {"type": "string", "description": "关系数据ID"}}),
+             {"dataId": {"type": "string", "description": "关系数据ID"}},
+             ["dataId"]),
         spec("relations_get", "批量获取关系",
              {"dataIds": {"type": "array", "items": {"type": "string"},
-                          "description": "关系数据ID列表"}}),
+                          "description": "关系数据ID列表"}},
+             ["dataIds"]),
         spec("entity_find", "按过滤表达式筛选实体",
              {"filter": {"type": "string", "description": "SQL风格过滤表达式（=和IN，AND/OR/括号）"},
               "limit": {"type": "integer", "description": "结果数量上限"},
@@ -290,30 +305,37 @@ def _doc_graph_tool_specs() -> list[dict]:
               "entityDataId": {"type": "string", "description": "锚点实体dataId"},
               "limit": {"type": "integer", "description": "邻居数量上限"},
               "neighborTypeNameEns": {"type": "array", "items": {"type": "string"}},
-              "relationTypeNameEns": {"type": "array", "items": {"type": "string"}}}),
+              "relationTypeNameEns": {"type": "array", "items": {"type": "string"}}},
+             ["entityDataId"]),
         spec("relations_between", "获取两个实体之间的所有关系",
              {"direction": {"type": "string", "enum": ["OUT", "IN", "BOTH"], "default": "BOTH"},
               "fromDataId": {"type": "string", "description": "起点实体dataId"},
-              "toDataId": {"type": "string", "description": "终点实体dataId"}}),
+              "toDataId": {"type": "string", "description": "终点实体dataId"}},
+             ["fromDataId", "toDataId"]),
         spec("subgraph_expand", "子图扩展",
              {"anchorDataIds": {"type": "array", "items": {"type": "string"}},
               "direction": {"type": "string", "enum": ["OUT", "IN", "BOTH"], "default": "BOTH"},
               "entityTypeNameEns": {"type": "array", "items": {"type": "string"}},
               "hops": {"type": "integer", "minimum": 0, "default": 1},
               "maxNodes": {"type": "integer", "default": 100},
-              "relationTypeNameEns": {"type": "array", "items": {"type": "string"}}}),
+              "relationTypeNameEns": {"type": "array", "items": {"type": "string"}}},
+             ["anchorDataIds"]),
         spec("paths_find", "查找两个实体之间的路径",
              {"fromDataId": {"type": "string"}, "toDataId": {"type": "string"},
               "limit": {"type": "integer", "default": 5},
-              "maxDepth": {"type": "integer", "minimum": 1, "maximum": 4, "default": 4}}),
+              "maxDepth": {"type": "integer", "minimum": 1, "maximum": 4, "default": 4}},
+             ["fromDataId", "toDataId"]),
         spec("path_exists", "判断两个实体之间路径是否存在",
-             {"fromDataId": {"type": "string"}, "toDataId": {"type": "string"}}),
+             {"fromDataId": {"type": "string"}, "toDataId": {"type": "string"}},
+             ["fromDataId", "toDataId"]),
         spec("shortest_path", "获取两个实体之间的最短路径",
-             {"fromDataId": {"type": "string"}, "toDataId": {"type": "string"}}),
+             {"fromDataId": {"type": "string"}, "toDataId": {"type": "string"}},
+             ["fromDataId", "toDataId"]),
         spec("semantic_search", "高级语义检索，可带条件",
              {"queryText": {"type": "string"}, "topK": {"type": "integer", "default": 10},
               "typeNameEns": {"type": "array", "items": {"type": "string"}},
-              "filter": {"type": "string"}}),
+              "filter": {"type": "string"}},
+             ["queryText"]),
     ]
 
 
