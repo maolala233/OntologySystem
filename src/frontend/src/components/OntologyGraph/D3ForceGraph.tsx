@@ -659,6 +659,35 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
 
         const forceParams = getAdaptiveForceParams();
 
+        // 三节点等边三角形预设（2026-11-26 用户反馈）：后端网格坐标（_grid_position，6 列）
+        // 把前 6 个节点排在同一个 y 上，力导从这种共线初值出发没有横向扰动，收敛后仍是一条直线——
+        // 三个节点本该是三角形。只在「首次进入 / 调整间距」时重摆，其余重绘沿用既有坐标；
+        // 拖拽后由力导照常接管，不会把用户亲手摆的位置吸回来
+        const trianglePreset = nodes.length === 3
+            && (newNodeIds.size === nodes.length || spacingChanged);
+        if (trianglePreset) {
+            const degById = new Map<string, number>();
+            edges.forEach((e: any) => {
+                const src = String(e.source);
+                const tgt = String(e.target);
+                degById.set(src, (degById.get(src) || 0) + 1);
+                degById.set(tgt, (degById.get(tgt) || 0) + 1);
+            });
+            // 度数最高的（通常是中心类）放上顶点，另两个落下方两角，读图时主节点朝上
+            const ordered = [...d3Nodes].sort(
+                (a: any, b: any) => (degById.get(String(b.id)) || 0) - (degById.get(String(a.id)) || 0),
+            );
+            // 半径跟着「节点间距」走：默认档（链接距离 160）对应外接圆约 152，边长约 263
+            const r = Math.max(110, Math.round(forceParams.linkDistance * 0.95));
+            ordered.forEach((n: any, i: number) => {
+                const angle = -Math.PI / 2 + (i * 2 * Math.PI) / 3;
+                n.x = centerX + Math.cos(angle) * r;
+                n.y = centerY + Math.sin(angle) * r;
+                n.vx = 0;
+                n.vy = 0;
+            });
+        }
+
         const simulation = forceSimulation(d3Nodes)
             .force("link", forceLink(d3Links)
                 .id((d: any) => d.id)
@@ -687,7 +716,8 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
         const allNewCached = newNodeIds.size > 0
             && Array.from(newNodeIds).every((id: string) => posCacheRef.current.has(id));
         const structureNeedsLayout = newNodeIds.size > 0 ? !allNewCached : edgeAdded;
-        const heating = structureNeedsLayout || spacingChanged;
+        // 三角形预设本身就是最终摆位，不再让力导把它拉回一条直线
+        const heating = !trianglePreset && (structureNeedsLayout || spacingChanged);
         heatStartRef.current = performance.now();
         if (heating) {
             simulation.alpha(hadNodesBefore ? 0.35 : forceParams.simAlpha);
@@ -1374,7 +1404,9 @@ const D3ForceGraph: React.FC<D3ForceGraphProps> = ({
         };
         // 静止渲染时也会新出现节点/边（展开已记住位置的实例）：它们没有 tick 来定位，
         // 这里同步画一遍坐标和连线（只画这一次，不产生动画）
-        if (!heating && (newNodeIds.size > 0 || edgeAdded)) {
+        // trianglePreset 也要走这里：调整间距后三角形是新摆位，但既没有 tick 也没有新增节点/边，
+        // 不在这里补一次坐标和连线，画布会停在旧位置
+        if (!heating && (newNodeIds.size > 0 || edgeAdded || trianglePreset)) {
             // 摆回原位后做一轮「只碰撞」的同步推挤：不产生动画，只把正好叠在一起的节点错开
             // （例如拖动过类节点后再展开实例，实例可能压到别的节点上）
             if (newNodeIds.size > 0) {

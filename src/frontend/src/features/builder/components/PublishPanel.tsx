@@ -6,7 +6,7 @@
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import { message, notifyError } from '../../../shared/feedback';
-import { Alert, Button, Card, Space, Spin, Table, Tag, Typography } from 'antd';
+import { Alert, Button, Card, Popconfirm, Space, Spin, Table, Tag, Typography } from 'antd';
 import InlineNotice from '../../../components/InlineNotice';
 import { CloudUploadOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 
@@ -145,12 +145,29 @@ const PublishPanel: React.FC<Props> = ({ projectId, onBackToResults }) => {
             {isPublished && (
                 <Card size="small" title="当前发布版本"
                       extra={(
+                          // 与项目详情页「本体构建结果」卡同一套：下线/重新发布都在按钮旁就近确认
+                          // （2026-11-26 统一），不再一击即生效
                           <Space>
-                              <Button onClick={handleUnpublish}>取消发布</Button>
-                              <Button type="primary" ghost icon={<CloudUploadOutlined />}
-                                      onClick={handlePublish} loading={publishing}>
-                                  重新发布（发新版本）
-                              </Button>
+                              <Popconfirm
+                                  title="取消发布？"
+                                  description="该本体将从资产中心下架，公共区用户不再能看到；数据、版本与审核记录不受影响，可随时重新发布。"
+                                  okText="确认下线" cancelText="取消" okButtonProps={{ danger: true }}
+                                  onConfirm={handleUnpublish}
+                              >
+                                  <Button>取消发布</Button>
+                              </Popconfirm>
+                              <Popconfirm
+                                  title="重新发布（发新版本）？"
+                                  description="将用当前工作区生成新的版本快照，资产中心展示随之更新；旧版本仍保留可回溯。"
+                                  okText="重新发布" cancelText="取消"
+                                  disabled={publishing}
+                                  onConfirm={handlePublish}
+                              >
+                                  <Button type="primary" ghost icon={<CloudUploadOutlined />}
+                                          loading={publishing}>
+                                      重新发布（发新版本）
+                                  </Button>
+                              </Popconfirm>
                           </Space>
                       )}>
                 {version ? (

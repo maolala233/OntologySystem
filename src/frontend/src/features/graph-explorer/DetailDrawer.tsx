@@ -569,9 +569,20 @@ export const NodeDetailContent: React.FC<{
                                         { title: <Term t="谓词" />, dataIndex: 'predicate', width: '30%',
                                           render: (v, r) => <Tag color={r.direction === 'out' ? 'blue' : 'green'}>{v}{r.direction === 'out' ? ' →' : ' ←'}</Tag> },
                                         { title: '对方', dataIndex: 'other_label',
-                                          render: (v, r) => r.other_id ? (
-                                              <a onClick={() => r.other_id && onNavigateNode?.(r.other_id)}>{v} <Text type="secondary" className="text-xs">{r.other_class}</Text></a>
-                                          ) : v },
+                                          // 不再把同一个名字渲染两遍（2026-11-26）：类节点的 class_label 就是
+                                          // 自身名（行表：is_class → class_label = label），类↔类关系原来会
+                                          // 出现「名字 + 同名字小字」；只在两者不同（如实例 → 所属类）时才补类名，
+                                          // 「未分类」是兜底占位，也不在关系行里凑字数
+                                          render: (v, r) => {
+                                              const cls = r.other_class && r.other_class !== v && r.other_class !== '未分类'
+                                                  ? r.other_class : null;
+                                              return r.other_id ? (
+                                                  <a onClick={() => onNavigateNode?.(r.other_id!)}>
+                                                      {v}
+                                                      {cls && <Text type="secondary" className="ml-1 text-[11px]">{cls}</Text>}
+                                                  </a>
+                                              ) : v;
+                                          } },
                                         { title: <Term t="置信" />, dataIndex: 'confidence', width: 70,
                                           render: (v) => v != null ? v.toFixed(2) : '—' },
                                     ]}

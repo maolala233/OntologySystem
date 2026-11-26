@@ -24,7 +24,6 @@ import { useBuilderStore } from '../features/builder/store';
 import type { ProjectData } from '../types/ontology';
 import Navbar from '../components/Layout/Navbar';
 import PageScroll from '../components/Layout/PageScroll';
-import Tip from '../shared/Tip';
 
 const ProjectOverviewPage: React.FC = () => {
     const { projectId } = useParams<{ projectId: string }>();
@@ -413,23 +412,23 @@ const ProjectOverviewPage: React.FC = () => {
                                             {statusMeta.text}
                                         </Tag>
                                     )}
+                                    {/* 知识域标签不再挂悬停提示（2026-11-26 用户反馈）：
+                                        标签本身就是分类名，超长由 max-w + 省略号收住 */}
                                     {projectReady && domainName && (
-                                        <Tip text={domainName}>
-                                            <Tag
-                                                className="!m-0 shrink-0 max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap"
-                                                style={{ background: 'rgba(91,141,239,0.10)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.24)', marginInlineEnd: 0 }}
-                                            >
-                                                {domainName}
-                                            </Tag>
-                                        </Tip>
+                                        <Tag
+                                            className="!m-0 shrink-0 max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap"
+                                            style={{ background: 'rgba(91,141,239,0.10)', color: '#2A57C6', borderColor: 'rgba(91,141,239,0.24)', marginInlineEnd: 0 }}
+                                        >
+                                            {domainName}
+                                        </Tag>
                                     )}
                                 </div>
+                                {/* 描述同样去掉悬停提示（2026-11-26 用户反馈）：与项目名同一处理，
+                                    超长由 truncate 收成省略号 */}
                                 {projectReady && projectDescription && (
-                                    <Tip text={projectDescription}>
-                                        <p className="m-0 mt-1 truncate text-[12.5px] leading-5 text-[#66738F]">
-                                            {projectDescription}
-                                        </p>
-                                    </Tip>
+                                    <p className="m-0 mt-1 truncate text-[12.5px] leading-5 text-[#66738F]">
+                                        {projectDescription}
+                                    </p>
                                 )}
                             </div>
                             <div className="flex shrink-0 items-center gap-2.5">

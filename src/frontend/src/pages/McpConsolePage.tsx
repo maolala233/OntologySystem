@@ -220,6 +220,15 @@ export default function McpConsolePage() {
     const [formValues, setFormValues] = useState<Record<string, string>>({});
     const [calling, setCalling] = useState(false);
     const [callResult, setCallResult] = useState<{ ok: boolean; text: string } | null>(null);
+    // 必填拦截（2026-11-26）：点「运行工具」先看带 * 的参数有没有填。
+    // 图谱工具缺参大多不抛错、只在结果里返回 error 字段，结果卡还挂着「成功」角标，
+    // 很容易被误判成调用成功；showMissing 只在点过一次运行之后才把空缺项标红
+    const [showMissing, setShowMissing] = useState(false);
+    const schemaProps = Object.entries(selectedTool?.inputSchema?.properties ?? {});
+    const requiredKeys = selectedTool?.inputSchema?.required ?? [];
+    const missingRequired = requiredKeys
+        .filter((k) => schemaProps.some(([key]) => key === k))
+        .filter((k) => formValues[k] == null || String(formValues[k]).trim() === '');
 
     // 结果卡出现 / 刷新时滚进面板视野（2026-11-25）：
     // 参数多的时候结果落在右侧面板下方，之前不会自动滚动，用户会以为"没出结果"
@@ -401,6 +410,13 @@ export default function McpConsolePage() {
 
     const runTool = useCallback(async () => {
         if (!selectedTool || !bearer) return;
+        // 必填项没填就不发请求：就地标红 + 一句人话，省掉一次注定失败的往返
+        if (missingRequired.length > 0) {
+            setShowMissing(true);
+            message.warning(`请先填写必填参数：${missingRequired.join('、')}`);
+            return;
+        }
+        setShowMissing(false);
         setCalling(true);
         // 不清空上一轮结果：结果卡一旦卸载，右侧滚动容器会瞬间变矮、滚动位置被夹到顶部，
         // 等结果回来又弹下去。这里保留旧结果（置灰 + 角标显示「运行中」），新结果到了再原地替换。
@@ -423,7 +439,7 @@ export default function McpConsolePage() {
         } finally {
             setCalling(false);
         }
-    }, [selectedTool, bearer, formValues, rpc]);
+    }, [selectedTool, bearer, formValues, missingRequired, rpc]);
 
     const listResources = useCallback(async () => {
         try {
@@ -502,8 +518,10 @@ export default function McpConsolePage() {
         }
     }, [isAdmin, selectedTokenId, loadTokens, disconnect]);
 
-    const schemaProps = Object.entries(selectedTool?.inputSchema?.properties ?? {});
-    const requiredKeys = selectedTool?.inputSchema?.required ?? [];
+    // 只有表单里真的出现带 * 的字段时才显示「带 * 为必填」（2026-11-26）：
+    // 之前这条说明无条件挂着，而不少工具（尤其 17 个图谱工具）的 schema 没声明 required，
+    // 表单里一个星号都没有，说明就成了空话
+    const hasRequiredParam = schemaProps.some(([key]) => requiredKeys.includes(key));
     const filteredTools = toolSearchQuery
         ? tools.filter(t => `${t.name} ${t.description ?? ''}`.toLowerCase().includes(toolSearchQuery.toLowerCase()))
         : tools;
@@ -1082,6 +1100,7 @@ export default function McpConsolePage() {
                                                     onClick={() => {
                                                         setSelectedTool(t);
                                                         setCallResult(null);
+                                                        setShowMissing(false);
                                                         const defaults: Record<string, string> = {};
                                                         Object.entries(t.inputSchema?.properties ?? {}).forEach(([k, p]) => {
                                                             if (p.default != null) defaults[k] = String(p.default);
@@ -1130,7 +1149,9 @@ export default function McpConsolePage() {
                                                 <SectionHead
                                                     className="mb-3"
                                                     title="调用参数"
-                                                    extra={<span className="text-[11px] text-[#8A94AB]">带 <span className="text-[#B42318]">*</span> 为必填</span>}
+                                                    extra={hasRequiredParam
+                                                        ? <span className="text-[11px] text-[#8A94AB]">带 <span className="text-[#B42318]">*</span> 为必填</span>
+                                                        : undefined}
                                                 />
                                                 {schemaProps.length === 0 ? (
                                                     <div className="py-2 text-[13px] text-[#66738F]">该工具无入参，直接运行即可</div>
@@ -1141,11 +1162,14 @@ export default function McpConsolePage() {
                                                                 <div className="mb-1 flex flex-wrap items-baseline gap-2 text-xs">
                                                                     <span className="font-mono text-[#3D4B66]">{key}</span>
                                                                     {requiredKeys.includes(key) && <span className="text-[#B42318]">*</span>}
+                                                                    {showMissing && missingRequired.includes(key)
+                                                                        && <span className="text-[11px] text-[#B42318]">请填写</span>}
                                                                     {prop.description && <span className="text-[#8A94AB]">{prop.description}</span>}
                                                                 </div>
                                                                 {prop.enum ? (
                                                                     <Select
                                                                         className="w-full max-w-xl"
+                                                                        status={showMissing && missingRequired.includes(key) ? 'error' : undefined}
                                                                         value={formValues[key] ?? prop.default}
                                                                         onChange={v => setFormValues(prev => ({ ...prev, [key]: v }))}
                                                                         options={prop.enum.map(e => ({ value: e, label: e }))}
@@ -1159,6 +1183,7 @@ export default function McpConsolePage() {
                                                                 ) : prop.type === 'integer' || prop.type === 'number' ? (
                                                                     <InputNumber
                                                                         className="w-full max-w-xl"
+                                                                        status={showMissing && missingRequired.includes(key) ? 'error' : undefined}
                                                                         value={formValues[key] ? Number(formValues[key]) : undefined}
                                                                         onChange={v => setFormValues(prev => ({ ...prev, [key]: v == null ? '' : String(v) }))}
                                                                         placeholder={prop.description}
@@ -1166,6 +1191,7 @@ export default function McpConsolePage() {
                                                                 ) : (
                                                                     <Input.TextArea
                                                                         className="max-w-xl"
+                                                                        status={showMissing && missingRequired.includes(key) ? 'error' : undefined}
                                                                         rows={2}
                                                                         value={formValues[key] ?? ''}
                                                                         onChange={e => setFormValues(prev => ({ ...prev, [key]: e.target.value }))}

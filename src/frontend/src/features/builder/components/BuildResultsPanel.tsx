@@ -8,7 +8,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { message, notifyError } from '../../../shared/feedback';
-import { Button, Card, Space, Tag } from 'antd';
+import { Button, Card, Popconfirm, Space, Tag } from 'antd';
 import {
   AppstoreOutlined, CloudUploadOutlined, NodeIndexOutlined,
   PartitionOutlined, SafetyCertificateOutlined, ClusterOutlined,
@@ -36,6 +36,10 @@ const BuildResultsPanel: React.FC<Props> = ({ projectId, summary, checks, publis
   // 发布状态以后端 is_published 为准；版本号仅取自 publication 快照供展示
   // （单看版本号会把"刚入库的 schema/full 快照"误判成已发布——2026-11-06 实测修复）
   const published = !!summary.is_published && publishedVersionNo != null;
+  // 发布按钮的确认气泡只出现在「点了就发」的场景（2026-11-26 统一）：
+  // 已发布（重新发布）必然带域，直接落快照；未发布但已知没有知识域时，点击会先弹
+  // 选域弹窗——那本身就是一次选择，再垫一层气泡只是多按一次
+  const publishImmediate = published || hasDomain === true;
 
   const doPublish = async () => {
     setPublishing(true);
@@ -98,13 +102,42 @@ const BuildResultsPanel: React.FC<Props> = ({ projectId, summary, checks, publis
               </Button>
               {published && (
                 // 取消发布是破坏性操作，但它不是这一屏的主操作：用中性描边，
-                // hover 才露出冷调红，避免和右侧「重新发布」抢注意力
-                <Button size="small" className="br-unpublish" onClick={doUnpublish}>取消发布</Button>
+                // hover 才露出冷调红，避免和右侧「重新发布」抢注意力。
+                // 点击不再直接下线：按钮旁就近弹一枚 Popconfirm 做二次确认（2026-11-26 用户反馈），
+                // 这只是一次范围明确的开关，不值得占用中心模态
+                <Popconfirm
+                  title="取消发布？"
+                  description="该本体将从资产中心下架，公共区用户不再能看到；数据、版本与审核记录不受影响，可随时重新发布。"
+                  okText="确认下线" cancelText="取消" okButtonProps={{ danger: true }}
+                  onConfirm={doUnpublish}
+                >
+                  <Button size="small" className="br-unpublish">取消发布</Button>
+                </Popconfirm>
               )}
-              <Button size="small" type="primary" icon={<CloudUploadOutlined />}
-                      loading={publishing} onClick={doPublish}>
-                {published ? '重新发布' : '发布到资产中心'}
-              </Button>
+              {/* 点了就发的场景给就近确认：会生成新版本快照、资产中心展示随之更新，
+                  点错一次代价不小。会先弹选域弹窗的场景（无知识域）不再垫气泡。
+                  发布中（loading）时气泡挂起，避免连点排队 */}
+              {publishImmediate ? (
+                <Popconfirm
+                  title={published ? '重新发布到资产中心？' : '发布到资产中心？'}
+                  description={published
+                    ? '将用当前工作区生成新的版本快照，资产中心展示随之更新；旧版本仍保留可回溯。'
+                    : '将生成版本快照并发布到资产中心；发布后可在同一位置取消发布。'}
+                  okText={published ? '重新发布' : '发布'} cancelText="取消"
+                  disabled={publishing}
+                  onConfirm={doPublish}
+                >
+                  <Button size="small" type="primary" icon={<CloudUploadOutlined />}
+                          loading={publishing}>
+                    {published ? '重新发布' : '发布到资产中心'}
+                  </Button>
+                </Popconfirm>
+              ) : (
+                <Button size="small" type="primary" icon={<CloudUploadOutlined />}
+                        loading={publishing} onClick={doPublish}>
+                  {published ? '重新发布' : '发布到资产中心'}
+                </Button>
+              )}
             </Space>
           )}>
       {/* 结构指标带（2026-11-17）：从四块白格子换成一条「冷蓝纸 + 柔光 + 节点线稿」的指标带，

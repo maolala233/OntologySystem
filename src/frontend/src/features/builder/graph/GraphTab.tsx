@@ -20,7 +20,6 @@ import { projectsApi } from '../../../api/projects';
 import { setUnsavedGuard } from '../../../utils/unsavedGuard';
 import Tip from '../../../shared/Tip';
 import { useImeSafeSearch } from '../../../shared/useImeSafeSearch';
-import confirmImpact from '../../../utils/impactConfirm';
 import { extractionApi } from '../../../api/extraction';
 import { versionsApi } from '../../../api/governance';
 import { graphApi, graphEditApi, GraphEditResult } from '../../../api/graphview';
@@ -553,32 +552,18 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
     const [exportOpen, setExportOpen] = useState(false);
 
     // 发布走「发布预检弹窗」（O3-F9：先看影响分析 + 门控结论，门控未过禁用发布）；
-    // 下线是破坏性操作，走统一影响范围确认模板（F10）。
+    // 下线是破坏性操作，原来走中心的影响确认模态（F10）。2026-11-26 统一为「按钮就近确认」：
+    // 菜单项点完就收起，再让视线跳回屏幕中央太重——改为在「更多」按钮旁弹一枚 Popconfirm。
+    const [unpublishConfirmOpen, setUnpublishConfirmOpen] = useState(false);
+
     const handleTogglePublish = async () => {
         try {
             const p = await projectsApi.getProject(projectId);
             if (p.is_published) {
-                confirmImpact({
-                    title: '确认取消发布',
-                    impact: [
-                        '该本体将从资产中心下架，公共区用户不再能看到它；',
-                        '项目数据、版本与审核记录不受影响，可随时重新发布。',
-                    ],
-                    okText: '确认下线',
-                    onOk: async () => {
-                        try {
-                            await projectsApi.unpublishProject(Number(projectId));
-                            message.success('已取消发布');
-                            const updated = await projectsApi.getProject(projectId);
-                            setIsPublished(!!updated.is_published);
-                            onChanged?.();
-                        } catch (error: any) {
-                            notifyError(error, '取消发布失败');
-                        }
-                    },
-                });
+                setUnpublishConfirmOpen(true);
             } else {
-                // 与普通模式同一发布检查（项目页「发布」阶段内容区）
+                // 未发布时只是跳到项目页的发布入口（真正的发布确认在那边），不构成状态变更，
+                // 不再多垫一层确认
                 navigate(`/projects/${projectId}?stage=publish`);
             }
         } catch (e: any) {
@@ -586,11 +571,24 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
         }
     };
 
+    const handleUnpublish = async () => {
+        setUnpublishConfirmOpen(false);
+        try {
+            await projectsApi.unpublishProject(Number(projectId));
+            message.success('已取消发布');
+            const updated = await projectsApi.getProject(projectId);
+            setIsPublished(!!updated.is_published);
+            onChanged?.();
+        } catch (error: any) {
+            notifyError(error, '取消发布失败');
+        }
+    };
+
     const moreMenuItems = [
         { key: 'export', icon: <ExportOutlined />, label: '导出图谱…' },
         { key: 'rag-sync', icon: <ThunderboltOutlined />, label: 'RAG 同步（RAGFlow）' },
         { type: 'divider' as const },
-        { key: 'publish', icon: isPublished ? <EyeOutlined /> : <CloudServerOutlined />, label: isPublished ? '已发布 · 点击下线' : '发布到资产中心' },
+        { key: 'publish', icon: isPublished ? <EyeOutlined /> : <CloudServerOutlined />, label: isPublished ? '取消发布…' : '发布到资产中心' },
     ];
 
     const handleMoreMenuClick: MenuProps['onClick'] = ({ key }) => {
@@ -796,12 +794,25 @@ const GraphTab: React.FC<Props> = ({ projectId, onChanged }) => {
                                 保存
                             </Button>
                         </Tooltip>
-                        <Dropdown
-                            trigger={['click']}
-                            menu={{ items: moreMenuItems, onClick: handleMoreMenuClick }}
+                        {/* 下线确认：菜单项收起后，在「更多」按钮旁就近弹气泡（open 由菜单项驱动，
+                            受控模式下点击/悬停不会自己冒出来） */}
+                        <Popconfirm
+                            open={unpublishConfirmOpen}
+                            onOpenChange={(o) => { if (!o) setUnpublishConfirmOpen(false); }}
+                            title="取消发布？"
+                            description="该本体将从资产中心下架，公共区用户不再能看到；数据、版本与审核记录不受影响，可随时重新发布。"
+                            okText="确认下线" cancelText="取消" okButtonProps={{ danger: true }}
+                            onConfirm={handleUnpublish}
                         >
-                            <Button icon={<MoreOutlined />} style={{ background: 'transparent', borderColor: '#2A3550', color: '#E6EAF2' }} />
-                        </Dropdown>
+                            <span className="inline-flex">
+                                <Dropdown
+                                    trigger={['click']}
+                                    menu={{ items: moreMenuItems, onClick: handleMoreMenuClick }}
+                                >
+                                    <Button icon={<MoreOutlined />} style={{ background: 'transparent', borderColor: '#2A3550', color: '#E6EAF2' }} />
+                                </Dropdown>
+                            </span>
+                        </Popconfirm>
                     </div>
                 </div>
 
