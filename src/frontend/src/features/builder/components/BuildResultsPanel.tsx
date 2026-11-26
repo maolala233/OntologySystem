@@ -1,7 +1,7 @@
 /**
  * 本体构建结果卡（2026-11-05 精简定稿；2026-11-17 按浅色冷调白卡统一视觉）：
  * 单张浅色卡片与系统品牌风格一致——标题 + 右上角操作，正文四格统计
- * （发丝线分列、标签前荧光圆点、等宽彩色数字），下方一行质量自检状态。
+ * （发丝线分列、标签前荧光圆点、等宽彩色数字）；质量自检只在有硬伤时提示。
  * 右上角 查看图谱 / 发布到资产中心（一键直发，发布后翻转 已发布 vN + 取消发布 + 重新发布）。
  * 分类明细表与导出已按需求移除。
  */
@@ -176,20 +176,13 @@ const BuildResultsPanel: React.FC<Props> = ({ projectId, summary, checks, publis
           ))}
         </div>
       </div>
-      {checks && (
+      {/* 质量自检行只保留"有问题"态（2026-11-26）：「机检通过」这类常态提示不再展示 */}
+      {checks && !checkOk && (
         <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px]">
-          <span className="flex items-center gap-1.5"
-                style={{ color: checkOk ? '#1B87AD' : '#B42318' }}>
+          <span className="flex items-center gap-1.5" style={{ color: '#B42318' }}>
             <span className="h-[7px] w-[7px] flex-none rounded-full"
-                  style={{
-                    background: checkOk ? '#34C3A4' : '#F2685C',
-                    boxShadow: checkOk
-                      ? '0 0 6px rgba(52,195,164,0.75)'
-                      : '0 0 6px rgba(242,104,92,0.75)',
-                  }} />
-            {checkOk
-              ? '机检通过'
-              : `机检 ${checks.error_count} 处问题（发布会被拦截）`}
+                  style={{ background: '#F2685C', boxShadow: '0 0 6px rgba(242,104,92,0.75)' }} />
+            {`机检 ${checks.error_count} 处问题（发布会被拦截）`}
           </span>
         </div>
       )}
