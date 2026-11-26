@@ -24,7 +24,6 @@ import Navbar from '../../components/Layout/Navbar';
 import PageScroll from '../../components/Layout/PageScroll';
 import TechHero from '../../components/TechHero';
 import { Dot, Note, PageLoading, SectionHead, StatBand, TkTag } from '../../shared/consoleUi';
-import Tip from '../../shared/Tip';
 
 const PURPOSES = [
     { key: 'extract', label: '抽取模型', hint: '文档解析后的本体抽取（消耗最大）', icon: <ThunderboltOutlined /> },
@@ -470,9 +469,9 @@ const ModelConfigsPage: React.FC = () => {
                                             >
                                                 {pMeta?.icon ?? <RobotOutlined />}
                                             </span>
-                                            <Tip text={row.name}>
-                                                <span className="min-w-0 truncate text-[13.5px] font-semibold text-[#1F2A44]">{row.name}</span>
-                                            </Tip>
+                                            {/* 卡片标题不挂悬停提示（2026-11-26 用户反馈）：
+                                                提示内容就是标题本身，纯重复；超长由 truncate 收尾 */}
+                                            <span className="min-w-0 truncate text-[13.5px] font-semibold text-[#1F2A44]">{row.name}</span>
                                             {row.is_default && <TkTag tone="brand"><StarFilled className="text-[9px]" />默认</TkTag>}
                                             {!row.enabled && <TkTag tone="quiet">停用</TkTag>}
                                             <TkTag tone={row.scope === 'global' ? 'violet' : 'cyan'}>
@@ -486,9 +485,8 @@ const ModelConfigsPage: React.FC = () => {
                                 >
                                     <div className="space-y-1.5">
                                         <FieldRow label="模型" mono>
-                                            <Tip text={row.model_name}>
-                                                <span className="block truncate">{row.model_name}</span>
-                                            </Tip>
+                                            {/* 模型名同样去掉悬停提示，整张卡不再有重复文案的气泡（2026-11-26） */}
+                                            <span className="block truncate">{row.model_name}</span>
                                         </FieldRow>
                                         <FieldRow label="地址" mono>
                                             <span className="break-all text-[#66738F]">{row.base_url}</span>

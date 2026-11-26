@@ -362,7 +362,10 @@ const DomainManagementPage: React.FC = () => {
                     >
                         <ClusterOutlined />
                     </span>
-                    <Text strong ellipsis={{ tooltip: name }} className="!m-0">{name}</Text>
+                    {/* 名称不挂悬停提示（2026-11-26 用户反馈）：antd 的 ellipsis.tooltip
+                        只在它判定为截断时才弹，短名字不弹、个别名字莫名弹，看起来像偏心；
+                        截断改由 CSS 收尾，整列行为一致 */}
+                    <Text strong className="!m-0 min-w-0 truncate">{name}</Text>
                 </div>
             ),
         },
@@ -657,8 +660,9 @@ const DomainManagementPage: React.FC = () => {
                                         key: 'name',
                                         width: 200,
                                         render: (name: string, record: ProjectInDomain) => (
-                                            <div className="flex items-center gap-2">
-                                                <Text strong ellipsis={{ tooltip: name }} className="!m-0">{name}</Text>
+                                            <div className="flex min-w-0 items-center gap-2">
+                                                {/* 同样不挂悬停提示，长名字由截断收尾（2026-11-26） */}
+                                                <Text strong className="!m-0 min-w-0 truncate">{name}</Text>
                                                 {record.is_published && <TkTag tone="violet">已发布</TkTag>}
                                             </div>
                                         ),
