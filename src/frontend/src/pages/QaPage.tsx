@@ -630,6 +630,9 @@ export default function QaPage() {
                     outline: 2px solid rgba(91, 141, 239, 0.45);
                     outline-offset: 2px;
                 }
+                /* 列表最后一条不再留底边距（2026-11-27）：卡片直接贴住列表容器底边，
+                   列底的间距统一交给 aside 的 pb-4，避免最后一张卡片下面套两层留白 */
+                .qa-conv-list > div:last-child { margin-bottom: 0; }
                 /* 回答卡（2026-11-19）：原来是一张纯白 + 细描边的平面纸，压在冷蓝画布上
                    像从别处抠来的一块控件。改成和 .ant-card 同一族的冷白纸面
                    ——冷蓝渐变底 + 上内高光 + 下内阴影 + 近距投影，
@@ -696,7 +699,9 @@ export default function QaPage() {
             <div className="flex flex-1 min-h-0 pt-1 pb-0 pl-1 sm:pt-3 sm:pb-2 sm:pl-3">
                 {/* 左侧：会话历史。整列透明，让内容区底部的静态背景图透上来；
                     只保留一条右侧分隔线，列内条目用白色/品牌蓝药丸保持可读性 */}
-                <aside className="w-64 shrink-0 border-r border-[#E4EBF7]/70 bg-transparent flex flex-col">
+                {/* 底部留白（2026-11-27）：列表是滚动容器，列表自身的 pb 只出现在滚到底时；
+                    列底再加 16px，与顶部 12(页) + 12(按钮区) 的节奏对齐，滚到中途也不会贴底 */}
+                <aside className="w-64 shrink-0 border-r border-[#E4EBF7]/70 bg-transparent flex flex-col pb-4">
                     <div className="p-3 pb-2">
                         <button
                             type="button"
@@ -726,7 +731,7 @@ export default function QaPage() {
                             )}
                         </div>
                     </div>
-                    <div className="flex-1 overflow-auto px-2 pb-2">
+                    <div className="qa-conv-list flex-1 overflow-auto px-2">
                         {!convsReadyForUi ? null : conversations.length === 0 ? (
                             <div className="flex flex-col items-center justify-center text-center py-10 px-3">
                                 <MessageOutlined className="text-2xl text-[#C3CCDD] mb-2" />
