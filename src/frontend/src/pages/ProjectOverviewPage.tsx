@@ -385,7 +385,9 @@ const ProjectOverviewPage: React.FC = () => {
                 {/* 卡面走全站统一的 .surface-card 材质（2026-11-16）：冷白渐变 + 顶部内高光 +
                    底部内阴影 + 圆角 14，与系统配置五页 / 知识域管理 / MCP 一致。
                    原来手写的纯白 + rounded-xl + 自绘阴影在浅蓝画布上像一张贴纸 */}
-                <div className="overview-stack surface-card mb-4">
+                {/* 底部不再自带 mb-4（2026-11-27）：PageScroll 已有 24px 上下留白，
+                    这 16px 叠在卡身后让页面最底部比别的页面空一倍，与段间距也对不上 */}
+                <div className="overview-stack surface-card">
                     {/* 卡内第 0 段：项目身份（2026-11-16）。原来是挂在页面上的 PageHeader，
                         浮在画布上另起一段，和下面白卡割裂；名称/状态/领域/时间/主操作本质都是
                         "这个项目的属性"，与构建、文档、结果同属一张白面，因此并进卡里当第一段。
